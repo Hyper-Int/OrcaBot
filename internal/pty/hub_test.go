@@ -129,3 +129,44 @@ func TestHubClientCount(t *testing.T) {
 		t.Errorf("expected 1 client after unregister, got %d", hub.ClientCount())
 	}
 }
+
+func TestHubStopKillsProcessAndClosesClients(t *testing.T) {
+	p, err := New("/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create PTY: %v", err)
+	}
+	// Don't defer p.Close() - hub.Stop() should do it
+
+	hub := NewHub(p)
+	go hub.Run()
+
+	// Register a client
+	client := make(chan []byte, 100)
+	hub.Register(client)
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop the hub
+	hub.Stop()
+
+	// Client channel should eventually be closed
+	// Drain any pending data and wait for close
+	timeout := time.After(500 * time.Millisecond)
+	closed := false
+	for !closed {
+		select {
+		case _, ok := <-client:
+			if !ok {
+				closed = true
+			}
+			// If ok, keep draining
+		case <-timeout:
+			t.Fatal("timeout waiting for client channel to close")
+		}
+	}
+
+	// PTY should be closed - write should fail
+	_, err = p.Write([]byte("test"))
+	if err == nil {
+		t.Error("expected write to closed PTY to fail")
+	}
+}

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/hyper-ai-inc/hyper-backend/internal/fs"
 	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
@@ -21,10 +25,40 @@ func main() {
 	sessionManager := sessions.NewManager()
 	server := NewServer(sessionManager)
 
-	log.Printf("Starting server on :%s", port)
-	if err := http.ListenAndServe(":"+port, server.Handler()); err != nil {
-		log.Fatal(err)
+	httpServer := &http.Server{
+		Addr:    ":" + port,
+		Handler: server.Handler(),
 	}
+
+	// Channel to listen for shutdown signals
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in goroutine
+	go func() {
+		log.Printf("Starting server on :%s", port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sig := <-shutdown
+	log.Printf("Received signal %v, shutting down...", sig)
+
+	// Create context with timeout for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown HTTP server (stops accepting new connections)
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	// Close all sessions (kills PTYs, agents, cleans up workspaces)
+	sessionManager.Shutdown()
+
+	log.Println("Server stopped")
 }
 
 type Server struct {

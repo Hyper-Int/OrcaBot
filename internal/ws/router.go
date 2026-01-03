@@ -54,6 +54,10 @@ func (r *Router) HandleWebSocket(w http.ResponseWriter, req *http.Request) {
 	}
 
 	client := NewClientWithUser(conn, ptyInfo.Hub, userID)
+	if client == nil {
+		// Hub already stopped
+		return
+	}
 	go client.ReadPump()
 	go client.WritePump()
 }
@@ -82,6 +86,10 @@ func (r *Router) HandleAgentWebSocket(w http.ResponseWriter, req *http.Request) 
 	}
 
 	client := NewClientWithUser(conn, agent.Hub(), userID)
+	if client == nil {
+		// Hub already stopped
+		return
+	}
 	go client.ReadPump()
 	go client.WritePump()
 }

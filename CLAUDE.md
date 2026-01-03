@@ -119,6 +119,44 @@ Fly.io (execution plane)
 
 ---
 
+## Agent input control (soft lock)
+
+When Claude Code (or other agents) run in a multiplayer terminal, there's a risk of **byte-level input interleaving** if humans and the agent type simultaneously. This could corrupt commands.
+
+### Soft lock model (implemented)
+
+The backend enforces a "soft lock" on agent PTYs:
+
+| Agent State | Human Input | Rationale |
+|-------------|-------------|-----------|
+| **Running** | Blocked | Agent has exclusive control; human input silently dropped |
+| **Paused**  | Allowed | Agent is SIGSTOP'd; humans can take control via turn-taking |
+| **Stopped** | Allowed | Agent terminated; normal PTY behavior |
+
+### Implementation details
+
+- Agent Hub has `agentMode` flag (true for agent PTYs)
+- `Hub.Write()` checks agent state before allowing human input
+- State changes broadcast `agent_state` events to all clients
+- Frontend should show "Agent is running" indicator and disable typing
+
+### WebSocket events
+
+```json
+{"type": "agent_state", "agent_state": "running"}  // Human input blocked
+{"type": "agent_state", "agent_state": "paused"}   // Human input allowed
+{"type": "agent_state", "agent_state": "stopped"}  // Agent terminated
+```
+
+### Why soft lock?
+
+- **Prevents corruption**: Commands can't interleave at byte level
+- **Backend authority**: Even if UI bugs allow typing, backend drops it
+- **Natural UX**: Matches user expectation (can't type while Claude is working)
+- **Flexible**: Pause allows manual intervention when needed
+
+---
+
 ## Persistence model
 
 ### Persisted (Postgres)
@@ -226,7 +264,9 @@ Goal: safe shared terminals
 - Dedicated Claude terminal
 - Agent controller wrapper
 - Pause (SIGSTOP) / resume (SIGCONT) / stop (SIGINT→SIGTERM→SIGKILL)
-- Explicit control handoff to/from Claude
+- Soft lock: agent has exclusive input control while running
+- Humans can only type when agent is paused
+- `agent_state` WebSocket events for UI sync
 
 Goal: Claude can "drive" visibly and safely
 

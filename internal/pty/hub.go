@@ -13,10 +13,11 @@ type ClientInfo struct {
 
 // ControlEvent represents a turn-taking event to broadcast
 type ControlEvent struct {
-	Type       string `json:"type"`
-	Controller string `json:"controller,omitempty"`
-	From       string `json:"from,omitempty"`
-	To         string `json:"to,omitempty"`
+	Type       string   `json:"type"`
+	Controller string   `json:"controller,omitempty"` // user ID for turn-taking events
+	AgentState string   `json:"agent_state,omitempty"` // running|paused|stopped for agent_state events
+	From       string   `json:"from,omitempty"`
+	To         string   `json:"to,omitempty"`
 	Requests   []string `json:"requests,omitempty"`
 }
 
@@ -28,10 +29,15 @@ type Hub struct {
 	mu      sync.RWMutex
 	clients map[chan []byte]*ClientInfo
 
+	// Agent mode: when true, this Hub is for an agent PTY
+	// and human input is only allowed when agent is not running
+	agentMode    bool
+	agentRunning bool
+
 	register   chan *ClientInfo
 	unregister chan chan []byte
 	stop       chan struct{}
-	stopped    bool
+	stopOnce   sync.Once
 }
 
 // NewHub creates a new Hub for the given PTY
@@ -74,7 +80,6 @@ func (h *Hub) Run() {
 
 		case <-h.stop:
 			h.mu.Lock()
-			h.stopped = true
 			h.turn.Stop()
 			// Close all client channels
 			for client := range h.clients {
@@ -121,24 +126,57 @@ func (h *Hub) broadcast(data []byte) {
 	}
 }
 
-// Register adds a client to receive PTY output (legacy - no user ID)
-func (h *Hub) Register(client chan []byte) {
-	h.register <- &ClientInfo{Output: client}
+// Register adds a client to receive PTY output (legacy - no user ID).
+// Returns false if hub is already stopped.
+func (h *Hub) Register(client chan []byte) bool {
+	select {
+	case h.register <- &ClientInfo{Output: client}:
+		return true
+	case <-h.stop:
+		return false
+	}
 }
 
-// RegisterClient adds a client with user ID
-func (h *Hub) RegisterClient(userID string, client chan []byte) {
-	h.register <- &ClientInfo{UserID: userID, Output: client}
+// RegisterClient adds a client with user ID.
+// Returns false if hub is already stopped.
+func (h *Hub) RegisterClient(userID string, client chan []byte) bool {
+	select {
+	case h.register <- &ClientInfo{UserID: userID, Output: client}:
+		return true
+	case <-h.stop:
+		return false
+	}
 }
 
-// Unregister removes a client
+// Unregister removes a client.
+// Safe to call even after hub is stopped.
 func (h *Hub) Unregister(client chan []byte) {
-	h.unregister <- client
+	// Use select to avoid blocking if hub is already stopped
+	select {
+	case h.unregister <- client:
+		// Successfully sent to run loop
+	case <-h.stop:
+		// Hub already stopped, clean up directly
+		h.mu.Lock()
+		if info, ok := h.clients[client]; ok {
+			delete(h.clients, client)
+			if info.UserID != "" {
+				h.turn.Disconnect(info.UserID)
+			}
+		}
+		h.mu.Unlock()
+	}
 }
 
-// Stop shuts down the hub
+// Stop shuts down the hub and kills the PTY process.
+// Safe to call multiple times (idempotent).
 func (h *Hub) Stop() {
-	close(h.stop)
+	h.stopOnce.Do(func() {
+		// Signal the run loop to stop
+		close(h.stop)
+		// Close the PTY (kills process, closes file descriptor)
+		h.pty.Close()
+	})
 }
 
 // ClientCount returns the number of connected clients
@@ -149,7 +187,18 @@ func (h *Hub) ClientCount() int {
 }
 
 // Write sends input to the PTY (only from controller)
+// In agent mode, human input is blocked while agent is running
 func (h *Hub) Write(userID string, data []byte) (int, error) {
+	h.mu.RLock()
+	agentMode := h.agentMode
+	agentRunning := h.agentRunning
+	h.mu.RUnlock()
+
+	// In agent mode, block human input while agent is running
+	if agentMode && agentRunning {
+		return 0, nil // Silently drop - agent has exclusive control
+	}
+
 	if !h.turn.IsController(userID) {
 		return 0, nil // Silently drop input from non-controllers
 	}
@@ -158,6 +207,12 @@ func (h *Hub) Write(userID string, data []byte) (int, error) {
 
 // WriteForce sends input to the PTY without checking controller (for legacy/testing)
 func (h *Hub) WriteForce(data []byte) (int, error) {
+	return h.pty.Write(data)
+}
+
+// WriteAgent sends input to the PTY from the agent process.
+// Bypasses all human input gates - use only for agent-originated writes.
+func (h *Hub) WriteAgent(data []byte) (int, error) {
 	return h.pty.Write(data)
 }
 
@@ -232,6 +287,60 @@ func (h *Hub) IsController(userID string) bool {
 // Reconnect handles a user reconnecting
 func (h *Hub) Reconnect(userID string) {
 	h.turn.Reconnect(userID)
+}
+
+// SetAgentMode configures this hub for agent mode
+// In agent mode, human input is blocked while the agent is running
+func (h *Hub) SetAgentMode(enabled bool) {
+	h.mu.Lock()
+	h.agentMode = enabled
+	h.agentRunning = enabled // Start as running if enabling
+	h.mu.Unlock()
+
+	if enabled {
+		h.broadcastAgentState("running")
+	}
+}
+
+// SetAgentRunning updates the agent running state
+// When running=false (paused/stopped), humans can take control
+func (h *Hub) SetAgentRunning(running bool) {
+	h.mu.Lock()
+	h.agentRunning = running
+	h.mu.Unlock()
+
+	if running {
+		h.broadcastAgentState("running")
+	} else {
+		h.broadcastAgentState("paused")
+	}
+}
+
+// IsAgentRunning returns true if this is an agent hub and agent is running
+func (h *Hub) IsAgentRunning() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.agentMode && h.agentRunning
+}
+
+// SetAgentStopped marks the agent as stopped and broadcasts to clients.
+// Call this before Stop() to notify clients the agent has terminated.
+func (h *Hub) SetAgentStopped() {
+	h.mu.Lock()
+	h.agentRunning = false
+	h.mu.Unlock()
+
+	h.broadcastAgentState("stopped")
+}
+
+// broadcastAgentState sends agent state to all clients
+func (h *Hub) broadcastAgentState(state string) {
+	event := ControlEvent{
+		Type:       "agent_state",
+		AgentState: state,
+	}
+	data, _ := json.Marshal(event)
+	h.broadcastControl(data)
 }
 
 // sendControlState sends current control state to a specific client

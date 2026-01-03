@@ -42,6 +42,7 @@ func NewController(id, shell string, cols, rows uint16) (*Controller, error) {
 	}
 
 	hub := pty.NewHub(p)
+	hub.SetAgentMode(true) // Enable agent mode - blocks human input while running
 	go hub.Run()
 
 	return &Controller{
@@ -100,6 +101,7 @@ func (c *Controller) Pause() error {
 	}
 
 	c.state = StatePaused
+	c.hub.SetAgentRunning(false) // Allow human input while paused
 	return nil
 }
 
@@ -121,6 +123,7 @@ func (c *Controller) Resume() error {
 	}
 
 	c.state = StateRunning
+	c.hub.SetAgentRunning(true) // Block human input while running
 	return nil
 }
 
@@ -180,6 +183,7 @@ func (c *Controller) markStopped() {
 	defer c.mu.Unlock()
 
 	c.state = StateStopped
+	c.hub.SetAgentStopped() // Notify clients before closing
 	c.hub.Stop()
 	c.pty.Close()
 }

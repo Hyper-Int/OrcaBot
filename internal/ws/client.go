@@ -38,7 +38,8 @@ func NewClient(conn *websocket.Conn, hub *pty.Hub) *Client {
 	return NewClientWithUser(conn, hub, "")
 }
 
-// NewClientWithUser creates a new WebSocket client with user ID
+// NewClientWithUser creates a new WebSocket client with user ID.
+// Returns nil if hub is already stopped.
 func NewClientWithUser(conn *websocket.Conn, hub *pty.Hub, userID string) *Client {
 	c := &Client{
 		conn:   conn,
@@ -46,12 +47,18 @@ func NewClientWithUser(conn *websocket.Conn, hub *pty.Hub, userID string) *Clien
 		userID: userID,
 		output: make(chan []byte, 256),
 	}
+	var registered bool
 	if userID != "" {
-		hub.RegisterClient(userID, c.output)
-		// Handle reconnection
-		hub.Reconnect(userID)
+		registered = hub.RegisterClient(userID, c.output)
+		if registered {
+			hub.Reconnect(userID)
+		}
 	} else {
-		hub.Register(c.output)
+		registered = hub.Register(c.output)
+	}
+	if !registered {
+		conn.Close()
+		return nil
 	}
 	return c
 }

@@ -98,3 +98,24 @@ func (m *Manager) List() []string {
 	}
 	return ids
 }
+
+// Shutdown closes all sessions gracefully
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	ids := make([]string, 0, len(m.sessions))
+	for id, session := range m.sessions {
+		sessions = append(sessions, session)
+		ids = append(ids, id)
+	}
+	m.sessions = make(map[string]*Session)
+	m.mu.Unlock()
+
+	// Close all sessions
+	for i, session := range sessions {
+		session.Close()
+		// Clean up workspace directory
+		workspacePath := filepath.Join(m.workspaceBase, ids[i])
+		os.RemoveAll(workspacePath)
+	}
+}
