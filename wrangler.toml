@@ -1,0 +1,26 @@
+name = "hyper-cloudflare"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+SANDBOX_URL = "http://localhost:8080"
+
+# Durable Objects for real-time collaboration
+[[durable_objects.bindings]]
+name = "DASHBOARD"
+class_name = "DashboardDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["DashboardDO"]
+
+# D1 Database for persistent state
+[[d1_databases]]
+binding = "DB"
+database_name = "hyper-db"
+database_id = "local"
+
+# For local development
+[dev]
+port = 8787
+local_protocol = "http"
