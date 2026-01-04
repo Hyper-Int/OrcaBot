@@ -20,9 +20,14 @@ type Manager struct {
 	workspaceBase string
 }
 
-// NewManager creates a new session manager with workspaces under the given base path
+// NewManager creates a new session manager with workspaces under the given base path.
+// Uses WORKSPACE_BASE env var if set, otherwise defaults to /workspace.
 func NewManager() *Manager {
-	return NewManagerWithWorkspace("/workspace")
+	base := os.Getenv("WORKSPACE_BASE")
+	if base == "" {
+		base = "/workspace"
+	}
+	return NewManagerWithWorkspace(base)
 }
 
 // NewManagerWithWorkspace creates a manager with a custom workspace base path
