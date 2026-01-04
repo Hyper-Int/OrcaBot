@@ -7,6 +7,7 @@
 
 import type { Env, DashboardItem, RecipeStep } from './types';
 import { authenticate, requireAuth } from './auth/middleware';
+import { checkRateLimit } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
@@ -44,6 +45,12 @@ export default {
     }
 
     try {
+      // Check rate limit
+      const rateLimitResult = await checkRateLimit(request, env);
+      if (!rateLimitResult.allowed) {
+        return corsResponse(rateLimitResult.response!);
+      }
+
       const response = await handleRequest(request, env);
       return corsResponse(response);
     } catch (error) {

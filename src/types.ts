@@ -1,8 +1,14 @@
+// Rate limiter binding type
+export interface RateLimiter {
+  limit: (options: { key: string }) => Promise<{ success: boolean }>;
+}
+
 // Environment bindings
 export interface Env {
   DB: D1Database;
   DASHBOARD: DurableObjectNamespace;
   SANDBOX_URL: string;
+  RATE_LIMITER: RateLimiter;
 }
 
 // User types
