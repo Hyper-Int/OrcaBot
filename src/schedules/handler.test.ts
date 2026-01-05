@@ -36,7 +36,7 @@ describe('Schedule Handlers', () => {
     it('should create cron schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
-      const response = await createSchedule(ctx.env, {
+      const response = await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'Daily Run',
         cron: '0 9 * * *',
@@ -51,7 +51,7 @@ describe('Schedule Handlers', () => {
     it('should create event-based schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
-      const response = await createSchedule(ctx.env, {
+      const response = await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'On Push',
         eventTrigger: 'code.push',
@@ -65,7 +65,7 @@ describe('Schedule Handlers', () => {
     it('should return 400 when neither cron nor event provided', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
-      const response = await createSchedule(ctx.env, {
+      const response = await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'Invalid',
       });
@@ -76,7 +76,7 @@ describe('Schedule Handlers', () => {
     it('should create disabled schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
-      const response = await createSchedule(ctx.env, {
+      const response = await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'Disabled',
         cron: '0 * * * *',
@@ -93,7 +93,7 @@ describe('Schedule Handlers', () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
       const schedule = await seedSchedule(ctx.db, recipe.id, { name: 'To Delete' });
 
-      const response = await deleteSchedule(ctx.env, schedule.id);
+      const response = await deleteSchedule(ctx.env, schedule.id, testUser.id);
 
       expect(response.status).toBe(204);
 
@@ -108,7 +108,7 @@ describe('Schedule Handlers', () => {
     it('should insert schedule into database', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
-      await createSchedule(ctx.env, {
+      await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'DB Test',
         cron: '0 0 * * *',
@@ -128,7 +128,7 @@ describe('Schedule Handlers', () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
 
       // Create schedule with cron
-      const createResponse = await createSchedule(ctx.env, {
+      const createResponse = await createSchedule(ctx.env, testUser.id, {
         recipeId: recipe.id,
         name: 'Test Schedule',
         cron: '0 9 * * *',
@@ -137,7 +137,7 @@ describe('Schedule Handlers', () => {
       expect(schedule.nextRunAt).not.toBeNull();
 
       // Update to remove cron (event-based only)
-      const updateResponse = await updateSchedule(ctx.env, schedule.id, {
+      const updateResponse = await updateSchedule(ctx.env, schedule.id, testUser.id, {
         cron: '',
         eventTrigger: 'manual.trigger',
       });
@@ -233,6 +233,29 @@ describe('Cron Parsing', () => {
 
       expect(next).not.toBeNull();
       expect(next!.getUTCDay()).toBe(1); // Monday
+    });
+
+    it('should use OR logic when both day-of-month and weekday are restricted', () => {
+      // Run on 15th of month OR on Monday (standard cron OR semantics)
+      // From: Monday Jan 15 - next should be Jan 15 at 09:00 (matches day-of-month)
+      const from = new Date('2024-01-15T08:00:00Z'); // Monday Jan 15
+      const next = computeNextRun('0 9 15 * 1', from);
+
+      expect(next).not.toBeNull();
+      // Should match because day-of-month (15) matches
+      expect(next!.getUTCDate()).toBe(15);
+    });
+
+    it('should match weekday when day-of-month does not match (OR logic)', () => {
+      // Run on 1st of month OR on Monday
+      // From: Monday Jan 15 - next should be Jan 15 (matches Monday)
+      const from = new Date('2024-01-15T08:00:00Z'); // Monday Jan 15
+      const next = computeNextRun('0 9 1 * 1', from);
+
+      expect(next).not.toBeNull();
+      // Should match because weekday (Monday) matches, even though day-of-month doesn't
+      expect(next!.getUTCDay()).toBe(1); // Monday
+      expect(next!.getUTCHours()).toBe(9);
     });
   });
 });

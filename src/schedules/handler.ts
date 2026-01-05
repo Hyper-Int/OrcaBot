@@ -12,6 +12,93 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+// Check if user has access to a schedule (via its recipe → dashboard)
+async function checkScheduleAccess(
+  env: Env,
+  scheduleId: string,
+  userId: string,
+  requiredRole?: 'owner' | 'editor' | 'viewer'
+): Promise<{ hasAccess: boolean; schedule?: Record<string, unknown> }> {
+  const schedule = await env.DB.prepare(`
+    SELECT * FROM schedules WHERE id = ?
+  `).bind(scheduleId).first();
+
+  if (!schedule) {
+    return { hasAccess: false };
+  }
+
+  // Check access to the associated recipe
+  const recipe = await env.DB.prepare(`
+    SELECT * FROM recipes WHERE id = ?
+  `).bind(schedule.recipe_id).first();
+
+  if (!recipe) {
+    return { hasAccess: false };
+  }
+
+  // Recipes without dashboard_id are accessible to any authenticated user
+  if (!recipe.dashboard_id) {
+    return { hasAccess: true, schedule };
+  }
+
+  // Check dashboard membership
+  const member = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(recipe.dashboard_id, userId).first<{ role: string }>();
+
+  if (!member) {
+    return { hasAccess: false };
+  }
+
+  // Check role permissions in JavaScript
+  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
+  const userRoleLevel = roleHierarchy[member.role] || 0;
+  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
+  const hasAccess = userRoleLevel >= requiredLevel;
+
+  return { hasAccess, schedule: hasAccess ? schedule : undefined };
+}
+
+// Check if user has access to a recipe (for creating schedules)
+async function checkRecipeAccessForSchedule(
+  env: Env,
+  recipeId: string,
+  userId: string,
+  requiredRole?: 'owner' | 'editor' | 'viewer'
+): Promise<{ hasAccess: boolean; recipe?: Record<string, unknown> }> {
+  const recipe = await env.DB.prepare(`
+    SELECT * FROM recipes WHERE id = ?
+  `).bind(recipeId).first();
+
+  if (!recipe) {
+    return { hasAccess: false };
+  }
+
+  // Recipes without dashboard_id are accessible to any authenticated user
+  if (!recipe.dashboard_id) {
+    return { hasAccess: true, recipe };
+  }
+
+  // Check dashboard membership
+  const member = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(recipe.dashboard_id, userId).first<{ role: string }>();
+
+  if (!member) {
+    return { hasAccess: false };
+  }
+
+  // Check role permissions in JavaScript
+  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
+  const userRoleLevel = roleHierarchy[member.role] || 0;
+  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
+  const hasAccess = userRoleLevel >= requiredLevel;
+
+  return { hasAccess, recipe: hasAccess ? recipe : undefined };
+}
+
 // Parse a cron field and return matching values (exported for testing)
 export function parseCronField(field: string, min: number, max: number): number[] | null {
   const values: number[] = [];
@@ -47,6 +134,10 @@ export function parseCronField(field: string, min: number, max: number): number[
 export function computeNextRun(cron: string, from: Date = new Date()): Date | null {
   // Cron format: minute hour day month weekday
   // Supports: *, specific numbers, */n, ranges (n-m), lists (n,m)
+  //
+  // Standard cron day/weekday logic:
+  // - If both day-of-month and weekday are restricted (not *), use OR logic
+  // - Otherwise, use AND logic
   try {
     const parts = cron.trim().split(/\s+/);
     if (parts.length !== 5) return null;
@@ -58,6 +149,11 @@ export function computeNextRun(cron: string, from: Date = new Date()): Date | nu
     const weekdays = parseCronField(parts[4], 0, 6);
 
     if (!minutes || !hours || !days || !months || !weekdays) return null;
+
+    // Determine if day-of-month or weekday is restricted (not *)
+    const dayRestricted = parts[2] !== '*';
+    const weekdayRestricted = parts[4] !== '*';
+    const useDayOrWeekday = dayRestricted && weekdayRestricted;
 
     // Start from next minute (use UTC consistently)
     const next = new Date(from);
@@ -74,10 +170,14 @@ export function computeNextRun(cron: string, from: Date = new Date()): Date | nu
       const hour = next.getUTCHours();
       const minute = next.getUTCMinutes();
 
+      // Check day/weekday with OR logic if both are restricted
+      const dayMatches = useDayOrWeekday
+        ? days.includes(day) || weekdays.includes(weekday)
+        : days.includes(day) && weekdays.includes(weekday);
+
       if (
         months.includes(month) &&
-        days.includes(day) &&
-        weekdays.includes(weekday) &&
+        dayMatches &&
         hours.includes(hour) &&
         minutes.includes(minute)
       ) {
@@ -93,22 +193,46 @@ export function computeNextRun(cron: string, from: Date = new Date()): Date | nu
   }
 }
 
-// List schedules
+// List schedules (only those the user has access to via recipes)
 export async function listSchedules(
   env: Env,
+  userId: string,
   recipeId?: string
 ): Promise<Response> {
-  let query = 'SELECT * FROM schedules';
-  const params: string[] = [];
-
+  // If recipeId specified, verify access first
   if (recipeId) {
-    query += ' WHERE recipe_id = ?';
-    params.push(recipeId);
+    const { hasAccess } = await checkRecipeAccessForSchedule(env, recipeId, userId, 'viewer');
+    if (!hasAccess) {
+      return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
+    }
+
+    const result = await env.DB.prepare(`
+      SELECT * FROM schedules WHERE recipe_id = ? ORDER BY created_at DESC
+    `).bind(recipeId).all();
+
+    const schedules = result.results.map(s => ({
+      id: s.id,
+      recipeId: s.recipe_id,
+      name: s.name,
+      cron: s.cron,
+      eventTrigger: s.event_trigger,
+      enabled: Boolean(s.enabled),
+      lastRunAt: s.last_run_at,
+      nextRunAt: s.next_run_at,
+      createdAt: s.created_at,
+    }));
+
+    return Response.json({ schedules });
   }
 
-  query += ' ORDER BY created_at DESC';
-
-  const result = await env.DB.prepare(query).bind(...params).all();
+  // Get schedules for recipes the user has access to (via dashboard membership) + global recipes
+  const result = await env.DB.prepare(`
+    SELECT s.* FROM schedules s
+    INNER JOIN recipes r ON s.recipe_id = r.id
+    LEFT JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
+    WHERE r.dashboard_id IS NULL OR dm.user_id = ?
+    ORDER BY s.created_at DESC
+  `).bind(userId).all();
 
   const schedules = result.results.map(s => ({
     id: s.id,
@@ -128,14 +252,13 @@ export async function listSchedules(
 // Get a single schedule
 export async function getSchedule(
   env: Env,
-  scheduleId: string
+  scheduleId: string,
+  userId: string
 ): Promise<Response> {
-  const schedule = await env.DB.prepare(`
-    SELECT * FROM schedules WHERE id = ?
-  `).bind(scheduleId).first();
+  const { hasAccess, schedule } = await checkScheduleAccess(env, scheduleId, userId, 'viewer');
 
-  if (!schedule) {
-    return Response.json({ error: 'Schedule not found' }, { status: 404 });
+  if (!hasAccess || !schedule) {
+    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
   }
 
   return Response.json({
@@ -156,6 +279,7 @@ export async function getSchedule(
 // Create a schedule
 export async function createSchedule(
   env: Env,
+  userId: string,
   data: {
     recipeId: string;
     name: string;
@@ -164,13 +288,11 @@ export async function createSchedule(
     enabled?: boolean;
   }
 ): Promise<Response> {
-  // Verify recipe exists
-  const recipe = await env.DB.prepare(`
-    SELECT id FROM recipes WHERE id = ?
-  `).bind(data.recipeId).first();
+  // Verify user has editor access to the recipe
+  const { hasAccess } = await checkRecipeAccessForSchedule(env, data.recipeId, userId, 'editor');
 
-  if (!recipe) {
-    return Response.json({ error: 'Recipe not found' }, { status: 404 });
+  if (!hasAccess) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
   }
 
   if (!data.cron && !data.eventTrigger) {
@@ -220,6 +342,7 @@ export async function createSchedule(
 export async function updateSchedule(
   env: Env,
   scheduleId: string,
+  userId: string,
   data: {
     name?: string;
     cron?: string;
@@ -227,12 +350,10 @@ export async function updateSchedule(
     enabled?: boolean;
   }
 ): Promise<Response> {
-  const existing = await env.DB.prepare(`
-    SELECT * FROM schedules WHERE id = ?
-  `).bind(scheduleId).first();
+  const { hasAccess, schedule: existing } = await checkScheduleAccess(env, scheduleId, userId, 'editor');
 
-  if (!existing) {
-    return Response.json({ error: 'Schedule not found' }, { status: 404 });
+  if (!hasAccess || !existing) {
+    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
   }
 
   const enabled = data.enabled !== undefined ? data.enabled : Boolean(existing.enabled);
@@ -281,11 +402,18 @@ export async function updateSchedule(
   });
 }
 
-// Delete a schedule
+// Delete a schedule (owner only)
 export async function deleteSchedule(
   env: Env,
-  scheduleId: string
+  scheduleId: string,
+  userId: string
 ): Promise<Response> {
+  const { hasAccess } = await checkScheduleAccess(env, scheduleId, userId, 'owner');
+
+  if (!hasAccess) {
+    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
+  }
+
   await env.DB.prepare(`DELETE FROM schedules WHERE id = ?`).bind(scheduleId).run();
   return new Response(null, { status: 204 });
 }
@@ -293,36 +421,38 @@ export async function deleteSchedule(
 // Enable a schedule
 export async function enableSchedule(
   env: Env,
-  scheduleId: string
+  scheduleId: string,
+  userId: string
 ): Promise<Response> {
-  return updateSchedule(env, scheduleId, { enabled: true });
+  return updateSchedule(env, scheduleId, userId, { enabled: true });
 }
 
 // Disable a schedule
 export async function disableSchedule(
   env: Env,
-  scheduleId: string
+  scheduleId: string,
+  userId: string
 ): Promise<Response> {
-  return updateSchedule(env, scheduleId, { enabled: false });
+  return updateSchedule(env, scheduleId, userId, { enabled: false });
 }
 
 // Trigger a schedule manually
 export async function triggerSchedule(
   env: Env,
-  scheduleId: string
+  scheduleId: string,
+  userId: string
 ): Promise<Response> {
-  const schedule = await env.DB.prepare(`
-    SELECT * FROM schedules WHERE id = ?
-  `).bind(scheduleId).first();
+  const { hasAccess, schedule } = await checkScheduleAccess(env, scheduleId, userId, 'editor');
 
-  if (!schedule) {
-    return Response.json({ error: 'Schedule not found' }, { status: 404 });
+  if (!hasAccess || !schedule) {
+    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
   }
 
   // Start execution
   const executionResponse = await recipes.startExecution(
     env,
     schedule.recipe_id as string,
+    userId,
     { triggeredBy: 'manual', scheduleId }
   );
 
