@@ -16,6 +16,7 @@ type TurnController struct {
 	graceTimers  map[string]*time.Timer // Grace period timers
 	requests     []string          // Pending control requests (ordered)
 	gracePeriod  time.Duration
+	onExpire     func(userID string) // Callback when grace period expires
 }
 
 // NewTurnController creates a new turn controller
@@ -33,6 +34,13 @@ func (tc *TurnController) SetGracePeriod(d time.Duration) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 	tc.gracePeriod = d
+}
+
+// SetOnExpire sets the callback invoked when a controller's grace period expires
+func (tc *TurnController) SetOnExpire(fn func(userID string)) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.onExpire = fn
 }
 
 // Controller returns the current controller's user ID
@@ -193,16 +201,24 @@ func (tc *TurnController) IsDisconnected(userID string) bool {
 
 // expireGracePeriod is called when the grace period expires
 func (tc *TurnController) expireGracePeriod(userID string) {
-	tc.mu.Lock()
-	defer tc.mu.Unlock()
+	var expired bool
+	var callback func(string)
 
+	tc.mu.Lock()
 	// Only expire if still disconnected and still controller
 	if tc.disconnected[userID] && tc.controller == userID {
 		tc.controller = ""
 		delete(tc.disconnected, userID)
+		expired = true
+		callback = tc.onExpire
 	}
-
 	delete(tc.graceTimers, userID)
+	tc.mu.Unlock()
+
+	// Call callback outside lock to avoid deadlock
+	if expired && callback != nil {
+		callback(userID)
+	}
 }
 
 // removeRequestLocked removes a user from the pending requests (must hold lock)
