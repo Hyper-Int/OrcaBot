@@ -170,3 +170,111 @@ func TestHubStopKillsProcessAndClosesClients(t *testing.T) {
 		t.Error("expected write to closed PTY to fail")
 	}
 }
+
+func TestHubNewClientReceivesAgentState(t *testing.T) {
+	p, err := New("/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create PTY: %v", err)
+	}
+	defer p.Close()
+
+	hub := NewHub(p)
+	go hub.Run()
+	defer hub.Stop()
+
+	// Set agent mode (agent starts as running)
+	hub.SetAgentMode(true)
+
+	// Connect a new client
+	client := make(chan HubMessage, 100)
+	hub.Register(client)
+
+	// Wait for control_state message
+	timeout := time.After(500 * time.Millisecond)
+	var gotAgentState bool
+	for {
+		select {
+		case msg := <-client:
+			if !msg.IsBinary {
+				// Parse JSON to check for agent_state
+				data := string(msg.Data)
+				if bytes.Contains(msg.Data, []byte(`"agent_state":"running"`)) &&
+					bytes.Contains(msg.Data, []byte(`"type":"control_state"`)) {
+					gotAgentState = true
+				}
+				_ = data // suppress unused warning
+			}
+			if gotAgentState {
+				return
+			}
+		case <-timeout:
+			t.Fatal("new client did not receive agent_state in control_state message")
+		}
+	}
+}
+
+func TestHubAgentStateTransitions(t *testing.T) {
+	p, err := New("/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create PTY: %v", err)
+	}
+	defer p.Close()
+
+	hub := NewHub(p)
+	go hub.Run()
+	defer hub.Stop()
+
+	client := make(chan HubMessage, 100)
+	hub.Register(client)
+	time.Sleep(50 * time.Millisecond)
+
+	// Drain initial control_state
+	drainNonBinary(client)
+
+	// Enable agent mode
+	hub.SetAgentMode(true)
+	expectAgentState(t, client, "running")
+
+	// Pause
+	hub.SetAgentRunning(false)
+	expectAgentState(t, client, "paused")
+
+	// Resume
+	hub.SetAgentRunning(true)
+	expectAgentState(t, client, "running")
+
+	// Stop
+	hub.SetAgentStopped()
+	expectAgentState(t, client, "stopped")
+}
+
+func drainNonBinary(ch chan HubMessage) {
+	for {
+		select {
+		case msg := <-ch:
+			if msg.IsBinary {
+				continue
+			}
+		case <-time.After(100 * time.Millisecond):
+			return
+		}
+	}
+}
+
+func expectAgentState(t *testing.T, ch chan HubMessage, expected string) {
+	t.Helper()
+	timeout := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case msg := <-ch:
+			if msg.IsBinary {
+				continue
+			}
+			if bytes.Contains(msg.Data, []byte(`"agent_state":"`+expected+`"`)) {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("timeout waiting for agent_state %q", expected)
+		}
+	}
+}

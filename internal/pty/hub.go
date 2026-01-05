@@ -41,6 +41,7 @@ type Hub struct {
 	// and human input is only allowed when agent is not running
 	agentMode    bool
 	agentRunning bool
+	agentState   string // "running", "paused", or "stopped" (empty if not agent mode)
 
 	register   chan *ClientInfo
 	unregister chan chan HubMessage
@@ -315,6 +316,11 @@ func (h *Hub) SetAgentMode(enabled bool) {
 	h.mu.Lock()
 	h.agentMode = enabled
 	h.agentRunning = enabled // Start as running if enabling
+	if enabled {
+		h.agentState = "running"
+	} else {
+		h.agentState = ""
+	}
 	h.mu.Unlock()
 
 	if enabled {
@@ -325,15 +331,19 @@ func (h *Hub) SetAgentMode(enabled bool) {
 // SetAgentRunning updates the agent running state
 // When running=false (paused/stopped), humans can take control
 func (h *Hub) SetAgentRunning(running bool) {
+	var state string
+	if running {
+		state = "running"
+	} else {
+		state = "paused"
+	}
+
 	h.mu.Lock()
 	h.agentRunning = running
+	h.agentState = state
 	h.mu.Unlock()
 
-	if running {
-		h.broadcastAgentState("running")
-	} else {
-		h.broadcastAgentState("paused")
-	}
+	h.broadcastAgentState(state)
 }
 
 // IsAgentRunning returns true if this is an agent hub and agent is running
@@ -348,6 +358,7 @@ func (h *Hub) IsAgentRunning() bool {
 func (h *Hub) SetAgentStopped() {
 	h.mu.Lock()
 	h.agentRunning = false
+	h.agentState = "stopped"
 	h.mu.Unlock()
 
 	h.broadcastAgentState("stopped")
@@ -365,10 +376,15 @@ func (h *Hub) broadcastAgentState(state string) {
 
 // sendControlState sends current control state to a specific client
 func (h *Hub) sendControlState(client chan HubMessage) {
+	h.mu.RLock()
+	agentState := h.agentState
+	h.mu.RUnlock()
+
 	event := ControlEvent{
 		Type:       "control_state",
 		Controller: h.turn.Controller(),
 		Requests:   h.turn.PendingRequests(),
+		AgentState: agentState,
 	}
 	data, _ := json.Marshal(event)
 	msg := HubMessage{IsBinary: false, Data: data}
