@@ -31,7 +31,13 @@ type Workspace struct {
 
 // NewWorkspace creates a new workspace rooted at the given path
 func NewWorkspace(root string) *Workspace {
-	absRoot, _ := filepath.Abs(root)
+	// Resolve symlinks in root to ensure consistent path comparisons
+	// (e.g., on macOS /var -> /private/var)
+	absRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		// Fallback to Abs if root doesn't exist yet
+		absRoot, _ = filepath.Abs(root)
+	}
 	return &Workspace{root: absRoot}
 }
 
@@ -57,9 +63,33 @@ func (w *Workspace) resolvePath(path string) (string, error) {
 	// Join with root
 	fullPath := filepath.Join(w.root, cleaned)
 
-	// Resolve any symlinks and get absolute path
-	resolved, err := filepath.Abs(fullPath)
+	// Resolve symlinks to get the real path
+	// This prevents symlink-based escapes (e.g., /workspace/link -> /etc)
+	resolved, err := filepath.EvalSymlinks(fullPath)
 	if err != nil {
+		// If the path doesn't exist, check the parent directory instead
+		// This allows creating new files while still preventing symlink escapes
+		if os.IsNotExist(err) {
+			parent := filepath.Dir(fullPath)
+			base := filepath.Base(fullPath)
+
+			resolvedParent, parentErr := filepath.EvalSymlinks(parent)
+			if parentErr != nil {
+				// Parent doesn't exist either - check if it's within workspace
+				// Use Abs as fallback for new directory trees
+				resolvedParent, parentErr = filepath.Abs(parent)
+				if parentErr != nil {
+					return "", parentErr
+				}
+			}
+
+			// Check parent is within workspace
+			if !strings.HasPrefix(resolvedParent, w.root) {
+				return "", ErrPathTraversal
+			}
+
+			return filepath.Join(resolvedParent, base), nil
+		}
 		return "", err
 	}
 
