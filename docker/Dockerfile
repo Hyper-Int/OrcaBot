@@ -1,6 +1,26 @@
 # Hyper Sandbox Image
-# Base image for running Claude Code and Codex CLI in sandboxed terminals
+# Multi-stage build: Go server + Claude Code sandbox environment
 
+# =============================================================================
+# Stage 1: Build Go binary
+# =============================================================================
+FROM golang:1.23-bookworm AS builder
+
+WORKDIR /build
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build static binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/hyper-server ./cmd/server
+
+# =============================================================================
+# Stage 2: Sandbox runtime image
+# =============================================================================
 FROM debian:bookworm-slim
 
 # Prevent interactive prompts during package installation
@@ -48,7 +68,7 @@ RUN pip3 install --break-system-packages openai-codex-cli || true
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 777 /workspace
 
-# Create non-root user for sandbox
+# Create non-root user for sandbox operations
 RUN useradd -m -s /bin/bash sandbox \
     && chown -R sandbox:sandbox /workspace
 
@@ -57,11 +77,18 @@ ENV HOME=/home/sandbox
 ENV TERM=xterm-256color
 ENV PATH="/home/sandbox/.local/bin:${PATH}"
 
+# Copy Go server binary from builder
+COPY --from=builder /build/hyper-server /usr/local/bin/hyper-server
+
 # Working directory
 WORKDIR /workspace
 
-# Default to non-root user
-USER sandbox
+# Expose HTTP/WebSocket port
+EXPOSE 8080
 
-# Default command - bash shell
-CMD ["/bin/bash"]
+# Run as root (needed for PTY creation and process management)
+# The sandbox user is used for spawned shell processes, not the server itself
+USER root
+
+# Start the Go server
+CMD ["/usr/local/bin/hyper-server"]

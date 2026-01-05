@@ -194,3 +194,95 @@ func TestAgentControllerRunCommand(t *testing.T) {
 		t.Error("expected non-empty output")
 	}
 }
+
+func TestAgentSoftLockBlocksHumanInput(t *testing.T) {
+	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create agent controller: %v", err)
+	}
+	defer ac.Stop()
+
+	hub := ac.Hub()
+
+	// Agent hub should start with agent mode enabled and running
+	if !hub.IsAgentRunning() {
+		t.Error("expected hub to be in agent running mode")
+	}
+
+	// Human input via hub.Write should be silently dropped when agent is running
+	// First, a human needs to take control (which should work)
+	hub.TakeControl("human1")
+
+	// But writing should be blocked because agent is running
+	n, err := hub.Write("human1", []byte("echo human_input\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Error("expected human input to be dropped (0 bytes written) while agent is running")
+	}
+}
+
+func TestAgentSoftLockAllowsInputWhenPaused(t *testing.T) {
+	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create agent controller: %v", err)
+	}
+	defer ac.Stop()
+
+	hub := ac.Hub()
+
+	// Pause the agent
+	if err := ac.Pause(); err != nil {
+		t.Fatalf("failed to pause: %v", err)
+	}
+
+	// Hub should no longer be in "agent running" mode
+	if hub.IsAgentRunning() {
+		t.Error("expected hub to NOT be in agent running mode after pause")
+	}
+
+	// Human takes control
+	hub.TakeControl("human1")
+
+	// Human input should now be allowed
+	n, err := hub.Write("human1", []byte("echo human_input\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n == 0 {
+		t.Error("expected human input to be allowed when agent is paused")
+	}
+}
+
+func TestAgentSoftLockResumeBlocksHumanInput(t *testing.T) {
+	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	if err != nil {
+		t.Fatalf("failed to create agent controller: %v", err)
+	}
+	defer ac.Stop()
+
+	hub := ac.Hub()
+
+	// Pause and let human take control
+	ac.Pause()
+	hub.TakeControl("human1")
+
+	// Resume the agent
+	if err := ac.Resume(); err != nil {
+		t.Fatalf("failed to resume: %v", err)
+	}
+
+	// Human input should be blocked again
+	if !hub.IsAgentRunning() {
+		t.Error("expected hub to be in agent running mode after resume")
+	}
+
+	n, err := hub.Write("human1", []byte("echo human_input\n"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Error("expected human input to be dropped after agent resumes")
+	}
+}

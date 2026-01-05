@@ -20,9 +20,14 @@ type Manager struct {
 	workspaceBase string
 }
 
-// NewManager creates a new session manager with workspaces under the given base path
+// NewManager creates a new session manager with workspaces under the given base path.
+// Uses WORKSPACE_BASE env var if set, otherwise defaults to /workspace.
 func NewManager() *Manager {
-	return NewManagerWithWorkspace("/workspace")
+	base := os.Getenv("WORKSPACE_BASE")
+	if base == "" {
+		base = "/workspace"
+	}
+	return NewManagerWithWorkspace(base)
 }
 
 // NewManagerWithWorkspace creates a manager with a custom workspace base path
@@ -97,4 +102,25 @@ func (m *Manager) List() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// Shutdown closes all sessions gracefully
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	ids := make([]string, 0, len(m.sessions))
+	for id, session := range m.sessions {
+		sessions = append(sessions, session)
+		ids = append(ids, id)
+	}
+	m.sessions = make(map[string]*Session)
+	m.mu.Unlock()
+
+	// Close all sessions
+	for i, session := range sessions {
+		session.Close()
+		// Clean up workspace directory
+		workspacePath := filepath.Join(m.workspaceBase, ids[i])
+		os.RemoveAll(workspacePath)
+	}
 }

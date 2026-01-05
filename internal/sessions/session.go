@@ -1,3 +1,13 @@
+// Package sessions manages session lifecycle.
+//
+// A Session represents a single sandbox instance - an isolated execution environment
+// running on a Fly Machine. Each session has its own:
+//   - Workspace directory (/workspace/<session-id>)
+//   - Set of PTYs (pseudo-terminals)
+//   - Optional coding agent (Claude Code, Codex CLI)
+//
+// Sessions are ephemeral and single-tenant. When a session is deleted, all associated
+// resources (PTYs, agent, workspace files) are cleaned up.
 package sessions
 
 import (
@@ -29,7 +39,8 @@ type PTYInfo struct {
 	Hub *pty.Hub
 }
 
-// Session represents a user session with PTYs
+// Session represents a sandbox instance with PTYs and an optional agent.
+// Each session maps 1:1 to a Fly Machine and owns all resources within it.
 type Session struct {
 	ID string
 

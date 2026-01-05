@@ -160,7 +160,12 @@ paths:
     delete:
       tags: [PTYs]
       summary: Delete a PTY
-      description: Closes the PTY and disconnects all WebSocket clients
+      description: |
+        Deletes a PTY with guaranteed cleanup:
+        1. Process is killed (SIGKILL)
+        2. Hub is stopped
+        3. All WebSocket client channels are closed
+        4. Clients receive channel close notification
       operationId: deletePTY
       parameters:
         - $ref: '#/components/parameters/sessionId'
@@ -201,12 +206,22 @@ paths:
 
         **Events from server:**
         ```json
-        {"type": "control_state", "controller": "user_id"}
+        {"type": "control_state", "controller": "user_id", "requests": ["user2"]}
         {"type": "control_taken", "controller": "user_id"}
-        {"type": "control_requested", "from": "user_id"}
-        {"type": "control_granted", "controller": "user_id"}
+        {"type": "control_requested", "from": "user_id", "requests": ["user2"]}
+        {"type": "control_granted", "controller": "user_id", "from": "prev_user"}
         {"type": "control_revoked", "from": "user_id"}
+        {"type": "agent_state", "agent_state": "running|paused|stopped"}
         ```
+
+        ## Turn-Taking Semantics
+
+        - **take_control**: Takes control if no one has it (first come, first served)
+        - **request_control**: Requests control from current controller (queued)
+        - **grant_control**: Controller grants to a requester (only controller can grant)
+        - **revoke_control**: Controller releases control voluntarily
+        - **Disconnect grace**: Controller has 10s grace period on disconnect to reconnect
+        - **Input filtering**: Only controller's binary input reaches the PTY
       operationId: connectPTY
       parameters:
         - $ref: '#/components/parameters/sessionId'
@@ -346,6 +361,33 @@ paths:
       description: |
         WebSocket connection for agent terminal I/O.
         Same protocol as PTY WebSocket.
+
+        ## Soft Lock (Input Control)
+
+        The agent uses a "soft lock" model for input control:
+
+        - **Agent running**: Human input is blocked at the backend
+          - Binary messages from humans are silently dropped
+          - UI should show "Agent is running" indicator
+          - UI should disable typing to prevent confusion
+
+        - **Agent paused**: Humans can take control
+          - Normal turn-taking rules apply
+          - Humans can send input to the paused shell
+          - Useful for debugging or manual intervention
+
+        - **Agent resumed**: Human input blocked again
+          - Control returns to agent automatically
+
+        **Why soft lock?**
+        - Prevents byte-level interleaving of human and agent input
+        - Commands cannot corrupt each other
+        - Backend is the final authority (even if UI allows typing)
+
+        **Events:**
+        - `{"type": "agent_state", "agent_state": "running"}` - Agent active, input blocked
+        - `{"type": "agent_state", "agent_state": "paused"}` - Agent paused, humans can type
+        - `{"type": "agent_state", "agent_state": "stopped"}` - Agent terminated
       operationId: connectAgent
       parameters:
         - $ref: '#/components/parameters/sessionId'
@@ -680,10 +722,14 @@ components:
       properties:
         type:
           type: string
-          enum: [control_state, control_taken, control_requested, control_granted, control_revoked]
+          enum: [control_state, control_taken, control_requested, control_granted, control_revoked, agent_state]
         controller:
           type: string
-          description: Current controller user ID
+          description: Current controller user ID (for turn-taking events)
+        agent_state:
+          type: string
+          enum: [running, paused, stopped]
+          description: Agent state (for agent_state events only)
         from:
           type: string
           description: User ID who triggered the event
