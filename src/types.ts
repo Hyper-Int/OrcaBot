@@ -81,12 +81,32 @@ export interface RecipeStep {
   onError: 'fail' | 'retry' | 'skip';
 }
 
+/**
+ * Context for execution triggers.
+ * - Manual triggers include actorUserId (the user who triggered)
+ * - Cron/event triggers do not have actorUserId
+ */
+export interface ExecutionContext {
+  /** How the execution was triggered */
+  triggeredBy?: 'manual' | 'cron' | 'event';
+  /** Schedule ID if triggered by a schedule */
+  scheduleId?: string;
+  /** User ID who manually triggered (only for manual triggers) */
+  actorUserId?: string;
+  /** Event name (only for event triggers) */
+  eventName?: string;
+  /** Event payload (only for event triggers) */
+  payload?: Record<string, unknown>;
+  /** Additional custom context */
+  [key: string]: unknown;
+}
+
 export interface Execution {
   id: string;
   recipeId: string;
   status: 'pending' | 'running' | 'paused' | 'completed' | 'failed';
   currentStepId: string | null;
-  context: Record<string, unknown>;
+  context: ExecutionContext;
   startedAt: string;
   completedAt: string | null;
   error: string | null;
