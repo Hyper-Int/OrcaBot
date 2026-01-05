@@ -4,6 +4,8 @@ compatibility_date = "2024-01-01"
 
 [vars]
 SANDBOX_URL = "http://localhost:8080"
+# For production, use `wrangler secret put INTERNAL_API_TOKEN`
+INTERNAL_API_TOKEN = "dev-internal-token-change-in-production"
 
 # Rate limiting
 [[unsafe.bindings]]

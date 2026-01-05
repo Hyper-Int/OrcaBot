@@ -24,6 +24,8 @@ export async function createTestContext(): Promise<TestContext> {
     DB: db,
     DASHBOARD: new MockDurableObjectNamespace(DashboardDO) as unknown as DurableObjectNamespace,
     SANDBOX_URL: 'http://localhost:8080',
+    INTERNAL_API_TOKEN: 'test-internal-token',
+    RATE_LIMITER: { limit: async () => ({ success: true }) },
   };
 
   return {
@@ -49,6 +51,12 @@ export function createAuthHeaders(user: { id: string; email: string; name: strin
     'X-User-ID': user.id,
     'X-User-Email': user.email,
     'X-User-Name': user.name,
+  };
+}
+
+export function createInternalAuthHeaders(token: string = 'test-internal-token') {
+  return {
+    'X-Internal-Token': token,
   };
 }
 

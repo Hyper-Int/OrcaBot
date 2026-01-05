@@ -80,3 +80,28 @@ export function requireAuth(ctx: AuthContext): Response | null {
   }
   return null;
 }
+
+// Validate internal API token for service-to-service calls
+export function requireInternalAuth(
+  request: Request,
+  env: Env
+): Response | null {
+  const token = request.headers.get('X-Internal-Token');
+
+  if (!env.INTERNAL_API_TOKEN) {
+    // If no token configured, reject all internal requests
+    return Response.json(
+      { error: 'Internal API not configured' },
+      { status: 503 }
+    );
+  }
+
+  if (!token || token !== env.INTERNAL_API_TOKEN) {
+    return Response.json(
+      { error: 'Invalid internal token' },
+      { status: 401 }
+    );
+  }
+
+  return null;
+}

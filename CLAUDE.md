@@ -24,7 +24,7 @@ Claude should **not** introduce execution logic, PTYs, Docker, or Fly Machine in
 
 ## Related Repos
 
-  Backend reference: ../hyper-backend
+  Backend sandbox reference: ../hyper-sandbox
   - See CLAUDE.md for architecture
   - See api/openapi.yaml for API contract (also copied here in api/)
 

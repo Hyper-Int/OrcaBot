@@ -9,6 +9,7 @@ export interface Env {
   DASHBOARD: DurableObjectNamespace;
   SANDBOX_URL: string;
   RATE_LIMITER: RateLimiter;
+  INTERNAL_API_TOKEN: string;
 }
 
 // User types
