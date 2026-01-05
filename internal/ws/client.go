@@ -30,7 +30,7 @@ type Client struct {
 	conn   *websocket.Conn
 	hub    *pty.Hub
 	userID string
-	output chan []byte
+	output chan pty.HubMessage
 }
 
 // NewClient creates a new WebSocket client (legacy - no user ID)
@@ -45,7 +45,7 @@ func NewClientWithUser(conn *websocket.Conn, hub *pty.Hub, userID string) *Clien
 		conn:   conn,
 		hub:    hub,
 		userID: userID,
-		output: make(chan []byte, 256),
+		output: make(chan pty.HubMessage, 256),
 	}
 	var registered bool
 	if userID != "" {
@@ -151,21 +151,20 @@ func (c *Client) WritePump() {
 
 	for {
 		select {
-		case data, ok := <-c.output:
+		case msg, ok := <-c.output:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			// Detect if this is a control message (JSON) or PTY output (binary)
-			// Control messages start with '{' and are valid JSON
-			if len(data) > 0 && data[0] == '{' {
-				if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			// Use the message type flag to determine WebSocket frame type
+			if msg.IsBinary {
+				if err := c.conn.WriteMessage(websocket.BinaryMessage, msg.Data); err != nil {
 					return
 				}
 			} else {
-				if err := c.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+				if err := c.conn.WriteMessage(websocket.TextMessage, msg.Data); err != nil {
 					return
 				}
 			}

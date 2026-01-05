@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 	"time"
+
+	"github.com/hyper-ai-inc/hyper-backend/internal/pty"
 )
 
 func TestAgentControllerCreate(t *testing.T) {
@@ -109,7 +111,7 @@ func TestAgentControllerHub(t *testing.T) {
 	}
 
 	// Hub should allow registering clients
-	client := make(chan []byte, 100)
+	client := make(chan pty.HubMessage, 100)
 	hub.Register(client)
 
 	// Write to agent
@@ -119,8 +121,8 @@ func TestAgentControllerHub(t *testing.T) {
 	timeout := time.After(3 * time.Second)
 	for {
 		select {
-		case data := <-client:
-			if len(data) > 0 {
+		case msg := <-client:
+			if len(msg.Data) > 0 {
 				return // Success - got some output
 			}
 		case <-timeout:

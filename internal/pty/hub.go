@@ -5,10 +5,18 @@ import (
 	"sync"
 )
 
+// HubMessage represents a message sent through the hub to clients.
+// IsBinary indicates whether this should be sent as a WebSocket binary frame (PTY output)
+// or text frame (JSON control messages).
+type HubMessage struct {
+	IsBinary bool
+	Data     []byte
+}
+
 // ClientInfo holds information about a connected client
 type ClientInfo struct {
 	UserID string
-	Output chan []byte
+	Output chan HubMessage
 }
 
 // ControlEvent represents a turn-taking event to broadcast
@@ -27,7 +35,7 @@ type Hub struct {
 	turn *TurnController
 
 	mu      sync.RWMutex
-	clients map[chan []byte]*ClientInfo
+	clients map[chan HubMessage]*ClientInfo
 
 	// Agent mode: when true, this Hub is for an agent PTY
 	// and human input is only allowed when agent is not running
@@ -35,7 +43,7 @@ type Hub struct {
 	agentRunning bool
 
 	register   chan *ClientInfo
-	unregister chan chan []byte
+	unregister chan chan HubMessage
 	stop       chan struct{}
 	stopOnce   sync.Once
 }
@@ -45,9 +53,9 @@ func NewHub(p *PTY) *Hub {
 	return &Hub{
 		pty:        p,
 		turn:       NewTurnController(),
-		clients:    make(map[chan []byte]*ClientInfo),
+		clients:    make(map[chan HubMessage]*ClientInfo),
 		register:   make(chan *ClientInfo),
-		unregister: make(chan chan []byte),
+		unregister: make(chan chan HubMessage),
 		stop:       make(chan struct{}),
 	}
 }
@@ -112,14 +120,15 @@ func (h *Hub) readLoop() {
 	}
 }
 
-// broadcast sends data to all connected clients
+// broadcast sends PTY output to all connected clients as binary messages
 func (h *Hub) broadcast(data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	msg := HubMessage{IsBinary: true, Data: data}
 	for client := range h.clients {
 		select {
-		case client <- data:
+		case client <- msg:
 		default:
 			// Client buffer full, skip (or could disconnect)
 		}
@@ -128,7 +137,7 @@ func (h *Hub) broadcast(data []byte) {
 
 // Register adds a client to receive PTY output (legacy - no user ID).
 // Returns false if hub is already stopped.
-func (h *Hub) Register(client chan []byte) bool {
+func (h *Hub) Register(client chan HubMessage) bool {
 	select {
 	case h.register <- &ClientInfo{Output: client}:
 		return true
@@ -139,7 +148,7 @@ func (h *Hub) Register(client chan []byte) bool {
 
 // RegisterClient adds a client with user ID.
 // Returns false if hub is already stopped.
-func (h *Hub) RegisterClient(userID string, client chan []byte) bool {
+func (h *Hub) RegisterClient(userID string, client chan HubMessage) bool {
 	select {
 	case h.register <- &ClientInfo{UserID: userID, Output: client}:
 		return true
@@ -150,7 +159,7 @@ func (h *Hub) RegisterClient(userID string, client chan []byte) bool {
 
 // Unregister removes a client.
 // Safe to call even after hub is stopped.
-func (h *Hub) Unregister(client chan []byte) {
+func (h *Hub) Unregister(client chan HubMessage) {
 	// Use select to avoid blocking if hub is already stopped
 	select {
 	case h.unregister <- client:
@@ -344,15 +353,16 @@ func (h *Hub) broadcastAgentState(state string) {
 }
 
 // sendControlState sends current control state to a specific client
-func (h *Hub) sendControlState(client chan []byte) {
+func (h *Hub) sendControlState(client chan HubMessage) {
 	event := ControlEvent{
 		Type:       "control_state",
 		Controller: h.turn.Controller(),
 		Requests:   h.turn.PendingRequests(),
 	}
 	data, _ := json.Marshal(event)
+	msg := HubMessage{IsBinary: false, Data: data}
 	select {
-	case client <- data:
+	case client <- msg:
 	default:
 	}
 }
@@ -363,14 +373,15 @@ func (h *Hub) broadcastControlEvent(event ControlEvent) {
 	h.broadcastControl(data)
 }
 
-// broadcastControl sends control data to all clients
+// broadcastControl sends control data to all clients as text messages
 func (h *Hub) broadcastControl(data []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
+	msg := HubMessage{IsBinary: false, Data: data}
 	for client := range h.clients {
 		select {
-		case client <- data:
+		case client <- msg:
 		default:
 		}
 	}
