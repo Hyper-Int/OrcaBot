@@ -83,8 +83,8 @@ export async function seedDashboard(
 
   await db.prepare(`
     INSERT INTO dashboard_members (dashboard_id, user_id, role, added_at)
-    VALUES (?, ?, 'owner', ?)
-  `).bind(id, ownerId, now).run();
+    VALUES (?, ?, ?, ?)
+  `).bind(id, ownerId, 'owner', now).run();
 
   return { id, name, ownerId, createdAt: now, updatedAt: now };
 }

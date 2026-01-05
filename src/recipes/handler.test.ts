@@ -8,12 +8,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createRecipe,
+  getRecipe,
   deleteRecipe,
+  listRecipes,
 } from './handler';
 import {
   createTestContext,
   seedUser,
   seedRecipe,
+  seedDashboard,
   seedExecution,
   createTestUser,
 } from '../../tests/helpers';
@@ -31,7 +34,7 @@ describe('Recipe Handlers', () => {
 
   describe('createRecipe()', () => {
     it('should create a recipe', async () => {
-      const response = await createRecipe(ctx.env, {
+      const response = await createRecipe(ctx.env, testUser.id, {
         name: 'Test Workflow',
         description: 'A test workflow',
       });
@@ -47,7 +50,7 @@ describe('Recipe Handlers', () => {
         { id: 'step-1', type: 'run_agent', name: 'Run', config: {}, nextStepId: null, onError: 'fail' },
       ];
 
-      const response = await createRecipe(ctx.env, {
+      const response = await createRecipe(ctx.env, testUser.id, {
         name: 'With Steps',
         steps: steps as any,
       });
@@ -58,7 +61,7 @@ describe('Recipe Handlers', () => {
     });
 
     it('should default to empty steps', async () => {
-      const response = await createRecipe(ctx.env, { name: 'Empty' });
+      const response = await createRecipe(ctx.env, testUser.id, { name: 'Empty' });
       const data = await response.json();
 
       expect(data.recipe.steps).toEqual([]);
@@ -69,7 +72,7 @@ describe('Recipe Handlers', () => {
     it('should delete a recipe', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'To Delete' });
 
-      const response = await deleteRecipe(ctx.env, recipe.id);
+      const response = await deleteRecipe(ctx.env, recipe.id, testUser.id);
 
       expect(response.status).toBe(204);
 
@@ -83,7 +86,7 @@ describe('Recipe Handlers', () => {
 
   describe('Database operations', () => {
     it('should insert recipe into database', async () => {
-      await createRecipe(ctx.env, { name: 'DB Test' });
+      await createRecipe(ctx.env, testUser.id, { name: 'DB Test' });
 
       const result = await ctx.db.prepare(`
         SELECT * FROM recipes WHERE name = ?
@@ -96,7 +99,7 @@ describe('Recipe Handlers', () => {
     it('should store steps as JSON', async () => {
       const steps = [{ id: 's1', type: 'wait', name: 'Wait', config: { ms: 1000 } }];
 
-      await createRecipe(ctx.env, { name: 'JSON Steps', steps: steps as any });
+      await createRecipe(ctx.env, testUser.id, { name: 'JSON Steps', steps: steps as any });
 
       const result = await ctx.db.prepare(`
         SELECT steps FROM recipes WHERE name = ?
@@ -105,5 +108,27 @@ describe('Recipe Handlers', () => {
       const parsedSteps = JSON.parse(result!.steps as string);
       expect(parsedSteps[0].type).toBe('wait');
     });
+  });
+
+  describe('Access control', () => {
+    it('should allow access to recipes without dashboard_id', async () => {
+      // Recipe without dashboard is accessible to any authenticated user
+      const recipe = await seedRecipe(ctx.db, { name: 'Global Recipe' });
+
+      const response = await getRecipe(ctx.env, recipe.id, testUser.id);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.recipe.name).toBe('Global Recipe');
+    });
+
+    it('should return 404 for non-existent recipes', async () => {
+      const response = await getRecipe(ctx.env, 'non-existent-id', testUser.id);
+
+      expect(response.status).toBe(404);
+    });
+
+    // Note: More comprehensive access control tests (dashboard membership, role checks)
+    // require full D1 integration tests via wrangler dev --local
   });
 });

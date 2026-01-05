@@ -84,7 +84,7 @@ describe('Integration Tests', () => {
   describe('Recipe workflow', () => {
     it('should create and execute recipe', async () => {
       // Create recipe
-      const createRes = await recipes.createRecipe(ctx.env, {
+      const createRes = await recipes.createRecipe(ctx.env, user.id, {
         name: 'Build Pipeline',
         steps: [
           { id: 's1', type: 'run_agent', name: 'Build', config: {}, nextStepId: null, onError: 'fail' },
@@ -94,7 +94,7 @@ describe('Integration Tests', () => {
       expect(recipe.name).toBe('Build Pipeline');
 
       // Start execution
-      const execRes = await recipes.startExecution(ctx.env, recipe.id, { env: 'prod' });
+      const execRes = await recipes.startExecution(ctx.env, recipe.id, user.id, { env: 'prod' });
       expect(execRes.status).toBe(201);
 
       const { execution } = await execRes.json();
@@ -107,11 +107,11 @@ describe('Integration Tests', () => {
       const execution = await seedExecution(ctx.db, recipe.id, { status: 'running' });
 
       // Pause
-      const pauseRes = await recipes.pauseExecution(ctx.env, execution.id);
+      const pauseRes = await recipes.pauseExecution(ctx.env, execution.id, user.id);
       expect((await pauseRes.json()).status).toBe('paused');
 
       // Resume
-      const resumeRes = await recipes.resumeExecution(ctx.env, execution.id);
+      const resumeRes = await recipes.resumeExecution(ctx.env, execution.id, user.id);
       expect((await resumeRes.json()).status).toBe('running');
     });
 
@@ -133,7 +133,7 @@ describe('Integration Tests', () => {
     it('should create cron schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Daily Task' });
 
-      const createRes = await schedules.createSchedule(ctx.env, {
+      const createRes = await schedules.createSchedule(ctx.env, user.id, {
         recipeId: recipe.id,
         name: 'Daily at 9am',
         cron: '0 9 * * *',
@@ -148,7 +148,7 @@ describe('Integration Tests', () => {
     it('should create event schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'On Push' });
 
-      const createRes = await schedules.createSchedule(ctx.env, {
+      const createRes = await schedules.createSchedule(ctx.env, user.id, {
         recipeId: recipe.id,
         name: 'On Git Push',
         eventTrigger: 'git.push',
@@ -162,7 +162,7 @@ describe('Integration Tests', () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Test' });
       const schedule = await seedSchedule(ctx.db, recipe.id, { cron: '0 * * * *' });
 
-      const triggerRes = await schedules.triggerSchedule(ctx.env, schedule.id);
+      const triggerRes = await schedules.triggerSchedule(ctx.env, schedule.id, user.id);
       const data = await triggerRes.json();
 
       expect(data.schedule.lastRunAt).toBeTruthy();
@@ -174,7 +174,7 @@ describe('Integration Tests', () => {
       const schedule = await seedSchedule(ctx.db, recipe.id, { cron: '0 * * * *', enabled: true });
 
       // Disable schedule
-      const disableRes = await schedules.disableSchedule(ctx.env, schedule.id);
+      const disableRes = await schedules.disableSchedule(ctx.env, schedule.id, user.id);
       expect(disableRes.status).toBe(200);
 
       // Verify in database
@@ -184,7 +184,7 @@ describe('Integration Tests', () => {
       expect(afterDisable!.enabled).toBe(0);
 
       // Enable schedule
-      const enableRes = await schedules.enableSchedule(ctx.env, schedule.id);
+      const enableRes = await schedules.enableSchedule(ctx.env, schedule.id, user.id);
       expect(enableRes.status).toBe(200);
 
       // Verify in database

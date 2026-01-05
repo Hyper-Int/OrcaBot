@@ -84,8 +84,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     });
   }
 
-  // Initialize database (development helper)
+  // Initialize database (requires internal auth token)
   if (path === '/init-db' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
     await initializeDatabase(env.DB);
     return Response.json({ success: true, message: 'Database initialized' });
   }
@@ -207,7 +209,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     const dashboardId = url.searchParams.get('dashboard_id') || undefined;
-    return recipes.listRecipes(env, dashboardId);
+    return recipes.listRecipes(env, auth.user!.id, dashboardId);
   }
 
   // POST /recipes - Create recipe
@@ -220,14 +222,14 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       description?: string;
       steps?: RecipeStep[];
     };
-    return recipes.createRecipe(env, data);
+    return recipes.createRecipe(env, auth.user!.id, data);
   }
 
   // GET /recipes/:id - Get recipe
   if (segments[0] === 'recipes' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.getRecipe(env, segments[1]);
+    return recipes.getRecipe(env, segments[1], auth.user!.id);
   }
 
   // PUT /recipes/:id - Update recipe
@@ -239,21 +241,21 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       description?: string;
       steps?: RecipeStep[];
     };
-    return recipes.updateRecipe(env, segments[1], data);
+    return recipes.updateRecipe(env, segments[1], auth.user!.id, data);
   }
 
   // DELETE /recipes/:id - Delete recipe
   if (segments[0] === 'recipes' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.deleteRecipe(env, segments[1]);
+    return recipes.deleteRecipe(env, segments[1], auth.user!.id);
   }
 
   // GET /recipes/:id/executions - List executions
   if (segments[0] === 'recipes' && segments.length === 3 && segments[2] === 'executions' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.listExecutions(env, segments[1]);
+    return recipes.listExecutions(env, segments[1], auth.user!.id);
   }
 
   // POST /recipes/:id/execute - Start execution
@@ -261,28 +263,28 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json().catch(() => ({})) as { context?: Record<string, unknown> };
-    return recipes.startExecution(env, segments[1], data.context);
+    return recipes.startExecution(env, segments[1], auth.user!.id, data.context);
   }
 
   // GET /executions/:id - Get execution
   if (segments[0] === 'executions' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.getExecution(env, segments[1]);
+    return recipes.getExecution(env, segments[1], auth.user!.id);
   }
 
   // POST /executions/:id/pause - Pause execution
   if (segments[0] === 'executions' && segments.length === 3 && segments[2] === 'pause' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.pauseExecution(env, segments[1]);
+    return recipes.pauseExecution(env, segments[1], auth.user!.id);
   }
 
   // POST /executions/:id/resume - Resume execution
   if (segments[0] === 'executions' && segments.length === 3 && segments[2] === 'resume' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return recipes.resumeExecution(env, segments[1]);
+    return recipes.resumeExecution(env, segments[1], auth.user!.id);
   }
 
   // ============================================
@@ -311,7 +313,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     const recipeId = url.searchParams.get('recipe_id') || undefined;
-    return schedules.listSchedules(env, recipeId);
+    return schedules.listSchedules(env, auth.user!.id, recipeId);
   }
 
   // POST /schedules - Create schedule
@@ -325,14 +327,14 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       eventTrigger?: string;
       enabled?: boolean;
     };
-    return schedules.createSchedule(env, data);
+    return schedules.createSchedule(env, auth.user!.id, data);
   }
 
   // GET /schedules/:id - Get schedule
   if (segments[0] === 'schedules' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.getSchedule(env, segments[1]);
+    return schedules.getSchedule(env, segments[1], auth.user!.id);
   }
 
   // PUT /schedules/:id - Update schedule
@@ -345,35 +347,35 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       eventTrigger?: string;
       enabled?: boolean;
     };
-    return schedules.updateSchedule(env, segments[1], data);
+    return schedules.updateSchedule(env, segments[1], auth.user!.id, data);
   }
 
   // DELETE /schedules/:id - Delete schedule
   if (segments[0] === 'schedules' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.deleteSchedule(env, segments[1]);
+    return schedules.deleteSchedule(env, segments[1], auth.user!.id);
   }
 
   // POST /schedules/:id/enable - Enable schedule
   if (segments[0] === 'schedules' && segments.length === 3 && segments[2] === 'enable' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.enableSchedule(env, segments[1]);
+    return schedules.enableSchedule(env, segments[1], auth.user!.id);
   }
 
   // POST /schedules/:id/disable - Disable schedule
   if (segments[0] === 'schedules' && segments.length === 3 && segments[2] === 'disable' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.disableSchedule(env, segments[1]);
+    return schedules.disableSchedule(env, segments[1], auth.user!.id);
   }
 
   // POST /schedules/:id/trigger - Trigger schedule manually
   if (segments[0] === 'schedules' && segments.length === 3 && segments[2] === 'trigger' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.triggerSchedule(env, segments[1]);
+    return schedules.triggerSchedule(env, segments[1], auth.user!.id);
   }
 
   // POST /internal/events - Emit event (called by external systems with token)

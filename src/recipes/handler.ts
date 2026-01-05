@@ -12,22 +12,105 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
-// List recipes
-export async function listRecipes(
+// Check if user has access to a dashboard
+async function checkDashboardAccess(
   env: Env,
-  dashboardId?: string
-): Promise<Response> {
-  let query = 'SELECT * FROM recipes';
-  const params: string[] = [];
+  dashboardId: string,
+  userId: string,
+  requiredRole?: 'owner' | 'editor' | 'viewer'
+): Promise<{ hasAccess: boolean; role?: string }> {
+  const member = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, userId).first<{ role: string }>();
 
-  if (dashboardId) {
-    query += ' WHERE dashboard_id = ?';
-    params.push(dashboardId);
+  if (!member) {
+    return { hasAccess: false };
   }
 
-  query += ' ORDER BY updated_at DESC';
+  // Check role permissions in JavaScript for better mock compatibility
+  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
+  const userRoleLevel = roleHierarchy[member.role] || 0;
+  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
 
-  const result = await env.DB.prepare(query).bind(...params).all();
+  return {
+    hasAccess: userRoleLevel >= requiredLevel,
+    role: member.role,
+  };
+}
+
+// Check if user has access to a recipe (via its dashboard)
+async function checkRecipeAccess(
+  env: Env,
+  recipeId: string,
+  userId: string,
+  requiredRole?: 'owner' | 'editor' | 'viewer'
+): Promise<{ hasAccess: boolean; recipe?: Record<string, unknown> }> {
+  const recipe = await env.DB.prepare(`
+    SELECT * FROM recipes WHERE id = ?
+  `).bind(recipeId).first();
+
+  if (!recipe) {
+    return { hasAccess: false };
+  }
+
+  // Recipes without dashboard_id are accessible to any authenticated user
+  if (!recipe.dashboard_id) {
+    return { hasAccess: true, recipe };
+  }
+
+  const { hasAccess } = await checkDashboardAccess(env, recipe.dashboard_id as string, userId, requiredRole);
+  return { hasAccess, recipe: hasAccess ? recipe : undefined };
+}
+
+// Check if user has access to an execution (via execution → recipe → dashboard)
+async function checkExecutionAccess(
+  env: Env,
+  executionId: string,
+  userId: string,
+  requiredRole?: 'owner' | 'editor' | 'viewer'
+): Promise<{ hasAccess: boolean; execution?: Record<string, unknown> }> {
+  const execution = await env.DB.prepare(`
+    SELECT * FROM executions WHERE id = ?
+  `).bind(executionId).first();
+
+  if (!execution) {
+    return { hasAccess: false };
+  }
+
+  const { hasAccess } = await checkRecipeAccess(env, execution.recipe_id as string, userId, requiredRole);
+  return { hasAccess, execution: hasAccess ? execution : undefined };
+}
+
+// List recipes (only those the user has access to)
+export async function listRecipes(
+  env: Env,
+  userId: string,
+  dashboardId?: string
+): Promise<Response> {
+  // If dashboardId specified, verify access first
+  if (dashboardId) {
+    const { hasAccess } = await checkDashboardAccess(env, dashboardId, userId, 'viewer');
+    if (!hasAccess) {
+      return Response.json({ error: 'Dashboard not found or no access' }, { status: 404 });
+    }
+  }
+
+  // Get recipes: either for specific dashboard, or all dashboards user has access to + global recipes
+  let result;
+  if (dashboardId) {
+    result = await env.DB.prepare(`
+      SELECT * FROM recipes WHERE dashboard_id = ? ORDER BY updated_at DESC
+    `).bind(dashboardId).all();
+  } else {
+    // Get recipes from dashboards user is a member of, plus global recipes (no dashboard_id)
+    result = await env.DB.prepare(`
+      SELECT r.* FROM recipes r
+      LEFT JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
+      WHERE r.dashboard_id IS NULL OR dm.user_id = ?
+      ORDER BY r.updated_at DESC
+    `).bind(userId).all();
+  }
 
   const recipes = result.results.map(r => ({
     id: r.id,
@@ -45,14 +128,13 @@ export async function listRecipes(
 // Get a single recipe
 export async function getRecipe(
   env: Env,
-  recipeId: string
+  recipeId: string,
+  userId: string
 ): Promise<Response> {
-  const recipe = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(recipeId).first();
+  const { hasAccess, recipe } = await checkRecipeAccess(env, recipeId, userId, 'viewer');
 
-  if (!recipe) {
-    return Response.json({ error: 'Recipe not found' }, { status: 404 });
+  if (!hasAccess || !recipe) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
   }
 
   return Response.json({
@@ -71,6 +153,7 @@ export async function getRecipe(
 // Create a recipe
 export async function createRecipe(
   env: Env,
+  userId: string,
   data: {
     dashboardId?: string;
     name: string;
@@ -78,6 +161,14 @@ export async function createRecipe(
     steps?: RecipeStep[];
   }
 ): Promise<Response> {
+  // If dashboardId specified, verify user has editor access
+  if (data.dashboardId) {
+    const { hasAccess } = await checkDashboardAccess(env, data.dashboardId, userId, 'editor');
+    if (!hasAccess) {
+      return Response.json({ error: 'Dashboard not found or no access' }, { status: 404 });
+    }
+  }
+
   const id = generateId();
   const now = new Date().toISOString();
 
@@ -111,18 +202,17 @@ export async function createRecipe(
 export async function updateRecipe(
   env: Env,
   recipeId: string,
+  userId: string,
   data: {
     name?: string;
     description?: string;
     steps?: RecipeStep[];
   }
 ): Promise<Response> {
-  const existing = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(recipeId).first();
+  const { hasAccess, recipe: existing } = await checkRecipeAccess(env, recipeId, userId, 'editor');
 
-  if (!existing) {
-    return Response.json({ error: 'Recipe not found' }, { status: 404 });
+  if (!hasAccess || !existing) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
   }
 
   const now = new Date().toISOString();
@@ -162,8 +252,16 @@ export async function updateRecipe(
 // Delete a recipe
 export async function deleteRecipe(
   env: Env,
-  recipeId: string
+  recipeId: string,
+  userId: string
 ): Promise<Response> {
+  // Only owners can delete recipes
+  const { hasAccess } = await checkRecipeAccess(env, recipeId, userId, 'owner');
+
+  if (!hasAccess) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
+  }
+
   await env.DB.prepare(`DELETE FROM recipes WHERE id = ?`).bind(recipeId).run();
   return new Response(null, { status: 204 });
 }
@@ -172,14 +270,13 @@ export async function deleteRecipe(
 export async function startExecution(
   env: Env,
   recipeId: string,
+  userId: string,
   context?: Record<string, unknown>
 ): Promise<Response> {
-  const recipe = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(recipeId).first();
+  const { hasAccess, recipe } = await checkRecipeAccess(env, recipeId, userId, 'editor');
 
-  if (!recipe) {
-    return Response.json({ error: 'Recipe not found' }, { status: 404 });
+  if (!hasAccess || !recipe) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
   }
 
   const steps = JSON.parse(recipe.steps as string) as RecipeStep[];
@@ -223,14 +320,13 @@ export async function startExecution(
 // Get execution status
 export async function getExecution(
   env: Env,
-  executionId: string
+  executionId: string,
+  userId: string
 ): Promise<Response> {
-  const execution = await env.DB.prepare(`
-    SELECT * FROM executions WHERE id = ?
-  `).bind(executionId).first();
+  const { hasAccess, execution } = await checkExecutionAccess(env, executionId, userId, 'viewer');
 
-  if (!execution) {
-    return Response.json({ error: 'Execution not found' }, { status: 404 });
+  if (!hasAccess || !execution) {
+    return Response.json({ error: 'Execution not found or no access' }, { status: 404 });
   }
 
   // Get artifacts
@@ -264,8 +360,16 @@ export async function getExecution(
 // List executions for a recipe
 export async function listExecutions(
   env: Env,
-  recipeId: string
+  recipeId: string,
+  userId: string
 ): Promise<Response> {
+  // Verify user has access to the recipe
+  const { hasAccess } = await checkRecipeAccess(env, recipeId, userId, 'viewer');
+
+  if (!hasAccess) {
+    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
+  }
+
   const result = await env.DB.prepare(`
     SELECT * FROM executions WHERE recipe_id = ? ORDER BY started_at DESC
   `).bind(recipeId).all();
@@ -287,19 +391,22 @@ export async function listExecutions(
 // Pause an execution
 export async function pauseExecution(
   env: Env,
-  executionId: string
+  executionId: string,
+  userId: string
 ): Promise<Response> {
-  const execution = await env.DB.prepare(`
-    SELECT * FROM executions WHERE id = ? AND status = 'running'
-  `).bind(executionId).first();
+  const { hasAccess, execution } = await checkExecutionAccess(env, executionId, userId, 'editor');
 
-  if (!execution) {
-    return Response.json({ error: 'Running execution not found' }, { status: 404 });
+  if (!hasAccess || !execution) {
+    return Response.json({ error: 'Execution not found or no access' }, { status: 404 });
+  }
+
+  if (execution.status !== 'running') {
+    return Response.json({ error: 'Execution is not running' }, { status: 400 });
   }
 
   await env.DB.prepare(`
-    UPDATE executions SET status = 'paused' WHERE id = ?
-  `).bind(executionId).run();
+    UPDATE executions SET status = ? WHERE id = ?
+  `).bind('paused', executionId).run();
 
   return Response.json({ status: 'paused' });
 }
@@ -307,19 +414,22 @@ export async function pauseExecution(
 // Resume an execution
 export async function resumeExecution(
   env: Env,
-  executionId: string
+  executionId: string,
+  userId: string
 ): Promise<Response> {
-  const execution = await env.DB.prepare(`
-    SELECT * FROM executions WHERE id = ? AND status = 'paused'
-  `).bind(executionId).first();
+  const { hasAccess, execution } = await checkExecutionAccess(env, executionId, userId, 'editor');
 
-  if (!execution) {
-    return Response.json({ error: 'Paused execution not found' }, { status: 404 });
+  if (!hasAccess || !execution) {
+    return Response.json({ error: 'Execution not found or no access' }, { status: 404 });
+  }
+
+  if (execution.status !== 'paused') {
+    return Response.json({ error: 'Execution is not paused' }, { status: 400 });
   }
 
   await env.DB.prepare(`
-    UPDATE executions SET status = 'running' WHERE id = ?
-  `).bind(executionId).run();
+    UPDATE executions SET status = ? WHERE id = ?
+  `).bind('running', executionId).run();
 
   return Response.json({ status: 'running' });
 }
