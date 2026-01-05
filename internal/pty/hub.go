@@ -226,11 +226,6 @@ func (h *Hub) Write(userID string, data []byte) (int, error) {
 	return h.pty.Write(data)
 }
 
-// WriteForce sends input to the PTY without checking controller (for legacy/testing)
-func (h *Hub) WriteForce(data []byte) (int, error) {
-	return h.pty.Write(data)
-}
-
 // WriteAgent sends input to the PTY from the agent process.
 // Bypasses all human input gates - use only for agent-originated writes.
 func (h *Hub) WriteAgent(data []byte) (int, error) {

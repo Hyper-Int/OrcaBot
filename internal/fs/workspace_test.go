@@ -299,6 +299,40 @@ func TestWorkspaceListNotFound(t *testing.T) {
 	}
 }
 
+// Security test - sibling directory prefix bypass prevention
+// Ensures /workspace-evil doesn't pass containment check for /workspace
+func TestWorkspaceSiblingDirectoryBypass(t *testing.T) {
+	// Create two sibling directories: workspace and workspace-evil
+	parent, err := os.MkdirTemp("", "workspace-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(parent)
+
+	workspaceRoot := filepath.Join(parent, "workspace")
+	evilRoot := filepath.Join(parent, "workspace-evil")
+	os.Mkdir(workspaceRoot, 0755)
+	os.Mkdir(evilRoot, 0755)
+
+	// Create a file in the evil sibling
+	os.WriteFile(filepath.Join(evilRoot, "secret.txt"), []byte("evil data"), 0644)
+
+	ws := NewWorkspace(workspaceRoot)
+
+	// Create a symlink inside workspace pointing to workspace-evil
+	symlinkPath := filepath.Join(workspaceRoot, "sibling")
+	err = os.Symlink(evilRoot, symlinkPath)
+	if err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	// Try to read via symlink to sibling - should be blocked
+	_, err = ws.Read("/sibling/secret.txt")
+	if err != ErrPathTraversal {
+		t.Errorf("expected ErrPathTraversal for sibling escape, got: %v", err)
+	}
+}
+
 // Security test - symlink escape prevention
 func TestWorkspaceSymlinkEscape(t *testing.T) {
 	root := setupTestWorkspace(t)
