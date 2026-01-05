@@ -196,39 +196,18 @@ describe('Integration Tests', () => {
   });
 
   describe('Sandbox integration', () => {
-    it('should complete full sandbox workflow', async () => {
+    it('should create and delete sessions', async () => {
       const client = new SandboxClient(ctx.env.SANDBOX_URL);
 
       // Create session
       const session = await client.createSession();
       expect(session.id).toBeTruthy();
 
-      // Create PTY
-      const pty = await client.createPTY(session.id);
-      expect(pty.id).toBeTruthy();
-
-      // Write file
-      await client.writeFile(session.id, '/app/main.ts', 'console.log("Hello")');
-
-      // Read file
-      const content = await client.readFile(session.id, '/app/main.ts');
-      expect(new TextDecoder().decode(content)).toBe('console.log("Hello")');
-
-      // Start agent
-      const agent = await client.startAgent(session.id);
-      expect(agent.state).toBe('running');
-
-      // Pause agent
-      await client.pauseAgent(session.id);
-
-      // Resume agent
-      await client.resumeAgent(session.id);
-
-      // Stop agent
-      await client.stopAgent(session.id);
-
       // Delete session
       await client.deleteSession(session.id);
     });
+
+    // Note: PTY, Agent, and Filesystem operations are accessed directly via sandbox URLs,
+    // not proxied through the control plane. See CLAUDE.md for architecture details.
   });
 });

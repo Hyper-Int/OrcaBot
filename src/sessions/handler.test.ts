@@ -51,62 +51,8 @@ describe('Session Handlers', () => {
       expect(session.id).toBeTruthy();
     });
 
-    it('should create and list PTYs', async () => {
-      const client = new SandboxClient(ctx.env.SANDBOX_URL);
-
-      const session = await client.createSession();
-      const pty = await client.createPTY(session.id);
-
-      expect(pty.id).toBeTruthy();
-
-      const ptys = await client.listPTYs(session.id);
-      expect(ptys).toHaveLength(1);
-    });
-
-    it('should manage agent lifecycle', async () => {
-      const client = new SandboxClient(ctx.env.SANDBOX_URL);
-
-      const session = await client.createSession();
-
-      // Start agent
-      const agent = await client.startAgent(session.id);
-      expect(agent.state).toBe('running');
-
-      // Pause
-      const paused = await client.pauseAgent(session.id);
-      expect(paused.state).toBe('paused');
-
-      // Resume
-      const resumed = await client.resumeAgent(session.id);
-      expect(resumed.state).toBe('running');
-
-      // Stop
-      await client.stopAgent(session.id);
-      const stopped = await client.getAgent(session.id);
-      expect(stopped).toBeNull();
-    });
-
-    it('should manage files', async () => {
-      const client = new SandboxClient(ctx.env.SANDBOX_URL);
-
-      const session = await client.createSession();
-
-      // Write
-      await client.writeFile(session.id, '/test.txt', 'Hello World');
-
-      // Read
-      const content = await client.readFile(session.id, '/test.txt');
-      expect(new TextDecoder().decode(content)).toBe('Hello World');
-
-      // List
-      const files = await client.listFiles(session.id, '/');
-      expect(files).toHaveLength(1);
-
-      // Delete
-      await client.deleteFile(session.id, '/test.txt');
-      const afterDelete = await client.listFiles(session.id, '/');
-      expect(afterDelete).toHaveLength(0);
-    });
+    // Note: PTY, Agent, and Filesystem operations are accessed directly via sandbox URLs,
+    // not proxied through the control plane. See CLAUDE.md for architecture details.
   });
 
   describe('Session database operations', () => {
