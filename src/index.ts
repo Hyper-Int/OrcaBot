@@ -6,7 +6,7 @@
  */
 
 import type { Env, DashboardItem, RecipeStep } from './types';
-import { authenticate, requireAuth } from './auth/middleware';
+import { authenticate, requireAuth, requireInternalAuth } from './auth/middleware';
 import { checkRateLimit } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import * as dashboards from './dashboards/handler';
@@ -204,6 +204,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /recipes - List recipes
   if (segments[0] === 'recipes' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     const dashboardId = url.searchParams.get('dashboard_id') || undefined;
     return recipes.listRecipes(env, dashboardId);
   }
@@ -223,6 +225,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /recipes/:id - Get recipe
   if (segments[0] === 'recipes' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     return recipes.getRecipe(env, segments[1]);
   }
 
@@ -247,6 +251,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /recipes/:id/executions - List executions
   if (segments[0] === 'recipes' && segments.length === 3 && segments[2] === 'executions' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     return recipes.listExecutions(env, segments[1]);
   }
 
@@ -260,6 +266,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /executions/:id - Get execution
   if (segments[0] === 'executions' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     return recipes.getExecution(env, segments[1]);
   }
 
@@ -277,15 +285,21 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return recipes.resumeExecution(env, segments[1]);
   }
 
-  // POST /executions/:id/artifacts - Add artifact
-  if (segments[0] === 'executions' && segments.length === 3 && segments[2] === 'artifacts' && method === 'POST') {
+  // ============================================
+  // Internal routes (service-to-service, token auth)
+  // ============================================
+
+  // POST /internal/executions/:id/artifacts - Add artifact (called by sandbox)
+  if (segments[0] === 'internal' && segments[1] === 'executions' && segments.length === 4 && segments[3] === 'artifacts' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
     const data = await request.json() as {
       stepId: string;
       type: 'file' | 'log' | 'summary' | 'output';
       name: string;
       content: string;
     };
-    return recipes.addArtifact(env, segments[1], data);
+    return recipes.addArtifact(env, segments[2], data);
   }
 
   // ============================================
@@ -294,6 +308,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /schedules - List schedules
   if (segments[0] === 'schedules' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     const recipeId = url.searchParams.get('recipe_id') || undefined;
     return schedules.listSchedules(env, recipeId);
   }
@@ -314,6 +330,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /schedules/:id - Get schedule
   if (segments[0] === 'schedules' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
     return schedules.getSchedule(env, segments[1]);
   }
 
@@ -358,8 +376,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return schedules.triggerSchedule(env, segments[1]);
   }
 
-  // POST /events - Emit event
-  if (segments[0] === 'events' && segments.length === 1 && method === 'POST') {
+  // POST /internal/events - Emit event (called by external systems with token)
+  if (segments[0] === 'internal' && segments[1] === 'events' && segments.length === 2 && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
     const data = await request.json() as { event: string; payload?: Record<string, unknown> };
     return schedules.emitEvent(env, data.event, data.payload);
   }
