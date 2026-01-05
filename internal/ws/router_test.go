@@ -34,7 +34,15 @@ func setupTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, func())
 }
 
 func wsURL(server *httptest.Server, sessionId, ptyId string) string {
-	return "ws" + strings.TrimPrefix(server.URL, "http") + "/sessions/" + sessionId + "/ptys/" + ptyId + "/ws"
+	return wsURLWithUser(server, sessionId, ptyId, "")
+}
+
+func wsURLWithUser(server *httptest.Server, sessionId, ptyId, userID string) string {
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/sessions/" + sessionId + "/ptys/" + ptyId + "/ws"
+	if userID != "" {
+		url += "?user_id=" + userID
+	}
+	return url
 }
 
 func TestWebSocketConnect(t *testing.T) {
@@ -89,12 +97,23 @@ func TestWebSocketSendReceive(t *testing.T) {
 	session, _ := sm.Create()
 	pty, _ := session.CreatePTY()
 
-	url := wsURL(server, session.ID, pty.ID)
+	// Connect with user_id so we can take control
+	url := wsURLWithUser(server, session.ID, pty.ID, "test-user")
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
 	defer conn.Close()
+
+	// Take control first (required for writing)
+	takeControlMsg, _ := json.Marshal(ControlMessage{Type: "take_control"})
+	err = conn.WriteMessage(websocket.TextMessage, takeControlMsg)
+	if err != nil {
+		t.Fatalf("failed to take control: %v", err)
+	}
+
+	// Small delay to let the control request be processed
+	time.Sleep(50 * time.Millisecond)
 
 	// Send command as binary
 	err = conn.WriteMessage(websocket.BinaryMessage, []byte("echo hello_ws_test\n"))
@@ -155,16 +174,17 @@ func TestWebSocketMultipleClients(t *testing.T) {
 	session, _ := sm.Create()
 	pty, _ := session.CreatePTY()
 
-	url := wsURL(server, session.ID, pty.ID)
+	// Connect two clients with different user IDs
+	url1 := wsURLWithUser(server, session.ID, pty.ID, "user1")
+	url2 := wsURLWithUser(server, session.ID, pty.ID, "user2")
 
-	// Connect two clients
-	conn1, _, err := websocket.DefaultDialer.Dial(url, nil)
+	conn1, _, err := websocket.DefaultDialer.Dial(url1, nil)
 	if err != nil {
 		t.Fatalf("failed to connect client1: %v", err)
 	}
 	defer conn1.Close()
 
-	conn2, _, err := websocket.DefaultDialer.Dial(url, nil)
+	conn2, _, err := websocket.DefaultDialer.Dial(url2, nil)
 	if err != nil {
 		t.Fatalf("failed to connect client2: %v", err)
 	}
@@ -173,7 +193,15 @@ func TestWebSocketMultipleClients(t *testing.T) {
 	// Give time for both to register
 	time.Sleep(100 * time.Millisecond)
 
-	// Send from client1
+	// Client1 takes control first
+	takeControlMsg, _ := json.Marshal(ControlMessage{Type: "take_control"})
+	err = conn1.WriteMessage(websocket.TextMessage, takeControlMsg)
+	if err != nil {
+		t.Fatalf("failed to take control: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Send from client1 (who has control)
 	err = conn1.WriteMessage(websocket.BinaryMessage, []byte("echo multiclient\n"))
 	if err != nil {
 		t.Fatalf("failed to write: %v", err)

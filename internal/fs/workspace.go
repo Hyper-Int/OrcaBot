@@ -84,7 +84,7 @@ func (w *Workspace) resolvePath(path string) (string, error) {
 			}
 
 			// Check parent is within workspace
-			if !strings.HasPrefix(resolvedParent, w.root) {
+			if !isPathWithin(resolvedParent, w.root) {
 				return "", ErrPathTraversal
 			}
 
@@ -94,11 +94,22 @@ func (w *Workspace) resolvePath(path string) (string, error) {
 	}
 
 	// Final check: ensure resolved path is within workspace
-	if !strings.HasPrefix(resolved, w.root) {
+	if !isPathWithin(resolved, w.root) {
 		return "", ErrPathTraversal
 	}
 
 	return resolved, nil
+}
+
+// isPathWithin checks if path is equal to or inside root.
+// This is safer than strings.HasPrefix which would incorrectly match
+// /workspace-evil as being within /workspace.
+func isPathWithin(path, root string) bool {
+	if path == root {
+		return true
+	}
+	// Ensure path starts with root followed by a separator
+	return strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
 // List returns entries in a directory

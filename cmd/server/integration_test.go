@@ -72,14 +72,23 @@ func TestFullSessionLifecycle(t *testing.T) {
 
 	t.Logf("Created PTY: %s", ptyID)
 
-	// 3. Connect via WebSocket
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/sessions/" + sessionID + "/ptys/" + ptyID + "/ws"
+	// 3. Connect via WebSocket (with user_id for turn-taking)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/sessions/" + sessionID + "/ptys/" + ptyID + "/ws?user_id=test-user"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("websocket connect failed: %v", err)
 	}
 
 	t.Log("Connected via WebSocket")
+
+	// Take control first (required for writing)
+	takeControlMsg := ws.ControlMessage{Type: "take_control"}
+	msgBytes, _ := json.Marshal(takeControlMsg)
+	err = conn.WriteMessage(websocket.TextMessage, msgBytes)
+	if err != nil {
+		t.Fatalf("take control failed: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
 
 	// 4. Send command and receive output
 	err = conn.WriteMessage(websocket.BinaryMessage, []byte("echo integration_test_marker\n"))
@@ -108,7 +117,7 @@ func TestFullSessionLifecycle(t *testing.T) {
 		Cols: 100,
 		Rows: 50,
 	}
-	msgBytes, _ := json.Marshal(resizeMsg)
+	msgBytes, _ = json.Marshal(resizeMsg)
 	err = conn.WriteMessage(websocket.TextMessage, msgBytes)
 	if err != nil {
 		t.Fatalf("resize failed: %v", err)

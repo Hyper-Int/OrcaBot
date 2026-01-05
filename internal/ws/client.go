@@ -89,12 +89,11 @@ func (c *Client) ReadPump() {
 		switch messageType {
 		case websocket.BinaryMessage:
 			// Binary = PTY input (only from controller)
+			// Clients without userID cannot write - they are view-only
 			if c.userID != "" {
 				c.hub.Write(c.userID, data)
-			} else {
-				// Legacy mode: allow all writes
-				c.hub.WriteForce(data)
 			}
+			// else: silently drop input from anonymous clients
 
 		case websocket.TextMessage:
 			// Text = JSON control message
