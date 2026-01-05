@@ -50,7 +50,7 @@ type Hub struct {
 
 // NewHub creates a new Hub for the given PTY
 func NewHub(p *PTY) *Hub {
-	return &Hub{
+	h := &Hub{
 		pty:        p,
 		turn:       NewTurnController(),
 		clients:    make(map[chan HubMessage]*ClientInfo),
@@ -58,6 +58,17 @@ func NewHub(p *PTY) *Hub {
 		unregister: make(chan chan HubMessage),
 		stop:       make(chan struct{}),
 	}
+
+	// Set up callback to broadcast when controller's grace period expires
+	h.turn.SetOnExpire(func(userID string) {
+		h.broadcastControlEvent(ControlEvent{
+			Type:       "control_expired",
+			From:       userID,
+			Controller: "", // No controller after expiry
+		})
+	})
+
+	return h
 }
 
 // Run starts the hub's event loop

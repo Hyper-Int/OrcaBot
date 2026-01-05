@@ -183,6 +183,60 @@ func TestTurnControllerGracePeriodExpiry(t *testing.T) {
 	}
 }
 
+func TestTurnControllerOnExpireCallback(t *testing.T) {
+	tc := NewTurnController()
+	tc.SetGracePeriod(50 * time.Millisecond)
+
+	var expiredUser string
+	var callbackCalled bool
+	tc.SetOnExpire(func(userID string) {
+		callbackCalled = true
+		expiredUser = userID
+	})
+
+	tc.TakeControl("user1")
+	tc.Disconnect("user1")
+
+	// Wait for grace period to expire
+	time.Sleep(100 * time.Millisecond)
+
+	if !callbackCalled {
+		t.Error("expected onExpire callback to be called")
+	}
+
+	if expiredUser != "user1" {
+		t.Errorf("expected expired user to be 'user1', got %q", expiredUser)
+	}
+}
+
+func TestTurnControllerOnExpireNotCalledIfReconnected(t *testing.T) {
+	tc := NewTurnController()
+	tc.SetGracePeriod(50 * time.Millisecond)
+
+	var callbackCalled bool
+	tc.SetOnExpire(func(userID string) {
+		callbackCalled = true
+	})
+
+	tc.TakeControl("user1")
+	tc.Disconnect("user1")
+
+	// Reconnect before grace period expires
+	time.Sleep(20 * time.Millisecond)
+	tc.Reconnect("user1")
+
+	// Wait past the original grace period
+	time.Sleep(50 * time.Millisecond)
+
+	if callbackCalled {
+		t.Error("expected onExpire callback NOT to be called after reconnect")
+	}
+
+	if tc.Controller() != "user1" {
+		t.Error("expected user1 to still be controller")
+	}
+}
+
 func TestTurnControllerMultipleRequests(t *testing.T) {
 	tc := NewTurnController()
 
