@@ -279,6 +279,34 @@ export async function startExecution(
     return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
   }
 
+  return createExecution(env, recipeId, recipe, context);
+}
+
+// Internal version for system-triggered executions (cron/events)
+// Access was already validated when the schedule was created
+export async function startExecutionInternal(
+  env: Env,
+  recipeId: string,
+  context?: Record<string, unknown>
+): Promise<Response> {
+  const recipe = await env.DB.prepare(`
+    SELECT * FROM recipes WHERE id = ?
+  `).bind(recipeId).first();
+
+  if (!recipe) {
+    return Response.json({ error: 'Recipe not found' }, { status: 404 });
+  }
+
+  return createExecution(env, recipeId, recipe, context);
+}
+
+// Shared execution creation logic
+async function createExecution(
+  env: Env,
+  recipeId: string,
+  recipe: Record<string, unknown>,
+  context?: Record<string, unknown>
+): Promise<Response> {
   const steps = JSON.parse(recipe.steps as string) as RecipeStep[];
   const firstStepId = steps.length > 0 ? steps[0].id : null;
 

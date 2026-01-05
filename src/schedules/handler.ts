@@ -493,8 +493,8 @@ export async function processDueSchedules(env: Env): Promise<void> {
 
   for (const schedule of dueSchedules.results) {
     try {
-      // Start execution
-      await recipes.startExecution(
+      // Start execution (internal - no user context for cron triggers)
+      await recipes.startExecutionInternal(
         env,
         schedule.recipe_id as string,
         { triggeredBy: 'cron', scheduleId: schedule.id }
@@ -531,7 +531,8 @@ export async function emitEvent(
 
   for (const schedule of schedules.results) {
     try {
-      const executionResponse = await recipes.startExecution(
+      // Start execution (internal - no user context for event triggers)
+      const executionResponse = await recipes.startExecutionInternal(
         env,
         schedule.recipe_id as string,
         { triggeredBy: 'event', eventName, payload, scheduleId: schedule.id }
