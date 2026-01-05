@@ -212,7 +212,7 @@ func (c *Controller) RunCommand(command string, timeout time.Duration) ([]byte, 
 	}
 
 	// Create a temporary client to capture output
-	output := make(chan []byte, 1024)
+	output := make(chan pty.HubMessage, 1024)
 	c.hub.Register(output)
 	defer c.hub.Unregister(output)
 
@@ -228,8 +228,8 @@ func (c *Controller) RunCommand(command string, timeout time.Duration) ([]byte, 
 
 	for {
 		select {
-		case data := <-output:
-			result.Write(data)
+		case msg := <-output:
+			result.Write(msg.Data)
 		case <-deadline:
 			return result.Bytes(), nil
 		}
