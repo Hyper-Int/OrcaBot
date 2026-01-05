@@ -169,6 +169,19 @@ describe('Integration Tests', () => {
       expect(data.execution).toBeTruthy();
     });
 
+    it('should include actorUserId in context for manual triggers', async () => {
+      const recipe = await seedRecipe(ctx.db, { name: 'Test' });
+      const schedule = await seedSchedule(ctx.db, recipe.id, { cron: '0 * * * *' });
+
+      const triggerRes = await schedules.triggerSchedule(ctx.env, schedule.id, user.id);
+      const data = await triggerRes.json();
+
+      // Verify execution context includes actorUserId for manual trigger
+      expect(data.execution.context.triggeredBy).toBe('manual');
+      expect(data.execution.context.actorUserId).toBe(user.id);
+      expect(data.execution.context.scheduleId).toBe(schedule.id);
+    });
+
     it('should enable and disable schedule', async () => {
       const recipe = await seedRecipe(ctx.db, { name: 'Test' });
       const schedule = await seedSchedule(ctx.db, recipe.id, { cron: '0 * * * *', enabled: true });

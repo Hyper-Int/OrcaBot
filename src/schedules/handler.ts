@@ -448,12 +448,12 @@ export async function triggerSchedule(
     return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
   }
 
-  // Start execution
+  // Start execution with actor context
   const executionResponse = await recipes.startExecution(
     env,
     schedule.recipe_id as string,
     userId,
-    { triggeredBy: 'manual', scheduleId }
+    { triggeredBy: 'manual', scheduleId, actorUserId: userId }
   );
 
   // Update last run
