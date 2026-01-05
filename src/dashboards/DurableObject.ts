@@ -20,6 +20,8 @@ export class DashboardDO implements DurableObject {
   private state: DurableObjectState;
   private sessions: Map<WebSocket, WebSocketAttachment> = new Map();
   private presence: Map<string, PresenceInfo> = new Map();
+  // Track connection count per user for multi-tab support
+  private userConnectionCount: Map<string, number> = new Map();
   private dashboard: Dashboard | null = null;
   private items: Map<string, DashboardItem> = new Map();
   private terminalSessions: Map<string, Session> = new Map();
@@ -136,18 +138,26 @@ export class DashboardDO implements DurableObject {
     // Store attachment
     this.sessions.set(ws, { userId, userName });
 
-    // Add to presence
-    const presenceInfo: PresenceInfo = {
-      userId,
-      userName,
-      cursor: null,
-      selectedItemId: null,
-      connectedAt: new Date().toISOString(),
-    };
-    this.presence.set(userId, presenceInfo);
+    // Track connection count for multi-tab support
+    const currentCount = this.userConnectionCount.get(userId) || 0;
+    this.userConnectionCount.set(userId, currentCount + 1);
 
-    // Notify others
-    this.broadcast({ type: 'join', userId, userName }, ws);
+    // Only add to presence and notify if this is the first connection for this user
+    const isFirstConnection = currentCount === 0;
+
+    if (isFirstConnection) {
+      const presenceInfo: PresenceInfo = {
+        userId,
+        userName,
+        cursor: null,
+        selectedItemId: null,
+        connectedAt: new Date().toISOString(),
+      };
+      this.presence.set(userId, presenceInfo);
+
+      // Notify others of new user
+      this.broadcast({ type: 'join', userId, userName }, ws);
+    }
 
     // Send current state to new client
     const stateMsg = JSON.stringify({
@@ -193,9 +203,21 @@ export class DashboardDO implements DurableObject {
   webSocketClose(ws: WebSocket): void {
     const attachment = this.sessions.get(ws);
     if (attachment) {
-      this.presence.delete(attachment.userId);
       this.sessions.delete(ws);
-      this.broadcast({ type: 'leave', userId: attachment.userId });
+
+      // Decrement connection count
+      const currentCount = this.userConnectionCount.get(attachment.userId) || 1;
+      const newCount = currentCount - 1;
+
+      if (newCount <= 0) {
+        // Last connection closed - remove presence and notify
+        this.userConnectionCount.delete(attachment.userId);
+        this.presence.delete(attachment.userId);
+        this.broadcast({ type: 'leave', userId: attachment.userId });
+      } else {
+        // User still has other connections open
+        this.userConnectionCount.set(attachment.userId, newCount);
+      }
     }
   }
 

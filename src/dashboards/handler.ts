@@ -8,6 +8,51 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+// Format a raw DB dashboard row to camelCase
+function formatDashboard(row: Record<string, unknown>): Dashboard {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    ownerId: row.owner_id as string,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+// Format a raw DB item row to camelCase
+function formatItem(row: Record<string, unknown>): DashboardItem {
+  return {
+    id: row.id as string,
+    dashboardId: row.dashboard_id as string,
+    type: row.type as DashboardItem['type'],
+    content: row.content as string,
+    position: {
+      x: row.position_x as number,
+      y: row.position_y as number,
+    },
+    size: {
+      width: row.width as number,
+      height: row.height as number,
+    },
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
+// Format a raw DB session row to camelCase
+function formatSession(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    dashboardId: row.dashboard_id as string,
+    itemId: row.item_id as string,
+    sandboxSessionId: row.sandbox_session_id as string,
+    status: row.status as string,
+    region: row.region as string,
+    createdAt: row.created_at as string,
+    stoppedAt: row.stopped_at as string | null,
+  };
+}
+
 // List dashboards for a user
 export async function listDashboards(
   env: Env,
@@ -18,9 +63,10 @@ export async function listDashboards(
     JOIN dashboard_members dm ON d.id = dm.dashboard_id
     WHERE dm.user_id = ?
     ORDER BY d.updated_at DESC
-  `).bind(userId).all<Dashboard>();
+  `).bind(userId).all();
 
-  return Response.json({ dashboards: result.results });
+  const dashboards = result.results.map(formatDashboard);
+  return Response.json({ dashboards });
 }
 
 // Get a single dashboard
@@ -40,28 +86,28 @@ export async function getDashboard(
   }
 
   // Get dashboard
-  const dashboard = await env.DB.prepare(`
+  const dashboardRow = await env.DB.prepare(`
     SELECT * FROM dashboards WHERE id = ?
-  `).bind(dashboardId).first<Dashboard>();
+  `).bind(dashboardId).first();
 
-  if (!dashboard) {
+  if (!dashboardRow) {
     return Response.json({ error: 'Dashboard not found' }, { status: 404 });
   }
 
   // Get items
-  const items = await env.DB.prepare(`
+  const itemRows = await env.DB.prepare(`
     SELECT * FROM dashboard_items WHERE dashboard_id = ?
   `).bind(dashboardId).all();
 
   // Get sessions
-  const sessions = await env.DB.prepare(`
+  const sessionRows = await env.DB.prepare(`
     SELECT * FROM sessions WHERE dashboard_id = ? AND status != 'stopped'
   `).bind(dashboardId).all();
 
   return Response.json({
-    dashboard,
-    items: items.results,
-    sessions: sessions.results,
+    dashboard: formatDashboard(dashboardRow),
+    items: itemRows.results.map(formatItem),
+    sessions: sessionRows.results.map(formatSession),
     role: access.role,
   });
 }
@@ -123,11 +169,11 @@ export async function updateDashboard(
     `).bind(data.name, now, dashboardId).run();
   }
 
-  const dashboard = await env.DB.prepare(`
+  const dashboardRow = await env.DB.prepare(`
     SELECT * FROM dashboards WHERE id = ?
-  `).bind(dashboardId).first<Dashboard>();
+  `).bind(dashboardId).first();
 
-  return Response.json({ dashboard });
+  return Response.json({ dashboard: formatDashboard(dashboardRow!) });
 }
 
 // Delete a dashboard
@@ -177,7 +223,7 @@ export async function upsertItem(
   `).bind(id).first();
 
   if (existing) {
-    // Update
+    // Update - use undefined check to allow clearing to empty string
     await env.DB.prepare(`
       UPDATE dashboard_items SET
         content = COALESCE(?, content),
@@ -188,7 +234,7 @@ export async function upsertItem(
         updated_at = ?
       WHERE id = ?
     `).bind(
-      item.content || null,
+      item.content !== undefined ? item.content : null,
       item.position?.x ?? null,
       item.position?.y ?? null,
       item.size?.width ?? null,
@@ -228,22 +274,7 @@ export async function upsertItem(
     SELECT * FROM dashboard_items WHERE id = ?
   `).bind(id).first();
 
-  const formattedItem: DashboardItem = {
-    id: savedItem!.id as string,
-    dashboardId: savedItem!.dashboard_id as string,
-    type: savedItem!.type as DashboardItem['type'],
-    content: savedItem!.content as string,
-    position: {
-      x: savedItem!.position_x as number,
-      y: savedItem!.position_y as number,
-    },
-    size: {
-      width: savedItem!.width as number,
-      height: savedItem!.height as number,
-    },
-    createdAt: savedItem!.created_at as string,
-    updatedAt: savedItem!.updated_at as string,
-  };
+  const formattedItem = formatItem(savedItem!);
 
   await stub.fetch(new Request('http://do/item', {
     method: existing ? 'PUT' : 'POST',

@@ -9,6 +9,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createSchedule,
   deleteSchedule,
+  updateSchedule,
+  parseCronField,
+  computeNextRun,
 } from './handler';
 import {
   createTestContext,
@@ -117,6 +120,119 @@ describe('Schedule Handlers', () => {
 
       expect(result).not.toBeNull();
       expect(result!.cron).toBe('0 0 * * *');
+    });
+  });
+
+  describe('updateSchedule()', () => {
+    it('should clear next_run_at when cron is removed', async () => {
+      const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
+
+      // Create schedule with cron
+      const createResponse = await createSchedule(ctx.env, {
+        recipeId: recipe.id,
+        name: 'Test Schedule',
+        cron: '0 9 * * *',
+      });
+      const { schedule } = await createResponse.json() as { schedule: { id: string; nextRunAt: string | null } };
+      expect(schedule.nextRunAt).not.toBeNull();
+
+      // Update to remove cron (event-based only)
+      const updateResponse = await updateSchedule(ctx.env, schedule.id, {
+        cron: '',
+        eventTrigger: 'manual.trigger',
+      });
+      const updated = await updateResponse.json() as { schedule: { nextRunAt: string | null } };
+
+      expect(updated.schedule.nextRunAt).toBeNull();
+    });
+  });
+});
+
+describe('Cron Parsing', () => {
+  describe('parseCronField()', () => {
+    it('should parse wildcard (*)', () => {
+      const result = parseCronField('*', 0, 59);
+      expect(result).toHaveLength(60);
+      expect(result![0]).toBe(0);
+      expect(result![59]).toBe(59);
+    });
+
+    it('should parse specific number', () => {
+      const result = parseCronField('30', 0, 59);
+      expect(result).toEqual([30]);
+    });
+
+    it('should parse step values (*/n)', () => {
+      const result = parseCronField('*/15', 0, 59);
+      expect(result).toEqual([0, 15, 30, 45]);
+    });
+
+    it('should parse range (n-m)', () => {
+      const result = parseCronField('1-5', 0, 59);
+      expect(result).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('should parse list (n,m,o)', () => {
+      const result = parseCronField('0,15,30,45', 0, 59);
+      expect(result).toEqual([0, 15, 30, 45]);
+    });
+
+    it('should return null for invalid value', () => {
+      expect(parseCronField('60', 0, 59)).toBeNull();
+      expect(parseCronField('-1', 0, 59)).toBeNull();
+      expect(parseCronField('abc', 0, 59)).toBeNull();
+    });
+
+    it('should return null for invalid range', () => {
+      expect(parseCronField('5-3', 0, 59)).toBeNull(); // start > end
+      expect(parseCronField('0-100', 0, 59)).toBeNull(); // exceeds max
+    });
+  });
+
+  describe('computeNextRun()', () => {
+    it('should compute next run for simple cron', () => {
+      // Every hour at minute 0
+      const from = new Date('2024-01-15T10:30:00Z');
+      const next = computeNextRun('0 * * * *', from);
+
+      expect(next).not.toBeNull();
+      expect(next!.getUTCMinutes()).toBe(0);
+      expect(next!.getUTCHours()).toBe(11);
+    });
+
+    it('should compute next run for specific time', () => {
+      // Daily at 9:00 AM - test from 8:00 AM so next run is same day
+      const from = new Date('2024-01-15T08:00:00Z');
+      const next = computeNextRun('0 9 * * *', from);
+
+      expect(next).not.toBeNull();
+      expect(next!.getUTCHours()).toBe(9);
+      expect(next!.getUTCMinutes()).toBe(0);
+      expect(next!.getUTCDate()).toBe(15); // Same day
+    });
+
+    it('should compute next run for step values', () => {
+      // Every 15 minutes
+      const from = new Date('2024-01-15T10:07:00Z');
+      const next = computeNextRun('*/15 * * * *', from);
+
+      expect(next).not.toBeNull();
+      expect(next!.getUTCMinutes()).toBe(15);
+    });
+
+    it('should return null for invalid cron', () => {
+      expect(computeNextRun('invalid')).toBeNull();
+      expect(computeNextRun('* * *')).toBeNull(); // too few fields
+      expect(computeNextRun('60 * * * *')).toBeNull(); // invalid minute
+    });
+
+    it('should handle weekday constraints', () => {
+      // Only on Monday (1)
+      const from = new Date('2024-01-15T10:00:00Z'); // Monday
+      const next = computeNextRun('0 9 * * 1', from);
+
+      expect(next).not.toBeNull();
+      expect(next!.getUTCDay()).toBe(1); // Monday
     });
   });
 });

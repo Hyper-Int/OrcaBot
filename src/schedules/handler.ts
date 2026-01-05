@@ -12,25 +12,82 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
-// Parse cron expression and compute next run time
-function computeNextRun(cron: string, from: Date = new Date()): Date | null {
-  // Simple cron parser for basic expressions
-  // Format: minute hour day month weekday
-  // Supports: *, specific numbers, */n
+// Parse a cron field and return matching values (exported for testing)
+export function parseCronField(field: string, min: number, max: number): number[] | null {
+  const values: number[] = [];
+
+  for (const part of field.split(',')) {
+    if (part === '*') {
+      // All values
+      for (let i = min; i <= max; i++) values.push(i);
+    } else if (part.startsWith('*/')) {
+      // Step values: */n
+      const step = parseInt(part.slice(2), 10);
+      if (isNaN(step) || step <= 0) return null;
+      for (let i = min; i <= max; i += step) values.push(i);
+    } else if (part.includes('-')) {
+      // Range: n-m
+      const [startStr, endStr] = part.split('-');
+      const start = parseInt(startStr, 10);
+      const end = parseInt(endStr, 10);
+      if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) return null;
+      for (let i = start; i <= end; i++) values.push(i);
+    } else {
+      // Specific value
+      const val = parseInt(part, 10);
+      if (isNaN(val) || val < min || val > max) return null;
+      values.push(val);
+    }
+  }
+
+  return values.length > 0 ? [...new Set(values)].sort((a, b) => a - b) : null;
+}
+
+// Parse cron expression and compute next run time (exported for testing)
+export function computeNextRun(cron: string, from: Date = new Date()): Date | null {
+  // Cron format: minute hour day month weekday
+  // Supports: *, specific numbers, */n, ranges (n-m), lists (n,m)
   try {
-    const parts = cron.split(' ');
+    const parts = cron.trim().split(/\s+/);
     if (parts.length !== 5) return null;
 
-    const [minute, hour, day, month, weekday] = parts;
+    const minutes = parseCronField(parts[0], 0, 59);
+    const hours = parseCronField(parts[1], 0, 23);
+    const days = parseCronField(parts[2], 1, 31);
+    const months = parseCronField(parts[3], 1, 12);
+    const weekdays = parseCronField(parts[4], 0, 6);
+
+    if (!minutes || !hours || !days || !months || !weekdays) return null;
+
+    // Start from next minute (use UTC consistently)
     const next = new Date(from);
-    next.setSeconds(0);
-    next.setMilliseconds(0);
+    next.setUTCSeconds(0);
+    next.setUTCMilliseconds(0);
+    next.setUTCMinutes(next.getUTCMinutes() + 1);
 
-    // Simple implementation: just add 1 minute and check
-    // A full implementation would properly parse cron expressions
-    next.setMinutes(next.getMinutes() + 1);
+    // Search for next matching time (up to 1 year ahead)
+    const maxIterations = 366 * 24 * 60; // ~1 year of minutes
+    for (let i = 0; i < maxIterations; i++) {
+      const month = next.getUTCMonth() + 1; // 1-12
+      const day = next.getUTCDate();
+      const weekday = next.getUTCDay(); // 0-6
+      const hour = next.getUTCHours();
+      const minute = next.getUTCMinutes();
 
-    return next;
+      if (
+        months.includes(month) &&
+        days.includes(day) &&
+        weekdays.includes(weekday) &&
+        hours.includes(hour) &&
+        minutes.includes(minute)
+      ) {
+        return next;
+      }
+
+      next.setUTCMinutes(next.getUTCMinutes() + 1);
+    }
+
+    return null; // No match found within a year
   } catch {
     return null;
   }
@@ -181,13 +238,12 @@ export async function updateSchedule(
   const enabled = data.enabled !== undefined ? data.enabled : Boolean(existing.enabled);
   const cron = data.cron !== undefined ? data.cron : existing.cron as string | null;
 
-  let nextRunAt = existing.next_run_at as string | null;
+  let nextRunAt: string | null = null;
   if (cron && enabled) {
     const next = computeNextRun(cron);
     nextRunAt = next ? next.toISOString() : null;
-  } else if (!enabled) {
-    nextRunAt = null;
   }
+  // nextRunAt is null if disabled OR if cron is removed/empty
 
   await env.DB.prepare(`
     UPDATE schedules SET
