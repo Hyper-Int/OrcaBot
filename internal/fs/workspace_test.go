@@ -298,3 +298,55 @@ func TestWorkspaceListNotFound(t *testing.T) {
 		t.Error("expected error for nonexistent directory")
 	}
 }
+
+// Security test - symlink escape prevention
+func TestWorkspaceSymlinkEscape(t *testing.T) {
+	root := setupTestWorkspace(t)
+	defer os.RemoveAll(root)
+
+	ws := NewWorkspace(root)
+
+	// Create a symlink inside workspace pointing outside
+	symlinkPath := filepath.Join(root, "escape")
+	err := os.Symlink("/etc", symlinkPath)
+	if err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	// Try to read via symlink - should be blocked
+	_, err = ws.Read("/escape/passwd")
+	if err != ErrPathTraversal {
+		t.Errorf("expected ErrPathTraversal for symlink escape, got: %v", err)
+	}
+
+	// Try to list via symlink - should be blocked
+	_, err = ws.List("/escape")
+	if err != ErrPathTraversal {
+		t.Errorf("expected ErrPathTraversal for symlink list, got: %v", err)
+	}
+
+	// Try to write via symlink - should be blocked
+	err = ws.Write("/escape/test.txt", []byte("bad"))
+	if err != ErrPathTraversal {
+		t.Errorf("expected ErrPathTraversal for symlink write, got: %v", err)
+	}
+
+	// Symlinks within workspace should still work
+	internalDir := filepath.Join(root, "realdir")
+	os.Mkdir(internalDir, 0755)
+	os.WriteFile(filepath.Join(internalDir, "file.txt"), []byte("ok"), 0644)
+
+	internalLink := filepath.Join(root, "link")
+	err = os.Symlink(internalDir, internalLink)
+	if err != nil {
+		t.Skipf("cannot create internal symlink: %v", err)
+	}
+
+	data, err := ws.Read("/link/file.txt")
+	if err != nil {
+		t.Errorf("internal symlink read should work: %v", err)
+	}
+	if string(data) != "ok" {
+		t.Errorf("expected 'ok', got %q", string(data))
+	}
+}
