@@ -160,7 +160,16 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	pty, err := session.CreatePTY()
+
+	// Parse optional creator_id from request body
+	var req struct {
+		CreatorID string `json:"creator_id"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - creator_id is optional
+	}
+
+	pty, err := session.CreatePTY(req.CreatorID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

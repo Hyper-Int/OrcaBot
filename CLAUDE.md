@@ -383,3 +383,16 @@ internal/auth/
   Role checking (viewer vs controller)
   Session ownership
   This avoids auth logic leaking everywhere later.
+
+---
+
+## Future: Cloudflare internal API integration
+
+The `/internal/executions/:id/artifacts` and `/internal/events` endpoints are for future integration when the sandbox needs to:
+- Report execution results/artifacts back
+- Emit events to trigger schedules
+
+When that integration is implemented, it will need to:
+1. Add `INTERNAL_API_TOKEN` to sandbox config
+2. Include `X-Internal-Token` header in outbound calls
+3. Use the `/internal/` prefixed routes

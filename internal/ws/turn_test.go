@@ -74,7 +74,7 @@ func TestTurnTakingTakeControl(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	ptyInfo, _ := session.CreatePTY()
+	ptyInfo, _ := session.CreatePTY("")
 
 	// Connect as user1
 	conn1 := dialWithUser(t, server, session.ID, ptyInfo.ID, "user1")
@@ -101,7 +101,7 @@ func TestTurnTakingOnlyControllerCanWrite(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	ptyInfo, _ := session.CreatePTY()
+	ptyInfo, _ := session.CreatePTY("")
 
 	// Connect user1 (controller) and user2 (observer)
 	conn1 := dialWithUser(t, server, session.ID, ptyInfo.ID, "user1")
@@ -157,7 +157,7 @@ func TestTurnTakingRequestAndGrant(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	ptyInfo, _ := session.CreatePTY()
+	ptyInfo, _ := session.CreatePTY("")
 
 	conn1 := dialWithUser(t, server, session.ID, ptyInfo.ID, "user1")
 	defer conn1.Close()
@@ -202,7 +202,7 @@ func TestTurnTakingRevokeControl(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	ptyInfo, _ := session.CreatePTY()
+	ptyInfo, _ := session.CreatePTY("")
 
 	conn1 := dialWithUser(t, server, session.ID, ptyInfo.ID, "user1")
 	defer conn1.Close()
@@ -226,7 +226,7 @@ func TestTurnTakingNonControllerCannotGrant(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	ptyInfo, _ := session.CreatePTY()
+	ptyInfo, _ := session.CreatePTY("")
 
 	conn1 := dialWithUser(t, server, session.ID, ptyInfo.ID, "user1")
 	defer conn1.Close()
