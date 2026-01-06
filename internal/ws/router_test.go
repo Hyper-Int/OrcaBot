@@ -50,7 +50,7 @@ func TestWebSocketConnect(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	pty, _ := session.CreatePTY()
+	pty, _ := session.CreatePTY("")
 
 	url := wsURL(server, session.ID, pty.ID)
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
@@ -95,7 +95,7 @@ func TestWebSocketSendReceive(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	pty, _ := session.CreatePTY()
+	pty, _ := session.CreatePTY("")
 
 	// Connect with user_id so we can take control
 	url := wsURLWithUser(server, session.ID, pty.ID, "test-user")
@@ -142,7 +142,7 @@ func TestWebSocketResize(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	pty, _ := session.CreatePTY()
+	pty, _ := session.CreatePTY("")
 
 	url := wsURL(server, session.ID, pty.ID)
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
@@ -172,7 +172,7 @@ func TestWebSocketMultipleClients(t *testing.T) {
 	defer cleanup()
 
 	session, _ := sm.Create()
-	pty, _ := session.CreatePTY()
+	pty, _ := session.CreatePTY("")
 
 	// Connect two clients with different user IDs
 	url1 := wsURLWithUser(server, session.ID, pty.ID, "user1")

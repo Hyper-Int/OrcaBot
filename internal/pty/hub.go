@@ -49,8 +49,9 @@ type Hub struct {
 	stopOnce   sync.Once
 }
 
-// NewHub creates a new Hub for the given PTY
-func NewHub(p *PTY) *Hub {
+// NewHub creates a new Hub for the given PTY.
+// If creatorID is provided, they are automatically assigned control.
+func NewHub(p *PTY, creatorID string) *Hub {
 	h := &Hub{
 		pty:        p,
 		turn:       NewTurnController(),
@@ -68,6 +69,11 @@ func NewHub(p *PTY) *Hub {
 			Controller: "", // No controller after expiry
 		})
 	})
+
+	// Auto-assign control to creator if provided
+	if creatorID != "" {
+		h.turn.TakeControl(creatorID)
+	}
 
 	return h
 }

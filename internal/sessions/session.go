@@ -64,14 +64,15 @@ func (s *Session) Workspace() *fs.Workspace {
 	return s.workspace
 }
 
-// CreatePTY creates a new PTY in this session
-func (s *Session) CreatePTY() (*PTYInfo, error) {
+// CreatePTY creates a new PTY in this session.
+// If creatorID is provided, they are automatically assigned control.
+func (s *Session) CreatePTY(creatorID string) (*PTYInfo, error) {
 	p, err := pty.New("/bin/sh", 80, 24)
 	if err != nil {
 		return nil, err
 	}
 
-	hub := pty.NewHub(p)
+	hub := pty.NewHub(p, creatorID)
 	go hub.Run()
 
 	info := &PTYInfo{

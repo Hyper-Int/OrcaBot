@@ -41,8 +41,8 @@ func NewController(id, shell string, cols, rows uint16) (*Controller, error) {
 		return nil, err
 	}
 
-	hub := pty.NewHub(p)
-	hub.SetAgentMode(true) // Enable agent mode - blocks human input while running
+	hub := pty.NewHub(p, "") // Agent PTYs have no human creator
+	hub.SetAgentMode(true)   // Enable agent mode - blocks human input while running
 	go hub.Run()
 
 	return &Controller{

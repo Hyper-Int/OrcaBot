@@ -14,7 +14,7 @@ func TestHubBroadcast(t *testing.T) {
 	}
 	defer p.Close()
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 	defer hub.Stop()
 
@@ -66,7 +66,7 @@ func TestHubUnregister(t *testing.T) {
 	}
 	defer p.Close()
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 	defer hub.Stop()
 
@@ -98,7 +98,7 @@ func TestHubClientCount(t *testing.T) {
 	}
 	defer p.Close()
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 	defer hub.Stop()
 
@@ -137,7 +137,7 @@ func TestHubStopKillsProcessAndClosesClients(t *testing.T) {
 	}
 	// Don't defer p.Close() - hub.Stop() should do it
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 
 	// Register a client
@@ -178,7 +178,7 @@ func TestHubNewClientReceivesAgentState(t *testing.T) {
 	}
 	defer p.Close()
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 	defer hub.Stop()
 
@@ -220,7 +220,7 @@ func TestHubAgentStateTransitions(t *testing.T) {
 	}
 	defer p.Close()
 
-	hub := NewHub(p)
+	hub := NewHub(p, "")
 	go hub.Run()
 	defer hub.Stop()
 
