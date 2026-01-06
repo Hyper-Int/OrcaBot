@@ -50,6 +50,7 @@ export async function createSession(
         dashboardId: existingSession.dashboard_id,
         itemId: existingSession.item_id,
         sandboxSessionId: existingSession.sandbox_session_id,
+        ptyId: existingSession.pty_id,
         status: existingSession.status,
         region: existingSession.region,
         createdAt: existingSession.created_at,
@@ -63,26 +64,31 @@ export async function createSession(
 
   // Create session record first
   await env.DB.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, sandbox_session_id, status, region, created_at)
-    VALUES (?, ?, ?, '', 'creating', 'local', ?)
+    INSERT INTO sessions (id, dashboard_id, item_id, sandbox_session_id, pty_id, status, region, created_at)
+    VALUES (?, ?, ?, '', '', 'creating', 'local', ?)
   `).bind(id, dashboardId, itemId, now).run();
 
-  // Create sandbox session
+  // Create sandbox session and PTY
   const sandbox = new SandboxClient(env.SANDBOX_URL);
 
   try {
+    // Create sandbox session
     const sandboxSession = await sandbox.createSession();
 
-    // Update with sandbox session ID
+    // Create PTY within the session, assigning control to the creator
+    const pty = await sandbox.createPty(sandboxSession.id, userId);
+
+    // Update with sandbox session ID and PTY ID
     await env.DB.prepare(`
-      UPDATE sessions SET sandbox_session_id = ?, status = 'active' WHERE id = ?
-    `).bind(sandboxSession.id, id).run();
+      UPDATE sessions SET sandbox_session_id = ?, pty_id = ?, status = 'active' WHERE id = ?
+    `).bind(sandboxSession.id, pty.id, id).run();
 
     const session: Session = {
       id,
       dashboardId,
       itemId,
       sandboxSessionId: sandboxSession.id,
+      ptyId: pty.id,
       status: 'active',
       region: 'local',
       createdAt: now,
@@ -132,6 +138,7 @@ export async function getSession(
       dashboardId: session.dashboard_id,
       itemId: session.item_id,
       sandboxSessionId: session.sandbox_session_id,
+      ptyId: session.pty_id,
       status: session.status,
       region: session.region,
       createdAt: session.created_at,
@@ -178,6 +185,7 @@ export async function stopSession(
     dashboardId: session.dashboard_id as string,
     itemId: session.item_id as string,
     sandboxSessionId: session.sandbox_session_id as string,
+    ptyId: session.pty_id as string,
     status: 'stopped',
     region: session.region as string,
     createdAt: session.created_at as string,

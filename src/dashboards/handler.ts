@@ -46,6 +46,7 @@ function formatSession(row: Record<string, unknown>) {
     dashboardId: row.dashboard_id as string,
     itemId: row.item_id as string,
     sandboxSessionId: row.sandbox_session_id as string,
+    ptyId: row.pty_id as string,
     status: row.status as string,
     region: row.region as string,
     createdAt: row.created_at as string,
@@ -343,7 +344,7 @@ export async function connectWebSocket(
   wsUrl.searchParams.set('user_id', userId);
   wsUrl.searchParams.set('user_name', userName);
 
-  return stub.fetch(new Request(wsUrl.toString(), {
-    headers: request.headers,
-  }));
+  // Pass original request to preserve WebSocket upgrade semantics
+  // The second argument copies method, headers, body, and upgrade intent from the original
+  return stub.fetch(new Request(wsUrl.toString(), request));
 }

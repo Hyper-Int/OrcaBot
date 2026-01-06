@@ -53,6 +53,7 @@ export interface Session {
   dashboardId: string;
   itemId: string;        // The terminal item in the dashboard
   sandboxSessionId: string; // The session ID in the sandbox
+  ptyId: string;         // The PTY ID in the sandbox session
   status: 'creating' | 'active' | 'stopped' | 'error';
   region: string;
   createdAt: string;

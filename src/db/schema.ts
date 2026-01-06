@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
   item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
   sandbox_session_id TEXT NOT NULL,
+  pty_id TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK (status IN ('creating', 'active', 'stopped', 'error')),
   region TEXT NOT NULL DEFAULT 'local',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
