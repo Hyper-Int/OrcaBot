@@ -260,8 +260,20 @@ func (h *Hub) TakeControl(userID string) bool {
 	return false
 }
 
-// RequestControl requests control from the current controller
+// RequestControl requests control from the current controller.
+// If no one currently has control, the requester is granted control immediately.
 func (h *Hub) RequestControl(userID string) {
+	// If no controller, auto-grant instead of queueing
+	if !h.turn.HasController() {
+		if h.turn.TakeControl(userID) {
+			h.broadcastControlEvent(ControlEvent{
+				Type:       "control_taken",
+				Controller: userID,
+			})
+			return
+		}
+	}
+
 	h.turn.RequestControl(userID)
 	h.broadcastControlEvent(ControlEvent{
 		Type:     "control_requested",
