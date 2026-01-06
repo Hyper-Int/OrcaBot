@@ -9,6 +9,10 @@ export interface SandboxSession {
   id: string;
 }
 
+export interface SandboxPty {
+  id: string;
+}
+
 export class SandboxClient {
   private baseUrl: string;
 
@@ -44,6 +48,28 @@ export class SandboxClient {
     });
     if (!res.ok && res.status !== 404) {
       throw new Error(`Failed to delete session: ${res.status}`);
+    }
+  }
+
+  // PTY management
+  async createPty(sessionId: string, creatorId?: string): Promise<SandboxPty> {
+    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys`, {
+      method: 'POST',
+      headers: creatorId ? { 'Content-Type': 'application/json' } : undefined,
+      body: creatorId ? JSON.stringify({ creator_id: creatorId }) : undefined,
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to create PTY: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async deletePty(sessionId: string, ptyId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`Failed to delete PTY: ${res.status}`);
     }
   }
 }

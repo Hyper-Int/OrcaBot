@@ -116,7 +116,8 @@ export class DashboardDO implements DurableObject {
       const { itemId } = await request.json() as { itemId: string };
       this.items.delete(itemId);
       await this.persistState();
-      this.broadcast({ type: 'item_delete', itemId });
+      // Use snake_case for frontend
+      this.broadcast({ type: 'item_delete', item_id: itemId });
       return Response.json({ success: true });
     }
 
@@ -155,14 +156,19 @@ export class DashboardDO implements DurableObject {
       };
       this.presence.set(userId, presenceInfo);
 
-      // Notify others of new user
-      this.broadcast({ type: 'join', userId, userName }, ws);
+      // Notify others of new user (use snake_case for frontend)
+      this.broadcast({ type: 'join', user_id: userId, user_name: userName }, ws);
     }
 
-    // Send current state to new client
+    // Send current state to new client (convert to snake_case for frontend)
     const stateMsg = JSON.stringify({
       type: 'presence',
-      users: Array.from(this.presence.values()),
+      users: Array.from(this.presence.values()).map(p => ({
+        user_id: p.userId,
+        user_name: p.userName,
+        cursor: p.cursor,
+        selected_item: p.selectedItemId,
+      })),
     });
     ws.send(stateMsg);
   }
@@ -181,7 +187,8 @@ export class DashboardDO implements DurableObject {
           const presence = this.presence.get(attachment.userId);
           if (presence) {
             presence.cursor = { x: msg.x, y: msg.y };
-            this.broadcast({ type: 'cursor', userId: attachment.userId, x: msg.x, y: msg.y }, ws);
+            // Use snake_case for frontend
+            this.broadcast({ type: 'cursor', user_id: attachment.userId, x: msg.x, y: msg.y }, ws);
           }
           break;
         }
@@ -190,7 +197,8 @@ export class DashboardDO implements DurableObject {
           const presence = this.presence.get(attachment.userId);
           if (presence) {
             presence.selectedItemId = msg.itemId;
-            this.broadcast({ type: 'select', userId: attachment.userId, itemId: msg.itemId }, ws);
+            // Use snake_case for frontend
+            this.broadcast({ type: 'select', user_id: attachment.userId, item_id: msg.itemId }, ws);
           }
           break;
         }
@@ -213,7 +221,8 @@ export class DashboardDO implements DurableObject {
         // Last connection closed - remove presence and notify
         this.userConnectionCount.delete(attachment.userId);
         this.presence.delete(attachment.userId);
-        this.broadcast({ type: 'leave', userId: attachment.userId });
+        // Use snake_case for frontend
+        this.broadcast({ type: 'leave', user_id: attachment.userId });
       } else {
         // User still has other connections open
         this.userConnectionCount.set(attachment.userId, newCount);

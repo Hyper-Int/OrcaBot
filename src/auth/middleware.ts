@@ -18,9 +18,18 @@ export async function authenticate(
   env: Env
 ): Promise<AuthContext> {
   // Check for user ID in header (development mode)
-  const userId = request.headers.get('X-User-ID');
-  const userEmail = request.headers.get('X-User-Email');
-  const userName = request.headers.get('X-User-Name');
+  let userId = request.headers.get('X-User-ID');
+  let userEmail = request.headers.get('X-User-Email');
+  let userName = request.headers.get('X-User-Name');
+
+  // For WebSocket connections, also check query parameters
+  // (browsers can't set custom headers on WebSocket requests)
+  if (!userId) {
+    const url = new URL(request.url);
+    userId = url.searchParams.get('user_id');
+    userEmail = url.searchParams.get('user_email');
+    userName = url.searchParams.get('user_name');
+  }
 
   if (!userId) {
     return { user: null, isAuthenticated: false };

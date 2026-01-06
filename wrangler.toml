@@ -2,11 +2,6 @@ name = "hyper-cloudflare"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
-[vars]
-SANDBOX_URL = "http://localhost:8080"
-# For production, use `wrangler secret put INTERNAL_API_TOKEN`
-INTERNAL_API_TOKEN = "dev-internal-token-change-in-production"
-
 # Rate limiting
 [[unsafe.bindings]]
 name = "RATE_LIMITER"
@@ -21,13 +16,13 @@ class_name = "DashboardDO"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["DashboardDO"]
+new_sqlite_classes = ["DashboardDO"]
 
 # D1 Database for persistent state
 [[d1_databases]]
 binding = "DB"
 database_name = "hyper-db"
-database_id = "local"
+database_id = "7d6525ac-8867-4e8a-8f02-0ec3dfa288a2"
 
 # For local development
 [dev]
