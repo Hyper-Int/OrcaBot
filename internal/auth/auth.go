@@ -12,10 +12,10 @@ type Middleware struct {
 }
 
 // NewMiddleware creates a new auth middleware
-// Token is read from INTERNAL_API_TOKEN environment variable
+// Token is read from SANDBOX_INTERNAL_TOKEN environment variable
 func NewMiddleware() *Middleware {
 	return &Middleware{
-		token: os.Getenv("INTERNAL_API_TOKEN"),
+		token: os.Getenv("SANDBOX_INTERNAL_TOKEN"),
 	}
 }
 

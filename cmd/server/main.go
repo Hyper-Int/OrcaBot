@@ -71,7 +71,7 @@ type Server struct {
 func NewServer(sm *sessions.Manager) *Server {
 	authMiddleware := auth.NewMiddleware()
 	if !authMiddleware.IsEnabled() {
-		log.Println("WARNING: INTERNAL_API_TOKEN not set - authentication is disabled, all requests will be rejected")
+		log.Println("WARNING: SANDBOX_INTERNAL_TOKEN not set - authentication is disabled, all requests will be rejected")
 	}
 	return &Server{
 		sessions: sm,

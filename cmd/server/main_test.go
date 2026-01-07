@@ -10,7 +10,7 @@ import (
 
 func init() {
 	// Set auth environment variables for tests
-	os.Setenv("INTERNAL_API_TOKEN", "test-api-token-12345")
+	os.Setenv("SANDBOX_INTERNAL_TOKEN", "test-api-token-12345")
 	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 }
 
