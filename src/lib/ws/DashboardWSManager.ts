@@ -25,7 +25,6 @@ export class DashboardWSManager extends BaseWebSocketManager {
   private dashboardId: string;
   private userId: string;
   private userName: string;
-  private userEmail: string;
   private lastCursorSend = 0;
   private pendingCursor: CursorPosition | null = null;
   private cursorThrottleTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -41,16 +40,14 @@ export class DashboardWSManager extends BaseWebSocketManager {
     dashboardId: string,
     userId: string,
     userName: string,
-    userEmail: string,
     config?: WebSocketConfig
   ) {
-    const url = getCollaborationWsUrl(dashboardId, userId, userName, userEmail);
+    const url = getCollaborationWsUrl(dashboardId, userId, userName);
     super(url, config);
 
     this.dashboardId = dashboardId;
     this.userId = userId;
     this.userName = userName;
-    this.userEmail = userEmail;
   }
 
   /**

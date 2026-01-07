@@ -181,13 +181,9 @@ export async function stopSession(sessionId: string): Promise<void> {
 export function getCollaborationWsUrl(
   dashboardId: string,
   userId: string,
-  userName: string,
-  userEmail?: string
+  userName: string
 ): string {
   const baseWsUrl = API.cloudflare.ws(dashboardId);
   let url = `${baseWsUrl}?user_id=${encodeURIComponent(userId)}&user_name=${encodeURIComponent(userName)}`;
-  if (userEmail) {
-    url += `&user_email=${encodeURIComponent(userEmail)}`;
-  }
   return url;
 }
