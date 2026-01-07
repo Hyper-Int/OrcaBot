@@ -26,12 +26,12 @@ func setupTestManager(t *testing.T) (*sessions.Manager, func()) {
 	}
 
 	// Set auth environment variables for tests
-	os.Setenv("INTERNAL_API_TOKEN", testAPIToken)
+	os.Setenv("SANDBOX_INTERNAL_TOKEN", testAPIToken)
 	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 
 	return sessions.NewManagerWithWorkspace(dir), func() {
 		os.RemoveAll(dir)
-		os.Unsetenv("INTERNAL_API_TOKEN")
+		os.Unsetenv("SANDBOX_INTERNAL_TOKEN")
 		os.Unsetenv("ALLOWED_ORIGINS")
 	}
 }

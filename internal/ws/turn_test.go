@@ -22,7 +22,7 @@ func setupTurnTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, fun
 	}
 
 	// Ensure auth environment variables are set (may already be set by router_test.go init)
-	os.Setenv("INTERNAL_API_TOKEN", testAPIToken)
+	os.Setenv("SANDBOX_INTERNAL_TOKEN", testAPIToken)
 	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 
 	sm := sessions.NewManagerWithWorkspace(dir)
