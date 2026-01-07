@@ -43,6 +43,31 @@ function corsResponse(response: Response): Response {
   });
 }
 
+async function proxySandboxWebSocket(
+  request: Request,
+  env: Env,
+  sandboxSessionId: string,
+  ptyId: string,
+  userId: string
+): Promise<Response> {
+  const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/ptys/${ptyId}/ws`);
+  sandboxUrl.searchParams.set('user_id', userId);
+
+  const headers = new Headers(request.headers);
+  headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
+  headers.delete('Host');
+
+  const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body;
+  const proxyRequest = new Request(sandboxUrl.toString(), {
+    method: request.method,
+    headers,
+    body,
+    redirect: 'manual',
+  });
+
+  return fetch(proxyRequest);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // Handle CORS preflight
@@ -81,7 +106,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Health check
   if (path === '/health' && method === 'GET') {
-    const sandbox = new SandboxClient(env.SANDBOX_URL);
+    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
     const sandboxHealthy = await sandbox.health();
     return Response.json({
       status: 'ok',
@@ -204,6 +229,34 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return sessions.stopSession(env, segments[1], auth.user!.id);
+  }
+
+  // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
+  if (segments[0] === 'sessions' && segments.length === 5 && segments[2] === 'ptys' && segments[4] === 'ws' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+
+    if (!session) {
+      return Response.json({ error: 'Session not found or no access' }, { status: 404 });
+    }
+
+    if (session.pty_id !== segments[3]) {
+      return Response.json({ error: 'PTY not found' }, { status: 404 });
+    }
+
+    return proxySandboxWebSocket(
+      request,
+      env,
+      session.sandbox_session_id as string,
+      session.pty_id as string,
+      auth.user!.id
+    );
   }
 
   // ============================================

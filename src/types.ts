@@ -10,6 +10,7 @@ export interface Env {
   SANDBOX_URL: string;
   RATE_LIMITER: RateLimiter;
   INTERNAL_API_TOKEN: string;
+  SANDBOX_INTERNAL_TOKEN: string;
 }
 
 // User types
