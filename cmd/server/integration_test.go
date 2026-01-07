@@ -16,13 +16,24 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const testAPIToken = "test-api-token-12345"
+
 func setupTestManager(t *testing.T) (*sessions.Manager, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hyper-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	return sessions.NewManagerWithWorkspace(dir), func() { os.RemoveAll(dir) }
+
+	// Set auth environment variables for tests
+	os.Setenv("INTERNAL_API_TOKEN", testAPIToken)
+	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
+
+	return sessions.NewManagerWithWorkspace(dir), func() {
+		os.RemoveAll(dir)
+		os.Unsetenv("INTERNAL_API_TOKEN")
+		os.Unsetenv("ALLOWED_ORIGINS")
+	}
 }
 
 // TestFullSessionLifecycle tests the complete flow:
@@ -74,25 +85,20 @@ func TestFullSessionLifecycle(t *testing.T) {
 
 	// 3. Connect via WebSocket (with user_id for turn-taking)
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/sessions/" + sessionID + "/ptys/" + ptyID + "/ws?user_id=test-user"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket connect failed: %v", err)
-	}
+	conn := wsDialWithAuth(t, wsURL, ts.URL)
 
 	t.Log("Connected via WebSocket")
 
 	// Take control first (required for writing)
 	takeControlMsg := ws.ControlMessage{Type: "take_control"}
 	msgBytes, _ := json.Marshal(takeControlMsg)
-	err = conn.WriteMessage(websocket.TextMessage, msgBytes)
-	if err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
 		t.Fatalf("take control failed: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
 
 	// 4. Send command and receive output
-	err = conn.WriteMessage(websocket.BinaryMessage, []byte("echo integration_test_marker\n"))
-	if err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("echo integration_test_marker\n")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -118,8 +124,7 @@ func TestFullSessionLifecycle(t *testing.T) {
 		Rows: 50,
 	}
 	msgBytes, _ = json.Marshal(resizeMsg)
-	err = conn.WriteMessage(websocket.TextMessage, msgBytes)
-	if err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
 		t.Fatalf("resize failed: %v", err)
 	}
 
@@ -209,10 +214,7 @@ func TestMultiplePTYsPerSession(t *testing.T) {
 	// Connect to each PTY via WebSocket
 	for _, ptyID := range ptyIDs {
 		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/sessions/" + sessionID + "/ptys/" + ptyID + "/ws"
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			t.Fatalf("websocket connect to %s failed: %v", ptyID, err)
-		}
+		conn := wsDialWithAuth(t, wsURL, ts.URL)
 		conn.Close()
 	}
 
@@ -266,9 +268,26 @@ func TestConcurrentSessions(t *testing.T) {
 }
 
 // Helper functions
+
+// wsDialWithAuth connects to a WebSocket endpoint with auth headers
+func wsDialWithAuth(t *testing.T, url, origin string) *websocket.Conn {
+	t.Helper()
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+testAPIToken)
+	headers.Set("Origin", origin)
+	conn, _, err := websocket.DefaultDialer.Dial(url, headers)
+	if err != nil {
+		t.Fatalf("websocket connect failed: %v", err)
+	}
+	return conn
+}
+
 func httpPost(t *testing.T, url string, body []byte) *http.Response {
 	t.Helper()
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST %s failed: %v", url, err)
 	}
@@ -277,7 +296,9 @@ func httpPost(t *testing.T, url string, body []byte) *http.Response {
 
 func httpGet(t *testing.T, url string) *http.Response {
 	t.Helper()
-	resp, err := http.Get(url)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s failed: %v", url, err)
 	}
@@ -287,6 +308,7 @@ func httpGet(t *testing.T, url string) *http.Response {
 func httpDelete(t *testing.T, url string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest("DELETE", url, nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE %s failed: %v", url, err)
@@ -350,16 +372,12 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// 4. Connect via WebSocket
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/sessions/" + sessionID + "/agent/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket connect failed: %v", err)
-	}
+	conn := wsDialWithAuth(t, wsURL, ts.URL)
 
 	t.Log("Connected to agent via WebSocket")
 
 	// Send a command
-	err = conn.WriteMessage(websocket.BinaryMessage, []byte("echo agent_test\n"))
-	if err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, []byte("echo agent_test\n")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -716,6 +734,7 @@ func TestFilesystemPathTraversal(t *testing.T) {
 func httpPut(t *testing.T, url string, body []byte) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest("PUT", url, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s failed: %v", url, err)

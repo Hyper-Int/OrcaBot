@@ -4,8 +4,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
+
+func init() {
+	// Set auth environment variables for tests
+	os.Setenv("INTERNAL_API_TOKEN", "test-api-token-12345")
+	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
+}
+
+func setAuthHeader(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer test-api-token-12345")
+}
 
 func TestHealthEndpoint(t *testing.T) {
 	sm, cleanup := setupTestManager(t)
@@ -36,6 +47,7 @@ func TestCreateSession(t *testing.T) {
 	server := NewServer(sm)
 
 	req := httptest.NewRequest("POST", "/sessions", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -65,6 +77,7 @@ func TestDeleteSession(t *testing.T) {
 	}
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID, nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -86,6 +99,7 @@ func TestDeleteNonExistentSession(t *testing.T) {
 	server := NewServer(sm)
 
 	req := httptest.NewRequest("DELETE", "/sessions/nonexistent", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -103,6 +117,7 @@ func TestListPTYs(t *testing.T) {
 	session, _ := sm.Create()
 
 	req := httptest.NewRequest("GET", "/sessions/"+session.ID+"/ptys", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -132,6 +147,7 @@ func TestCreatePTY(t *testing.T) {
 	session, _ := sm.Create()
 
 	req := httptest.NewRequest("POST", "/sessions/"+session.ID+"/ptys", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -150,6 +166,7 @@ func TestCreatePTY(t *testing.T) {
 
 	// Verify PTY is listed
 	req = httptest.NewRequest("GET", "/sessions/"+session.ID+"/ptys", nil)
+	setAuthHeader(req)
 	w = httptest.NewRecorder()
 	server.Handler().ServeHTTP(w, req)
 
@@ -170,6 +187,7 @@ func TestCreatePTYNonExistentSession(t *testing.T) {
 	server := NewServer(sm)
 
 	req := httptest.NewRequest("POST", "/sessions/nonexistent/ptys", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -188,6 +206,7 @@ func TestDeletePTY(t *testing.T) {
 	pty, _ := session.CreatePTY("")
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID+"/ptys/"+pty.ID, nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -204,6 +223,7 @@ func TestDeletePTY(t *testing.T) {
 
 	// Verify list is empty
 	req = httptest.NewRequest("GET", "/sessions/"+session.ID+"/ptys", nil)
+	setAuthHeader(req)
 	w = httptest.NewRecorder()
 	server.Handler().ServeHTTP(w, req)
 
@@ -222,6 +242,7 @@ func TestDeletePTYNonExistentSession(t *testing.T) {
 	server := NewServer(sm)
 
 	req := httptest.NewRequest("DELETE", "/sessions/nonexistent/ptys/somePty", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
@@ -239,6 +260,7 @@ func TestDeletePTYNonExistent(t *testing.T) {
 	session, _ := sm.Create()
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID+"/ptys/nonexistent", nil)
+	setAuthHeader(req)
 	w := httptest.NewRecorder()
 
 	server.Handler().ServeHTTP(w, req)
