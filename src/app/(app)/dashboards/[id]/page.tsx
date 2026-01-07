@@ -98,7 +98,6 @@ export default function DashboardPage() {
     dashboardId,
     userId: user?.id || "",
     userName: user?.name || "",
-    userEmail: user?.email || "",
     enabled: isAuthenticated && !!dashboardId && !!user?.id,
   });
 

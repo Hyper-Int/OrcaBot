@@ -33,6 +33,7 @@ export const API = {
     recipes: `${CLOUDFLARE_API_URL}/recipes`,
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
     executions: `${CLOUDFLARE_API_URL}/executions`,
+    usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

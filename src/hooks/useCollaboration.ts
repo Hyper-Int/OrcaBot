@@ -9,12 +9,12 @@ import type {
   IncomingCollabMessage,
 } from "@/types/collaboration";
 import type { DashboardItem, Session } from "@/types/dashboard";
+import { getCurrentUser } from "@/lib/api/cloudflare";
 
 export interface UseCollaborationOptions {
   dashboardId: string;
   userId: string;
   userName: string;
-  userEmail: string;
   enabled?: boolean;
 }
 
@@ -50,9 +50,10 @@ export interface UseCollaborationActions {
 export function useCollaboration(
   options: UseCollaborationOptions
 ): [UseCollaborationState, UseCollaborationActions] {
-  const { dashboardId, userId, userName, userEmail, enabled = true } = options;
+  const { dashboardId, userId, userName, enabled = true } = options;
 
   const managerRef = React.useRef<DashboardWSManager | null>(null);
+  const [isBootstrapped, setIsBootstrapped] = React.useState(false);
   const [connectionState, setConnectionState] =
     React.useState<ConnectionState>("disconnected");
   const [presence, setPresence] = React.useState<PresenceInfo[]>([]);
@@ -60,31 +61,43 @@ export function useCollaboration(
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [error, setError] = React.useState<Error | null>(null);
 
+  // Ensure user exists (dev-auth bootstrap) before connecting to WS
+  React.useEffect(() => {
+    let cancelled = false;
+
+    if (!enabled || !dashboardId || !userId) {
+      setIsBootstrapped(false);
+      return;
+    }
+
+    setIsBootstrapped(false);
+    getCurrentUser()
+      .then(() => {
+        if (!cancelled) {
+          setIsBootstrapped(true);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err : new Error("Failed to load user"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, dashboardId, userId]);
+
   // Initialize and manage WebSocket connection
   React.useEffect(() => {
-    if (!enabled || !dashboardId || !userId || !userEmail) {
-      console.log(`[Collab] Skipping connection - enabled: ${enabled}, dashboardId: ${dashboardId}, userId: ${userId}, userEmail: ${userEmail}`);
+    if (!enabled || !dashboardId || !userId || !isBootstrapped) {
+      console.log(`[Collab] Skipping connection - enabled: ${enabled}, dashboardId: ${dashboardId}, userId: ${userId}`);
       return;
     }
 
     console.log(`[Collab] Initializing collaboration for dashboard ${dashboardId}`);
 
-    // First, make a diagnostic HTTP request to check if the endpoint is reachable
-    // This helps us see the actual error response
-    const wsUrl = `wss://hyper-cloudflare.robbomacrae.workers.dev/dashboards/${dashboardId}/ws?user_id=${encodeURIComponent(userId)}&user_name=${encodeURIComponent(userName)}&user_email=${encodeURIComponent(userEmail)}`;
-    const httpUrl = wsUrl.replace("wss://", "https://").replace("ws://", "http://");
-
-    console.log(`[Collab] Testing endpoint: ${httpUrl}`);
-    fetch(httpUrl, { method: "GET" })
-      .then(async (response) => {
-        const text = await response.text();
-        console.log(`[Collab] HTTP probe response: ${response.status} ${response.statusText}`, text.substring(0, 500));
-      })
-      .catch((err) => {
-        console.log(`[Collab] HTTP probe error:`, err);
-      });
-
-    const manager = new DashboardWSManager(dashboardId, userId, userName, userEmail);
+    const manager = new DashboardWSManager(dashboardId, userId, userName);
     managerRef.current = manager;
 
     // Subscribe to state changes
@@ -116,7 +129,7 @@ export function useCollaboration(
       manager.disconnect();
       managerRef.current = null;
     };
-  }, [dashboardId, userId, userName, userEmail, enabled]);
+  }, [dashboardId, userId, userName, enabled, isBootstrapped]);
 
   // Handle incoming messages
   const handleMessage = React.useCallback((message: IncomingCollabMessage) => {
