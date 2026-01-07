@@ -220,8 +220,8 @@ export async function upsertItem(
 
   // Check if exists
   const existing = await env.DB.prepare(`
-    SELECT id FROM dashboard_items WHERE id = ?
-  `).bind(id).first();
+    SELECT id FROM dashboard_items WHERE id = ? AND dashboard_id = ?
+  `).bind(id, dashboardId).first();
 
   if (existing) {
     // Update - use undefined check to allow clearing to empty string

@@ -11,6 +11,7 @@ export interface Env {
   RATE_LIMITER: RateLimiter;
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
+  DEV_AUTH_ENABLED?: string;
 }
 
 // User types
