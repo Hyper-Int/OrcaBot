@@ -112,18 +112,22 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     [terminalActions]
   );
 
-  // Handle terminal ready - delay write slightly to ensure terminal is fully initialized
+  // Handle terminal ready - auto-connect when terminal is ready
   const handleTerminalReady = React.useCallback(() => {
     setIsReady(true);
-    // Delay initial message to ensure terminal is fully ready
-    setTimeout(() => {
-      if (!session) {
-        ghosttyRef.current?.write(
-          "\x1b[90mClick 'Connect' to start a terminal session\x1b[0m\r\n"
-        );
-      }
-    }, 50);
-  }, [session]);
+  }, []);
+
+  // Auto-connect when terminal is ready and no session exists
+  const hasAutoConnectedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isReady && !session && !isCreatingSession && !hasAutoConnectedRef.current && data.dashboardId) {
+      hasAutoConnectedRef.current = true;
+      // Show connecting message
+      ghosttyRef.current?.write("\x1b[90mConnecting...\x1b[0m\r\n");
+      // Trigger connect
+      handleConnect();
+    }
+  }, [isReady, session, isCreatingSession, data.dashboardId]);
 
   // Create session handler
   const handleConnect = async () => {
@@ -214,16 +218,16 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
         borderWidth: "2px",
       }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] bg-[var(--background)] shrink-0">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
-          <span className="text-sm font-medium text-[var(--foreground)]">
+      {/* Header - compact */}
+      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0">
+        <div className="flex items-center gap-1.5">
+          <Terminal className="w-3 h-3 text-[var(--foreground-muted)]" />
+          <span className="text-[10px] font-medium text-[var(--foreground)]">
             {terminalName}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           {/* Connection status */}
           {session && (
             <Badge
@@ -232,7 +236,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
             >
               <div
                 className={cn(
-                  "w-2 h-2 rounded-full mr-1.5",
+                  "w-1.5 h-1.5 rounded-full mr-1",
                   isConnected
                     ? "bg-[var(--status-success)] animate-pulse"
                     : isFailed
@@ -241,30 +245,21 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
                 )}
               />
               {isConnecting
-                ? "Connecting..."
+                ? "..."
                 : isConnected
-                  ? "Connected"
+                  ? "Live"
                   : isFailed
-                    ? "Failed"
-                    : "Disconnected"}
+                    ? "Err"
+                    : "Off"}
             </Badge>
           )}
 
           {/* Controller badge */}
           {isConnected && (
-            <div className="flex items-center gap-1.5">
-              {turnTaking.isController ? (
-                <Badge variant="success" size="sm">
-                  <User className="w-3 h-3 mr-1" />
-                  You control
-                </Badge>
-              ) : (
-                <Badge variant="secondary" size="sm">
-                  <User className="w-3 h-3 mr-1" />
-                  {turnTaking.controllerName || "No one"}
-                </Badge>
-              )}
-            </div>
+            <Badge variant={turnTaking.isController ? "success" : "secondary"} size="sm">
+              <User className="w-2 h-2 mr-0.5" />
+              {turnTaking.isController ? "You" : (turnTaking.controllerName || "—")}
+            </Badge>
           )}
 
           {/* Agent status badge */}
@@ -279,8 +274,8 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
               }
               size="sm"
             >
-              <Bot className="w-3 h-3 mr-1" />
-              Agent {agentState}
+              <Bot className="w-2 h-2 mr-0.5" />
+              {agentState === "running" ? "Agent" : agentState}
             </Badge>
           )}
         </div>
@@ -294,24 +289,21 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
           onResize={handleTerminalResize}
           onReady={handleTerminalReady}
           disabled={!canType}
-          fontSize={14}
+          fontSize={9}
           className="w-full h-full"
         />
 
-        {/* Not connected overlay */}
-        {!session && (
+        {/* Error overlay - only show if session creation failed */}
+        {!session && sessionError && (
           <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
             <div className="bg-[var(--background-elevated)] px-6 py-4 rounded-lg border border-[var(--border)] flex flex-col items-center gap-3">
-              <Terminal className="w-8 h-8 text-[var(--foreground-muted)]" />
+              <AlertCircle className="w-8 h-8 text-[var(--status-error)]" />
               <span className="text-sm text-[var(--foreground)]">
-                No session connected
+                Connection failed
               </span>
-              {sessionError && (
-                <div className="flex items-center gap-2 text-xs text-[var(--status-error)]">
-                  <AlertCircle className="w-3 h-3" />
-                  {sessionError}
-                </div>
-              )}
+              <div className="flex items-center gap-2 text-xs text-[var(--status-error)]">
+                {sessionError}
+              </div>
               <Button
                 variant="primary"
                 size="sm"
@@ -319,7 +311,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
                 isLoading={isCreatingSession}
                 leftIcon={<Plug className="w-4 h-4" />}
               >
-                Connect
+                Retry
               </Button>
             </div>
           </div>
@@ -352,13 +344,13 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
         )}
       </div>
 
-      {/* Footer controls */}
-      <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--border)] bg-[var(--background)] shrink-0">
+      {/* Footer controls - compact */}
+      <div className="flex items-center justify-between px-2 py-1 border-t border-[var(--border)] bg-[var(--background)] shrink-0">
         {/* Control actions */}
         <div>
           {!session && (
-            <div className="text-xs text-[var(--foreground-subtle)]">
-              Not connected
+            <div className="text-[10px] text-[var(--foreground-subtle)]">
+              Connecting...
             </div>
           )}
 
@@ -367,6 +359,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
               variant="secondary"
               size="sm"
               onClick={() => terminalActions.reconnect()}
+              className="text-[10px] h-5 px-2"
             >
               Reconnect
             </Button>
@@ -378,24 +371,23 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
               size="sm"
               onClick={handleRequestControl}
               disabled={turnTaking.hasPendingRequest}
+              className="text-[10px] h-5 px-2"
             >
-              {turnTaking.hasPendingRequest
-                ? "Request pending..."
-                : "Request Control"}
+              {turnTaking.hasPendingRequest ? "Pending..." : "Take Control"}
             </Button>
           )}
 
           {session && isConnected && turnTaking.isController && (
-            <div className="flex items-center gap-1.5 text-xs text-[var(--foreground-subtle)]">
-              <div className="w-2 h-2 rounded-full bg-[var(--status-success)] animate-pulse" />
-              You have control
+            <div className="flex items-center gap-1 text-[10px] text-[var(--foreground-subtle)]">
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
+              Control active
             </div>
           )}
         </div>
 
         {/* Agent controls */}
         {agentState !== "idle" && agentState !== null && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             {isAgentRunning && (
               <>
                 <Button
@@ -403,14 +395,15 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
                   size="icon-sm"
                   onClick={handlePauseAgent}
                   title="Pause agent"
+                  className="h-5 w-5"
                 >
-                  <Pause className="w-4 h-4" />
+                  <Pause className="w-3 h-3" />
                 </Button>
                 <Button
                   variant="danger"
                   size="sm"
                   onClick={handleStopAgent}
-                  leftIcon={<Square className="w-3 h-3" />}
+                  className="text-[10px] h-5 px-2"
                 >
                   Stop
                 </Button>
@@ -423,14 +416,15 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
                   size="icon-sm"
                   onClick={handleResumeAgent}
                   title="Resume agent"
+                  className="h-5 w-5"
                 >
-                  <Play className="w-4 h-4" />
+                  <Play className="w-3 h-3" />
                 </Button>
                 <Button
                   variant="danger"
                   size="sm"
                   onClick={handleStopAgent}
-                  leftIcon={<Square className="w-3 h-3" />}
+                  className="text-[10px] h-5 px-2"
                 >
                   Stop
                 </Button>
