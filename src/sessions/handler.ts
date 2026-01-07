@@ -69,7 +69,7 @@ export async function createSession(
   `).bind(id, dashboardId, itemId, now).run();
 
   // Create sandbox session and PTY
-  const sandbox = new SandboxClient(env.SANDBOX_URL);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
     // Create sandbox session
@@ -167,7 +167,7 @@ export async function stopSession(
     return Response.json({ error: 'Session already stopped' }, { status: 400 });
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
     await sandbox.deleteSession(session.sandbox_session_id as string);
