@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyper-ai-inc/hyper-backend/internal/auth"
 	"github.com/hyper-ai-inc/hyper-backend/internal/fs"
 	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
 	"github.com/hyper-ai-inc/hyper-backend/internal/ws"
@@ -64,47 +65,54 @@ func main() {
 type Server struct {
 	sessions *sessions.Manager
 	wsRouter *ws.Router
+	auth     *auth.Middleware
 }
 
 func NewServer(sm *sessions.Manager) *Server {
+	authMiddleware := auth.NewMiddleware()
+	if !authMiddleware.IsEnabled() {
+		log.Println("WARNING: INTERNAL_API_TOKEN not set - authentication is disabled, all requests will be rejected")
+	}
 	return &Server{
 		sessions: sm,
 		wsRouter: ws.NewRouter(sm),
+		auth:     authMiddleware,
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Health check
+	// Health check - unauthenticated (for load balancer probes)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	// All other routes require authentication
 	// Sessions
-	mux.HandleFunc("POST /sessions", s.handleCreateSession)
-	mux.HandleFunc("DELETE /sessions/{sessionId}", s.handleDeleteSession)
+	mux.HandleFunc("POST /sessions", s.auth.RequireAuthFunc(s.handleCreateSession))
+	mux.HandleFunc("DELETE /sessions/{sessionId}", s.auth.RequireAuthFunc(s.handleDeleteSession))
 
 	// PTYs
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.handleListPTYs)
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.handleCreatePTY)
-	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.handleDeletePTY)
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.handleListPTYs))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.handleCreatePTY))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.handleDeletePTY))
 
-	// WebSocket for PTYs
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.wsRouter.HandleWebSocket)
+	// WebSocket for PTYs - auth checked via token, origin validated by upgrader
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.wsRouter.HandleWebSocket))
 
 	// Agent
-	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.handleStartAgent)
-	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.handleGetAgent)
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.handlePauseAgent)
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.handleResumeAgent)
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.handleStopAgent)
-	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.wsRouter.HandleAgentWebSocket)
+	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.handleStartAgent))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.handleGetAgent))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.auth.RequireAuthFunc(s.handlePauseAgent))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.auth.RequireAuthFunc(s.handleResumeAgent))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.auth.RequireAuthFunc(s.handleStopAgent))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.auth.RequireAuthFunc(s.wsRouter.HandleAgentWebSocket))
 
 	// Filesystem
-	mux.HandleFunc("GET /sessions/{sessionId}/files", s.handleListFiles)
-	mux.HandleFunc("GET /sessions/{sessionId}/file", s.handleGetFile)
-	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.handlePutFile)
-	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.handleDeleteFile)
-	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.handleStatFile)
+	mux.HandleFunc("GET /sessions/{sessionId}/files", s.auth.RequireAuthFunc(s.handleListFiles))
+	mux.HandleFunc("GET /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handleGetFile))
+	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handlePutFile))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handleDeleteFile))
+	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.handleStatFile))
 
 	return mux
 }

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/hyper-ai-inc/hyper-backend/internal/pty"
 	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
-	"github.com/gorilla/websocket"
 )
 
 func setupTurnTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, func()) {
@@ -20,6 +20,10 @@ func setupTurnTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, fun
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
+
+	// Ensure auth environment variables are set (may already be set by router_test.go init)
+	os.Setenv("INTERNAL_API_TOKEN", testAPIToken)
+	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 
 	sm := sessions.NewManagerWithWorkspace(dir)
 	router := NewRouter(sm)
@@ -37,7 +41,9 @@ func setupTurnTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, fun
 func dialWithUser(t *testing.T, server *httptest.Server, sessionID, ptyID, userID string) *websocket.Conn {
 	url := "ws" + strings.TrimPrefix(server.URL, "http") +
 		"/sessions/" + sessionID + "/ptys/" + ptyID + "/ws?user_id=" + userID
-	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	headers := http.Header{}
+	headers.Set("Origin", server.URL)
+	conn, _, err := websocket.DefaultDialer.Dial(url, headers)
 	if err != nil {
 		t.Fatalf("failed to connect as %s: %v", userID, err)
 	}

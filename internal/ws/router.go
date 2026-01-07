@@ -3,18 +3,74 @@ package ws
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
-	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
 	"github.com/gorilla/websocket"
+	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
 )
+
+// allowedOrigins returns the list of allowed WebSocket origins from environment
+func allowedOrigins() []string {
+	origins := os.Getenv("ALLOWED_ORIGINS")
+	if origins == "" {
+		return nil
+	}
+	return strings.Split(origins, ",")
+}
+
+// checkOrigin validates the Origin header against allowed origins
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		// No Origin header - reject (browsers always send Origin for cross-origin)
+		return false
+	}
+
+	allowed := allowedOrigins()
+	if len(allowed) == 0 {
+		// No allowed origins configured - reject all (fail secure)
+		return false
+	}
+
+	for _, a := range allowed {
+		a = strings.TrimSpace(a)
+		if a == origin {
+			return true
+		}
+		// Support wildcard for all origins (use with caution, only for dev)
+		if a == "*" {
+			return true
+		}
+		// Support wildcard port matching (e.g., "http://localhost:*")
+		if strings.HasSuffix(a, ":*") {
+			prefix := strings.TrimSuffix(a, "*")
+			if strings.HasPrefix(origin, prefix) {
+				// Check that remainder is a valid port (digits only)
+				remainder := strings.TrimPrefix(origin, prefix)
+				if len(remainder) > 0 && isNumeric(remainder) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isNumeric checks if a string contains only digits
+func isNumeric(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: implement proper origin checking
-		return true
-	},
+	CheckOrigin:     checkOrigin,
 }
 
 // Router handles WebSocket connections to PTYs
