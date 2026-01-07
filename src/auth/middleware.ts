@@ -17,6 +17,12 @@ export async function authenticate(
   request: Request,
   env: Env
 ): Promise<AuthContext> {
+  const devAuthEnabled = env.DEV_AUTH_ENABLED === 'true';
+
+  if (!devAuthEnabled) {
+    return { user: null, isAuthenticated: false };
+  }
+
   // Check for user ID in header (development mode)
   let userId = request.headers.get('X-User-ID');
   let userEmail = request.headers.get('X-User-Email');

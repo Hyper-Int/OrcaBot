@@ -224,6 +224,13 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return sessions.getSession(env, segments[1], auth.user!.id);
   }
 
+  // GET /users/me - Get current user (dev auth bootstrap)
+  if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return Response.json({ user: auth.user });
+  }
+
   // DELETE /sessions/:id - Stop session
   if (segments[0] === 'sessions' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
