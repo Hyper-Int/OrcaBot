@@ -55,7 +55,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
     ptyId: string,
     config: TerminalWSConfig
   ) {
-    const url = `${API.sandbox.ws(sessionId, ptyId)}?user_id=${encodeURIComponent(config.userId)}`;
+    const url = `${API.cloudflare.terminalWs(sessionId, ptyId)}?user_id=${encodeURIComponent(config.userId)}`;
     super(url, config);
 
     this.sessionId = sessionId;

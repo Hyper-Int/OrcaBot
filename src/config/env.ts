@@ -35,6 +35,8 @@ export const API = {
     executions: `${CLOUDFLARE_API_URL}/executions`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
+    terminalWs: (sessionId: string, ptyId: string) =>
+      `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/sessions/${sessionId}/ptys/${ptyId}/ws`,
   },
   sandbox: {
     base: SANDBOX_API_URL,
