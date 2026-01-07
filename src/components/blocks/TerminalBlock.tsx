@@ -52,7 +52,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
   // Use terminal hook for WebSocket connection
   const [terminalState, terminalActions] = useTerminal(
     {
-      sessionId: session?.sandboxSessionId || "",
+      sessionId: session?.id || "",
       ptyId: session?.ptyId || "",
       userId: user?.id || "",
       userName: user?.name || "",
