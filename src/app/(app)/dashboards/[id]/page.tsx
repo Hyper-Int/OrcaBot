@@ -52,7 +52,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
   link: { width: 260, height: 140 },
-  terminal: { width: 600, height: 360 },
+  terminal: { width: 400, height: 280 },
   recipe: { width: 320, height: 200 },
 };
 
