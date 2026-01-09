@@ -67,7 +67,7 @@ func (s *Session) Workspace() *fs.Workspace {
 // CreatePTY creates a new PTY in this session.
 // If creatorID is provided, they are automatically assigned control.
 func (s *Session) CreatePTY(creatorID string) (*PTYInfo, error) {
-	p, err := pty.New("/bin/sh", 80, 24)
+	p, err := pty.New(pty.DefaultShell(), 80, 24)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (s *Session) StartAgent(agentType AgentType) (*agent.Controller, error) {
 		return nil, ErrAgentExists
 	}
 
-	ac, err := agent.NewController(s.ID+"-agent", "/bin/sh", 80, 24)
+	ac, err := agent.NewController(s.ID+"-agent", "", 80, 24)
 	if err != nil {
 		return nil, err
 	}

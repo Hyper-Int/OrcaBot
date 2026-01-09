@@ -36,6 +36,9 @@ type Controller struct {
 
 // NewController creates a new agent controller
 func NewController(id, shell string, cols, rows uint16) (*Controller, error) {
+	if shell == "" {
+		shell = pty.DefaultShell()
+	}
 	p, err := pty.New(shell, cols, rows)
 	if err != nil {
 		return nil, err
