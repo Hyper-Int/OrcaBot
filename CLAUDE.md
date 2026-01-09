@@ -8,7 +8,7 @@ It is responsible for:
 - authentication UI
 - dashboard selection and navigation
 - multiplayer dashboard experience (Figma-like board)
-- terminal rendering (Ghostty-web)
+- terminal rendering (xterm.js)
 - turn-taking and agent interaction UX
 - file explorer UI
 
@@ -107,9 +107,9 @@ All non-terminal blocks represent **structure and intent only**.
 
 ---
 
-## Terminal blocks (Ghostty-web)
+## Terminal blocks (xterm.js)
 
-Terminal rendering uses [Ghostty-web](https://github.com/coder/ghostty-web/) — a WebAssembly port of the Ghostty terminal emulator.
+Terminal rendering uses [xterm.js](https://xtermjs.org/) — a widely used web terminal emulator.
 
 A terminal is a **block on the board**, not a page.
 
@@ -121,7 +121,7 @@ Creating a terminal:
 - Terminal connects via WebSocket
 
 Terminal block UI:
-- Ghostty-web terminal
+- xterm.js terminal
 - Header showing:
   - terminal name
   - controller

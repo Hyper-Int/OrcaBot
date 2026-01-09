@@ -33,6 +33,7 @@ import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration } from "@/hooks/useCollaboration";
 import { getDashboard, createItem, updateItem, deleteItem } from "@/lib/api/cloudflare";
+import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
 
@@ -169,11 +170,66 @@ export default function DashboardPage() {
   const createItemMutation = useMutation({
     mutationFn: (item: Parameters<typeof createItem>[1]) =>
       createItem(dashboardId, item),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
+    onMutate: async (item) => {
+      await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
+      const previous = queryClient.getQueryData<{
+        dashboard: Dashboard;
+        items: DashboardItem[];
+        sessions: Session[];
+        role: string;
+      }>(["dashboard", dashboardId]);
+
+      const now = new Date().toISOString();
+      const tempId = `temp-${generateId()}`;
+      const optimisticItem: DashboardItem = {
+        id: tempId,
+        dashboardId,
+        type: item.type,
+        content: item.content,
+        position: item.position,
+        size: item.size,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            items: [...oldData.items, optimisticItem],
+          };
+        }
+      );
+
+      return { previous, tempId };
+    },
+    onSuccess: (createdItem, _variables, context) => {
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          const hasTemp = context?.tempId
+            ? oldData.items.some((item) => item.id === context.tempId)
+            : false;
+          const nextItems = hasTemp
+            ? oldData.items.map((item) =>
+                item.id === context?.tempId ? createdItem : item
+              )
+            : [...oldData.items, createdItem];
+          return {
+            ...oldData,
+            items: nextItems,
+          };
+        }
+      );
       toast.success("Block added");
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["dashboard", dashboardId], context.previous);
+      }
       toast.error(`Failed to add block: ${error.message}`);
     },
   });
@@ -198,11 +254,35 @@ export default function DashboardPage() {
   // Delete item mutation
   const deleteItemMutation = useMutation({
     mutationFn: (itemId: string) => deleteItem(dashboardId, itemId),
+    onMutate: async (itemId) => {
+      await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
+      const previous = queryClient.getQueryData<{
+        dashboard: Dashboard;
+        items: DashboardItem[];
+        sessions: Session[];
+        role: string;
+      }>(["dashboard", dashboardId]);
+
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            items: oldData.items.filter((item) => item.id !== itemId),
+          };
+        }
+      );
+
+      return { previous };
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
       toast.success("Block deleted");
     },
-    onError: (error) => {
+    onError: (error, _itemId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["dashboard", dashboardId], context.previous);
+      }
       toast.error(`Failed to delete block: ${error.message}`);
     },
   });

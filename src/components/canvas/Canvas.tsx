@@ -23,6 +23,7 @@ import { LinkBlock } from "@/components/blocks/LinkBlock";
 import { TerminalBlock } from "@/components/blocks/TerminalBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import type { DashboardItem, Session } from "@/types/dashboard";
+import type { TerminalHandle } from "@/components/terminal";
 
 // Register custom node types
 const nodeTypes: NodeTypes = {
@@ -37,7 +38,8 @@ const nodeTypes: NodeTypes = {
 function itemsToNodes(
   items: DashboardItem[],
   sessions: Session[],
-  onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void
+  onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void,
+  onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void
 ): Node[] {
   return items.map((item) => {
     // Find active session for terminal items
@@ -57,6 +59,7 @@ function itemsToNodes(
         size: item.size,
         dashboardId: item.dashboardId,
         session, // Pass session to terminal blocks
+        onRegisterTerminal,
         onContentChange: onItemChange
           ? (content: string) => onItemChange(item.id, { content })
           : undefined,
@@ -86,14 +89,39 @@ export function Canvas({
   onItemDelete,
   readOnly = false,
 }: CanvasProps) {
+  const terminalRefs = React.useRef<Map<string, TerminalHandle>>(new Map());
   const [nodes, setNodes, onNodesChange] = useNodesState(
-    itemsToNodes(items, sessions, readOnly ? undefined : onItemChange)
+    itemsToNodes(
+      items,
+      sessions,
+      readOnly ? undefined : onItemChange,
+      (itemId, handle) => {
+        if (handle) {
+          terminalRefs.current.set(itemId, handle);
+        } else {
+          terminalRefs.current.delete(itemId);
+        }
+      }
+    )
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   // Update nodes when items or sessions change from server
   React.useEffect(() => {
-    setNodes(itemsToNodes(items, sessions, readOnly ? undefined : onItemChange));
+    setNodes(
+      itemsToNodes(
+        items,
+        sessions,
+        readOnly ? undefined : onItemChange,
+        (itemId, handle) => {
+          if (handle) {
+            terminalRefs.current.set(itemId, handle);
+          } else {
+            terminalRefs.current.delete(itemId);
+          }
+        }
+      )
+    );
   }, [items, sessions, setNodes, onItemChange, readOnly]);
 
   // Handle node changes - apply locally, sync dimensions on resize end
@@ -117,6 +145,10 @@ export function Canvas({
               },
             });
           }
+
+          if (node?.type === "terminal") {
+            terminalRefs.current.get(node.id)?.fit();
+          }
         }
       });
     },
@@ -128,6 +160,10 @@ export function Canvas({
     (_event, node) => {
       if (onItemChange && node.position) {
         onItemChange(node.id, { position: node.position });
+      }
+
+      if (node.type === "terminal") {
+        terminalRefs.current.get(node.id)?.fit();
       }
     },
     [onItemChange]
@@ -163,6 +199,7 @@ export function Canvas({
         selectionOnDrag
         panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
         selectNodesOnDrag={false}
+        autoPanOnNodeDrag={false}
         className="canvas-flow"
         proOptions={{ hideAttribution: true }}
         nodeDragThreshold={1}

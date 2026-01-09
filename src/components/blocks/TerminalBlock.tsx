@@ -18,8 +18,8 @@ import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { Button, Badge } from "@/components/ui";
 import {
-  GhosttyTerminal,
-  type GhosttyTerminalHandle,
+  Terminal as TerminalEmulator,
+  type TerminalHandle,
 } from "@/components/terminal";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
@@ -32,15 +32,25 @@ interface TerminalData extends Record<string, unknown> {
   dashboardId: string;
   // Session info (can be injected from parent or fetched)
   session?: Session;
+  onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
 
 export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
-  const ghosttyRef = React.useRef<GhosttyTerminalHandle>(null);
+  const terminalRef = React.useRef<TerminalHandle>(null);
+  const fitTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const [terminalName] = React.useState(data.content || "Terminal");
   const { user } = useAuthStore();
   const [isReady, setIsReady] = React.useState(false);
+  const onRegisterTerminal = data.onRegisterTerminal;
+  const setTerminalRef = React.useCallback(
+    (handle: TerminalHandle | null) => {
+      terminalRef.current = handle;
+      onRegisterTerminal?.(id, handle);
+    },
+    [id, onRegisterTerminal]
+  );
 
   // Session state
   const [session, setSession] = React.useState<Session | null>(
@@ -62,7 +72,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
       onData: React.useCallback((dataBytes: Uint8Array) => {
         // Write received data to the terminal
         const text = new TextDecoder().decode(dataBytes);
-        ghosttyRef.current?.write(text);
+        terminalRef.current?.write(text);
       }, []),
     }
   );
@@ -123,7 +133,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     if (isReady && !session && !isCreatingSession && !hasAutoConnectedRef.current && data.dashboardId) {
       hasAutoConnectedRef.current = true;
       // Show connecting message
-      ghosttyRef.current?.write("\x1b[90mConnecting...\x1b[0m\r\n");
+      terminalRef.current?.write("\x1b[90mConnecting...\x1b[0m\r\n");
       // Trigger connect
       handleConnect();
     }
@@ -149,8 +159,8 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
 
       // Clear terminal and show connecting message
       if (isReady) {
-        ghosttyRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
-        ghosttyRef.current?.write(
+        terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+        terminalRef.current?.write(
           "\x1b[32mConnecting to sandbox...\x1b[0m\r\n"
         );
       }
@@ -158,7 +168,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
       const errorMsg = error instanceof Error ? error.message : "Failed to create session";
       setSessionError(errorMsg);
       if (isReady) {
-        ghosttyRef.current?.write(`\x1b[31mError: ${errorMsg}\x1b[0m\r\n`);
+        terminalRef.current?.write(`\x1b[31mError: ${errorMsg}\x1b[0m\r\n`);
       }
     } finally {
       setIsCreatingSession(false);
@@ -168,12 +178,19 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
   // Show connected message when WebSocket connects
   React.useEffect(() => {
     if (isConnected && session && isReady) {
-      ghosttyRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
-      ghosttyRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n");
-      ghosttyRef.current?.write(
+      if (fitTimeoutRef.current) {
+        clearTimeout(fitTimeoutRef.current);
+      }
+      fitTimeoutRef.current = setTimeout(() => {
+        terminalRef.current?.fit();
+      }, 120);
+
+      terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n");
+      terminalRef.current?.write(
         `\x1b[90mSession: ${session.sandboxSessionId}\x1b[0m\r\n`
       );
-      ghosttyRef.current?.write("\r\n");
+      terminalRef.current?.write("\r\n");
 
       // NOTE: Do NOT auto-take control here.
       // Turn-taking requires explicit user action - control must be requested/granted.
@@ -181,10 +198,36 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     }
   }, [isConnected, session, isReady]);
 
+  React.useEffect(() => {
+    if (!session || !terminalRef.current) {
+      return;
+    }
+    if (fitTimeoutRef.current) {
+      clearTimeout(fitTimeoutRef.current);
+    }
+    fitTimeoutRef.current = setTimeout(() => {
+      terminalRef.current?.fit();
+    }, 140);
+  }, [data.size.width, data.size.height, session]);
+
+  React.useEffect(() => {
+    return () => {
+      if (fitTimeoutRef.current) {
+        clearTimeout(fitTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      onRegisterTerminal?.(id, null);
+    };
+  }, [id, onRegisterTerminal]);
+
   // Show error when WebSocket fails
   React.useEffect(() => {
     if (isFailed && isReady) {
-      ghosttyRef.current?.write(
+      terminalRef.current?.write(
         `\x1b[31mConnection failed: ${wsError?.message || "Unable to connect to sandbox"}\x1b[0m\r\n`
       );
     }
@@ -281,10 +324,10 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
         </div>
       </div>
 
-      {/* Terminal body - Ghostty-web */}
-      <div className="relative flex-1 min-h-0" style={{ contain: "strict", overflow: "hidden" }}>
-        <GhosttyTerminal
-          ref={ghosttyRef}
+      {/* Terminal body */}
+      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ contain: "strict", overflow: "hidden" }}>
+        <TerminalEmulator
+          ref={setTerminalRef}
           onData={handleTerminalData}
           onResize={handleTerminalResize}
           onReady={handleTerminalReady}
