@@ -2,6 +2,12 @@ name = "hyper-cloudflare"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
+[vars]
+DEV_AUTH_ENABLED = "true"
+SANDBOX_INTERNAL_TOKEN = "pHkOmsNY17gDHZZ6aie3IXMVgyTDioPSAlmiuHC2hXA="
+INTERNAL_API_TOKEN = "pHkOmsNY17gDHZZ6aie3IXMVgyTDioPSAlmiuHC2hXA="
+SANDBOX_URL = "https://hyper-sandbox.fly.dev/"
+
 # Rate limiting
 [[unsafe.bindings]]
 name = "RATE_LIMITER"
