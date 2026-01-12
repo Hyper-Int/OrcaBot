@@ -34,7 +34,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
