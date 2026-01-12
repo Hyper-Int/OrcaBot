@@ -176,21 +176,35 @@ export function TerminalBlock({
     prevDraggingRef.current = dragging;
   }, [selected, dragging, id, overlay?.bringToFront]);
 
+  const isTempId = id.startsWith("temp-");
+
   // Auto-connect when terminal is ready and no session exists
   const hasAutoConnectedRef = React.useRef(false);
   React.useEffect(() => {
-    if (isReady && !session && !isCreatingSession && !hasAutoConnectedRef.current && data.dashboardId) {
+    if (
+      isReady &&
+      !isTempId &&
+      !session &&
+      !isCreatingSession &&
+      !hasAutoConnectedRef.current &&
+      data.dashboardId
+    ) {
       hasAutoConnectedRef.current = true;
       // Show connecting message
       terminalRef.current?.write("\x1b[90mConnecting...\x1b[0m\r\n");
       // Trigger connect
       handleConnect();
     }
-  }, [isReady, session, isCreatingSession, data.dashboardId]);
+  }, [isReady, isTempId, session, isCreatingSession, data.dashboardId]);
 
   // Create session handler
   const handleConnect = async () => {
     console.log(`[TerminalBlock] handleConnect called - dashboardId: ${data.dashboardId}, itemId: ${id}`);
+
+    if (isTempId) {
+      console.log("[TerminalBlock] Skipping connect for temporary item id.");
+      return;
+    }
 
     if (!data.dashboardId) {
       setSessionError("Dashboard ID not found");
@@ -350,7 +364,7 @@ export function TerminalBlock({
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         <div className="flex items-center gap-1.5">
           <Terminal className="w-3 h-3 text-[var(--foreground-muted)]" />
-          <span className="text-[10px] font-medium text-[var(--foreground)]">
+          <span className="text-[16px] font-medium text-[var(--foreground)]">
             {terminalName}
           </span>
         </div>

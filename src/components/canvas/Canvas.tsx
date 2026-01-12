@@ -216,6 +216,7 @@ export function Canvas({
           }}
           nodeTypes={nodeTypes}
           fitView
+          fitViewOptions={{ maxZoom: 0.75 }}
           snapToGrid
           snapGrid={[16, 16]}
           nodesDraggable={!readOnly}
