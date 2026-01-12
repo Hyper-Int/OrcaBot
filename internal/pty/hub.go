@@ -97,6 +97,7 @@ func (h *Hub) Run() {
 			info, ok := h.clients[client]
 			if ok {
 				delete(h.clients, client)
+				close(client) // Close channel to unblock WritePump
 				// Handle disconnect for turn-taking
 				if info.UserID != "" {
 					h.turn.Disconnect(info.UserID)
