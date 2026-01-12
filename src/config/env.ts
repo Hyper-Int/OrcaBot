@@ -34,6 +34,7 @@ export const API = {
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
     executions: `${CLOUDFLARE_API_URL}/executions`,
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
+    embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

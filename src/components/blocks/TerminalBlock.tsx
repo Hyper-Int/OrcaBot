@@ -35,6 +35,7 @@ interface TerminalData extends Record<string, unknown> {
   // Session info (can be injected from parent or fetched)
   session?: Session;
   onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
@@ -78,8 +79,48 @@ export function TerminalBlock({
   const [session, setSession] = React.useState<Session | null>(
     data.session || null
   );
+
+  const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
+  const outputBufferRef = React.useRef("");
+  const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    createdBrowserUrlsRef.current.clear();
+    outputBufferRef.current = "";
+    if (browserScanTimeoutRef.current) {
+      clearTimeout(browserScanTimeoutRef.current);
+      browserScanTimeoutRef.current = null;
+    }
+  }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
+
+  const maybeCreateBrowserBlock = React.useCallback(
+    (lines: string[]) => {
+      const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
+      for (const line of lines) {
+        const strippedLine = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+        const matches = strippedLine.match(urlRegex);
+        if (!matches || matches.length === 0) {
+          continue;
+        }
+
+        for (const rawUrl of matches) {
+          const cleanedUrl = rawUrl.replace(/[)\],.;]+$/, "");
+          if (createdBrowserUrlsRef.current.has(cleanedUrl)) {
+            continue;
+          }
+          createdBrowserUrlsRef.current.add(cleanedUrl);
+          data.onCreateBrowserBlock?.(cleanedUrl, {
+            x: positionAbsoluteX + (width ?? data.size.width) + 24,
+            y: positionAbsoluteY + 24,
+          });
+          return;
+        }
+      }
+    },
+    [data, positionAbsoluteX, positionAbsoluteY, width]
+  );
 
   // Use terminal hook for WebSocket connection
   const [terminalState, terminalActions] = useTerminal(
@@ -95,7 +136,22 @@ export function TerminalBlock({
         // Write received data to the terminal
         const text = new TextDecoder().decode(dataBytes);
         terminalRef.current?.write(text);
-      }, []),
+        outputBufferRef.current = (outputBufferRef.current + text).slice(-2000);
+
+        if (browserScanTimeoutRef.current) {
+          clearTimeout(browserScanTimeoutRef.current);
+        }
+
+        browserScanTimeoutRef.current = setTimeout(() => {
+          const buffer = outputBufferRef.current;
+          const parts = buffer.split("\n");
+          const pending = parts.pop() ?? "";
+          if (parts.length > 0) {
+            maybeCreateBrowserBlock(parts);
+          }
+          outputBufferRef.current = pending;
+        }, 250);
+      }, [maybeCreateBrowserBlock]),
     }
   );
 

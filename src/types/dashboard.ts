@@ -12,7 +12,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "recipe";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "recipe";
 
 /**
  * Position on the canvas
@@ -87,6 +87,13 @@ export interface TerminalContent {
   name: string;
   sessionId?: string;
   ptyId?: string;
+}
+
+/**
+ * Browser block content
+ */
+export interface BrowserContent {
+  url: string;
 }
 
 /**

@@ -22,6 +22,7 @@ import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
 import { LinkBlock } from "@/components/blocks/LinkBlock";
 import { TerminalBlock } from "@/components/blocks/TerminalBlock";
+import { BrowserBlock } from "@/components/blocks/BrowserBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -33,6 +34,7 @@ const nodeTypes: NodeTypes = {
   todo: TodoBlock,
   link: LinkBlock,
   terminal: TerminalBlock,
+  browser: BrowserBlock,
   recipe: RecipeBlock,
 };
 
@@ -41,7 +43,8 @@ function itemsToNodes(
   items: DashboardItem[],
   sessions: Session[],
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void,
-  onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void
+  onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void,
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void
 ): Node[] {
   return items.map((item) => {
     // Find active session for terminal items
@@ -62,6 +65,10 @@ function itemsToNodes(
         dashboardId: item.dashboardId,
         session, // Pass session to terminal blocks
         onRegisterTerminal,
+        onCreateBrowserBlock,
+        onItemChange: onItemChange
+          ? (changes: Partial<DashboardItem>) => onItemChange(item.id, changes)
+          : undefined,
         onContentChange: onItemChange
           ? (content: string) => onItemChange(item.id, { content })
           : undefined,
@@ -80,6 +87,7 @@ interface CanvasProps {
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void;
   onItemCreate?: (item: Omit<DashboardItem, "id" | "createdAt" | "updatedAt">) => void;
   onItemDelete?: (itemId: string) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void;
   readOnly?: boolean;
 }
 
@@ -89,6 +97,7 @@ export function Canvas({
   onItemChange,
   onItemCreate,
   onItemDelete,
+  onCreateBrowserBlock,
   readOnly = false,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
@@ -107,7 +116,8 @@ export function Canvas({
         } else {
           terminalRefs.current.delete(itemId);
         }
-      }
+      },
+      onCreateBrowserBlock
     )
   );
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -125,10 +135,11 @@ export function Canvas({
           } else {
             terminalRefs.current.delete(itemId);
           }
-        }
+        },
+        onCreateBrowserBlock
       )
     );
-  }, [items, sessions, setNodes, onItemChange, readOnly]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock]);
 
   // Handle node changes - apply locally, sync dimensions on resize end
   const handleNodesChange: OnNodesChange = React.useCallback(

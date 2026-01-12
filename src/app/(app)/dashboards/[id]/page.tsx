@@ -8,6 +8,7 @@ import {
   StickyNote,
   CheckSquare,
   Link2,
+  Globe,
   Terminal,
   Users,
   Settings,
@@ -45,6 +46,7 @@ const blockTools: { type: BlockType; icon: React.ReactNode; label: string }[] = 
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
   { type: "link", icon: <Link2 className="w-4 h-4" />, label: "Link" },
   { type: "terminal", icon: <Terminal className="w-4 h-4" />, label: "Terminal" },
+  { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -54,6 +56,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   todo: { width: 280, height: 160 },
   link: { width: 260, height: 140 },
   terminal: { width: 636, height: 548 },
+  browser: { width: 520, height: 360 },
   recipe: { width: 320, height: 200 },
 };
 
@@ -320,6 +323,22 @@ export default function DashboardPage() {
     });
   };
 
+  const handleCreateBrowserBlock = React.useCallback(
+    (url: string, anchor?: { x: number; y: number }) => {
+      if (!url) return;
+      const position = anchor
+        ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
+        : { x: 140 + Math.random() * 200, y: 140 + Math.random() * 200 };
+      createItemMutation.mutate({
+        type: "browser",
+        content: url,
+        position,
+        size: defaultSizes.browser,
+      });
+    },
+    [createItemMutation]
+  );
+
   // Add link handler
   const handleAddLink = (e: React.FormEvent) => {
     e.preventDefault();
@@ -569,6 +588,7 @@ export default function DashboardPage() {
             sessions={sessions}
             onItemChange={handleItemChange}
             onItemDelete={handleItemDelete}
+            onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
             readOnly={role === "viewer"}
           />
           {/* Remote cursors overlay */}
