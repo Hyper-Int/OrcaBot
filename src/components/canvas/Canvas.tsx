@@ -14,6 +14,7 @@ import {
   type OnNodesChange,
   type OnNodeDrag,
   type NodeChange,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -24,6 +25,7 @@ import { TerminalBlock } from "@/components/blocks/TerminalBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
+import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
 
 // Register custom node types
 const nodeTypes: NodeTypes = {
@@ -89,6 +91,10 @@ export function Canvas({
   onItemDelete,
   readOnly = false,
 }: CanvasProps) {
+  const overlayRef = React.useRef<HTMLDivElement>(null);
+  const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
+  const [viewport, setViewport] = React.useState({ x: 0, y: 0, zoom: 1 });
+  const { zIndexVersion, bringToFront, getZIndex } = useTerminalZIndex();
   const terminalRefs = React.useRef<Map<string, TerminalHandle>>(new Map());
   const [nodes, setNodes, onNodesChange] = useNodesState(
     itemsToNodes(
@@ -179,31 +185,51 @@ export function Canvas({
     [onItemDelete]
   );
 
+  React.useLayoutEffect(() => {
+    if (overlayRef.current) {
+      setOverlayRoot(overlayRef.current);
+    }
+  }, []);
+
+  const handleInit = React.useCallback((instance: ReactFlowInstance) => {
+    setViewport(instance.getViewport());
+  }, []);
+
+  const overlayContextValue = React.useMemo(
+    () => ({ root: overlayRoot, viewport, zIndexVersion, bringToFront, getZIndex }),
+    [overlayRoot, viewport, zIndexVersion, bringToFront, getZIndex]
+  );
+
   return (
-    <div className="w-full h-full bg-[var(--background)]">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={handleNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeDragStop={handleNodeDragStop}
-        onNodesDelete={handleNodesDelete}
-        nodeTypes={nodeTypes}
-        fitView
-        snapToGrid
-        snapGrid={[16, 16]}
-        nodesDraggable={!readOnly}
-        nodesConnectable={false}
-        elementsSelectable={!readOnly}
-        panOnScroll
-        selectionOnDrag
-        panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
-        selectNodesOnDrag={false}
-        autoPanOnNodeDrag={false}
-        className="canvas-flow"
-        proOptions={{ hideAttribution: true }}
-        nodeDragThreshold={1}
-      >
+    <TerminalOverlayProvider value={overlayContextValue}>
+      <div className="w-full h-full bg-[var(--background)] relative">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={handleNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeDragStop={handleNodeDragStop}
+          onNodesDelete={handleNodesDelete}
+          onInit={handleInit}
+          onMove={(_event, nextViewport) => {
+            setViewport(nextViewport);
+          }}
+          nodeTypes={nodeTypes}
+          fitView
+          snapToGrid
+          snapGrid={[16, 16]}
+          nodesDraggable={!readOnly}
+          nodesConnectable={false}
+          elementsSelectable={!readOnly}
+          panOnScroll
+          selectionOnDrag
+          panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
+          selectNodesOnDrag={false}
+          autoPanOnNodeDrag={false}
+          className="canvas-flow"
+          proOptions={{ hideAttribution: true }}
+          nodeDragThreshold={1}
+        >
         {/* Dot grid background */}
         <Background
           variant={BackgroundVariant.Dots}
@@ -242,8 +268,14 @@ export function Canvas({
           maskColor="rgba(0, 0, 0, 0.8)"
           className="canvas-minimap"
         />
-      </ReactFlow>
-    </div>
+        </ReactFlow>
+
+        <div
+          ref={overlayRef}
+          className="absolute inset-0 z-10 pointer-events-none"
+        />
+      </div>
+    </TerminalOverlayProvider>
   );
 }
 

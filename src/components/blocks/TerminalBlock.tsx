@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { type NodeProps, type Node } from "@xyflow/react";
 import {
   Terminal,
@@ -25,6 +26,7 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { createSession } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
+import { useTerminalOverlay } from "@/components/terminal";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -37,9 +39,29 @@ interface TerminalData extends Record<string, unknown> {
 
 type TerminalNode = Node<TerminalData, "terminal">;
 
-export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
+export function TerminalBlock({
+  id,
+  data,
+  selected,
+  dragging,
+  positionAbsoluteX,
+  positionAbsoluteY,
+  width,
+  height,
+}: NodeProps<TerminalNode>) {
+  const baseFontSize = 12;
+  const minFontSize = 8;
+  const maxFontSize = 16;
+  const minCols = 90;
+  const growColsBuffer = 0;
+  const shrinkColsBuffer = 0;
+  const fontCooldownMs = 600;
+  const overlay = useTerminalOverlay();
   const terminalRef = React.useRef<TerminalHandle>(null);
   const fitTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFontChangeRef = React.useRef(0);
+  const [fontSize, setFontSize] = React.useState(baseFontSize);
+  const stableFontRef = React.useRef(baseFontSize);
   const [terminalName] = React.useState(data.content || "Terminal");
   const { user } = useAuthStore();
   const [isReady, setIsReady] = React.useState(false);
@@ -127,6 +149,33 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     setIsReady(true);
   }, []);
 
+  // Calculate position and size for the overlay portal
+  const zoom = overlay?.viewport.zoom ?? 1;
+  const blockWidth = (width ?? data.size.width) * zoom;
+  const blockHeight = (height ?? data.size.height) * zoom;
+  const blockX = positionAbsoluteX * zoom + (overlay?.viewport.x ?? 0);
+  const blockY = positionAbsoluteY * zoom + (overlay?.viewport.y ?? 0);
+
+  // Selected or dragging terminal gets high z-index, others use tracked order
+  const baseZIndex = overlay?.getZIndex(id) ?? 0;
+  const zIndex = selected || dragging ? 9999 : baseZIndex;
+
+  // Track z-order so last-selected/dragged stays on top
+  const prevSelectedRef = React.useRef(false);
+  const prevDraggingRef = React.useRef(false);
+  React.useEffect(() => {
+    // Bring to front when selection or dragging transitions from false to true
+    const shouldBringToFront =
+      (selected && !prevSelectedRef.current) ||
+      (dragging && !prevDraggingRef.current);
+
+    if (shouldBringToFront) {
+      overlay?.bringToFront(id);
+    }
+    prevSelectedRef.current = selected;
+    prevDraggingRef.current = dragging;
+  }, [selected, dragging, id, overlay?.bringToFront]);
+
   // Auto-connect when terminal is ready and no session exists
   const hasAutoConnectedRef = React.useRef(false);
   React.useEffect(() => {
@@ -207,8 +256,27 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     }
     fitTimeoutRef.current = setTimeout(() => {
       terminalRef.current?.fit();
+      const dims = terminalRef.current?.getDimensions();
+      if (!dims) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastFontChangeRef.current < fontCooldownMs) {
+        return;
+      }
+
+      const targetCols = minCols + (dims.cols < minCols ? shrinkColsBuffer : growColsBuffer);
+      const rawTarget = Math.floor((stableFontRef.current * dims.cols) / targetCols);
+      const target = Math.max(minFontSize, Math.min(maxFontSize, rawTarget));
+
+      if (target !== stableFontRef.current) {
+        stableFontRef.current = target;
+        lastFontChangeRef.current = now;
+        setFontSize(target);
+      }
     }, 140);
-  }, [data.size.width, data.size.height, session]);
+  }, [data.size.width, data.size.height, session, blockWidth]);
 
   React.useEffect(() => {
     return () => {
@@ -250,19 +318,36 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
     console.log("Stopping agent...");
   };
 
-  return (
-    <BlockWrapper
-      selected={selected}
-      className="p-0 overflow-hidden flex flex-col"
-      minWidth={300}
-      minHeight={200}
+  // The visible terminal content - rendered in portal when overlay is available
+  //
+  // POINTER EVENTS PATTERN:
+  // The portal wrapper has pointer-events: none so drag events pass through to
+  // the invisible ReactFlow node underneath (which handles drag/resize).
+  //
+  // Interactive elements must explicitly set pointer-events: auto:
+  // - Terminal body (for xterm.js input)
+  // - Buttons (Reconnect, Take Control, agent controls, etc.)
+  //
+  // If you add new clickable elements to header/footer, add: style={{ pointerEvents: "auto" }}
+  //
+  const terminalContent = (
+    <div
+      className={cn(
+        "flex flex-col rounded-[var(--radius-card)]",
+        "bg-[var(--background-elevated)] border border-[var(--border)]",
+        "shadow-sm",
+        selected && "ring-2 ring-[var(--accent-primary)] shadow-lg"
+      )}
       style={{
+        width: "100%",
+        height: "100%",
         borderColor: getBorderColor(),
         borderWidth: "2px",
+        overflow: "hidden",
       }}
     >
-      {/* Header - compact */}
-      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0">
+      {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
+      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         <div className="flex items-center gap-1.5">
           <Terminal className="w-3 h-3 text-[var(--foreground-muted)]" />
           <span className="text-[10px] font-medium text-[var(--foreground)]">
@@ -324,15 +409,15 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
         </div>
       </div>
 
-      {/* Terminal body */}
-      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ contain: "strict", overflow: "hidden" }}>
+      {/* Terminal body - pointerEvents: auto for xterm.js interaction */}
+      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ contain: "strict", overflow: "hidden", pointerEvents: "auto" }}>
         <TerminalEmulator
           ref={setTerminalRef}
           onData={handleTerminalData}
           onResize={handleTerminalResize}
           onReady={handleTerminalReady}
           disabled={!canType}
-          fontSize={9}
+          fontSize={fontSize}
           className="w-full h-full"
         />
 
@@ -353,6 +438,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
                 onClick={handleConnect}
                 isLoading={isCreatingSession}
                 leftIcon={<Plug className="w-4 h-4" />}
+                style={{ pointerEvents: "auto" }}
               >
                 Retry
               </Button>
@@ -387,8 +473,8 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
         )}
       </div>
 
-      {/* Footer controls - compact */}
-      <div className="flex items-center justify-between px-2 py-1 border-t border-[var(--border)] bg-[var(--background)] shrink-0">
+      {/* Footer controls - compact, pointer-events: none to allow drag, buttons get pointer-events: auto */}
+      <div className="flex items-center justify-between px-2 py-1 border-t border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         {/* Control actions */}
         <div>
           {!session && (
@@ -403,6 +489,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
               size="sm"
               onClick={() => terminalActions.reconnect()}
               className="text-[10px] h-5 px-2"
+              style={{ pointerEvents: "auto" }}
             >
               Reconnect
             </Button>
@@ -415,6 +502,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
               onClick={handleRequestControl}
               disabled={turnTaking.hasPendingRequest}
               className="text-[10px] h-5 px-2"
+              style={{ pointerEvents: "auto" }}
             >
               {turnTaking.hasPendingRequest ? "Pending..." : "Take Control"}
             </Button>
@@ -430,7 +518,7 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
 
         {/* Agent controls */}
         {agentState !== "idle" && agentState !== null && (
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" style={{ pointerEvents: "auto" }}>
             {isAgentRunning && (
               <>
                 <Button
@@ -476,7 +564,47 @@ export function TerminalBlock({ id, data, selected }: NodeProps<TerminalNode>) {
           </div>
         )}
       </div>
-    </BlockWrapper>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Invisible placeholder node in ReactFlow for drag/resize handling */}
+      <BlockWrapper
+        selected={selected}
+        className="p-0 overflow-hidden"
+        minWidth={300}
+        minHeight={200}
+        style={{
+          borderColor: "transparent",
+          borderWidth: "2px",
+        }}
+      >
+        {/* Invisible content - same structure for sizing but not rendered visually */}
+        <div style={{ opacity: 0, pointerEvents: "none" }} className="w-full h-full" />
+      </BlockWrapper>
+
+      {/* Portal the entire terminal to overlay for correct z-ordering and no CSS transform issues */}
+      {/* pointerEvents: none on wrapper allows drag events to pass through to ReactFlow node */}
+      {overlay?.root && blockWidth > 0 && blockHeight > 0
+        ? createPortal(
+            <div
+              style={{
+                position: "absolute",
+                left: `${blockX}px`,
+                top: `${blockY}px`,
+                width: `${blockWidth}px`,
+                height: `${blockHeight}px`,
+                zIndex,
+                pointerEvents: "none",
+              }}
+            >
+              {terminalContent}
+            </div>,
+            overlay.root
+          )
+        : terminalContent}
+    </>
   );
 }
 

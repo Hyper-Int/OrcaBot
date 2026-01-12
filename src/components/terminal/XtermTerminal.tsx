@@ -106,7 +106,27 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
         terminalRef.current = null;
         fitAddonRef.current = null;
       };
-    }, [fontSize, theme]);
+    }, [theme]);
+
+    React.useEffect(() => {
+      if (!terminalRef.current) {
+        return;
+      }
+      terminalRef.current.options.fontSize = fontSize;
+      const container = containerRef.current;
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+        return;
+      }
+      try {
+        fitAddonRef.current?.fit();
+        callbacksRef.current.onResize?.(
+          terminalRef.current.cols,
+          terminalRef.current.rows
+        );
+      } catch {
+        // Ignore resize errors during teardown or rapid resizes.
+      }
+    }, [fontSize]);
 
     React.useImperativeHandle(
       ref,
