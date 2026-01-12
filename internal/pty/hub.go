@@ -22,7 +22,7 @@ type ClientInfo struct {
 // ControlEvent represents a turn-taking event to broadcast
 type ControlEvent struct {
 	Type       string   `json:"type"`
-	Controller string   `json:"controller,omitempty"` // user ID for turn-taking events
+	Controller string   `json:"controller,omitempty"`  // user ID for turn-taking events
 	AgentState string   `json:"agent_state,omitempty"` // running|paused|stopped for agent_state events
 	From       string   `json:"from,omitempty"`
 	To         string   `json:"to,omitempty"`
@@ -187,6 +187,7 @@ func (h *Hub) Unregister(client chan HubMessage) {
 		h.mu.Lock()
 		if info, ok := h.clients[client]; ok {
 			delete(h.clients, client)
+			close(client) // Close channel to unblock WritePump
 			if info.UserID != "" {
 				h.turn.Disconnect(info.UserID)
 			}

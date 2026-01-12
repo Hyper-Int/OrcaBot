@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/hyper-ai-inc/hyper-backend/internal/pty"
 	"github.com/gorilla/websocket"
+	"github.com/hyper-ai-inc/hyper-backend/internal/pty"
 )
 
 const (
@@ -21,7 +21,7 @@ type ControlMessage struct {
 	Type   string `json:"type"`
 	Cols   uint16 `json:"cols,omitempty"`
 	Rows   uint16 `json:"rows,omitempty"`
-	To     string `json:"to,omitempty"`     // For grant_control
+	To     string `json:"to,omitempty"`      // For grant_control
 	UserID string `json:"user_id,omitempty"` // For identifying sender
 }
 
@@ -134,6 +134,9 @@ func (c *Client) handleControl(msg ControlMessage) {
 		if c.userID != "" {
 			c.hub.RevokeControl(c.userID)
 		}
+
+	case "ping":
+		// Client keepalive ping - no action needed, presence is sufficient
 
 	default:
 		log.Printf("unknown control message type: %s", msg.Type)
