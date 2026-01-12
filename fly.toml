@@ -24,6 +24,13 @@ primary_region = 'sjc'
     hard_limit = 100
     soft_limit = 80
 
+[[http_service.checks]]
+  interval = "10s"
+  timeout = "2s"
+  grace_period = "5s"
+  method = "GET"
+  path = "/health"
+
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '1gb'
