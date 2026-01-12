@@ -34,11 +34,11 @@ CREATE TABLE IF NOT EXISTS dashboard_members (
   PRIMARY KEY (dashboard_id, user_id)
 );
 
--- Dashboard items (notes, todos, terminal attachments, links)
+-- Dashboard items (notes, todos, terminal attachments, links, browsers)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,

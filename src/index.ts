@@ -25,6 +25,8 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-User-ID, X-User-Email, X-User-Name',
 };
 
+const EMBED_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
+
 function corsResponse(response: Response): Response {
   // Don't wrap WebSocket upgrade responses - they have a special webSocket property
   // that would be lost if we create a new Response
@@ -41,6 +43,90 @@ function corsResponse(response: Response): Response {
     statusText: response.statusText,
     headers: newHeaders,
   });
+}
+
+function isPrivateHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.local')) {
+    return true;
+  }
+
+  if (lower.startsWith('[') && lower.endsWith(']')) {
+    const ipv6 = lower.slice(1, -1);
+    if (ipv6 === '::1') return true;
+    if (ipv6.startsWith('fc') || ipv6.startsWith('fd')) return true; // fc00::/7
+    if (ipv6.startsWith('fe80')) return true; // fe80::/10
+    return false;
+  }
+
+  const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4Match) return false;
+
+  const octets = ipv4Match.slice(1).map((part) => Number(part));
+  if (octets.some((octet) => Number.isNaN(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function parseFrameAncestors(csp: string | null): string[] | null {
+  if (!csp) return null;
+  const directives = csp
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const frameAncestors = directives.find((directive) =>
+    directive.toLowerCase().startsWith('frame-ancestors')
+  );
+  if (!frameAncestors) return null;
+  return frameAncestors.split(/\s+/).slice(1);
+}
+
+function matchSourceExpression(source: string, origin: string): boolean {
+  if (source === '*') return true;
+
+  if (source === "'self'") {
+    return false;
+  }
+
+  if (!source.startsWith('http://') && !source.startsWith('https://')) {
+    return false;
+  }
+
+  if (!source.includes('*')) {
+    return source === origin;
+  }
+
+  const escaped = source.replace(/[-/\\^$+?.()|[\]{}]/g, '\\$&').replace(/\*/g, '.*');
+  const regex = new RegExp(`^${escaped}$`);
+  return regex.test(origin);
+}
+
+function isOriginAllowedByFrameAncestors(
+  sources: string[],
+  origin: string | null,
+  targetOrigin: string
+): boolean {
+  if (sources.includes("'none'")) return false;
+  if (sources.includes('*')) return true;
+
+  if (!origin) {
+    return true;
+  }
+
+  if (sources.includes("'self'")) {
+    return origin === targetOrigin;
+  }
+
+  return sources.some((source) => matchSourceExpression(source, origin));
 }
 
 async function proxySandboxWebSocket(
@@ -128,6 +214,95 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
+
+  // GET /embed-check - Check if a URL can be embedded in an iframe
+  if (segments[0] === 'embed-check' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const targetUrlParam = url.searchParams.get('url');
+    if (!targetUrlParam) {
+      return Response.json({ error: 'Missing url parameter' }, { status: 400 });
+    }
+
+    let targetUrl: URL;
+    try {
+      targetUrl = new URL(targetUrlParam);
+    } catch {
+      return Response.json({ error: 'Invalid url parameter' }, { status: 400 });
+    }
+
+    if (!EMBED_ALLOWED_PROTOCOLS.has(targetUrl.protocol)) {
+      return Response.json({ error: 'Unsupported URL protocol' }, { status: 400 });
+    }
+
+    if (isPrivateHostname(targetUrl.hostname)) {
+      return Response.json({ error: 'URL not allowed' }, { status: 400 });
+    }
+
+    const originParam = url.searchParams.get('origin') || request.headers.get('Origin');
+    let origin: string | null = null;
+    try {
+      if (originParam) {
+        origin = new URL(originParam).origin;
+      }
+    } catch {
+      origin = null;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(targetUrl.toString(), { method: 'HEAD', redirect: 'follow' });
+      if (response.status === 405 || response.status === 501) {
+        response = await fetch(targetUrl.toString(), {
+          method: 'GET',
+          headers: { Range: 'bytes=0-0' },
+          redirect: 'follow',
+        });
+      }
+    } catch (error) {
+      console.warn('Embed check fetch failed:', error);
+      return Response.json({ embeddable: true, reason: 'fetch_failed' });
+    }
+
+    const checkedUrl = response.url || targetUrl.toString();
+    const checkedOrigin = new URL(checkedUrl).origin;
+    const xfo = response.headers.get('x-frame-options');
+    const csp = response.headers.get('content-security-policy');
+
+    let embeddable = true;
+    let reason: string | undefined;
+
+    if (xfo) {
+      const value = xfo.toLowerCase();
+      if (value.includes('deny')) {
+        embeddable = false;
+        reason = 'x_frame_options_deny';
+      } else if (value.includes('sameorigin')) {
+        embeddable = origin === checkedOrigin;
+        reason = embeddable ? undefined : 'x_frame_options_sameorigin';
+      } else if (value.includes('allow-from')) {
+        embeddable = origin ? value.includes(origin) : false;
+        reason = embeddable ? undefined : 'x_frame_options_allow_from';
+      }
+    }
+
+    if (embeddable) {
+      const ancestors = parseFrameAncestors(csp);
+      if (ancestors) {
+        embeddable = isOriginAllowedByFrameAncestors(ancestors, origin, checkedOrigin);
+        if (!embeddable) {
+          reason = 'frame_ancestors';
+        }
+      }
+    }
+
+    return Response.json({
+      embeddable,
+      reason,
+      checkedUrl,
+    });
+  }
 
   // ============================================
   // Dashboard routes
