@@ -14,6 +14,7 @@ import * as sessions from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as integrations from './integrations/handler';
 import { SandboxClient } from './sandbox/client';
 
 // Export Durable Object
@@ -139,6 +140,31 @@ async function proxySandboxWebSocket(
 ): Promise<Response> {
   const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/ptys/${ptyId}/ws`);
   sandboxUrl.searchParams.set('user_id', userId);
+
+  const headers = new Headers(request.headers);
+  headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
+  headers.delete('Host');
+
+  const body = ['POST', 'PUT', 'PATCH'].includes(request.method)
+    ? request.clone().body
+    : undefined;
+  const proxyRequest = new Request(sandboxUrl.toString(), {
+    method: request.method,
+    headers,
+    body,
+    redirect: 'manual',
+  });
+
+  return fetch(proxyRequest);
+}
+
+async function proxySandboxRequest(
+  request: Request,
+  env: Env,
+  path: string
+): Promise<Response> {
+  const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}${path}`);
+  sandboxUrl.search = new URL(request.url).search;
 
   const headers = new Headers(request.headers);
   headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
@@ -393,6 +419,30 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return subagents.listSubagents(env, auth.user!.id);
   }
 
+  // ============================================
+  // Integration routes
+  // ============================================
+
+  // GET /integrations/google/drive/connect
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'connect' && method === 'GET') {
+    return integrations.connectGoogleDrive(request, env, auth);
+  }
+
+  // GET /integrations/google/drive/callback
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'callback' && method === 'GET') {
+    return integrations.callbackGoogleDrive(request, env);
+  }
+
+  // GET /integrations/github/connect
+  if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'connect' && method === 'GET') {
+    return integrations.connectGithub(request, env, auth);
+  }
+
+  // GET /integrations/github/callback
+  if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'callback' && method === 'GET') {
+    return integrations.callbackGithub(request, env);
+  }
+
   // POST /subagents - Create subagent
   if (segments[0] === 'subagents' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
@@ -424,6 +474,50 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return sessions.getSession(env, segments[1], auth.user!.id);
+  }
+
+  // GET /sessions/:id/files - List files in sandbox workspace
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'files' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+
+    if (!session) {
+      return Response.json({ error: 'Session not found or no access' }, { status: 404 });
+    }
+
+    return proxySandboxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/files`
+    );
+  }
+
+  // DELETE /sessions/:id/file - Delete file or directory in sandbox workspace
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+
+    if (!session) {
+      return Response.json({ error: 'Session not found or no access' }, { status: 404 });
+    }
+
+    return proxySandboxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`
+    );
   }
 
   // GET /users/me - Get current user (dev auth bootstrap)

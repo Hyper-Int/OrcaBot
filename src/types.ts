@@ -12,6 +12,11 @@ export interface Env {
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  OAUTH_REDIRECT_BASE?: string;
 }
 
 // User types
@@ -57,6 +62,20 @@ export interface UserSubagent {
   prompt: string;
   tools: string[];
   source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserIntegration {
+  id: string;
+  userId: string;
+  provider: 'google_drive' | 'github';
+  accessToken: string;
+  refreshToken: string | null;
+  scope: string | null;
+  tokenType: string | null;
+  expiresAt: string | null;
+  metadata: string;
   createdAt: string;
   updatedAt: string;
 }

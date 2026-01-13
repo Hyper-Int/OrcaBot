@@ -92,6 +92,34 @@ CREATE TABLE IF NOT EXISTS user_subagents (
 
 CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
 
+-- OAuth state (short-lived)
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_states_user ON oauth_states(user_id);
+
+-- User integrations (OAuth tokens)
+CREATE TABLE IF NOT EXISTS user_integrations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github')),
+  access_token TEXT NOT NULL,
+  refresh_token TEXT,
+  scope TEXT,
+  token_type TEXT,
+  expires_at TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider
+  ON user_integrations(user_id, provider);
+
 -- Recipes (workflow definitions)
 CREATE TABLE IF NOT EXISTS recipes (
   id TEXT PRIMARY KEY,
