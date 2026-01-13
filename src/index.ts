@@ -13,6 +13,7 @@ import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
+import * as subagents from './subagents/handler';
 import { SandboxClient } from './sandbox/client';
 
 // Export Durable Object
@@ -379,6 +380,32 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return dashboards.deleteItem(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // ============================================
+  // Subagent routes
+  // ============================================
+
+  // GET /subagents - List saved subagents
+  if (segments[0] === 'subagents' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return subagents.listSubagents(env, auth.user!.id);
+  }
+
+  // POST /subagents - Create subagent
+  if (segments[0] === 'subagents' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return subagents.createSubagent(env, auth.user!.id, data);
+  }
+
+  // DELETE /subagents/:id - Delete subagent
+  if (segments[0] === 'subagents' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
   }
 
   // ============================================

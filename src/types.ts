@@ -49,6 +49,18 @@ export interface DashboardMember {
   addedAt: string;
 }
 
+export interface UserSubagent {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  prompt: string;
+  tools: string[];
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Session types (maps dashboard terminal items to sandbox sessions)
 export interface Session {
   id: string;

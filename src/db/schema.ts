@@ -77,6 +77,21 @@ CREATE TABLE IF NOT EXISTS agent_profiles (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- User subagents (Claude Code subagent favorites)
+CREATE TABLE IF NOT EXISTS user_subagents (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  tools TEXT NOT NULL DEFAULT '[]',
+  source TEXT NOT NULL DEFAULT 'custom',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
+
 -- Recipes (workflow definitions)
 CREATE TABLE IF NOT EXISTS recipes (
   id TEXT PRIMARY KEY,
