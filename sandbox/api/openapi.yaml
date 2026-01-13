@@ -1,0 +1,735 @@
+openapi: 3.0.3
+info:
+  title: OrcaBot Backend API
+  description: |
+    Backend API for the terminal-first, multiplayer agentic coding platform.
+
+    This API manages:
+    - **Sessions**: Isolated sandbox environments
+    - **PTYs**: Pseudo-terminals within sessions
+    - **Agents**: AI coding agents (Claude Code, Codex CLI)
+    - **Filesystem**: Scoped file operations within /workspace
+
+    ## Multiplayer Model
+    - Sessions are single-tenant sandboxes
+    - PTYs support multiple viewers but only one controller
+    - Turn-taking is enforced via WebSocket control messages
+
+    ## WebSocket Protocol
+    PTY and Agent WebSocket connections use:
+    - **Binary frames**: Raw terminal I/O
+    - **Text frames (JSON)**: Control messages (resize, turn-taking)
+  version: 1.0.0
+  contact:
+    name: OrcaBot
+    url: https://orcabot.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://{sandbox}.fly.dev
+    description: Fly.io sandbox
+    variables:
+      sandbox:
+        default: orcabot-sandbox
+        description: Sandbox machine name
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Sessions
+    description: Session lifecycle management
+  - name: PTYs
+    description: Pseudo-terminal management
+  - name: Agent
+    description: AI agent control
+  - name: Filesystem
+    description: Workspace file operations
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns server health status
+      operationId: getHealth
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /sessions:
+    post:
+      tags: [Sessions]
+      summary: Create a new session
+      description: |
+        Creates a new isolated session with its own workspace directory.
+        Each session can host multiple PTYs and one agent.
+      operationId: createSession
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}:
+    delete:
+      tags: [Sessions]
+      summary: Delete a session
+      description: |
+        Deletes a session and all associated resources:
+        - All PTYs are closed
+        - Agent is stopped
+        - Workspace directory is removed
+      operationId: deleteSession
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '204':
+          description: Session deleted
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/ptys:
+    get:
+      tags: [PTYs]
+      summary: List PTYs in a session
+      description: Returns all PTYs associated with the session
+      operationId: listPTYs
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: List of PTYs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PTYListResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags: [PTYs]
+      summary: Create a new PTY
+      description: |
+        Creates a new pseudo-terminal in the session.
+        The PTY runs /bin/sh with default dimensions 80x24.
+      operationId: createPTY
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '201':
+          description: PTY created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PTYResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to create PTY
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/ptys/{ptyId}:
+    delete:
+      tags: [PTYs]
+      summary: Delete a PTY
+      description: |
+        Deletes a PTY with guaranteed cleanup:
+        1. Process is killed (SIGKILL)
+        2. Hub is stopped
+        3. All WebSocket client channels are closed
+        4. Clients receive channel close notification
+      operationId: deletePTY
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - $ref: '#/components/parameters/ptyId'
+      responses:
+        '204':
+          description: PTY deleted
+        '404':
+          description: Session or PTY not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/ptys/{ptyId}/ws:
+    get:
+      tags: [PTYs]
+      summary: Connect to PTY via WebSocket
+      description: |
+        Upgrades to WebSocket connection for terminal I/O.
+
+        ## Message Types
+
+        ### Binary Messages
+        - **Input** (client → server): Raw terminal input (only accepted from controller)
+        - **Output** (server → client): Raw terminal output (broadcast to all)
+
+        ### Text Messages (JSON)
+
+        **Control messages from client:**
+        ```json
+        {"type": "resize", "cols": 120, "rows": 40}
+        {"type": "take_control"}
+        {"type": "request_control"}
+        {"type": "grant_control", "to": "user_id"}
+        {"type": "revoke_control"}
+        ```
+
+        **Events from server:**
+        ```json
+        {"type": "control_state", "controller": "user_id", "requests": ["user2"]}
+        {"type": "control_taken", "controller": "user_id"}
+        {"type": "control_requested", "from": "user_id", "requests": ["user2"]}
+        {"type": "control_granted", "controller": "user_id", "from": "prev_user"}
+        {"type": "control_revoked", "from": "user_id"}
+        {"type": "agent_state", "agent_state": "running|paused|stopped"}
+        ```
+
+        ## Turn-Taking Semantics
+
+        - **take_control**: Takes control if no one has it (first come, first served)
+        - **request_control**: Requests control from current controller (queued)
+        - **grant_control**: Controller grants to a requester (only controller can grant)
+        - **revoke_control**: Controller releases control voluntarily
+        - **Disconnect grace**: Controller has 10s grace period on disconnect to reconnect
+        - **Input filtering**: Only controller's binary input reaches the PTY
+      operationId: connectPTY
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - $ref: '#/components/parameters/ptyId'
+        - name: user_id
+          in: query
+          description: User ID for turn-taking
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Switching protocols to WebSocket
+        '404':
+          description: Session or PTY not found
+
+  /sessions/{sessionId}/agent:
+    post:
+      tags: [Agent]
+      summary: Start the agent
+      description: |
+        Starts an AI coding agent in the session.
+        Only one agent can run per session.
+      operationId: startAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '201':
+          description: Agent started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Agent already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [Agent]
+      summary: Get agent status
+      description: Returns the current agent state
+      operationId: getAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Agent status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '404':
+          description: Session or agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/agent/pause:
+    post:
+      tags: [Agent]
+      summary: Pause the agent
+      description: Pauses the agent using SIGSTOP
+      operationId: pauseAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Agent paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStateResponse'
+        '404':
+          description: Session or agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/agent/resume:
+    post:
+      tags: [Agent]
+      summary: Resume the agent
+      description: Resumes a paused agent using SIGCONT
+      operationId: resumeAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '200':
+          description: Agent resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStateResponse'
+        '404':
+          description: Session or agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/agent/stop:
+    post:
+      tags: [Agent]
+      summary: Stop the agent
+      description: |
+        Stops the agent gracefully:
+        1. SIGINT (x3, 500ms apart)
+        2. SIGTERM (after 1s)
+        3. SIGKILL (after 2s)
+      operationId: stopAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+      responses:
+        '204':
+          description: Agent stopped
+        '404':
+          description: Session or agent not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/agent/ws:
+    get:
+      tags: [Agent]
+      summary: Connect to agent via WebSocket
+      description: |
+        WebSocket connection for agent terminal I/O.
+        Same protocol as PTY WebSocket.
+
+        ## Soft Lock (Input Control)
+
+        The agent uses a "soft lock" model for input control:
+
+        - **Agent running**: Human input is blocked at the backend
+          - Binary messages from humans are silently dropped
+          - UI should show "Agent is running" indicator
+          - UI should disable typing to prevent confusion
+
+        - **Agent paused**: Humans can take control
+          - Normal turn-taking rules apply
+          - Humans can send input to the paused shell
+          - Useful for debugging or manual intervention
+
+        - **Agent resumed**: Human input blocked again
+          - Control returns to agent automatically
+
+        **Why soft lock?**
+        - Prevents byte-level interleaving of human and agent input
+        - Commands cannot corrupt each other
+        - Backend is the final authority (even if UI allows typing)
+
+        **Events:**
+        - `{"type": "agent_state", "agent_state": "running"}` - Agent active, input blocked
+        - `{"type": "agent_state", "agent_state": "paused"}` - Agent paused, humans can type
+        - `{"type": "agent_state", "agent_state": "stopped"}` - Agent terminated
+      operationId: connectAgent
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: user_id
+          in: query
+          description: User ID for turn-taking
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Switching protocols to WebSocket
+        '404':
+          description: Session or agent not found
+
+  /sessions/{sessionId}/files:
+    get:
+      tags: [Filesystem]
+      summary: List files in directory
+      description: |
+        Lists files and directories at the specified path.
+        Defaults to root (/) if path not specified.
+      operationId: listFiles
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: path
+          in: query
+          description: Directory path (default "/")
+          schema:
+            type: string
+            default: /
+      responses:
+        '200':
+          description: File listing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileListResponse'
+        '400':
+          description: Path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session or path not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/file:
+    get:
+      tags: [Filesystem]
+      summary: Read file contents
+      description: Returns the raw contents of a file
+      operationId: getFile
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: path
+          in: query
+          required: true
+          description: File path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File contents
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Path required or path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session or file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags: [Filesystem]
+      summary: Write file contents
+      description: |
+        Writes content to a file.
+        Creates parent directories automatically.
+      operationId: putFile
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: path
+          in: query
+          required: true
+          description: File path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: File written
+        '400':
+          description: Path required or path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags: [Filesystem]
+      summary: Delete file or directory
+      description: Deletes a file or directory (recursively)
+      operationId: deleteFile
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: path
+          in: query
+          required: true
+          description: File or directory path
+          schema:
+            type: string
+      responses:
+        '204':
+          description: File deleted
+        '400':
+          description: Path required or path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session or file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /sessions/{sessionId}/file/stat:
+    get:
+      tags: [Filesystem]
+      summary: Get file information
+      description: Returns metadata about a file or directory
+      operationId: statFile
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: path
+          in: query
+          required: true
+          description: File path
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileInfo'
+        '400':
+          description: Path required or path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session or file not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      description: Session UUID
+      schema:
+        type: string
+        format: uuid
+
+    ptyId:
+      name: ptyId
+      in: path
+      required: true
+      description: PTY UUID
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: session not found
+
+    SessionResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    PTYResponse:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440001
+
+    PTYListResponse:
+      type: object
+      required: [ptys]
+      properties:
+        ptys:
+          type: array
+          items:
+            $ref: '#/components/schemas/PTYResponse'
+
+    AgentResponse:
+      type: object
+      required: [id, state]
+      properties:
+        id:
+          type: string
+          example: session-id-agent
+        state:
+          type: string
+          enum: [running, paused, stopped]
+          example: running
+
+    AgentStateResponse:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [running, paused, stopped]
+          example: paused
+
+    FileInfo:
+      type: object
+      required: [name, path, size, is_dir, mod_time, mode]
+      properties:
+        name:
+          type: string
+          description: File name
+          example: README.md
+        path:
+          type: string
+          description: Relative path from workspace root
+          example: /docs/README.md
+        size:
+          type: integer
+          format: int64
+          description: File size in bytes
+          example: 1024
+        is_dir:
+          type: boolean
+          description: True if this is a directory
+          example: false
+        mod_time:
+          type: string
+          format: date-time
+          description: Last modification time
+          example: "2024-01-15T10:30:00Z"
+        mode:
+          type: string
+          description: File permissions
+          example: "-rw-r--r--"
+
+    FileListResponse:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileInfo'
+
+    ControlMessage:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [resize, take_control, request_control, grant_control, revoke_control]
+        cols:
+          type: integer
+          description: Terminal columns (for resize)
+        rows:
+          type: integer
+          description: Terminal rows (for resize)
+        to:
+          type: string
+          description: Target user ID (for grant_control)
+
+    ControlEvent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [control_state, control_taken, control_requested, control_granted, control_revoked, agent_state]
+        controller:
+          type: string
+          description: Current controller user ID (for turn-taking events)
+        agent_state:
+          type: string
+          enum: [running, paused, stopped]
+          description: Agent state (for agent_state events only)
+        from:
+          type: string
+          description: User ID who triggered the event
