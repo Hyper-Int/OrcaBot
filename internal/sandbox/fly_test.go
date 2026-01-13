@@ -214,9 +214,9 @@ func TestFlyLauncherWaitTimeout(t *testing.T) {
 
 func TestMachineSpecApplySize(t *testing.T) {
 	tests := []struct {
-		size     MachineSize
-		wantCPU  int
-		wantMem  int
+		size    MachineSize
+		wantCPU int
+		wantMem int
 	}{
 		{SizeSmall, 1, 256},
 		{SizeMedium, 2, 512},
