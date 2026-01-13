@@ -14,6 +14,7 @@ import {
   Plug,
   Loader2,
   AlertCircle,
+  PanelLeft,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -26,7 +27,8 @@ import {
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { createSession } from "@/lib/api/cloudflare";
-import { createSubagent, deleteSubagent, listSubagents, type UserSubagent } from "@/lib/api/cloudflare";
+import { createSubagent, deleteSubagent, listSubagents, listSessionFiles, deleteSessionFile, type UserSubagent, type SessionFileEntry } from "@/lib/api/cloudflare";
+import { API } from "@/config/env";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
@@ -122,6 +124,11 @@ export function TerminalBlock({
   const [activeSubagentTab, setActiveSubagentTab] = React.useState<"saved" | "browse">("saved");
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
   const [showAttachedList, setShowAttachedList] = React.useState(false);
+  const [showWorkspace, setShowWorkspace] = React.useState(true);
+  const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set(["/"]));
+  const [fileEntries, setFileEntries] = React.useState<Record<string, SessionFileEntry[]>>({});
+  const [fileLoading, setFileLoading] = React.useState<Record<string, boolean>>({});
+  const [fileError, setFileError] = React.useState<string | null>(null);
   const onRegisterTerminal = data.onRegisterTerminal;
   const setTerminalRef = React.useCallback(
     (handle: TerminalHandle | null) => {
@@ -139,6 +146,7 @@ export function TerminalBlock({
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
   const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileRefreshTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
 
   React.useEffect(() => {
@@ -148,8 +156,17 @@ export function TerminalBlock({
       clearTimeout(browserScanTimeoutRef.current);
       browserScanTimeoutRef.current = null;
     }
+    if (fileRefreshTimeoutRef.current) {
+      clearTimeout(fileRefreshTimeoutRef.current);
+      fileRefreshTimeoutRef.current = null;
+    }
     setIsClaudeSession(false);
     setShowSubagents(false);
+    setShowWorkspace(true);
+    setExpandedPaths(new Set(["/"]));
+    setFileEntries({});
+    setFileLoading({});
+    setFileError(null);
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
@@ -190,6 +207,21 @@ export function TerminalBlock({
     savedSubagents.forEach((item) => map.set(item.id, item));
     return map;
   }, [savedSubagents]);
+
+  const openIntegration = React.useCallback(
+    (provider: "google-drive" | "github") => {
+      if (!user) return;
+      const path = provider === "google-drive"
+        ? "/integrations/google/drive/connect"
+        : "/integrations/github/connect";
+      const url = new URL(`${API.cloudflare.baseUrl}${path}`);
+      url.searchParams.set("user_id", user.id);
+      url.searchParams.set("user_email", user.email);
+      url.searchParams.set("user_name", user.name);
+      window.open(url.toString(), "_blank", "noopener,noreferrer");
+    },
+    [user]
+  );
 
   const handleSaveSubagent = React.useCallback(
     (item: SubagentCatalogItem) => {
@@ -265,6 +297,121 @@ export function TerminalBlock({
     }));
   }, []);
 
+  const loadFiles = React.useCallback(
+    async (path: string) => {
+      if (!session?.id) return;
+      setFileLoading((prev) => ({ ...prev, [path]: true }));
+      try {
+        const entries = await listSessionFiles(session.id, path);
+        entries.sort((a, b) => {
+          if (a.is_dir && !b.is_dir) return -1;
+          if (!a.is_dir && b.is_dir) return 1;
+          return a.name.localeCompare(b.name);
+        });
+        setFileEntries((prev) => ({ ...prev, [path]: entries }));
+        setFileError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load files";
+        setFileError(message);
+      } finally {
+        setFileLoading((prev) => ({ ...prev, [path]: false }));
+      }
+    },
+    [session?.id]
+  );
+
+  React.useEffect(() => {
+    if (session?.id) {
+      loadFiles("/");
+    }
+  }, [session?.id, loadFiles]);
+
+  const togglePath = React.useCallback(
+    (path: string) => {
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+          if (!fileEntries[path]) {
+            loadFiles(path);
+          }
+        }
+        return next;
+      });
+    },
+    [fileEntries, loadFiles]
+  );
+
+  const handleDeletePath = React.useCallback(
+    async (path: string, parentPath: string) => {
+      if (!session?.id) return;
+      try {
+        await deleteSessionFile(session.id, path);
+        loadFiles(parentPath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to delete";
+        setFileError(message);
+      }
+    },
+    [loadFiles, session?.id]
+  );
+
+  const renderFileTree = React.useCallback(
+    (path: string, depth = 0) => {
+      const entries = fileEntries[path] || [];
+      return entries.map((entry) => {
+        const isExpanded = expandedPaths.has(entry.path);
+        const isDir = entry.is_dir;
+        return (
+          <div key={entry.path}>
+            <div
+              className="flex items-center justify-between gap-2 px-2 py-1 text-[11px] hover:bg-[var(--background-elevated)] rounded"
+              style={{ paddingLeft: `${depth * 10 + 8}px` }}
+            >
+              <div className="flex items-center gap-1 min-w-0">
+                {isDir ? (
+                  <button
+                    type="button"
+                    onClick={() => togglePath(entry.path)}
+                    className="text-[10px] text-[var(--foreground-muted)] nodrag"
+                    aria-label={isExpanded ? "Collapse folder" : "Expand folder"}
+                  >
+                    {isExpanded ? "▾" : "▸"}
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-[var(--foreground-subtle)]">—</span>
+                )}
+                <span className="truncate text-[var(--foreground)]">{entry.name}</span>
+              </div>
+              {!isDir && (
+                <button
+                  type="button"
+                  onClick={() => handleDeletePath(entry.path, path)}
+                  className="text-[10px] text-[var(--status-error)] hover:text-[var(--status-error)] nodrag"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+            {isDir && isExpanded && (
+              <div>
+                {renderFileTree(entry.path, depth + 1)}
+              </div>
+            )}
+          </div>
+        );
+      });
+    },
+    [expandedPaths, fileEntries, fileLoading, handleDeletePath, togglePath]
+  );
+
+  const refreshVisiblePaths = React.useCallback(() => {
+    const paths = Array.from(expandedPaths);
+    paths.forEach((path) => loadFiles(path));
+  }, [expandedPaths, loadFiles]);
+
   const maybeCreateBrowserBlock = React.useCallback(
     (lines: string[]) => {
       const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
@@ -324,7 +471,14 @@ export function TerminalBlock({
           }
           outputBufferRef.current = pending;
         }, 250);
-      }, [isClaudeSession, maybeCreateBrowserBlock]),
+
+        if (fileRefreshTimeoutRef.current) {
+          clearTimeout(fileRefreshTimeoutRef.current);
+        }
+        fileRefreshTimeoutRef.current = setTimeout(() => {
+          refreshVisiblePaths();
+        }, 600);
+      }, [isClaudeSession, maybeCreateBrowserBlock, refreshVisiblePaths]),
     }
   );
 
@@ -646,9 +800,6 @@ export function TerminalBlock({
               <div className="max-h-56 overflow-auto px-2 pb-2 text-xs">
                 {activeSubagentTab === "saved" ? (
                   <div className="space-y-2">
-                    {subagentsQuery.isLoading && (
-                      <div className="text-[var(--foreground-muted)]">Loading...</div>
-                    )}
                     {!subagentsQuery.isLoading && savedSubagents.length === 0 && (
                       <div className="text-[var(--foreground-muted)]">
                         No saved subagents yet.
@@ -797,6 +948,16 @@ export function TerminalBlock({
         </div>
 
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowWorkspace((prev) => !prev)}
+            className="text-[10px] h-5 px-2"
+            style={{ pointerEvents: "auto" }}
+            title={showWorkspace ? "Hide workspace" : "Show workspace"}
+          >
+            <PanelLeft className="w-3 h-3" />
+          </Button>
           {/* Connection status */}
           {session && (
             <Badge
@@ -851,16 +1012,72 @@ export function TerminalBlock({
       </div>
 
       {/* Terminal body - pointerEvents: auto for xterm.js interaction */}
-      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ contain: "strict", overflow: "hidden", pointerEvents: "auto" }}>
-        <TerminalEmulator
-          ref={setTerminalRef}
-          onData={handleTerminalData}
-          onResize={handleTerminalResize}
-          onReady={handleTerminalReady}
-          disabled={!canType}
-          fontSize={fontSize}
-          className="w-full h-full"
-        />
+      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ overflow: "visible", pointerEvents: "auto" }}>
+        {showWorkspace ? (
+          <div className="absolute inset-y-0 right-full mr-2 w-56 border border-[var(--border)] bg-white dark:bg-[var(--background-elevated)] text-xs overflow-hidden nodrag shadow-md flex flex-col">
+            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)] border-b border-[var(--border)] flex items-center justify-between">
+              <span>Workspace</span>
+              <button
+                type="button"
+                onClick={() => setShowWorkspace(false)}
+                className="text-[10px] text-[var(--foreground-muted)]"
+                title="Collapse workspace"
+              >
+                ▸
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-white dark:bg-[var(--background)]">
+              {fileError && (
+                <div className="px-2 py-1 text-[10px] text-[var(--status-error)]">
+                  {fileError}
+                </div>
+              )}
+              {renderFileTree("/", 0)}
+            </div>
+            <div className="border-t border-[var(--border)] bg-white dark:bg-[var(--background-elevated)] px-2 py-2 flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => openIntegration("google-drive")}
+                disabled={!user}
+                className="w-full text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] hover:bg-[var(--background-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                title={user ? "Connect Google Drive" : "Sign in to connect Google Drive"}
+              >
+                Add Google Drive
+              </button>
+              <button
+                type="button"
+                onClick={() => openIntegration("github")}
+                disabled={!user}
+                className="w-full text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] hover:bg-[var(--background-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                title={user ? "Connect GitHub" : "Sign in to connect GitHub"}
+              >
+                Add GitHub Repo
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="absolute inset-y-0 right-full mr-2 w-3 border border-[var(--border)] bg-[var(--background-elevated)] flex items-center justify-center nodrag shadow-sm">
+            <button
+              type="button"
+              onClick={() => setShowWorkspace(true)}
+              className="text-[10px] text-[var(--foreground-muted)]"
+              title="Show workspace"
+            >
+              ▸
+            </button>
+          </div>
+        )}
+        <div className="h-full w-full bg-[#0a0a0b]" style={{ contain: "layout" }}>
+          <TerminalEmulator
+            ref={setTerminalRef}
+            onData={handleTerminalData}
+            onResize={handleTerminalResize}
+            onReady={handleTerminalReady}
+            disabled={!canType}
+            fontSize={fontSize}
+            className="w-full h-full"
+          />
+        </div>
 
         {/* Error overlay - only show if session creation failed */}
         {!session && sessionError && (
