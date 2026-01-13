@@ -1,0 +1,27 @@
+# Claude Code
+.claude/
+claude.log
+
+# Talkito
+.talkito.env
+
+# OS files
+.DS_Store
+
+# Build artifacts
+bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
