@@ -38,6 +38,7 @@ function isValidUrl(value: string): boolean {
 export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
   const [draftUrl, setDraftUrl] = React.useState(data.content || "");
   const [isEmbeddable, setIsEmbeddable] = React.useState(true);
+  const lastEmbeddableRef = React.useRef<boolean | null>(null);
 
   React.useEffect(() => {
     setDraftUrl(data.content || "");
@@ -60,6 +61,7 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
 
     if (!validUrl) {
       setIsEmbeddable(true);
+      lastEmbeddableRef.current = true;
       return;
     }
 
@@ -68,26 +70,25 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
         if (cancelled) return;
         const embeddable = result.embeddable;
         setIsEmbeddable(embeddable);
-        const targetSize = embeddable
-          ? { width: 520, height: 360 }
-          : { width: 250, height: 130 };
-        if (
-          data.size.width !== targetSize.width ||
-          data.size.height !== targetSize.height
-        ) {
+        if (lastEmbeddableRef.current !== embeddable) {
+          const targetSize = embeddable
+            ? { width: 520, height: 360 }
+            : { width: 250, height: 130 };
           data.onItemChange?.({ size: targetSize });
         }
+        lastEmbeddableRef.current = embeddable;
       })
       .catch(() => {
         if (!cancelled) {
           setIsEmbeddable(true);
+          lastEmbeddableRef.current = true;
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [validUrl, url, data.size.width, data.size.height, data.onItemChange]);
+  }, [validUrl, url, data.onItemChange]);
 
   const handleOpen = () => {
     if (validUrl) {

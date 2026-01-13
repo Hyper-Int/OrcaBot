@@ -15,6 +15,7 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { Button, Badge } from "@/components/ui";
@@ -25,8 +26,10 @@ import {
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { createSession } from "@/lib/api/cloudflare";
+import { createSubagent, deleteSubagent, listSubagents, type UserSubagent } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
+import subagentCatalog from "@/data/claude-subagents.json";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -35,10 +38,53 @@ interface TerminalData extends Record<string, unknown> {
   // Session info (can be injected from parent or fetched)
   session?: Session;
   onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void;
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void;
+  onItemChange?: (changes: Partial<{ content: string }>) => void;
+  onCreateBrowserBlock?: (
+    url: string,
+    anchor?: { x: number; y: number },
+    sourceId?: string
+  ) => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
+
+type SubagentCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  tools?: string[];
+  prompt: string;
+  sourcePath?: string;
+};
+
+type SubagentCatalogCategory = {
+  id: string;
+  title: string;
+  items: SubagentCatalogItem[];
+};
+
+type TerminalContentState = {
+  name: string;
+  subagentIds: string[];
+};
+
+function parseTerminalContent(content: string | null | undefined): TerminalContentState {
+  if (content) {
+    try {
+      const parsed = JSON.parse(content) as Partial<TerminalContentState & { subagents?: string[] }>;
+      const name = typeof parsed.name === "string" ? parsed.name : content;
+      const subagentIds = Array.isArray(parsed.subagentIds)
+        ? parsed.subagentIds
+        : Array.isArray(parsed.subagents)
+          ? parsed.subagents
+          : [];
+      return { name, subagentIds };
+    } catch {
+      return { name: content, subagentIds: [] };
+    }
+  }
+  return { name: "Terminal", subagentIds: [] };
+}
 
 export function TerminalBlock({
   id,
@@ -63,9 +109,19 @@ export function TerminalBlock({
   const lastFontChangeRef = React.useRef(0);
   const [fontSize, setFontSize] = React.useState(baseFontSize);
   const stableFontRef = React.useRef(baseFontSize);
-  const [terminalName] = React.useState(data.content || "Terminal");
+  const terminalMeta = React.useMemo(
+    () => parseTerminalContent(data.content),
+    [data.content]
+  );
+  const terminalName = terminalMeta.name;
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
   const [isReady, setIsReady] = React.useState(false);
+  const [isClaudeSession, setIsClaudeSession] = React.useState(false);
+  const [showSubagents, setShowSubagents] = React.useState(false);
+  const [activeSubagentTab, setActiveSubagentTab] = React.useState<"saved" | "browse">("saved");
+  const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
+  const [showAttachedList, setShowAttachedList] = React.useState(false);
   const onRegisterTerminal = data.onRegisterTerminal;
   const setTerminalRef = React.useCallback(
     (handle: TerminalHandle | null) => {
@@ -83,6 +139,7 @@ export function TerminalBlock({
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
   const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
 
   React.useEffect(() => {
     createdBrowserUrlsRef.current.clear();
@@ -91,9 +148,122 @@ export function TerminalBlock({
       clearTimeout(browserScanTimeoutRef.current);
       browserScanTimeoutRef.current = null;
     }
+    setIsClaudeSession(false);
+    setShowSubagents(false);
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
+
+  const subagentsQuery = useQuery({
+    queryKey: ["subagents"],
+    queryFn: () => listSubagents(),
+    enabled: showSubagents,
+    staleTime: 60000,
+  });
+
+  const createSubagentMutation = useMutation({
+    mutationFn: createSubagent,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["subagents"] });
+    },
+  });
+
+  const deleteSubagentMutation = useMutation({
+    mutationFn: deleteSubagent,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["subagents"] });
+    },
+  });
+
+  const savedSubagents = subagentsQuery.data || [];
+  const savedNames = React.useMemo(
+    () => new Set(savedSubagents.map((item) => item.name)),
+    [savedSubagents]
+  );
+  const savedByName = React.useMemo(() => {
+    const map = new Map<string, UserSubagent>();
+    savedSubagents.forEach((item) => map.set(item.name, item));
+    return map;
+  }, [savedSubagents]);
+  const savedById = React.useMemo(() => {
+    const map = new Map<string, UserSubagent>();
+    savedSubagents.forEach((item) => map.set(item.id, item));
+    return map;
+  }, [savedSubagents]);
+
+  const handleSaveSubagent = React.useCallback(
+    (item: SubagentCatalogItem) => {
+      if (savedNames.has(item.name)) return;
+      createSubagentMutation.mutate({
+        name: item.name,
+        description: item.description,
+        prompt: item.prompt,
+        tools: item.tools || [],
+        source: "catalog",
+      });
+    },
+    [createSubagentMutation, savedNames]
+  );
+
+  const handleAttachSubagent = React.useCallback(
+    (subagentId: string) => {
+      if (!data.onItemChange) return;
+      if (terminalMeta.subagentIds.includes(subagentId)) return;
+      const nextIds = [...terminalMeta.subagentIds, subagentId];
+      data.onItemChange({
+        content: JSON.stringify({ name: terminalMeta.name, subagentIds: nextIds }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleDetachSubagent = React.useCallback(
+    (subagentId: string) => {
+      if (!data.onItemChange) return;
+      const nextIds = terminalMeta.subagentIds.filter((id) => id !== subagentId);
+      data.onItemChange({
+        content: JSON.stringify({ name: terminalMeta.name, subagentIds: nextIds }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleUseSavedSubagent = React.useCallback(
+    (item: UserSubagent) => {
+      handleAttachSubagent(item.id);
+    },
+    [handleAttachSubagent]
+  );
+
+  const handleUseBrowseSubagent = React.useCallback(
+    async (item: SubagentCatalogItem) => {
+      const existing = savedByName.get(item.name);
+      if (existing) {
+        handleAttachSubagent(existing.id);
+        return;
+      }
+      const created = await createSubagentMutation.mutateAsync({
+        name: item.name,
+        description: item.description,
+        prompt: item.prompt,
+        tools: item.tools || [],
+        source: "catalog",
+      });
+      handleAttachSubagent(created.id);
+    },
+    [createSubagentMutation, handleAttachSubagent, savedByName]
+  );
+
+  const attachedNames = React.useMemo(() => {
+    return terminalMeta.subagentIds.map((id) => savedById.get(id)?.name || "Unknown");
+  }, [terminalMeta.subagentIds, savedById]);
+
+  const toggleCategory = React.useCallback((categoryId: string) => {
+    setExpandedCategories((prev) => ({
+      ...prev,
+      [categoryId]: !prev[categoryId],
+    }));
+  }, []);
 
   const maybeCreateBrowserBlock = React.useCallback(
     (lines: string[]) => {
@@ -114,7 +284,7 @@ export function TerminalBlock({
           data.onCreateBrowserBlock?.(cleanedUrl, {
             x: positionAbsoluteX + (width ?? data.size.width) + 24,
             y: positionAbsoluteY + 24,
-          });
+          }, id);
           return;
         }
       }
@@ -137,6 +307,9 @@ export function TerminalBlock({
         const text = new TextDecoder().decode(dataBytes);
         terminalRef.current?.write(text);
         outputBufferRef.current = (outputBufferRef.current + text).slice(-2000);
+        if (!isClaudeSession && /Claude Code v/i.test(outputBufferRef.current)) {
+          setIsClaudeSession(true);
+        }
 
         if (browserScanTimeoutRef.current) {
           clearTimeout(browserScanTimeoutRef.current);
@@ -151,7 +324,7 @@ export function TerminalBlock({
           }
           outputBufferRef.current = pending;
         }, 250);
-      }, [maybeCreateBrowserBlock]),
+      }, [isClaudeSession, maybeCreateBrowserBlock]),
     }
   );
 
@@ -163,6 +336,7 @@ export function TerminalBlock({
   const isFailed = connectionState === "failed";
   const isAgentRunning = agentState === "running";
   const canType = turnTaking.isController && !isAgentRunning && isConnected;
+  const canInsertPrompt = canType;
 
   // Border color based on state
   const getBorderColor = () => {
@@ -403,7 +577,7 @@ export function TerminalBlock({
   const terminalContent = (
     <div
       className={cn(
-        "flex flex-col rounded-[var(--radius-card)]",
+        "relative flex flex-col rounded-[var(--radius-card)]",
         "bg-[var(--background-elevated)] border border-[var(--border)]",
         "shadow-sm",
         selected && "ring-2 ring-[var(--accent-primary)] shadow-lg"
@@ -413,9 +587,206 @@ export function TerminalBlock({
         height: "100%",
         borderColor: getBorderColor(),
         borderWidth: "2px",
-        overflow: "hidden",
+        overflow: "visible",
       }}
     >
+      {isClaudeSession && (showAttachedList || showSubagents) && (
+        <div
+          className="absolute left-0 right-0 bottom-full mb-2 flex flex-col gap-2"
+          style={{ pointerEvents: "auto" }}
+        >
+          {showAttachedList && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+              <div className="px-2 py-2 text-xs space-y-1">
+                {attachedNames.length === 0 && (
+                  <div className="text-[var(--foreground-muted)]">No subagents attached.</div>
+                )}
+                {terminalMeta.subagentIds.map((id) => (
+                  <div
+                    key={id}
+                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                  >
+                    <span className="text-[var(--foreground)]">
+                      {savedById.get(id)?.name || "Unknown"}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDetachSubagent(id)}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Detach
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {showSubagents && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+              <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border)]">
+                <Button
+                  variant={activeSubagentTab === "saved" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveSubagentTab("saved")}
+                  className="text-[10px] h-5 px-2 nodrag"
+                >
+                  Saved
+                </Button>
+                <Button
+                  variant={activeSubagentTab === "browse" ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveSubagentTab("browse")}
+                  className="text-[10px] h-5 px-2 nodrag"
+                >
+                  Browse
+                </Button>
+              </div>
+              <div className="max-h-56 overflow-auto px-2 pb-2 text-xs">
+                {activeSubagentTab === "saved" ? (
+                  <div className="space-y-2">
+                    {subagentsQuery.isLoading && (
+                      <div className="text-[var(--foreground-muted)]">Loading...</div>
+                    )}
+                    {!subagentsQuery.isLoading && savedSubagents.length === 0 && (
+                      <div className="text-[var(--foreground-muted)]">
+                        No saved subagents yet.
+                      </div>
+                    )}
+                    {savedSubagents.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                      >
+                        <div>
+                          <div className="font-medium text-[var(--foreground)]">
+                            {item.name}
+                          </div>
+                          {item.description && (
+                            <div className="text-[10px] text-[var(--foreground-muted)]">
+                              {item.description}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleUseSavedSubagent(item)}
+                            className="text-[10px] h-5 px-2 nodrag"
+                          >
+                            Attach
+                          </Button>
+                          {terminalMeta.subagentIds.includes(item.id) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDetachSubagent(item.id)}
+                              className="text-[10px] h-5 px-2 nodrag"
+                            >
+                              Detach
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {catalog.categories.map((category) => (
+                      <div key={category.id} className="rounded border border-[var(--border)]">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(category.id)}
+                          className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[var(--foreground)] bg-[var(--background)] nodrag"
+                        >
+                          <span>{category.title}</span>
+                          <span className="text-[10px] text-[var(--foreground-muted)]">
+                            {expandedCategories[category.id] ? "Hide" : "Show"}
+                          </span>
+                        </button>
+                        {expandedCategories[category.id] && (
+                          <div className="p-2 space-y-2">
+                            {category.items.map((item) => (
+                              <div
+                                key={item.id}
+                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                              >
+                                <div>
+                                  <div className="font-medium text-[var(--foreground)]">
+                                    {item.name}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--foreground-muted)]">
+                                    {item.description}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => handleUseBrowseSubagent(item)}
+                                    className="text-[10px] h-5 px-2 nodrag"
+                                  >
+                                    Attach
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleSaveSubagent(item)}
+                                    disabled={savedNames.has(item.name)}
+                                    className="text-[10px] h-5 px-2 nodrag"
+                                  >
+                                    {savedNames.has(item.name) ? "Saved" : "Save"}
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isClaudeSession && (
+        <div
+          className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] text-xs"
+          style={{ pointerEvents: "none" }}
+        >
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+            <span>Claude Code</span>
+            <button
+              type="button"
+              onClick={() => setShowAttachedList((prev) => !prev)}
+              className="flex items-center gap-1 text-[10px] font-medium text-[var(--foreground)] nodrag"
+              style={{ pointerEvents: "auto" }}
+            >
+              <span className="truncate max-w-[180px]">
+                {attachedNames.length > 0 ? attachedNames.join(" · ") : "No subagents"}
+              </span>
+              <span className="text-[10px] text-[var(--foreground-muted)]">
+                ({attachedNames.length})
+              </span>
+            </button>
+          </div>
+          <Button
+            variant={showSubagents ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setShowSubagents((prev) => !prev)}
+            className="text-[10px] h-5 px-2"
+            style={{ pointerEvents: "auto" }}
+          >
+            Subagents
+          </Button>
+        </div>
+      )}
+
       {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         <div className="flex items-center gap-1.5">

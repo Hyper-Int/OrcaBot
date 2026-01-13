@@ -11,6 +11,8 @@ import {
   BackgroundVariant,
   type NodeTypes,
   type Node,
+  type Edge,
+  type EdgeChange,
   type OnNodesChange,
   type OnNodeDrag,
   type NodeChange,
@@ -44,7 +46,11 @@ function itemsToNodes(
   sessions: Session[],
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void,
   onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void,
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void
+  onCreateBrowserBlock?: (
+    url: string,
+    anchor?: { x: number; y: number },
+    sourceId?: string
+  ) => void
 ): Node[] {
   return items.map((item) => {
     // Find active session for terminal items
@@ -87,7 +93,9 @@ interface CanvasProps {
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void;
   onItemCreate?: (item: Omit<DashboardItem, "id" | "createdAt" | "updatedAt">) => void;
   onItemDelete?: (itemId: string) => void;
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  edges?: Edge[];
+  onEdgesChange?: (changes: EdgeChange[]) => void;
   readOnly?: boolean;
 }
 
@@ -98,6 +106,8 @@ export function Canvas({
   onItemCreate,
   onItemDelete,
   onCreateBrowserBlock,
+  edges: controlledEdges,
+  onEdgesChange: onEdgesChangeProp,
   readOnly = false,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
@@ -120,7 +130,9 @@ export function Canvas({
       onCreateBrowserBlock
     )
   );
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, , onEdgesChange] = useEdgesState([]);
+  const edgesToRender = controlledEdges ?? edges;
+  const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
 
   // Update nodes when items or sessions change from server
   React.useEffect(() => {
@@ -216,9 +228,9 @@ export function Canvas({
       <div className="w-full h-full bg-[var(--background)] relative">
         <ReactFlow
           nodes={nodes}
-          edges={edges}
+          edges={edgesToRender}
           onNodesChange={handleNodesChange}
-          onEdgesChange={onEdgesChange}
+          onEdgesChange={edgesChangeHandler}
           onNodeDragStop={handleNodeDragStop}
           onNodesDelete={handleNodesDelete}
           onInit={handleInit}

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { type Edge, useEdgesState } from "@xyflow/react";
 import {
   ArrowLeft,
   StickyNote,
@@ -87,6 +88,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const dashboardId = params.id as string;
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const { user, isAuthenticated } = useAuthStore();
 
@@ -171,7 +173,11 @@ export default function DashboardPage() {
 
   // Create item mutation
   const createItemMutation = useMutation({
-    mutationFn: (item: Parameters<typeof createItem>[1]) =>
+    mutationFn: ({
+      clientTempId: _clientTempId,
+      sourceId: _sourceId,
+      ...item
+    }: Parameters<typeof createItem>[1] & { clientTempId?: string; sourceId?: string }) =>
       createItem(dashboardId, item),
     onMutate: async (item) => {
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
@@ -183,7 +189,7 @@ export default function DashboardPage() {
       }>(["dashboard", dashboardId]);
 
       const now = new Date().toISOString();
-      const tempId = `temp-${generateId()}`;
+      const tempId = item.clientTempId || `temp-${generateId()}`;
       const optimisticItem: DashboardItem = {
         id: tempId,
         dashboardId,
@@ -206,7 +212,25 @@ export default function DashboardPage() {
         }
       );
 
-      return { previous, tempId };
+      if (item.sourceId) {
+        const edgeId = `edge-${item.sourceId}-${tempId}`;
+        setEdges((prev) => {
+          if (prev.some((edge) => edge.id === edgeId)) return prev;
+          return [
+            ...prev,
+            {
+              id: edgeId,
+              source: item.sourceId as string,
+              target: tempId,
+              type: "smoothstep",
+              animated: true,
+              style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+            },
+          ];
+        });
+      }
+
+      return { previous, tempId, sourceId: item.sourceId };
     },
     onSuccess: (createdItem, _variables, context) => {
       queryClient.setQueryData(
@@ -227,11 +251,36 @@ export default function DashboardPage() {
           };
         }
       );
+      if (context?.sourceId) {
+        setEdges((prev) => {
+          const next = prev.filter(
+            (edge) =>
+              !(edge.source === context.sourceId && edge.target === context.tempId)
+          );
+          next.push({
+            id: `edge-${context.sourceId}-${createdItem.id}`,
+            source: context.sourceId,
+            target: createdItem.id,
+            type: "smoothstep",
+            animated: true,
+            style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+          });
+          return next;
+        });
+      }
       toast.success("Block added");
     },
     onError: (error, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
+      }
+      if (context?.sourceId) {
+        setEdges((prev) =>
+          prev.filter(
+            (edge) =>
+              !(edge.source === context.sourceId && edge.target === context.tempId)
+          )
+        );
       }
       toast.error(`Failed to add block: ${error.message}`);
     },
@@ -265,6 +314,7 @@ export default function DashboardPage() {
         sessions: Session[];
         role: string;
       }>(["dashboard", dashboardId]);
+      const previousEdges = edges;
 
       queryClient.setQueryData(
         ["dashboard", dashboardId],
@@ -277,7 +327,11 @@ export default function DashboardPage() {
         }
       );
 
-      return { previous };
+      setEdges((prev) =>
+        prev.filter((edge) => edge.source !== itemId && edge.target !== itemId)
+      );
+
+      return { previous, previousEdges };
     },
     onSuccess: () => {
       toast.success("Block deleted");
@@ -285,6 +339,9 @@ export default function DashboardPage() {
     onError: (error, _itemId, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
+      }
+      if (context?.previousEdges) {
+        setEdges(context.previousEdges);
       }
       toast.error(`Failed to delete block: ${error.message}`);
     },
@@ -324,7 +381,7 @@ export default function DashboardPage() {
   };
 
   const handleCreateBrowserBlock = React.useCallback(
-    (url: string, anchor?: { x: number; y: number }) => {
+    (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
       if (!url) return;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
@@ -334,6 +391,7 @@ export default function DashboardPage() {
         content: url,
         position,
         size: defaultSizes.browser,
+        sourceId,
       });
     },
     [createItemMutation]
@@ -390,6 +448,10 @@ export default function DashboardPage() {
     // Find items that actually changed (new or updated) by comparing with previous state
     const prevItems = prevCollabItemsRef.current;
     const currentItems = collabState.items;
+    const currentItemIds = new Set(currentItems.map((item) => item.id));
+    const removedItemIds = prevItems
+      .filter((item) => !currentItemIds.has(item.id))
+      .map((item) => item.id);
 
     const changedItemIds = new Set<string>();
     for (const item of currentItems) {
@@ -402,6 +464,16 @@ export default function DashboardPage() {
 
     // Update ref for next comparison
     prevCollabItemsRef.current = currentItems;
+
+    if (removedItemIds.length > 0) {
+      setEdges((prev) =>
+        prev.filter(
+          (edge) =>
+            !removedItemIds.includes(edge.source) &&
+            !removedItemIds.includes(edge.target)
+        )
+      );
+    }
 
     // Only invalidate if changed items are from remote users (not in our pending set)
     if (changedItemIds.size > 0) {
@@ -417,7 +489,7 @@ export default function DashboardPage() {
     if (collabState.sessions.length > 0) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
     }
-  }, [collabState.items, collabState.sessions, queryClient, dashboardId]);
+  }, [collabState.items, collabState.sessions, queryClient, dashboardId, setEdges]);
 
   // Item delete handler
   const handleItemDelete = (itemId: string) => {
@@ -588,6 +660,8 @@ export default function DashboardPage() {
             sessions={sessions}
             onItemChange={handleItemChange}
             onItemDelete={handleItemDelete}
+            edges={edges}
+            onEdgesChange={onEdgesChange}
             onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
             readOnly={role === "viewer"}
           />
