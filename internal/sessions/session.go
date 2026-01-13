@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	ErrPTYNotFound   = errors.New("pty not found")
-	ErrAgentExists   = errors.New("agent already exists")
-	ErrNoAgent       = errors.New("no agent in session")
+	ErrPTYNotFound = errors.New("pty not found")
+	ErrAgentExists = errors.New("agent already exists")
+	ErrNoAgent     = errors.New("no agent in session")
 )
 
 // AgentType represents the type of coding agent

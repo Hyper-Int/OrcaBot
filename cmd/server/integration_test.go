@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/hyper-ai-inc/hyper-backend/internal/sessions"
 	"github.com/hyper-ai-inc/hyper-backend/internal/ws"
-	"github.com/gorilla/websocket"
 )
 
 const testAPIToken = "test-api-token-12345"

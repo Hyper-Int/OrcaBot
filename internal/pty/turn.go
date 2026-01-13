@@ -11,10 +11,10 @@ const DefaultGracePeriod = 10 * time.Second
 type TurnController struct {
 	mu sync.RWMutex
 
-	controller   string            // Current controller user ID
-	disconnected map[string]bool   // Users currently disconnected
+	controller   string                 // Current controller user ID
+	disconnected map[string]bool        // Users currently disconnected
 	graceTimers  map[string]*time.Timer // Grace period timers
-	requests     []string          // Pending control requests (ordered)
+	requests     []string               // Pending control requests (ordered)
 	gracePeriod  time.Duration
 	onExpire     func(userID string) // Callback when grace period expires
 }
