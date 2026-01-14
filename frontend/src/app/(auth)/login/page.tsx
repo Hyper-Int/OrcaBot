@@ -74,7 +74,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-display text-[var(--foreground)] mb-2">OrcaBot</h1>
           <p className="text-body text-[var(--foreground-muted)]">
-            Terminal-first, multiplayer agentic coding
+            Agentic AI Coding Agent Orchestration on the Web
           </p>
         </div>
 

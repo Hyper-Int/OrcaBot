@@ -18,7 +18,7 @@ test.describe("Authentication", () => {
     // Check for branding
     await expect(page.getByText("OrcaBot")).toBeVisible();
     await expect(
-      page.getByText("Terminal-first, multiplayer agentic coding")
+      page.getByText("Agentic AI Coding Agent Orchestration on the Web")
     ).toBeVisible();
 
     // Check for login options

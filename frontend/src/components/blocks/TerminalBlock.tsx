@@ -489,7 +489,8 @@ export function TerminalBlock({
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
   const isFailed = connectionState === "failed";
   const isAgentRunning = agentState === "running";
-  const canType = turnTaking.isController && !isAgentRunning && isConnected;
+  const isOwner = !!session && user?.id === session.ownerUserId;
+  const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
 
   // Border color based on state
@@ -701,6 +702,7 @@ export function TerminalBlock({
 
   // Control handlers
   const handleRequestControl = () => {
+    if (!isOwner) return;
     terminalActions.requestControl();
   };
 
@@ -1117,14 +1119,16 @@ export function TerminalBlock({
         )}
 
         {/* Input blocked overlay (when connected but can't type) */}
-        {session && isConnected && !canType && (
+        {session && isConnected && !canType && isOwner && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-[var(--background-elevated)] px-4 py-2 rounded-lg border border-[var(--border)] flex items-center gap-2">
               <Lock className="w-4 h-4 text-[var(--foreground-muted)]" />
               <span className="text-sm text-[var(--foreground-muted)]">
                 {isAgentRunning
                   ? "Agent is running"
-                  : "Click below to request control"}
+                  : isOwner
+                    ? "Click below to request control"
+                    : "View-only session"}
               </span>
             </div>
           </div>
@@ -1153,7 +1157,7 @@ export function TerminalBlock({
             </Button>
           )}
 
-          {session && isConnected && !turnTaking.isController && !isAgentRunning && (
+          {session && isConnected && !turnTaking.isController && !isAgentRunning && isOwner && (
             <Button
               variant="secondary"
               size="sm"
@@ -1174,53 +1178,61 @@ export function TerminalBlock({
           )}
         </div>
 
-        {/* Agent controls */}
-        {agentState !== "idle" && agentState !== null && (
-          <div className="flex items-center gap-1" style={{ pointerEvents: "auto" }}>
-            {isAgentRunning && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handlePauseAgent}
-                  title="Pause agent"
-                  className="h-5 w-5"
-                >
-                  <Pause className="w-3 h-3" />
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleStopAgent}
-                  className="text-[10px] h-5 px-2"
-                >
-                  Stop
-                </Button>
-              </>
-            )}
-            {agentState === "paused" && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleResumeAgent}
-                  title="Resume agent"
-                  className="h-5 w-5"
-                >
-                  <Play className="w-3 h-3" />
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleStopAgent}
-                  className="text-[10px] h-5 px-2"
-                >
-                  Stop
-                </Button>
-              </>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-subtle)]">
+          {session && (
+            <div>
+              Owner: {session.ownerName || "—"}
+            </div>
+          )}
+
+          {/* Agent controls */}
+          {agentState !== "idle" && agentState !== null && (
+            <div className="flex items-center gap-1" style={{ pointerEvents: "auto" }}>
+              {isAgentRunning && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={handlePauseAgent}
+                    title="Pause agent"
+                    className="h-5 w-5"
+                  >
+                    <Pause className="w-3 h-3" />
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleStopAgent}
+                    className="text-[10px] h-5 px-2"
+                  >
+                    Stop
+                  </Button>
+                </>
+              )}
+              {agentState === "paused" && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={handleResumeAgent}
+                    title="Resume agent"
+                    className="h-5 w-5"
+                  >
+                    <Play className="w-3 h-3" />
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleStopAgent}
+                    className="text-[10px] h-5 px-2"
+                  >
+                    Stop
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

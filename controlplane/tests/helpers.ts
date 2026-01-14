@@ -25,7 +25,9 @@ export async function createTestContext(): Promise<TestContext> {
     DASHBOARD: new MockDurableObjectNamespace(DashboardDO) as unknown as DurableObjectNamespace,
     SANDBOX_URL: 'http://localhost:8080',
     INTERNAL_API_TOKEN: 'test-internal-token',
+    SANDBOX_INTERNAL_TOKEN: 'test-sandbox-token',
     RATE_LIMITER: { limit: async () => ({ success: true }) },
+    DEV_AUTH_ENABLED: 'true',
   };
 
   return {
@@ -115,19 +117,27 @@ export async function seedSession(
   db: MockD1Database,
   dashboardId: string,
   itemId: string,
-  data: { id?: string; sandboxSessionId?: string; status?: string } = {}
+  data: {
+    id?: string;
+    sandboxSessionId?: string;
+    status?: string;
+    ownerUserId?: string;
+    ownerName?: string;
+  } = {}
 ) {
   const id = data.id || `session-${Date.now()}`;
   const sandboxSessionId = data.sandboxSessionId || `sandbox-${Date.now()}`;
   const status = data.status || 'active';
+  const ownerUserId = data.ownerUserId || 'owner-1';
+  const ownerName = data.ownerName || 'Owner';
   const now = new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, sandbox_session_id, status, region, created_at)
-    VALUES (?, ?, ?, ?, ?, 'local', ?)
-  `).bind(id, dashboardId, itemId, sandboxSessionId, status, now).run();
+    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, status, region, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'local', ?)
+  `).bind(id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, status, now).run();
 
-  return { id, dashboardId, itemId, sandboxSessionId, status };
+  return { id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, status };
 }
 
 export async function seedRecipe(

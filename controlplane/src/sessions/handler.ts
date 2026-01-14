@@ -17,7 +17,8 @@ export async function createSession(
   env: Env,
   dashboardId: string,
   itemId: string,
-  userId: string
+  userId: string,
+  userName: string
 ): Promise<Response> {
   // Check access
   const access = await env.DB.prepare(`
@@ -49,6 +50,8 @@ export async function createSession(
         id: existingSession.id,
         dashboardId: existingSession.dashboard_id,
         itemId: existingSession.item_id,
+        ownerUserId: existingSession.owner_user_id,
+        ownerName: existingSession.owner_name,
         sandboxSessionId: existingSession.sandbox_session_id,
         ptyId: existingSession.pty_id,
         status: existingSession.status,
@@ -64,9 +67,9 @@ export async function createSession(
 
   // Create session record first
   await env.DB.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, sandbox_session_id, pty_id, status, region, created_at)
-    VALUES (?, ?, ?, '', '', 'creating', 'local', ?)
-  `).bind(id, dashboardId, itemId, now).run();
+    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, pty_id, status, region, created_at)
+    VALUES (?, ?, ?, ?, ?, '', '', 'creating', 'local', ?)
+  `).bind(id, dashboardId, itemId, userId, userName, now).run();
 
   // Create sandbox session and PTY
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
@@ -87,6 +90,8 @@ export async function createSession(
       id,
       dashboardId,
       itemId,
+      ownerUserId: userId,
+      ownerName: userName,
       sandboxSessionId: sandboxSession.id,
       ptyId: pty.id,
       status: 'active',
@@ -137,6 +142,8 @@ export async function getSession(
       id: session.id,
       dashboardId: session.dashboard_id,
       itemId: session.item_id,
+      ownerUserId: session.owner_user_id,
+      ownerName: session.owner_name,
       sandboxSessionId: session.sandbox_session_id,
       ptyId: session.pty_id,
       status: session.status,
@@ -184,6 +191,8 @@ export async function stopSession(
     id: session.id as string,
     dashboardId: session.dashboard_id as string,
     itemId: session.item_id as string,
+    ownerUserId: session.owner_user_id as string,
+    ownerName: session.owner_name as string,
     sandboxSessionId: session.sandbox_session_id as string,
     ptyId: session.pty_id as string,
     status: 'stopped',

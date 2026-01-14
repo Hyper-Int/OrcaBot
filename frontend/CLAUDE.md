@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository implements the **frontend experience layer** for a terminal-first, multiplayer agentic coding platform.
+This repository implements the **frontend experience layer** for a Agentic AI Coding Agent Orchestration figma like dashboard on the Web.
 
 It is responsible for:
 - authentication UI

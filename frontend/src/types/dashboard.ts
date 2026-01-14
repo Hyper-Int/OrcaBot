@@ -162,6 +162,8 @@ export interface Session {
   id: string;
   dashboardId: string;
   itemId: string;
+  ownerUserId: string;
+  ownerName: string;
   sandboxSessionId: string;
   ptyId: string; // PTY ID in the sandbox
   status: "creating" | "active" | "stopped" | "error";
