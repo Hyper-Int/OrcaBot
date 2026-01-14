@@ -11,9 +11,9 @@
 
   /* Foreground/text colors */
   --foreground: #111827;
-  --foreground-muted: #4b5563;
-  --foreground-subtle: #6b7280;
-  --foreground-disabled: #9ca3af;
+  --foreground-muted: #374151;
+  --foreground-subtle: #4b5563;
+  --foreground-disabled: #6b7280;
 
   /* Border colors */
   --border: #e5e7eb;

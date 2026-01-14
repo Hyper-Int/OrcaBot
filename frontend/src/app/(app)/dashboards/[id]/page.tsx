@@ -561,72 +561,75 @@ export default function DashboardPage() {
   return (
     <div className="h-screen flex flex-col bg-[var(--background)]">
       {/* Header */}
-      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
-        {/* Back button */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => router.push("/dashboards")}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
+      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full">
+          <div className="flex items-center gap-2">
+            <img
+              src="/orca.png"
+              alt="Orcabot"
+              className="w-6 h-6 object-contain"
+            />
+            <span className="text-sm font-medium text-[var(--foreground)]">
+              Orca Bot
+            </span>
+          </div>
 
-        {/* Dashboard name */}
-        <h1 className="text-sm font-medium text-[var(--foreground)] truncate">
-          {dashboard.name}
-        </h1>
-
-        {/* Role badge */}
-        {role !== "owner" && (
-          <span className="text-xs text-[var(--foreground-subtle)] px-2 py-0.5 bg-[var(--background)] rounded">
-            {role}
-          </span>
-        )}
-
-        <div className="flex-1" />
-
-        {/* Presence indicators */}
-        <div className="flex items-center gap-2">
-          <Tooltip
-            content={
-              isCollaborationConnected
-                ? `${presenceUsers.length} online`
-                : "Connecting..."
-            }
-          >
-            <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
-              <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
-              <span className="text-xs text-[var(--foreground-muted)]">
-                {presenceUsers.length}
+          <div className="flex items-center gap-2 justify-center min-w-0">
+            <h1 className="text-sm font-medium text-[var(--foreground)] truncate max-w-[40vw] text-center">
+              {dashboard.name}
+            </h1>
+            {role !== "owner" && (
+              <span className="text-xs text-[var(--foreground-subtle)] px-2 py-0.5 bg-[var(--background)] rounded">
+                {role}
               </span>
-              {/* Connection status dot */}
-              <div
-                className={`w-2 h-2 rounded-full ${
-                  isCollaborationConnected
-                    ? "bg-[var(--status-success)]"
-                    : "bg-[var(--status-warning)] animate-pulse"
-                }`}
-              />
-            </div>
-          </Tooltip>
-          <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
-        </div>
+            )}
+          </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-1">
-          <Tooltip content="Share">
-            <Button variant="ghost" size="icon-sm">
-              <Share2 className="w-4 h-4" />
-            </Button>
-          </Tooltip>
-          <Tooltip content="Toggle theme">
-            <ThemeToggle />
-          </Tooltip>
-          <Tooltip content="Settings">
-            <Button variant="ghost" size="icon-sm">
-              <Settings className="w-4 h-4" />
-            </Button>
-          </Tooltip>
+          <div className="flex items-center gap-3 justify-end">
+            {/* Presence indicators */}
+            <div className="flex items-center gap-2">
+              <Tooltip
+                content={
+                  isCollaborationConnected
+                    ? `${presenceUsers.length} online`
+                    : "Connecting..."
+                }
+              >
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
+                  <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+                  <span className="text-xs text-[var(--foreground-muted)]">
+                    {presenceUsers.length}
+                  </span>
+                  {/* Connection status dot */}
+                  <div
+                    className={`w-2 h-2 rounded-full ${
+                      isCollaborationConnected
+                        ? "bg-[var(--status-success)]"
+                        : "bg-[var(--status-warning)] animate-pulse"
+                    }`}
+                  />
+                </div>
+              </Tooltip>
+              <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1">
+              <Tooltip content="Share">
+                <Button variant="ghost" size="icon-sm">
+                  <Share2 className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Toggle theme">
+                <ThemeToggle />
+              </Tooltip>
+              <Tooltip content="Settings">
+                <Button variant="ghost" size="icon-sm">
+                  <Settings className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -634,6 +637,16 @@ export default function DashboardPage() {
       <div className="flex-1 flex">
         {/* Toolbar */}
         <aside className="w-12 border-r border-[var(--border)] bg-[var(--background-elevated)] flex flex-col items-center py-3 gap-1">
+          <Tooltip content="Back to dashboards" side="right">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => router.push("/dashboards")}
+              className="mb-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+          </Tooltip>
           {blockTools.map((tool) => (
             <Tooltip key={tool.type} content={tool.label} side="right">
               <Button

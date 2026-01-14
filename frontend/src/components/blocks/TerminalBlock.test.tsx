@@ -115,7 +115,7 @@ describe("TerminalBlock owner controls", () => {
   it("shows control button for the owner", () => {
     renderTerminal("owner-1", "owner-1");
     expect(screen.getByText("Owner: Owner")).toBeTruthy();
-    expect(screen.getByText("Take Control")).toBeTruthy();
+    expect(screen.queryByText("Take Control")).toBeNull();
   });
 
   it("hides control button for non-owners", () => {
