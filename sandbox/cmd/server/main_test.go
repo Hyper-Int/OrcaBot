@@ -203,7 +203,7 @@ func TestDeletePTY(t *testing.T) {
 	server := NewServer(sm)
 
 	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("")
+	pty, _ := session.CreatePTY("", "")
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID+"/ptys/"+pty.ID, nil)
 	setAuthHeader(req)

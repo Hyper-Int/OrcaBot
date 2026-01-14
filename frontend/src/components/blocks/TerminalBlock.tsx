@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { type NodeProps, type Node } from "@xyflow/react";
+import { type NodeProps, type Node, Handle, Position } from "@xyflow/react";
 import {
   Terminal,
   User,
@@ -14,7 +14,6 @@ import {
   Plug,
   Loader2,
   AlertCircle,
-  PanelLeft,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -26,9 +25,9 @@ import {
 } from "@/components/terminal";
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
+import { useThemeStore } from "@/stores/theme-store";
 import { createSession } from "@/lib/api/cloudflare";
-import { createSubagent, deleteSubagent, listSubagents, listSessionFiles, deleteSessionFile, type UserSubagent, type SessionFileEntry } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { createSubagent, deleteSubagent, listSubagents, type UserSubagent } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
@@ -68,6 +67,8 @@ type SubagentCatalogCategory = {
 type TerminalContentState = {
   name: string;
   subagentIds: string[];
+  agentic?: boolean;
+  bootCommand?: string;
 };
 
 function parseTerminalContent(content: string | null | undefined): TerminalContentState {
@@ -80,7 +81,12 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         : Array.isArray(parsed.subagents)
           ? parsed.subagents
           : [];
-      return { name, subagentIds };
+      return {
+        name,
+        subagentIds,
+        agentic: parsed.agentic,
+        bootCommand: parsed.bootCommand,
+      };
     } catch {
       return { name: content, subagentIds: [] };
     }
@@ -117,6 +123,7 @@ export function TerminalBlock({
   );
   const terminalName = terminalMeta.name;
   const { user } = useAuthStore();
+  const { theme } = useThemeStore();
   const queryClient = useQueryClient();
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
@@ -124,11 +131,6 @@ export function TerminalBlock({
   const [activeSubagentTab, setActiveSubagentTab] = React.useState<"saved" | "browse">("saved");
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
   const [showAttachedList, setShowAttachedList] = React.useState(false);
-  const [showWorkspace, setShowWorkspace] = React.useState(true);
-  const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set(["/"]));
-  const [fileEntries, setFileEntries] = React.useState<Record<string, SessionFileEntry[]>>({});
-  const [fileLoading, setFileLoading] = React.useState<Record<string, boolean>>({});
-  const [fileError, setFileError] = React.useState<string | null>(null);
   const onRegisterTerminal = data.onRegisterTerminal;
   const setTerminalRef = React.useCallback(
     (handle: TerminalHandle | null) => {
@@ -147,7 +149,6 @@ export function TerminalBlock({
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
   const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fileRefreshTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
 
   React.useEffect(() => {
@@ -157,17 +158,8 @@ export function TerminalBlock({
       clearTimeout(browserScanTimeoutRef.current);
       browserScanTimeoutRef.current = null;
     }
-    if (fileRefreshTimeoutRef.current) {
-      clearTimeout(fileRefreshTimeoutRef.current);
-      fileRefreshTimeoutRef.current = null;
-    }
     setIsClaudeSession(false);
     setShowSubagents(false);
-    setShowWorkspace(true);
-    setExpandedPaths(new Set(["/"]));
-    setFileEntries({});
-    setFileLoading({});
-    setFileError(null);
     autoControlRequestedRef.current = false;
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
@@ -209,21 +201,6 @@ export function TerminalBlock({
     savedSubagents.forEach((item) => map.set(item.id, item));
     return map;
   }, [savedSubagents]);
-
-  const openIntegration = React.useCallback(
-    (provider: "google-drive" | "github") => {
-      if (!user) return;
-      const path = provider === "google-drive"
-        ? "/integrations/google/drive/connect"
-        : "/integrations/github/connect";
-      const url = new URL(`${API.cloudflare.baseUrl}${path}`);
-      url.searchParams.set("user_id", user.id);
-      url.searchParams.set("user_email", user.email);
-      url.searchParams.set("user_name", user.name);
-      window.open(url.toString(), "_blank", "noopener,noreferrer");
-    },
-    [user]
-  );
 
   const handleSaveSubagent = React.useCallback(
     (item: SubagentCatalogItem) => {
@@ -299,143 +276,27 @@ export function TerminalBlock({
     }));
   }, []);
 
-  const loadFiles = React.useCallback(
-    async (path: string) => {
-      if (!session?.id) return;
-      setFileLoading((prev) => ({ ...prev, [path]: true }));
-      try {
-        const entries = await listSessionFiles(session.id, path);
-        entries.sort((a, b) => {
-          if (a.is_dir && !b.is_dir) return -1;
-          if (!a.is_dir && b.is_dir) return 1;
-          return a.name.localeCompare(b.name);
-        });
-        setFileEntries((prev) => ({ ...prev, [path]: entries }));
-        setFileError(null);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load files";
-        setFileError(message);
-      } finally {
-        setFileLoading((prev) => ({ ...prev, [path]: false }));
-      }
-    },
-    [session?.id]
-  );
-
-  React.useEffect(() => {
-    if (session?.id) {
-      loadFiles("/");
-    }
-  }, [session?.id, loadFiles]);
-
-  const togglePath = React.useCallback(
-    (path: string) => {
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        if (next.has(path)) {
-          next.delete(path);
-        } else {
-          next.add(path);
-          if (!fileEntries[path]) {
-            loadFiles(path);
-          }
-        }
-        return next;
-      });
-    },
-    [fileEntries, loadFiles]
-  );
-
-  const handleDeletePath = React.useCallback(
-    async (path: string, parentPath: string) => {
-      if (!session?.id) return;
-      try {
-        await deleteSessionFile(session.id, path);
-        loadFiles(parentPath);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to delete";
-        setFileError(message);
-      }
-    },
-    [loadFiles, session?.id]
-  );
-
-  const renderFileTree = React.useCallback(
-    (path: string, depth = 0) => {
-      const entries = fileEntries[path] || [];
-      return entries.map((entry) => {
-        const isExpanded = expandedPaths.has(entry.path);
-        const isDir = entry.is_dir;
-        return (
-          <div key={entry.path}>
-            <div
-              className="flex items-center justify-between gap-2 px-2 py-1 text-[11px] hover:bg-[var(--background-elevated)] rounded"
-              style={{ paddingLeft: `${depth * 10 + 8}px` }}
-            >
-              <div className="flex items-center gap-1 min-w-0">
-                {isDir ? (
-                  <button
-                    type="button"
-                    onClick={() => togglePath(entry.path)}
-                    className="text-[10px] text-[var(--foreground-muted)] nodrag"
-                    aria-label={isExpanded ? "Collapse folder" : "Expand folder"}
-                  >
-                    {isExpanded ? "▾" : "▸"}
-                  </button>
-                ) : (
-                  <span className="text-[10px] text-[var(--foreground-subtle)]">—</span>
-                )}
-                <span className="truncate text-[var(--foreground)]">{entry.name}</span>
-              </div>
-              {!isDir && (
-                <button
-                  type="button"
-                  onClick={() => handleDeletePath(entry.path, path)}
-                  className="text-[10px] text-[var(--status-error)] hover:text-[var(--status-error)] nodrag"
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-            {isDir && isExpanded && (
-              <div>
-                {renderFileTree(entry.path, depth + 1)}
-              </div>
-            )}
-          </div>
-        );
-      });
-    },
-    [expandedPaths, fileEntries, fileLoading, handleDeletePath, togglePath]
-  );
-
-  const refreshVisiblePaths = React.useCallback(() => {
-    const paths = Array.from(expandedPaths);
-    paths.forEach((path) => loadFiles(path));
-  }, [expandedPaths, loadFiles]);
-
   const maybeCreateBrowserBlock = React.useCallback(
-    (lines: string[]) => {
-      const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
-      for (const line of lines) {
-        const strippedLine = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-        const matches = strippedLine.match(urlRegex);
-        if (!matches || matches.length === 0) {
+    (text: string) => {
+      const urlRegex = /(https?:\/\/[^\s"'<>]+(?:\n[^\s"'<>]+)*)/g;
+      const strippedText = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+      const matches = strippedText.match(urlRegex);
+      if (!matches || matches.length === 0) {
+        return;
+      }
+
+      for (const rawUrl of matches) {
+        const flattened = rawUrl.replace(/\n/g, "");
+        const cleanedUrl = flattened.replace(/[)\],.;]+$/, "");
+        if (createdBrowserUrlsRef.current.has(cleanedUrl)) {
           continue;
         }
-
-        for (const rawUrl of matches) {
-          const cleanedUrl = rawUrl.replace(/[)\],.;]+$/, "");
-          if (createdBrowserUrlsRef.current.has(cleanedUrl)) {
-            continue;
-          }
-          createdBrowserUrlsRef.current.add(cleanedUrl);
-          data.onCreateBrowserBlock?.(cleanedUrl, {
-            x: positionAbsoluteX + (width ?? data.size.width) + 24,
-            y: positionAbsoluteY + 24,
-          }, id);
-          return;
-        }
+        createdBrowserUrlsRef.current.add(cleanedUrl);
+        data.onCreateBrowserBlock?.(cleanedUrl, {
+          x: positionAbsoluteX + (width ?? data.size.width) + 24,
+          y: positionAbsoluteY + 24,
+        }, id);
+        return;
       }
     },
     [data, positionAbsoluteX, positionAbsoluteY, width]
@@ -469,18 +330,12 @@ export function TerminalBlock({
           const parts = buffer.split("\n");
           const pending = parts.pop() ?? "";
           if (parts.length > 0) {
-            maybeCreateBrowserBlock(parts);
+            maybeCreateBrowserBlock(parts.join("\n"));
           }
           outputBufferRef.current = pending;
         }, 250);
 
-        if (fileRefreshTimeoutRef.current) {
-          clearTimeout(fileRefreshTimeoutRef.current);
-        }
-        fileRefreshTimeoutRef.current = setTimeout(() => {
-          refreshVisiblePaths();
-        }, 600);
-      }, [isClaudeSession, maybeCreateBrowserBlock, refreshVisiblePaths]),
+      }, [isClaudeSession, maybeCreateBrowserBlock]),
     }
   );
 
@@ -492,8 +347,26 @@ export function TerminalBlock({
   const isFailed = connectionState === "failed";
   const isAgentRunning = agentState === "running";
   const isOwner = !!session && user?.id === session.ownerUserId;
+  const isAgentic = terminalMeta.agentic === true;
   const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
+  const terminalTheme = React.useMemo(
+    () =>
+      theme === "dark"
+        ? {
+            background: "#0a0a0b",
+            foreground: "#e6e6e6",
+            cursor: "#e6e6e6",
+            selection: "rgba(255,255,255,0.2)",
+          }
+        : {
+            background: "#ffffff",
+            foreground: "#0f172a",
+            cursor: "#0f172a",
+            selection: "rgba(15,23,42,0.2)",
+          },
+    [theme]
+  );
 
   // Border color based on state
   const getBorderColor = () => {
@@ -661,6 +534,7 @@ export function TerminalBlock({
     terminalActions.takeControl();
   }, [isConnected, session, isOwner, isAgentRunning, turnTaking.isController, terminalActions]);
 
+
   React.useEffect(() => {
     if (!session || !terminalRef.current) {
       return;
@@ -715,12 +589,6 @@ export function TerminalBlock({
     }
   }, [isFailed, wsError, isReady]);
 
-  // Control handlers
-  const handleRequestControl = () => {
-    if (!isOwner) return;
-    terminalActions.requestControl();
-  };
-
   const handlePauseAgent = () => {
     console.log("Pausing agent...");
   };
@@ -761,7 +629,7 @@ export function TerminalBlock({
         overflow: "visible",
       }}
     >
-      {isClaudeSession && (showAttachedList || showSubagents) && (
+      {(isClaudeSession || isAgentic) && (showAttachedList || showSubagents) && (
         <div
           className="absolute left-0 right-0 bottom-full mb-2 flex flex-col gap-2"
           style={{ pointerEvents: "auto" }}
@@ -922,13 +790,13 @@ export function TerminalBlock({
         </div>
       )}
 
-      {isClaudeSession && (
+      {(isClaudeSession || isAgentic) && (
         <div
           className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] text-xs"
           style={{ pointerEvents: "none" }}
         >
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
-            <span>Claude Code</span>
+            <span>{terminalMeta.name}</span>
             <button
               type="button"
               onClick={() => setShowAttachedList((prev) => !prev)}
@@ -965,16 +833,6 @@ export function TerminalBlock({
         </div>
 
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowWorkspace((prev) => !prev)}
-            className="text-[10px] h-5 px-2"
-            style={{ pointerEvents: "auto" }}
-            title={showWorkspace ? "Hide workspace" : "Show workspace"}
-          >
-            <PanelLeft className="w-3 h-3" />
-          </Button>
           {/* Connection status */}
           {session && (
             <Badge
@@ -1029,62 +887,11 @@ export function TerminalBlock({
       </div>
 
       {/* Terminal body - pointerEvents: auto for xterm.js interaction */}
-      <div className="relative flex-1 min-h-0 nodrag bg-[#0a0a0b]" style={{ overflow: "visible", pointerEvents: "auto" }}>
-        {showWorkspace ? (
-          <div className="absolute inset-y-0 right-full mr-2 w-56 border border-[var(--border)] bg-white dark:bg-[var(--background-elevated)] text-xs overflow-hidden nodrag shadow-md flex flex-col">
-            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)] border-b border-[var(--border)] flex items-center justify-between">
-              <span>Workspace</span>
-              <button
-                type="button"
-                onClick={() => setShowWorkspace(false)}
-                className="text-[10px] text-[var(--foreground-muted)]"
-                title="Collapse workspace"
-              >
-                ▸
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto bg-white dark:bg-[var(--background)]">
-              {fileError && (
-                <div className="px-2 py-1 text-[10px] text-[var(--status-error)]">
-                  {fileError}
-                </div>
-              )}
-              {renderFileTree("/", 0)}
-            </div>
-            <div className="border-t border-[var(--border)] bg-white dark:bg-[var(--background-elevated)] px-2 py-2 flex flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => openIntegration("google-drive")}
-                disabled={!user}
-                className="w-full text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] hover:bg-[var(--background-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
-                title={user ? "Connect Google Drive" : "Sign in to connect Google Drive"}
-              >
-                Add Google Drive
-              </button>
-              <button
-                type="button"
-                onClick={() => openIntegration("github")}
-                disabled={!user}
-                className="w-full text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground)] border border-[var(--border)] rounded px-2 py-1 bg-[var(--background)] hover:bg-[var(--background-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
-                title={user ? "Connect GitHub" : "Sign in to connect GitHub"}
-              >
-                Add GitHub Repo
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute inset-y-0 right-full mr-2 w-3 border border-[var(--border)] bg-[var(--background-elevated)] flex items-center justify-center nodrag shadow-sm">
-            <button
-              type="button"
-              onClick={() => setShowWorkspace(true)}
-              className="text-[10px] text-[var(--foreground-muted)]"
-              title="Show workspace"
-            >
-              ▸
-            </button>
-          </div>
-        )}
-        <div className="h-full w-full bg-[#0a0a0b]" style={{ contain: "layout" }}>
+      <div
+        className="relative flex-1 min-h-0 nodrag"
+        style={{ overflow: "visible", pointerEvents: "auto", backgroundColor: terminalTheme.background }}
+      >
+        <div className="h-full w-full" style={{ contain: "layout", backgroundColor: terminalTheme.background }}>
           <TerminalEmulator
             ref={setTerminalRef}
             onData={handleTerminalData}
@@ -1092,6 +899,7 @@ export function TerminalBlock({
             onReady={handleTerminalReady}
             disabled={!canType}
             fontSize={fontSize}
+            theme={terminalTheme}
             className="w-full h-full"
           />
         </div>
@@ -1245,6 +1053,7 @@ export function TerminalBlock({
         className="p-0 overflow-hidden"
         minWidth={300}
         minHeight={200}
+        includeHandles={false}
         style={{
           borderColor: "transparent",
           borderWidth: "2px",
@@ -1252,6 +1061,9 @@ export function TerminalBlock({
       >
         {/* Invisible content - same structure for sizing but not rendered visually */}
         <div style={{ opacity: 0, pointerEvents: "none" }} className="w-full h-full" />
+        <Handle type="source" id="terminal-right" position={Position.Right} className="opacity-0" />
+        <Handle type="target" id="terminal-left" position={Position.Left} className="opacity-0" />
+        <Handle type="source" id="workspace" position={Position.Bottom} className="opacity-0" />
       </BlockWrapper>
 
       {/* Portal the entire terminal to overlay for correct z-ordering and no CSS transform issues */}

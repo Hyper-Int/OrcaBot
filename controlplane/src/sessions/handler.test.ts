@@ -67,6 +67,7 @@ describe('Session Handlers', () => {
       const data = await response.json();
       expect(data.session.ownerUserId).toBe(testUser.id);
       expect(data.session.ownerName).toBe(testUser.name);
+      expect(data.session.sandboxMachineId).toBe('machine-1');
 
       const result = await ctx.db.prepare(`
         SELECT * FROM sessions WHERE id = ?
@@ -75,6 +76,7 @@ describe('Session Handlers', () => {
       expect(result).not.toBeNull();
       expect(result!.owner_user_id).toBe(testUser.id);
       expect(result!.owner_name).toBe(testUser.name);
+      expect(result!.sandbox_machine_id).toBe('machine-1');
     });
 
     it('should seed and query sessions', async () => {
@@ -82,6 +84,7 @@ describe('Session Handlers', () => {
       const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
       const session = await seedSession(ctx.db, dashboard.id, item.id, {
         sandboxSessionId: 'sandbox-123',
+        sandboxMachineId: 'machine-123',
       });
 
       // Query the session directly
@@ -92,6 +95,7 @@ describe('Session Handlers', () => {
       expect(result).not.toBeNull();
       expect(result!.status).toBe('active');
       expect(result!.sandbox_session_id).toBe('sandbox-123');
+      expect(result!.sandbox_machine_id).toBe('machine-123');
     });
 
     it('should query session by sandbox_session_id', async () => {

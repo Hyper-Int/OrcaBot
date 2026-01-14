@@ -34,7 +34,7 @@ export function createMockSandboxServer(baseUrl = 'http://localhost:8080') {
         agent: null,
         files: new Map(),
       });
-      return HttpResponse.json({ id }, { status: 201 });
+      return HttpResponse.json({ id, machine_id: 'machine-1' }, { status: 201 });
     }),
 
     // Delete session

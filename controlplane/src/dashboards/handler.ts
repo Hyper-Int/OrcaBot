@@ -48,6 +48,7 @@ function formatSession(row: Record<string, unknown>) {
     ownerUserId: row.owner_user_id as string,
     ownerName: row.owner_name as string,
     sandboxSessionId: row.sandbox_session_id as string,
+    sandboxMachineId: row.sandbox_machine_id as string,
     ptyId: row.pty_id as string,
     status: row.status as string,
     region: row.region as string,

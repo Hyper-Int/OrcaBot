@@ -619,6 +619,10 @@ components:
           type: string
           format: uuid
           example: 550e8400-e29b-41d4-a716-446655440000
+        machine_id:
+          type: string
+          description: Fly machine ID that owns this session
+          example: 01HZY2A1B3C4D5E6F7G8H9J0K1
 
     PTYResponse:
       type: object

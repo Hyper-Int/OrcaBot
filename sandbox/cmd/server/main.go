@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -66,6 +67,7 @@ type Server struct {
 	sessions *sessions.Manager
 	wsRouter *ws.Router
 	auth     *auth.Middleware
+	machine  string
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -77,6 +79,7 @@ func NewServer(sm *sessions.Manager) *Server {
 		sessions: sm,
 		wsRouter: ws.NewRouter(sm),
 		auth:     authMiddleware,
+		machine:  sandboxMachineID(),
 	}
 }
 
@@ -86,33 +89,40 @@ func (s *Server) Handler() http.Handler {
 	// Health check - unauthenticated (for load balancer probes)
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	// Debug profiling - requires auth + machine pinning
+	mux.HandleFunc("GET /debug/pprof/", s.auth.RequireAuthFunc(s.requireMachine(pprof.Index)))
+	mux.HandleFunc("GET /debug/pprof/cmdline", s.auth.RequireAuthFunc(s.requireMachine(pprof.Cmdline)))
+	mux.HandleFunc("GET /debug/pprof/profile", s.auth.RequireAuthFunc(s.requireMachine(pprof.Profile)))
+	mux.HandleFunc("GET /debug/pprof/symbol", s.auth.RequireAuthFunc(s.requireMachine(pprof.Symbol)))
+	mux.HandleFunc("GET /debug/pprof/trace", s.auth.RequireAuthFunc(s.requireMachine(pprof.Trace)))
+
 	// All other routes require authentication
 	// Sessions
-	mux.HandleFunc("POST /sessions", s.auth.RequireAuthFunc(s.handleCreateSession))
-	mux.HandleFunc("DELETE /sessions/{sessionId}", s.auth.RequireAuthFunc(s.handleDeleteSession))
+	mux.HandleFunc("POST /sessions", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreateSession)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeleteSession)))
 
 	// PTYs
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.handleListPTYs))
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.handleCreatePTY))
-	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.handleDeletePTY))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleListPTYs)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
 
 	// WebSocket for PTYs - auth checked via token, origin validated by upgrader
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.wsRouter.HandleWebSocket))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleWebSocket)))
 
 	// Agent
-	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.handleStartAgent))
-	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.handleGetAgent))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.auth.RequireAuthFunc(s.handlePauseAgent))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.auth.RequireAuthFunc(s.handleResumeAgent))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.auth.RequireAuthFunc(s.handleStopAgent))
-	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.auth.RequireAuthFunc(s.wsRouter.HandleAgentWebSocket))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.requireMachine(s.handleStartAgent)))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.requireMachine(s.handleGetAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.auth.RequireAuthFunc(s.requireMachine(s.handlePauseAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.auth.RequireAuthFunc(s.requireMachine(s.handleResumeAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.auth.RequireAuthFunc(s.requireMachine(s.handleStopAgent)))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleAgentWebSocket)))
 
 	// Filesystem
-	mux.HandleFunc("GET /sessions/{sessionId}/files", s.auth.RequireAuthFunc(s.handleListFiles))
-	mux.HandleFunc("GET /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handleGetFile))
-	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handlePutFile))
-	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.handleDeleteFile))
-	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.handleStatFile))
+	mux.HandleFunc("GET /sessions/{sessionId}/files", s.auth.RequireAuthFunc(s.requireMachine(s.handleListFiles)))
+	mux.HandleFunc("GET /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handleGetFile)))
+	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handlePutFile)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeleteFile)))
+	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.requireMachine(s.handleStatFile)))
 
 	return mux
 }
@@ -130,7 +140,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(`{"id":"` + session.ID + `"}`))
+	w.Write([]byte(`{"id":"` + session.ID + `","machine_id":"` + s.machine + `"}`))
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -172,12 +182,13 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	// Parse optional creator_id from request body
 	var req struct {
 		CreatorID string `json:"creator_id"`
+		Command   string `json:"command"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - creator_id is optional
 	}
 
-	pty, err := session.CreatePTY(req.CreatorID)
+	pty, err := session.CreatePTY(req.CreatorID, req.Command)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -185,6 +196,29 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(`{"id":"` + pty.ID + `"}`))
+}
+
+func (s *Server) requireMachine(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		target := r.Header.Get("X-Sandbox-Machine-ID")
+		if target == "" || s.machine == "" || target == s.machine {
+			next(w, r)
+			return
+		}
+
+		w.Header().Set("Fly-Replay", "instance="+target)
+		w.WriteHeader(http.StatusConflict)
+	}
+}
+
+func sandboxMachineID() string {
+	if id := os.Getenv("FLY_MACHINE_ID"); id != "" {
+		return id
+	}
+	if id := os.Getenv("FLY_ALLOC_ID"); id != "" {
+		return id
+	}
+	return ""
 }
 
 func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {

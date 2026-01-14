@@ -7,6 +7,7 @@
 
 export interface SandboxSession {
   id: string;
+  machineId?: string;
 }
 
 export interface SandboxPty {
@@ -49,13 +50,21 @@ export class SandboxClient {
     if (!res.ok) {
       throw new Error(`Failed to create session: ${res.status}`);
     }
-    return res.json();
+    const data = await res.json() as { id: string; machine_id?: string };
+    return {
+      id: data.id,
+      machineId: data.machine_id,
+    };
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
+  async deleteSession(sessionId: string, machineId?: string): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}`, {
       method: 'DELETE',
-      headers: this.authHeaders(),
+      headers,
     });
     if (!res.ok && res.status !== 404) {
       throw new Error(`Failed to delete session: ${res.status}`);
@@ -63,14 +72,25 @@ export class SandboxClient {
   }
 
   // PTY management
-  async createPty(sessionId: string, creatorId?: string): Promise<SandboxPty> {
+  async createPty(sessionId: string, creatorId?: string, command?: string, machineId?: string): Promise<SandboxPty> {
+    const shouldSendBody = Boolean(creatorId || command);
+    const body = shouldSendBody
+      ? JSON.stringify({
+          creator_id: creatorId,
+          command: command,
+        })
+      : undefined;
+    const headers = new Headers(this.authHeaders());
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    if (shouldSendBody) {
+      headers.set('Content-Type', 'application/json');
+    }
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys`, {
       method: 'POST',
-      headers: {
-        ...this.authHeaders(),
-        ...(creatorId ? { 'Content-Type': 'application/json' } : undefined),
-      },
-      body: creatorId ? JSON.stringify({ creator_id: creatorId }) : undefined,
+      headers,
+      body,
     });
     if (!res.ok) {
       throw new Error(`Failed to create PTY: ${res.status}`);

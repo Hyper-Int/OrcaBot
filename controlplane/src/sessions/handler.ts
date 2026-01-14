@@ -12,6 +12,31 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+function parseBootCommand(content: unknown): string {
+  if (typeof content !== 'string') {
+    return '';
+  }
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{')) {
+    return '';
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as { bootCommand?: string };
+    return typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+  } catch {
+    return '';
+  }
+}
+
+async function getDashboardSandbox(env: Env, dashboardId: string) {
+  return env.DB.prepare(`
+    SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{
+    sandbox_session_id: string;
+    sandbox_machine_id: string;
+  }>();
+}
+
 // Create a session for a terminal item
 export async function createSession(
   env: Env,
@@ -53,6 +78,7 @@ export async function createSession(
         ownerUserId: existingSession.owner_user_id,
         ownerName: existingSession.owner_name,
         sandboxSessionId: existingSession.sandbox_session_id,
+        sandboxMachineId: existingSession.sandbox_machine_id,
         ptyId: existingSession.pty_id,
         status: existingSession.status,
         region: existingSession.region,
@@ -67,24 +93,51 @@ export async function createSession(
 
   // Create session record first
   await env.DB.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, pty_id, status, region, created_at)
-    VALUES (?, ?, ?, ?, ?, '', '', 'creating', 'local', ?)
+    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, sandbox_machine_id, pty_id, status, region, created_at)
+    VALUES (?, ?, ?, ?, ?, '', '', '', 'creating', 'local', ?)
   `).bind(id, dashboardId, itemId, userId, userName, now).run();
 
   // Create sandbox session and PTY
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
-    // Create sandbox session
-    const sandboxSession = await sandbox.createSession();
+    const bootCommand = parseBootCommand(item.content);
+    const existingSandbox = await getDashboardSandbox(env, dashboardId);
+    let sandboxSessionId = existingSandbox?.sandbox_session_id || '';
+    let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
 
-    // Create PTY within the session, assigning control to the creator
-    const pty = await sandbox.createPty(sandboxSession.id, userId);
+    if (!sandboxSessionId) {
+      const sandboxSession = await sandbox.createSession();
+      const insertResult = await env.DB.prepare(`
+        INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(dashboardId, sandboxSession.id, sandboxSession.machineId || '', now).run();
+
+      if (insertResult.meta.changes === 0) {
+        const reused = await getDashboardSandbox(env, dashboardId);
+        if (reused?.sandbox_session_id) {
+          sandboxSessionId = reused.sandbox_session_id;
+          sandboxMachineId = reused.sandbox_machine_id || '';
+        } else {
+          sandboxSessionId = sandboxSession.id;
+          sandboxMachineId = sandboxSession.machineId || '';
+        }
+        if (sandboxSessionId !== sandboxSession.id) {
+          await sandbox.deleteSession(sandboxSession.id, sandboxSession.machineId);
+        }
+      } else {
+        sandboxSessionId = sandboxSession.id;
+        sandboxMachineId = sandboxSession.machineId || '';
+      }
+    }
+
+    // Create PTY within the dashboard sandbox, assigning control to the creator
+    const pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
 
     // Update with sandbox session ID and PTY ID
     await env.DB.prepare(`
-      UPDATE sessions SET sandbox_session_id = ?, pty_id = ?, status = 'active' WHERE id = ?
-    `).bind(sandboxSession.id, pty.id, id).run();
+      UPDATE sessions SET sandbox_session_id = ?, sandbox_machine_id = ?, pty_id = ?, status = 'active' WHERE id = ?
+    `).bind(sandboxSessionId, sandboxMachineId, pty.id, id).run();
 
     const session: Session = {
       id,
@@ -92,7 +145,8 @@ export async function createSession(
       itemId,
       ownerUserId: userId,
       ownerName: userName,
-      sandboxSessionId: sandboxSession.id,
+      sandboxSessionId: sandboxSessionId,
+      sandboxMachineId: sandboxMachineId,
       ptyId: pty.id,
       status: 'active',
       region: 'local',
@@ -145,6 +199,7 @@ export async function getSession(
       ownerUserId: session.owner_user_id,
       ownerName: session.owner_name,
       sandboxSessionId: session.sandbox_session_id,
+      sandboxMachineId: session.sandbox_machine_id,
       ptyId: session.pty_id,
       status: session.status,
       region: session.region,
@@ -177,7 +232,17 @@ export async function stopSession(
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
-    await sandbox.deleteSession(session.sandbox_session_id as string);
+    const otherSessions = await env.DB.prepare(`
+      SELECT COUNT(1) as count FROM sessions
+      WHERE dashboard_id = ? AND status IN ('creating', 'active') AND id != ?
+    `).bind(session.dashboard_id, sessionId).first<{ count: number }>();
+
+    if (!otherSessions || otherSessions.count === 0) {
+      await sandbox.deleteSession(session.sandbox_session_id as string, session.sandbox_machine_id as string);
+      await env.DB.prepare(`
+        DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(session.dashboard_id).run();
+    }
   } catch {
     // Ignore errors - sandbox might already be gone
   }
@@ -194,6 +259,7 @@ export async function stopSession(
     ownerUserId: session.owner_user_id as string,
     ownerName: session.owner_name as string,
     sandboxSessionId: session.sandbox_session_id as string,
+    sandboxMachineId: session.sandbox_machine_id as string,
     ptyId: session.pty_id as string,
     status: 'stopped',
     region: session.region as string,

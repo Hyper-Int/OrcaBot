@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS dashboard_members (
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   owner_user_id TEXT NOT NULL REFERENCES users(id),
   owner_name TEXT NOT NULL DEFAULT '',
   sandbox_session_id TEXT NOT NULL,
+  sandbox_machine_id TEXT NOT NULL DEFAULT '',
   pty_id TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK (status IN ('creating', 'active', 'stopped', 'error')),
   region TEXT NOT NULL DEFAULT 'local',
@@ -67,6 +68,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_dashboard ON sessions(dashboard_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_item ON sessions(item_id);
+
+-- Dashboard sandbox mapping (one sandbox per dashboard)
+CREATE TABLE IF NOT EXISTS dashboard_sandboxes (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  sandbox_session_id TEXT NOT NULL,
+  sandbox_machine_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- Agent profiles (reusable agent configurations)
 CREATE TABLE IF NOT EXISTS agent_profiles (
@@ -191,4 +200,50 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   for (const statement of statements) {
     await db.prepare(statement).run();
   }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  await migrateWorkspaceItemType(db);
+}
+
+async function migrateWorkspaceItemType(db: D1Database): Promise<void> {
+  const tableInfo = await db.prepare(`
+    SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_items'
+  `).first<{ sql: string }>();
+
+  if (!tableInfo?.sql || tableInfo.sql.includes("'workspace'")) {
+    return;
+  }
+
+  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS dashboard_items_new (
+      id TEXT PRIMARY KEY,
+      dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace')),
+      content TEXT NOT NULL DEFAULT '',
+      position_x INTEGER NOT NULL DEFAULT 0,
+      position_y INTEGER NOT NULL DEFAULT 0,
+      width INTEGER NOT NULL DEFAULT 200,
+      height INTEGER NOT NULL DEFAULT 150,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+  await db.prepare(`
+    INSERT INTO dashboard_items_new
+      (id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at)
+    SELECT id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at
+    FROM dashboard_items
+  `).run();
+  await db.prepare(`DROP TABLE dashboard_items`).run();
+  await db.prepare(`ALTER TABLE dashboard_items_new RENAME TO dashboard_items`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id)`).run();
+  await db.prepare(`PRAGMA foreign_keys=ON`).run();
 }

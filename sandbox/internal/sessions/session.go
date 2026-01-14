@@ -66,8 +66,9 @@ func (s *Session) Workspace() *fs.Workspace {
 
 // CreatePTY creates a new PTY in this session.
 // If creatorID is provided, they are automatically assigned control.
-func (s *Session) CreatePTY(creatorID string) (*PTYInfo, error) {
-	p, err := pty.New(pty.DefaultShell(), 80, 24)
+// If command is empty, the default shell is used.
+func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) {
+	p, err := pty.NewWithCommand(command, 80, 24, s.workspace.Root())
 	if err != nil {
 		return nil, err
 	}

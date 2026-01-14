@@ -12,7 +12,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "recipe";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe";
 
 /**
  * Position on the canvas
@@ -165,6 +165,7 @@ export interface Session {
   ownerUserId: string;
   ownerName: string;
   sandboxSessionId: string;
+  sandboxMachineId?: string;
   ptyId: string; // PTY ID in the sandbox
   status: "creating" | "active" | "stopped" | "error";
   region: string;
