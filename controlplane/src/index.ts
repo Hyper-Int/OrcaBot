@@ -466,7 +466,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'items' && segments[4] === 'session' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.createSession(env, segments[1], segments[3], auth.user!.id);
+    return sessions.createSession(env, segments[1], segments[3], auth.user!.id, auth.user!.name);
   }
 
   // GET /sessions/:id - Get session
@@ -512,6 +512,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     if (!session) {
       return Response.json({ error: 'Session not found or no access' }, { status: 404 });
     }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'Only the owner can delete files' }, { status: 403 });
+    }
 
     return proxySandboxRequest(
       request,
@@ -553,12 +556,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return Response.json({ error: 'PTY not found' }, { status: 404 });
     }
 
+    const proxyUserId = session.owner_user_id === auth.user!.id
+      ? auth.user!.id
+      : '';
+
     return proxySandboxWebSocket(
       request,
       env,
       session.sandbox_session_id as string,
       session.pty_id as string,
-      auth.user!.id
+      proxyUserId
     );
   }
 

@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     # Build essentials (needed for some npm packages)
     build-essential \
-    # Python (for Codex CLI)
+    # Python (useful for user scripts)
     python3 \
     python3-pip \
     python3-venv \
@@ -63,7 +63,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN npm install -g @anthropic-ai/claude-code
 
 # Install Codex CLI (OpenAI)
-RUN pip3 install --break-system-packages openai-codex-cli || true
+RUN npm install -g @openai/codex
+
+# Install Gemini CLI (Google)
+RUN npm install -g @google/gemini-cli
+
+# Install OpenCode CLI and move to shared location
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 777 /workspace

@@ -16,6 +16,7 @@ import {
 } from '../../tests/helpers';
 import { createMockSandboxServer } from '../../tests/mocks/sandbox';
 import { SandboxClient } from '../sandbox/client';
+import { createSession } from './handler';
 import type { TestContext } from '../../tests/helpers';
 
 describe('Session Handlers', () => {
@@ -56,6 +57,26 @@ describe('Session Handlers', () => {
   });
 
   describe('Session database operations', () => {
+    it('should store owner info when creating a session', async () => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+
+      const response = await createSession(ctx.env, dashboard.id, item.id, testUser.id, testUser.name);
+      expect(response.status).toBe(201);
+
+      const data = await response.json();
+      expect(data.session.ownerUserId).toBe(testUser.id);
+      expect(data.session.ownerName).toBe(testUser.name);
+
+      const result = await ctx.db.prepare(`
+        SELECT * FROM sessions WHERE id = ?
+      `).bind(data.session.id).first();
+
+      expect(result).not.toBeNull();
+      expect(result!.owner_user_id).toBe(testUser.id);
+      expect(result!.owner_name).toBe(testUser.name);
+    });
+
     it('should seed and query sessions', async () => {
       const dashboard = await seedDashboard(ctx.db, testUser.id);
       const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });

@@ -85,6 +85,8 @@ export interface Session {
   id: string;
   dashboardId: string;
   itemId: string;        // The terminal item in the dashboard
+  ownerUserId: string;
+  ownerName: string;
   sandboxSessionId: string; // The session ID in the sandbox
   ptyId: string;         // The PTY ID in the sandbox session
   status: 'creating' | 'active' | 'stopped' | 'error';

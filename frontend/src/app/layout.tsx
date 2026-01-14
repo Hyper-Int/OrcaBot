@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "OrcaBot - Agentic AI Coding Agent Orchestration on the Web",
   description:
-    "A collaborative workspace for terminal-first, multiplayer agentic coding.",
+    "A collaborative workspace for Agentic AI coding agent orchestration on the web.",
   icons: {
     icon: "/favicon.ico",
   },
