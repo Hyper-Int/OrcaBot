@@ -136,13 +136,17 @@ async function proxySandboxWebSocket(
   env: Env,
   sandboxSessionId: string,
   ptyId: string,
-  userId: string
+  userId: string,
+  machineId?: string
 ): Promise<Response> {
   const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/ptys/${ptyId}/ws`);
   sandboxUrl.searchParams.set('user_id', userId);
 
   const headers = new Headers(request.headers);
   headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
+  if (machineId) {
+    headers.set('X-Sandbox-Machine-ID', machineId);
+  }
   headers.delete('Host');
 
   const body = ['POST', 'PUT', 'PATCH'].includes(request.method)
@@ -161,13 +165,17 @@ async function proxySandboxWebSocket(
 async function proxySandboxRequest(
   request: Request,
   env: Env,
-  path: string
+  path: string,
+  machineId?: string
 ): Promise<Response> {
   const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}${path}`);
   sandboxUrl.search = new URL(request.url).search;
 
   const headers = new Headers(request.headers);
   headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
+  if (machineId) {
+    headers.set('X-Sandbox-Machine-ID', machineId);
+  }
   headers.delete('Host');
 
   const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body;
@@ -494,7 +502,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return proxySandboxRequest(
       request,
       env,
-      `/sessions/${session.sandbox_session_id as string}/files`
+      `/sessions/${session.sandbox_session_id as string}/files`,
+      session.sandbox_machine_id as string
     );
   }
 
@@ -519,7 +528,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return proxySandboxRequest(
       request,
       env,
-      `/sessions/${session.sandbox_session_id as string}/file`
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
     );
   }
 
@@ -565,7 +575,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       env,
       session.sandbox_session_id as string,
       session.pty_id as string,
-      proxyUserId
+      proxyUserId,
+      session.sandbox_machine_id as string
     );
   }
 

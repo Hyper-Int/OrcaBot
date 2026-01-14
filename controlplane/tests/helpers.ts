@@ -123,6 +123,7 @@ export async function seedSession(
     status?: string;
     ownerUserId?: string;
     ownerName?: string;
+    sandboxMachineId?: string;
   } = {}
 ) {
   const id = data.id || `session-${Date.now()}`;
@@ -130,14 +131,15 @@ export async function seedSession(
   const status = data.status || 'active';
   const ownerUserId = data.ownerUserId || 'owner-1';
   const ownerName = data.ownerName || 'Owner';
+  const sandboxMachineId = data.sandboxMachineId || '';
   const now = new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, status, region, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'local', ?)
-  `).bind(id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, status, now).run();
+    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, sandbox_machine_id, status, region, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'local', ?)
+  `).bind(id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, sandboxMachineId, status, now).run();
 
-  return { id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, status };
+  return { id, dashboardId, itemId, ownerUserId, ownerName, sandboxSessionId, sandboxMachineId, status };
 }
 
 export async function seedRecipe(

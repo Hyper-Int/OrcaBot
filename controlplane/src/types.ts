@@ -39,7 +39,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -88,6 +88,7 @@ export interface Session {
   ownerUserId: string;
   ownerName: string;
   sandboxSessionId: string; // The session ID in the sandbox
+  sandboxMachineId: string;
   ptyId: string;         // The PTY ID in the sandbox session
   status: 'creating' | 'active' | 'stopped' | 'error';
   region: string;

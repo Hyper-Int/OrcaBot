@@ -26,6 +26,7 @@ import { TodoBlock } from "@/components/blocks/TodoBlock";
 import { LinkBlock } from "@/components/blocks/LinkBlock";
 import { TerminalBlock } from "@/components/blocks/TerminalBlock";
 import { BrowserBlock } from "@/components/blocks/BrowserBlock";
+import { WorkspaceBlock } from "@/components/blocks/WorkspaceBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -38,6 +39,7 @@ const nodeTypes: NodeTypes = {
   link: LinkBlock,
   terminal: TerminalBlock,
   browser: BrowserBlock,
+  workspace: WorkspaceBlock,
   recipe: RecipeBlock,
 };
 
@@ -53,6 +55,7 @@ function itemsToNodes(
     sourceId?: string
   ) => void
 ): Node[] {
+  const workspaceSession = sessions.find((s) => s.status === "active");
   return items.map((item) => {
     // Find active session for terminal items
     const session = item.type === "terminal"
@@ -71,6 +74,7 @@ function itemsToNodes(
         size: item.size,
         dashboardId: item.dashboardId,
         session, // Pass session to terminal blocks
+        sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
         onRegisterTerminal,
         onCreateBrowserBlock,
         onItemChange: onItemChange
@@ -95,6 +99,8 @@ interface CanvasProps {
   onItemCreate?: (item: Omit<DashboardItem, "id" | "createdAt" | "updatedAt">) => void;
   onItemDelete?: (itemId: string) => void;
   onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
+  fitViewEnabled?: boolean;
   edges?: Edge[];
   onEdgesChange?: (changes: EdgeChange[]) => void;
   readOnly?: boolean;
@@ -107,6 +113,8 @@ export function Canvas({
   onItemCreate,
   onItemDelete,
   onCreateBrowserBlock,
+  onViewportChange,
+  fitViewEnabled = true,
   edges: controlledEdges,
   onEdgesChange: onEdgesChangeProp,
   readOnly = false,
@@ -252,8 +260,10 @@ export function Canvas({
   }, []);
 
   const handleInit = React.useCallback((instance: ReactFlowInstance) => {
-    setViewport(instance.getViewport());
-  }, []);
+    const nextViewport = instance.getViewport();
+    setViewport(nextViewport);
+    onViewportChange?.(nextViewport);
+  }, [onViewportChange]);
 
   const overlayContextValue = React.useMemo(
     () => ({ root: overlayRoot, viewport, zIndexVersion, bringToFront, getZIndex }),
@@ -274,9 +284,10 @@ export function Canvas({
           onInit={handleInit}
           onMove={(_event, nextViewport) => {
             setViewport(nextViewport);
+            onViewportChange?.(nextViewport);
           }}
           nodeTypes={nodeTypes}
-          fitView
+          fitView={fitViewEnabled}
           fitViewOptions={{ maxZoom: 0.75 }}
           snapToGrid
           snapGrid={[16, 16]}
@@ -321,6 +332,8 @@ export function Canvas({
                 return "var(--status-info)";
               case "todo":
                 return "var(--accent-primary)";
+              case "workspace":
+                return "var(--foreground-muted)";
               case "recipe":
                 return "var(--status-control-agent)";
               default:

@@ -178,7 +178,7 @@ class MockD1PreparedStatement implements D1PreparedStatement {
   }
 
   private executeInsert<T>(): T[] {
-    const tableMatch = this.query.match(/INSERT INTO\s+(\w+)/i);
+    const tableMatch = this.query.match(/INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+(\w+)/i);
     if (!tableMatch) return [];
 
     const tableName = tableMatch[1];
@@ -195,6 +195,16 @@ class MockD1PreparedStatement implements D1PreparedStatement {
     columns.forEach((col, i) => {
       row[col] = this.bindings[i];
     });
+
+    const isIgnore = /INSERT\s+OR\s+IGNORE/i.test(this.query);
+    if (isIgnore && columns.length > 0) {
+      const primaryKey = columns[0];
+      const existing = this.tables.get(tableName)!.some(r => r[primaryKey] === row[primaryKey]);
+      if (existing) {
+        this.changes = 0;
+        return [] as T[];
+      }
+    }
 
     this.tables.get(tableName)!.push(row);
     this.lastInsertId = this.getNextId();

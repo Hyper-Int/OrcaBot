@@ -3,6 +3,7 @@ package pty
 import (
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -37,7 +38,27 @@ func New(shell string, cols, rows uint16) (*PTY, error) {
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 	)
+	return newWithCmd(cmd, cols, rows)
+}
 
+// NewWithCommand creates a new PTY running the given command and optional working directory.
+// If command is empty, DefaultShell() is used.
+func NewWithCommand(command string, cols, rows uint16, dir string) (*PTY, error) {
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		parts = []string{DefaultShell()}
+	}
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+	)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	return newWithCmd(cmd, cols, rows)
+}
+
+func newWithCmd(cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: cols,
 		Rows: rows,
@@ -45,7 +66,6 @@ func New(shell string, cols, rows uint16) (*PTY, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &PTY{
 		ID:   uuid.New().String(),
 		file: ptmx,

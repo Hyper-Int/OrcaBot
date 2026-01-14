@@ -189,7 +189,7 @@ func TestMultiplePTYsPerSession(t *testing.T) {
 	// Create 3 PTYs
 	ptyIDs := make([]string, 3)
 	for i := 0; i < 3; i++ {
-		resp = httpPost(t, ts.URL+"/sessions/"+sessionID+"/ptys", nil)
+	resp = httpPost(t, ts.URL+"/sessions/"+sessionID+"/ptys", nil)
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("create pty %d: expected 201, got %d", i, resp.StatusCode)
 		}

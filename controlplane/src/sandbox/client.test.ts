@@ -35,6 +35,7 @@ describe('SandboxClient', () => {
 
       expect(session).toHaveProperty('id');
       expect(session.id).toMatch(/^session-\d+$/);
+      expect(session.machineId).toBe('machine-1');
     });
 
     it('should delete a session', async () => {

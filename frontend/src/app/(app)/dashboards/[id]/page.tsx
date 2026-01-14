@@ -41,23 +41,65 @@ import type { PresenceUser } from "@/types/collaboration";
 
 type BlockType = DashboardItem["type"];
 
+type BlockTool = {
+  type: BlockType;
+  icon: React.ReactNode;
+  label: string;
+  terminalPreset?: {
+    command?: string;
+    agentic?: boolean;
+  };
+};
+
 // Only include types that exist in the DB schema
-const blockTools: { type: BlockType; icon: React.ReactNode; label: string }[] = [
+const blockTools: BlockTool[] = [
   { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
   { type: "link", icon: <Link2 className="w-4 h-4" />, label: "Link" },
-  { type: "terminal", icon: <Terminal className="w-4 h-4" />, label: "Terminal" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
+];
+
+const terminalTools: BlockTool[] = [
+  {
+    type: "terminal",
+    label: "Claude Code",
+    icon: <img src="/icons/claude.ico" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "claude", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "Gemini CLI",
+    icon: <img src="/icons/gemini.ico" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "gemini", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "Codex",
+    icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "codex", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "OpenCode",
+    icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "opencode", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "Terminal",
+    icon: <Terminal className="w-4 h-4" />,
+  },
 ];
 
 const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
   link: { width: 260, height: 140 },
-  terminal: { width: 636, height: 548 },
+  terminal: { width: 360, height: 400 },
   browser: { width: 520, height: 360 },
+  workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
 };
 
@@ -98,6 +140,7 @@ export default function DashboardPage() {
 
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
+  const viewportRef = React.useRef({ x: 0, y: 0, zoom: 1 });
 
   // Collaboration hook - real-time presence and updates
   const [collabState, collabActions] = useCollaboration({
@@ -156,6 +199,7 @@ export default function DashboardPage() {
   const pendingItemIdsRef = React.useRef<Set<string>>(new Set());
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
+  const workspaceCreateRequestedRef = React.useRef(false);
 
   // Fetch dashboard data with better caching
   const {
@@ -171,13 +215,18 @@ export default function DashboardPage() {
     refetchInterval: false, // Don't auto-refetch
   });
 
+  const dashboard = data?.dashboard;
+  const items = data?.items ?? [];
+  const sessions = data?.sessions ?? [];
+  const role = data?.role ?? "viewer";
+
   // Create item mutation
   const createItemMutation = useMutation({
     mutationFn: ({
       clientTempId: _clientTempId,
       sourceId: _sourceId,
       ...item
-    }: Parameters<typeof createItem>[1] & { clientTempId?: string; sourceId?: string }) =>
+    }: Parameters<typeof createItem>[1] & { clientTempId?: string; sourceId?: string; sourceHandle?: string }) =>
       createItem(dashboardId, item),
     onMutate: async (item) => {
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
@@ -222,6 +271,7 @@ export default function DashboardPage() {
               id: edgeId,
               source: item.sourceId as string,
               target: tempId,
+              sourceHandle: item.sourceHandle,
               type: "smoothstep",
               animated: true,
               style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
@@ -230,7 +280,7 @@ export default function DashboardPage() {
         });
       }
 
-      return { previous, tempId, sourceId: item.sourceId };
+      return { previous, tempId, sourceId: item.sourceId, sourceHandle: item.sourceHandle };
     },
     onSuccess: (createdItem, _variables, context) => {
       queryClient.setQueryData(
@@ -261,6 +311,7 @@ export default function DashboardPage() {
             id: `edge-${context.sourceId}-${createdItem.id}`,
             source: context.sourceId,
             target: createdItem.id,
+            sourceHandle: context.sourceHandle,
             type: "smoothstep",
             animated: true,
             style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
@@ -364,19 +415,27 @@ export default function DashboardPage() {
   }, 500);
 
   // Add block handler
-  const handleAddBlock = (type: BlockType) => {
-    if (type === "link") {
+  const handleAddBlock = (tool: BlockTool) => {
+    if (tool.type === "link") {
       setIsAddLinkOpen(true);
       return;
     }
 
-    const defaultContent = type === "todo" ? "[]" : "";
+    const defaultContent = tool.type === "todo" ? "[]" : "";
+    const terminalContent = tool.type === "terminal" && tool.terminalPreset
+      ? JSON.stringify({
+          name: tool.label,
+          subagentIds: [],
+          agentic: tool.terminalPreset.agentic ?? false,
+          bootCommand: tool.terminalPreset.command ?? "",
+        })
+      : defaultContent;
 
     createItemMutation.mutate({
-      type,
-      content: defaultContent,
+      type: tool.type,
+      content: tool.type === "terminal" && tool.terminalPreset ? terminalContent : defaultContent,
       position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
-      size: defaultSizes[type] || { width: 200, height: 120 },
+      size: defaultSizes[tool.type] || { width: 200, height: 120 },
     });
   };
 
@@ -386,16 +445,17 @@ export default function DashboardPage() {
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
         : { x: 140 + Math.random() * 200, y: 140 + Math.random() * 200 };
-      createItemMutation.mutate({
-        type: "browser",
-        content: url,
-        position,
-        size: defaultSizes.browser,
-        sourceId,
-      });
-    },
-    [createItemMutation]
-  );
+    createItemMutation.mutate({
+      type: "browser",
+      content: url,
+      position,
+      size: defaultSizes.browser,
+      sourceId,
+      sourceHandle: "terminal-right",
+    });
+  },
+  [createItemMutation]
+);
 
   // Add link handler
   const handleAddLink = (e: React.FormEvent) => {
@@ -506,6 +566,64 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, router]);
 
+  React.useEffect(() => {
+    if (!data) return;
+    if (role === "viewer") return;
+    const hasWorkspace = items.some((item) => item.type === "workspace");
+    if (hasWorkspace) {
+      workspaceCreateRequestedRef.current = false;
+      return;
+    }
+    if (workspaceCreateRequestedRef.current) return;
+
+    workspaceCreateRequestedRef.current = true;
+    const rect = canvasContainerRef.current?.getBoundingClientRect();
+    const viewport = viewportRef.current;
+    const screenX = 100;
+    const screenY = rect
+      ? Math.max(100, Math.round(rect.height - (defaultSizes.workspace.height * viewport.zoom) - 50))
+      : 520;
+    const x = Math.round((screenX - viewport.x) / viewport.zoom);
+    const y = Math.round((screenY - viewport.y) / viewport.zoom);
+    createItemMutation.mutate({
+      type: "workspace",
+      content: "",
+      position: { x, y },
+      size: defaultSizes.workspace,
+    }, {
+      onError: () => {
+        workspaceCreateRequestedRef.current = false;
+      },
+    });
+  }, [data, role, items, createItemMutation]);
+
+  React.useEffect(() => {
+    if (!data) return;
+    const workspaceItem = items.find((item) => item.type === "workspace");
+    if (!workspaceItem) return;
+    const terminalIds = items
+      .filter((item) => item.type === "terminal")
+      .map((item) => item.id);
+
+    setEdges((prev) => {
+      const next = [...prev];
+      terminalIds.forEach((terminalId) => {
+        const edgeId = `edge-${terminalId}-${workspaceItem.id}`;
+        if (next.some((edge) => edge.id === edgeId)) return;
+        next.push({
+          id: edgeId,
+          source: terminalId,
+          target: workspaceItem.id,
+          sourceHandle: "workspace",
+          type: "smoothstep",
+          animated: true,
+          style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+        });
+      });
+      return next;
+    });
+  }, [data, items, setEdges]);
+
   if (!isAuthenticated) {
     return null;
   }
@@ -553,16 +671,14 @@ export default function DashboardPage() {
     );
   }
 
-  const { dashboard, items, sessions, role } = data;
-
   // Connection status indicator
   const isCollaborationConnected = collabState.connectionState === "connected";
 
   return (
     <div className="h-screen flex flex-col bg-[var(--background)]">
       {/* Header */}
-      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4">
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full">
+      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full pointer-events-auto">
           <div className="flex items-center gap-2">
             <img
               src="/orca.png"
@@ -570,7 +686,7 @@ export default function DashboardPage() {
               className="w-6 h-6 object-contain"
             />
             <span className="text-sm font-medium text-[var(--foreground)]">
-              Orca Bot
+              OrcaBot
             </span>
           </div>
 
@@ -634,33 +750,7 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content area */}
-      <div className="flex-1 flex">
-        {/* Toolbar */}
-        <aside className="w-12 border-r border-[var(--border)] bg-[var(--background-elevated)] flex flex-col items-center py-3 gap-1">
-          <Tooltip content="Back to dashboards" side="right">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => router.push("/dashboards")}
-              className="mb-2"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-          </Tooltip>
-          {blockTools.map((tool) => (
-            <Tooltip key={tool.type} content={tool.label} side="right">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => handleAddBlock(tool.type)}
-                disabled={createItemMutation.isPending}
-              >
-                {tool.icon}
-              </Button>
-            </Tooltip>
-          ))}
-        </aside>
-
+      <div className="flex-1 flex relative">
         {/* Canvas with cursor tracking */}
         <main
           ref={canvasContainerRef}
@@ -668,6 +758,45 @@ export default function DashboardPage() {
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         >
+          <div className="absolute left-4 top-2 z-20 pointer-events-none">
+            <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
+              <Tooltip content="Back to dashboards" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => router.push("/dashboards")}
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+              <div className="h-6 w-px bg-[var(--border)] mx-2" />
+              {terminalTools.map((tool) => (
+                <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => handleAddBlock(tool)}
+                    disabled={createItemMutation.isPending}
+                  >
+                    {tool.icon}
+                  </Button>
+                </Tooltip>
+              ))}
+              <div className="h-6 w-px bg-[var(--border)] mx-2" />
+              {blockTools.map((tool) => (
+                <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => handleAddBlock(tool)}
+                    disabled={createItemMutation.isPending}
+                  >
+                    {tool.icon}
+                  </Button>
+                </Tooltip>
+              ))}
+            </div>
+          </div>
           <Canvas
             items={items}
             sessions={sessions}
@@ -676,6 +805,10 @@ export default function DashboardPage() {
             edges={edges}
             onEdgesChange={onEdgesChange}
             onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+            onViewportChange={(next) => {
+              viewportRef.current = next;
+            }}
+            fitViewEnabled={false}
             readOnly={role === "viewer"}
           />
           {/* Remote cursors overlay */}
