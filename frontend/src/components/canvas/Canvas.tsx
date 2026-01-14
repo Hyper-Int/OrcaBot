@@ -15,6 +15,7 @@ import {
   type EdgeChange,
   type OnNodesChange,
   type OnNodeDrag,
+  type OnNodeDragStart,
   type NodeChange,
   type ReactFlowInstance,
 } from "@xyflow/react";
@@ -115,28 +116,23 @@ export function Canvas({
   const [viewport, setViewport] = React.useState({ x: 0, y: 0, zoom: 1 });
   const { zIndexVersion, bringToFront, getZIndex } = useTerminalZIndex();
   const terminalRefs = React.useRef<Map<string, TerminalHandle>>(new Map());
-  const [nodes, setNodes, onNodesChange] = useNodesState(
-    itemsToNodes(
-      items,
-      sessions,
-      readOnly ? undefined : onItemChange,
-      (itemId, handle) => {
-        if (handle) {
-          terminalRefs.current.set(itemId, handle);
-        } else {
-          terminalRefs.current.delete(itemId);
-        }
-      },
-      onCreateBrowserBlock
-    )
+  const applyZIndex = React.useCallback(
+    (nextNodes: Node[]) =>
+      nextNodes.map((node) => {
+        const base = getZIndex(node.id);
+        const zIndex = node.type === "terminal" ? base + 10000 : base;
+        return {
+          ...node,
+          style: {
+            ...node.style,
+            zIndex,
+          },
+        };
+      }),
+    [getZIndex]
   );
-  const [edges, , onEdgesChange] = useEdgesState([]);
-  const edgesToRender = controlledEdges ?? edges;
-  const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
-
-  // Update nodes when items or sessions change from server
-  React.useEffect(() => {
-    setNodes(
+  const [nodes, setNodes, onNodesChange] = useNodesState(
+    applyZIndex(
       itemsToNodes(
         items,
         sessions,
@@ -150,12 +146,46 @@ export function Canvas({
         },
         onCreateBrowserBlock
       )
+    )
+  );
+  const [edges, , onEdgesChange] = useEdgesState([]);
+  const edgesToRender = controlledEdges ?? edges;
+  const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
+
+  // Update nodes when items or sessions change from server
+  React.useEffect(() => {
+    setNodes(
+      applyZIndex(
+        itemsToNodes(
+          items,
+          sessions,
+          readOnly ? undefined : onItemChange,
+          (itemId, handle) => {
+            if (handle) {
+              terminalRefs.current.set(itemId, handle);
+            } else {
+              terminalRefs.current.delete(itemId);
+            }
+          },
+          onCreateBrowserBlock
+        )
+      )
     );
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, applyZIndex]);
+
+  React.useEffect(() => {
+    setNodes((current) => applyZIndex(current));
+  }, [applyZIndex, setNodes, zIndexVersion]);
 
   // Handle node changes - apply locally, sync dimensions on resize end
   const handleNodesChange: OnNodesChange = React.useCallback(
     (changes: NodeChange[]) => {
+      changes.forEach((change) => {
+        if (change.type === "select" && change.selected) {
+          bringToFront(change.id);
+        }
+      });
+
       onNodesChange(changes);
 
       // Check for dimension changes (from NodeResizer)
@@ -181,7 +211,14 @@ export function Canvas({
         }
       });
     },
-    [onNodesChange, onItemChange, nodes]
+    [onNodesChange, onItemChange, nodes, bringToFront]
+  );
+
+  const handleNodeDragStart: OnNodeDragStart = React.useCallback(
+    (_event, node) => {
+      bringToFront(node.id);
+    },
+    [bringToFront]
   );
 
   // Handle node drag END - sync to server only when drag stops
@@ -231,6 +268,7 @@ export function Canvas({
           edges={edgesToRender}
           onNodesChange={handleNodesChange}
           onEdgesChange={edgesChangeHandler}
+          onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={handleNodeDragStop}
           onNodesDelete={handleNodesDelete}
           onInit={handleInit}

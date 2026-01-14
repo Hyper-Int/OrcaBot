@@ -142,6 +142,7 @@ export function TerminalBlock({
   const [session, setSession] = React.useState<Session | null>(
     data.session || null
   );
+  const autoControlRequestedRef = React.useRef(false);
 
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
@@ -167,6 +168,7 @@ export function TerminalBlock({
     setFileEntries({});
     setFileLoading({});
     setFileError(null);
+    autoControlRequestedRef.current = false;
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
@@ -541,9 +543,9 @@ export function TerminalBlock({
   const blockX = positionAbsoluteX * zoom + (overlay?.viewport.x ?? 0);
   const blockY = positionAbsoluteY * zoom + (overlay?.viewport.y ?? 0);
 
-  // Selected or dragging terminal gets high z-index, others use tracked order
+  // Terminals always sit above other blocks; order is tracked by z-index map.
   const baseZIndex = overlay?.getZIndex(id) ?? 0;
-  const zIndex = selected || dragging ? 9999 : baseZIndex;
+  const zIndex = baseZIndex + 10000;
 
   // Track z-order so last-selected/dragged stays on top
   const prevSelectedRef = React.useRef(false);
@@ -640,11 +642,24 @@ export function TerminalBlock({
       );
       terminalRef.current?.write("\r\n");
 
-      // NOTE: Do NOT auto-take control here.
-      // Turn-taking requires explicit user action - control must be requested/granted.
-      // The server will broadcast who has control via the control_state message.
+      // Control is requested separately once connected.
     }
   }, [isConnected, session, isReady]);
+
+  React.useEffect(() => {
+    if (!isConnected) {
+      autoControlRequestedRef.current = false;
+      return;
+    }
+    if (!session || !isOwner || isAgentRunning || turnTaking.isController) {
+      return;
+    }
+    if (autoControlRequestedRef.current) {
+      return;
+    }
+    autoControlRequestedRef.current = true;
+    terminalActions.takeControl();
+  }, [isConnected, session, isOwner, isAgentRunning, turnTaking.isController, terminalActions]);
 
   React.useEffect(() => {
     if (!session || !terminalRef.current) {
@@ -1119,16 +1134,14 @@ export function TerminalBlock({
         )}
 
         {/* Input blocked overlay (when connected but can't type) */}
-        {session && isConnected && !canType && isOwner && (
+        {session && isConnected && !canType && (isAgentRunning || !isOwner) && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="bg-[var(--background-elevated)] px-4 py-2 rounded-lg border border-[var(--border)] flex items-center gap-2">
               <Lock className="w-4 h-4 text-[var(--foreground-muted)]" />
               <span className="text-sm text-[var(--foreground-muted)]">
                 {isAgentRunning
                   ? "Agent is running"
-                  : isOwner
-                    ? "Click below to request control"
-                    : "View-only session"}
+                  : "View-only session"}
               </span>
             </div>
           </div>
@@ -1154,19 +1167,6 @@ export function TerminalBlock({
               style={{ pointerEvents: "auto" }}
             >
               Reconnect
-            </Button>
-          )}
-
-          {session && isConnected && !turnTaking.isController && !isAgentRunning && isOwner && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRequestControl}
-              disabled={turnTaking.hasPendingRequest}
-              className="text-[10px] h-5 px-2"
-              style={{ pointerEvents: "auto" }}
-            >
-              {turnTaking.hasPendingRequest ? "Pending..." : "Take Control"}
             </Button>
           )}
 

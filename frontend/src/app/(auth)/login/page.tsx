@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Terminal, Zap } from "lucide-react";
+import { Zap } from "lucide-react";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
 import { DEV_MODE_ENABLED } from "@/config/env";
@@ -69,9 +69,11 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo and Tagline */}
         <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 mb-6">
-            <Terminal className="w-8 h-8 text-[var(--accent-primary)]" />
-          </div>
+          <img
+            src="/orca.png"
+            alt="Orcabot"
+            className="w-[90px] h-[90px] object-contain mx-auto mb-6"
+          />
           <h1 className="text-display text-[var(--foreground)] mb-2">OrcaBot</h1>
           <p className="text-body text-[var(--foreground-muted)]">
             Agentic AI Coding Agent Orchestration on the Web

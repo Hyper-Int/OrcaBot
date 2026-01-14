@@ -114,7 +114,11 @@ export default function DashboardsPage() {
       <header className="border-b border-[var(--border)] bg-[var(--background-elevated)]">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Terminal className="w-6 h-6 text-[var(--accent-primary)]" />
+            <img
+              src="/orca.png"
+              alt="Orcabot"
+              className="w-7 h-7 object-contain"
+            />
             <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
           </div>
           <div className="flex items-center gap-4">
