@@ -8,7 +8,7 @@ import type {
   CursorPosition,
   IncomingCollabMessage,
 } from "@/types/collaboration";
-import type { DashboardItem, Session } from "@/types/dashboard";
+import type { DashboardItem, DashboardEdge, Session } from "@/types/dashboard";
 import { getCurrentUser } from "@/lib/api/cloudflare";
 
 export interface UseCollaborationOptions {
@@ -22,6 +22,7 @@ export interface UseCollaborationState {
   connectionState: ConnectionState;
   presence: PresenceInfo[];
   items: DashboardItem[];
+  edges: DashboardEdge[];
   sessions: Session[];
   error: Error | null;
 }
@@ -58,6 +59,7 @@ export function useCollaboration(
     React.useState<ConnectionState>("disconnected");
   const [presence, setPresence] = React.useState<PresenceInfo[]>([]);
   const [items, setItems] = React.useState<DashboardItem[]>([]);
+  const [edges, setEdges] = React.useState<DashboardEdge[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
   const [error, setError] = React.useState<Error | null>(null);
 
@@ -175,6 +177,17 @@ export function useCollaboration(
           return [...prev, message.session];
         });
         break;
+
+      case "edge_create":
+        setEdges((prev) => {
+          if (prev.some((edge) => edge.id === message.edge.id)) return prev;
+          return [...prev, message.edge];
+        });
+        break;
+
+      case "edge_delete":
+        setEdges((prev) => prev.filter((edge) => edge.id !== message.edge_id));
+        break;
     }
   }, []);
 
@@ -228,6 +241,7 @@ export function useCollaboration(
     connectionState,
     presence,
     items,
+    edges,
     sessions,
     error,
   };

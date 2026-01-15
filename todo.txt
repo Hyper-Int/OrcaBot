@@ -1,0 +1,34 @@
+deploy to cloudflare
+point orcabot.com and orcabot.ai at it
+test gate for me and anthony
+
+add all cloud drives
+combine drive contents appropriately
+connect subagents
+
+add flip mechanic to turn terminals into cute chatbots
+make connections pipe outputs around appropriately
+
+add skills
+add commands
+add mcp tools
+
+add talkito
+add sessionito
+add execution sandbox/canvas
+
+add schedule component
+add IFTTT
+add gmail
+
+add templates
+
+polish
+test
+add payment options
+
+DONE
+
+DREAM GOALS
+* Can someone use OrcaBot to set up Gas Town? Ralph? BMAD?
+* Is this Turing complete? Can someone create OrcaBot in OrcaBot?

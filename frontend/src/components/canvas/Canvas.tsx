@@ -28,6 +28,7 @@ import { TerminalBlock } from "@/components/blocks/TerminalBlock";
 import { BrowserBlock } from "@/components/blocks/BrowserBlock";
 import { WorkspaceBlock } from "@/components/blocks/WorkspaceBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
+import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
 import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
@@ -41,6 +42,7 @@ const nodeTypes: NodeTypes = {
   browser: BrowserBlock,
   workspace: WorkspaceBlock,
   recipe: RecipeBlock,
+  cursor: CursorNode,
 };
 
 // Convert dashboard items to React Flow nodes
@@ -53,7 +55,9 @@ function itemsToNodes(
     url: string,
     anchor?: { x: number; y: number },
     sourceId?: string
-  ) => void
+  ) => void,
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void,
+  connectorMode?: boolean
 ): Node[] {
   const workspaceSession = sessions.find((s) => s.status === "active");
   return items.map((item) => {
@@ -77,6 +81,8 @@ function itemsToNodes(
         sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
         onRegisterTerminal,
         onCreateBrowserBlock,
+        onConnectorClick,
+        connectorMode,
         onItemChange: onItemChange
           ? (changes: Partial<DashboardItem>) => onItemChange(item.id, changes)
           : undefined,
@@ -100,10 +106,15 @@ interface CanvasProps {
   onItemDelete?: (itemId: string) => void;
   onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
+  onCursorMove?: (point: { x: number; y: number }) => void;
+  onCanvasClick?: () => void;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
+  connectorMode?: boolean;
   fitViewEnabled?: boolean;
   edges?: Edge[];
   onEdgesChange?: (changes: EdgeChange[]) => void;
   readOnly?: boolean;
+  extraNodes?: Node[];
 }
 
 export function Canvas({
@@ -114,14 +125,20 @@ export function Canvas({
   onItemDelete,
   onCreateBrowserBlock,
   onViewportChange,
+  onCursorMove,
+  onCanvasClick,
+  onConnectorClick,
+  connectorMode = false,
   fitViewEnabled = true,
   edges: controlledEdges,
   onEdgesChange: onEdgesChangeProp,
   readOnly = false,
+  extraNodes = [],
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
   const [viewport, setViewport] = React.useState({ x: 0, y: 0, zoom: 1 });
+  const instanceRef = React.useRef<ReactFlowInstance | null>(null);
   const { zIndexVersion, bringToFront, getZIndex } = useTerminalZIndex();
   const terminalRefs = React.useRef<Map<string, TerminalHandle>>(new Map());
   const applyZIndex = React.useCallback(
@@ -139,8 +156,8 @@ export function Canvas({
       }),
     [getZIndex]
   );
-  const [nodes, setNodes, onNodesChange] = useNodesState(
-    applyZIndex(
+  const [nodes, setNodes, onNodesChange] = useNodesState(() => {
+    const baseNodes = applyZIndex(
       itemsToNodes(
         items,
         sessions,
@@ -152,34 +169,38 @@ export function Canvas({
             terminalRefs.current.delete(itemId);
           }
         },
-        onCreateBrowserBlock
+        onCreateBrowserBlock,
+        onConnectorClick,
+        connectorMode
       )
-    )
-  );
+    );
+    return [...baseNodes, ...extraNodes];
+  });
   const [edges, , onEdgesChange] = useEdgesState([]);
   const edgesToRender = controlledEdges ?? edges;
   const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
 
   // Update nodes when items or sessions change from server
   React.useEffect(() => {
-    setNodes(
-      applyZIndex(
-        itemsToNodes(
-          items,
-          sessions,
-          readOnly ? undefined : onItemChange,
-          (itemId, handle) => {
-            if (handle) {
-              terminalRefs.current.set(itemId, handle);
-            } else {
-              terminalRefs.current.delete(itemId);
-            }
-          },
-          onCreateBrowserBlock
-        )
+    const baseNodes = applyZIndex(
+      itemsToNodes(
+        items,
+        sessions,
+        readOnly ? undefined : onItemChange,
+        (itemId, handle) => {
+          if (handle) {
+            terminalRefs.current.set(itemId, handle);
+          } else {
+            terminalRefs.current.delete(itemId);
+          }
+        },
+        onCreateBrowserBlock,
+        onConnectorClick,
+        connectorMode
       )
     );
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, applyZIndex]);
+    setNodes([...baseNodes, ...extraNodes]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));
@@ -260,10 +281,23 @@ export function Canvas({
   }, []);
 
   const handleInit = React.useCallback((instance: ReactFlowInstance) => {
+    instanceRef.current = instance;
     const nextViewport = instance.getViewport();
     setViewport(nextViewport);
     onViewportChange?.(nextViewport);
   }, [onViewportChange]);
+
+  const handlePaneMouseMove = React.useCallback(
+    (event: React.MouseEvent) => {
+      if (!onCursorMove || !instanceRef.current) return;
+      const point = instanceRef.current.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      onCursorMove(point);
+    },
+    [onCursorMove]
+  );
 
   const overlayContextValue = React.useMemo(
     () => ({ root: overlayRoot, viewport, zIndexVersion, bringToFront, getZIndex }),
@@ -272,7 +306,10 @@ export function Canvas({
 
   return (
     <TerminalOverlayProvider value={overlayContextValue}>
-      <div className="w-full h-full bg-[var(--background)] relative">
+      <div
+        className="w-full h-full bg-[var(--background)] relative"
+        onMouseMoveCapture={handlePaneMouseMove}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edgesToRender}
@@ -282,6 +319,14 @@ export function Canvas({
           onNodeDragStop={handleNodeDragStop}
           onNodesDelete={handleNodesDelete}
           onInit={handleInit}
+          onPaneMouseMove={handlePaneMouseMove}
+          onPaneClick={() => onCanvasClick?.()}
+          onNodeClick={(event) => {
+            const target = event.target as HTMLElement | null;
+            if (target?.closest(".react-flow__handle")) return;
+            if (target?.closest("[data-connector=\"true\"]")) return;
+            onCanvasClick?.();
+          }}
           onMove={(_event, nextViewport) => {
             setViewport(nextViewport);
             onViewportChange?.(nextViewport);

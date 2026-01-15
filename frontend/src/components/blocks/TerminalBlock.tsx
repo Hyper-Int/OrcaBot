@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { type NodeProps, type Node, Handle, Position } from "@xyflow/react";
+import { type NodeProps, type Node } from "@xyflow/react";
 import {
   Terminal,
   User,
@@ -19,6 +19,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { Button, Badge } from "@/components/ui";
+import { ConnectionHandles } from "./ConnectionHandles";
+import { ConnectionMarkers } from "./ConnectionMarkers";
 import {
   Terminal as TerminalEmulator,
   type TerminalHandle,
@@ -45,6 +47,8 @@ interface TerminalData extends Record<string, unknown> {
     anchor?: { x: number; y: number },
     sourceId?: string
   ) => void;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
@@ -132,6 +136,7 @@ export function TerminalBlock({
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
   const [showAttachedList, setShowAttachedList] = React.useState(false);
   const onRegisterTerminal = data.onRegisterTerminal;
+  const connectorsVisible = selected || Boolean(data.connectorMode);
   const setTerminalRef = React.useCallback(
     (handle: TerminalHandle | null) => {
       terminalRef.current = handle;
@@ -616,7 +621,7 @@ export function TerminalBlock({
   const terminalContent = (
     <div
       className={cn(
-        "relative flex flex-col rounded-[var(--radius-card)]",
+        "relative flex flex-col rounded-[var(--radius-card)] group",
         "bg-[var(--background-elevated)] border border-[var(--border)]",
         "shadow-sm",
         selected && "ring-2 ring-[var(--accent-primary)] shadow-lg"
@@ -1061,9 +1066,13 @@ export function TerminalBlock({
       >
         {/* Invisible content - same structure for sizing but not rendered visually */}
         <div style={{ opacity: 0, pointerEvents: "none" }} className="w-full h-full" />
-        <Handle type="source" id="terminal-right" position={Position.Right} className="opacity-0" />
-        <Handle type="target" id="terminal-left" position={Position.Left} className="opacity-0" />
-        <Handle type="source" id="workspace" position={Position.Bottom} className="opacity-0" />
+        <ConnectionHandles
+          nodeId={id}
+          visible={false}
+          onConnectorClick={data.onConnectorClick}
+          topMode="none"
+          bottomMode="both"
+        />
       </BlockWrapper>
 
       {/* Portal the entire terminal to overlay for correct z-ordering and no CSS transform issues */}
@@ -1080,8 +1089,17 @@ export function TerminalBlock({
                 zIndex,
                 pointerEvents: "none",
               }}
+              className="group"
             >
               {terminalContent}
+              <ConnectionMarkers
+                nodeId={id}
+                visible={connectorsVisible}
+                onConnectorClick={data.onConnectorClick}
+                topMode="none"
+                bottomMode="both"
+                bottomVariant="single"
+              />
             </div>,
             overlay.root
           )

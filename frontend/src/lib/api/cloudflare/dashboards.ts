@@ -5,6 +5,7 @@ import type {
   DashboardItem,
   Session,
   DashboardRole,
+  DashboardEdge,
 } from "@/types/dashboard";
 
 // ===== Response Types =====
@@ -17,6 +18,7 @@ interface DashboardResponse {
   dashboard: Dashboard;
   items?: DashboardItem[];
   sessions?: Session[];
+  edges?: DashboardEdge[];
   role?: DashboardRole;
 }
 
@@ -30,6 +32,17 @@ interface DashboardUpdateRequest {
 
 interface ItemResponse {
   item: DashboardItem;
+}
+
+interface EdgeResponse {
+  edge: DashboardEdge;
+}
+
+interface EdgeCreateRequest {
+  sourceItemId: string;
+  targetItemId: string;
+  sourceHandle?: string;
+  targetHandle?: string;
 }
 
 interface ItemCreateRequest {
@@ -66,6 +79,7 @@ export async function getDashboard(id: string): Promise<{
   dashboard: Dashboard;
   items: DashboardItem[];
   sessions: Session[];
+  edges: DashboardEdge[];
   role: DashboardRole;
 }> {
   const response = await apiGet<DashboardResponse>(
@@ -75,6 +89,7 @@ export async function getDashboard(id: string): Promise<{
     dashboard: response.dashboard,
     items: response.items || [],
     sessions: response.sessions || [],
+    edges: response.edges || [],
     role: response.role || "viewer",
   };
 }
@@ -124,6 +139,30 @@ export async function createItem(
     data
   );
   return response.item;
+}
+
+/**
+ * Create a dashboard edge
+ */
+export async function createEdge(
+  dashboardId: string,
+  data: EdgeCreateRequest
+): Promise<DashboardEdge> {
+  const response = await apiPost<EdgeResponse>(
+    `${API.cloudflare.dashboards}/${dashboardId}/edges`,
+    data
+  );
+  return response.edge;
+}
+
+/**
+ * Delete a dashboard edge
+ */
+export async function deleteEdge(
+  dashboardId: string,
+  edgeId: string
+): Promise<void> {
+  await apiDelete<void>(`${API.cloudflare.dashboards}/${dashboardId}/edges/${edgeId}`);
 }
 
 /**

@@ -50,6 +50,24 @@ CREATE TABLE IF NOT EXISTS dashboard_items (
 
 CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id);
 
+-- Dashboard edges (connections between blocks)
+CREATE TABLE IF NOT EXISTS dashboard_edges (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  source_item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
+  target_item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
+  source_handle TEXT,
+  target_handle TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_edges_dashboard ON dashboard_edges(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_edges_source ON dashboard_edges(source_item_id);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON dashboard_edges(target_item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique
+  ON dashboard_edges(dashboard_id, source_item_id, target_item_id, source_handle, target_handle);
+
 -- Sessions (map dashboard terminals to sandbox sessions)
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,

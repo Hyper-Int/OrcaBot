@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { type NodeProps, type Node, Handle, Position } from "@xyflow/react";
+import { type NodeProps, type Node } from "@xyflow/react";
 import { Folder, Cloud, Github, Box, HardDrive } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
 import { Button } from "@/components/ui";
 import { listSessionFiles, deleteSessionFile } from "@/lib/api/cloudflare";
 import type { SessionFileEntry } from "@/lib/api/cloudflare";
@@ -13,18 +14,21 @@ import { API } from "@/config/env";
 interface WorkspaceData extends Record<string, unknown> {
   size: { width: number; height: number };
   sessionId?: string;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type WorkspaceNode = Node<WorkspaceData, "workspace">;
 
 type IntegrationProvider = "google-drive" | "github" | "box" | "onedrive";
 
-export function WorkspaceBlock({ data, selected }: NodeProps<WorkspaceNode>) {
+export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>) {
   const { user } = useAuthStore();
   const sessionId = data.sessionId;
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set(["/"]));
   const [fileEntries, setFileEntries] = React.useState<Record<string, SessionFileEntry[]>>({});
   const [fileError, setFileError] = React.useState<string | null>(null);
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   const openIntegration = React.useCallback(
     (provider: IntegrationProvider) => {
@@ -168,12 +172,11 @@ export function WorkspaceBlock({ data, selected }: NodeProps<WorkspaceNode>) {
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 overflow-hidden flex flex-col"
+      className="p-0 flex flex-col overflow-visible"
       minWidth={460}
       minHeight={110}
       includeHandles={false}
     >
-      <Handle type="target" position={Position.Top} className="opacity-0" />
       <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
         <Folder className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
         <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
@@ -247,6 +250,11 @@ export function WorkspaceBlock({ data, selected }: NodeProps<WorkspaceNode>) {
           </div>
         </div>
       </div>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
     </BlockWrapper>
   );
 }

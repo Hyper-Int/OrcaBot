@@ -416,6 +416,21 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return dashboards.deleteItem(env, segments[1], segments[3], auth.user!.id);
   }
 
+  // POST /dashboards/:id/edges - Create edge
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'edges' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json();
+    return dashboards.createEdge(env, segments[1], auth.user!.id, data);
+  }
+
+  // DELETE /dashboards/:id/edges/:edgeId - Delete edge
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'edges' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return dashboards.deleteEdge(env, segments[1], segments[3], auth.user!.id);
+  }
+
   // ============================================
   // Subagent routes
   // ============================================

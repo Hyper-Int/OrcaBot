@@ -5,6 +5,7 @@ import { type NodeProps, type Node } from "@xyflow/react";
 import { Plus, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
 import { Badge } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 
@@ -19,11 +20,13 @@ interface TodoData extends Record<string, unknown> {
   title?: string;
   size: { width: number; height: number };
   onContentChange?: (content: string) => void;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type TodoNode = Node<TodoData, "todo">;
 
-export function TodoBlock({ data, selected }: NodeProps<TodoNode>) {
+export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
   const [title, setTitle] = React.useState(data.title || "Todo List");
   const [items, setItems] = React.useState<TodoItem[]>(() => {
     try {
@@ -34,6 +37,7 @@ export function TodoBlock({ data, selected }: NodeProps<TodoNode>) {
   });
   const [newItemText, setNewItemText] = React.useState("");
   const [isAdding, setIsAdding] = React.useState(false);
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   // Sync content from server
   React.useEffect(() => {
@@ -89,7 +93,8 @@ export function TodoBlock({ data, selected }: NodeProps<TodoNode>) {
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 overflow-hidden flex flex-col"
+      className="p-0 flex flex-col overflow-visible"
+      includeHandles={false}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
@@ -172,6 +177,11 @@ export function TodoBlock({ data, selected }: NodeProps<TodoNode>) {
           </button>
         )}
       </div>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
     </BlockWrapper>
   );
 }
