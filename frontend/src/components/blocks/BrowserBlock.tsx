@@ -60,6 +60,10 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const validUrl = isValidUrl(url);
   const isCollapsed = validUrl && !isEmbeddable;
 
+  // Store onItemChange in a ref to avoid triggering effect on every render
+  const onItemChangeRef = React.useRef(data.onItemChange);
+  onItemChangeRef.current = data.onItemChange;
+
   React.useEffect(() => {
     let cancelled = false;
 
@@ -78,7 +82,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
           const targetSize = embeddable
             ? { width: 520, height: 360 }
             : { width: 250, height: 130 };
-          data.onItemChange?.({ size: targetSize });
+          onItemChangeRef.current?.({ size: targetSize });
         }
         lastEmbeddableRef.current = embeddable;
       })
@@ -92,7 +96,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
     return () => {
       cancelled = true;
     };
-  }, [validUrl, url, data.onItemChange]);
+  }, [validUrl, url]);
 
   const handleOpen = () => {
     if (validUrl) {
@@ -102,7 +106,9 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
 
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-      <Globe className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+      <span title="Browser icon">
+        <Globe className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+      </span>
       <Input
         value={draftUrl}
         onChange={(e) => setDraftUrl(e.target.value)}
@@ -114,6 +120,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
           }
         }}
         placeholder="https://..."
+        title="Enter URL"
         className={cn(
           "h-6 text-xs bg-[var(--background-elevated)] nodrag",
           "border-[var(--border)] focus:border-[var(--border-strong)]"

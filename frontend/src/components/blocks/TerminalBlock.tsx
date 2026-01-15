@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { type NodeProps, type Node } from "@xyflow/react";
+import { type NodeProps, type Node, useReactFlow } from "@xyflow/react";
 import {
   Terminal,
-  User,
   Bot,
   Pause,
   Play,
@@ -14,7 +13,7 @@ import {
   Plug,
   Loader2,
   AlertCircle,
-  Menu,
+  Settings,
   Key,
   Wand2,
   Puzzle,
@@ -25,6 +24,9 @@ import {
   Plus,
   Trash2,
   X,
+  RefreshCw,
+  Pencil,
+  Eye,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -48,7 +50,7 @@ import {
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { createSession } from "@/lib/api/cloudflare";
+import { createSession, stopSession } from "@/lib/api/cloudflare";
 import {
   createSubagent,
   deleteSubagent,
@@ -199,6 +201,7 @@ export function TerminalBlock({
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
+  const { deleteElements } = useReactFlow();
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
   const [activePanel, setActivePanel] = React.useState<ActivePanel>(null);
@@ -207,6 +210,8 @@ export function TerminalBlock({
   const [activeMcpTab, setActiveMcpTab] = React.useState<"saved" | "browse">("saved");
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
   const [showAttachedList, setShowAttachedList] = React.useState(false);
+  const [showSavedSkills, setShowSavedSkills] = React.useState(false);
+  const [showSavedMcp, setShowSavedMcp] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
   const onRegisterTerminal = data.onRegisterTerminal;
@@ -399,7 +404,12 @@ export function TerminalBlock({
       if (terminalMeta.subagentIds.includes(subagentId)) return;
       const nextIds = [...terminalMeta.subagentIds, subagentId];
       data.onItemChange({
-        content: JSON.stringify({ name: terminalMeta.name, subagentIds: nextIds }),
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: nextIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+        }),
       });
     },
     [data, terminalMeta]
@@ -410,7 +420,12 @@ export function TerminalBlock({
       if (!data.onItemChange) return;
       const nextIds = terminalMeta.subagentIds.filter((id) => id !== subagentId);
       data.onItemChange({
-        content: JSON.stringify({ name: terminalMeta.name, subagentIds: nextIds }),
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: nextIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+        }),
       });
     },
     [data, terminalMeta]
@@ -556,12 +571,26 @@ export function TerminalBlock({
     }
   );
 
-  const { connectionState, turnTaking, agentState, error: wsError } = terminalState;
+  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError } = terminalState;
+
+  // Track if we were ever connected (to distinguish initial disconnected from lost connection)
+  const wasConnectedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (connectionState === "connected") {
+      wasConnectedRef.current = true;
+    }
+  }, [connectionState]);
+
+  // Reset wasConnected when session changes (new session created)
+  React.useEffect(() => {
+    wasConnectedRef.current = false;
+  }, [session?.id]);
 
   // Computed state
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
   const isFailed = connectionState === "failed";
+  const isDisconnected = connectionState === "disconnected" && wasConnectedRef.current;
   const isAgentRunning = agentState === "running";
   const isOwner = !!session && user?.id === session.ownerUserId;
   const isAgentic = terminalMeta.agentic === true;
@@ -715,6 +744,56 @@ export function TerminalBlock({
     }
   };
 
+  // Delete terminal block handler
+  const handleDeleteBlock = React.useCallback(() => {
+    deleteElements({ nodes: [{ id }] });
+  }, [deleteElements, id]);
+
+  // Reopen terminal - stops old session and creates new one
+  const handleReopen = async () => {
+    if (!data.dashboardId) {
+      setSessionError("Dashboard ID not found");
+      return;
+    }
+
+    setIsCreatingSession(true);
+    setSessionError(null);
+
+    try {
+      // Stop the old session if it exists
+      if (session) {
+        console.log(`[TerminalBlock] Stopping old session ${session.id}...`);
+        try {
+          await stopSession(session.id);
+        } catch (e) {
+          // Ignore errors - session might already be stopped
+          console.log(`[TerminalBlock] Failed to stop session (may already be stopped):`, e);
+        }
+        setSession(null);
+      }
+
+      // Clear terminal
+      if (isReady) {
+        terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+        terminalRef.current?.write("\x1b[32mReconnecting...\x1b[0m\r\n");
+      }
+
+      // Create new session
+      console.log(`[TerminalBlock] Creating new session...`);
+      const newSession = await createSession(data.dashboardId, id);
+      console.log(`[TerminalBlock] New session created:`, newSession);
+      setSession(newSession);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Failed to create session";
+      setSessionError(errorMsg);
+      if (isReady) {
+        terminalRef.current?.write(`\x1b[31mError: ${errorMsg}\x1b[0m\r\n`);
+      }
+    } finally {
+      setIsCreatingSession(false);
+    }
+  };
+
   // Show connected message when WebSocket connects
   React.useEffect(() => {
     if (isConnected && session && isReady) {
@@ -846,14 +925,46 @@ export function TerminalBlock({
         overflow: "visible",
       }}
     >
-      {/* Panel overlay - shows above terminal when a panel is open */}
-      {(isClaudeSession || isAgentic) && (showAttachedList || activePanel !== null) && (
+      {/* Panel overlay - shows to the right of terminal when a panel is open */}
+      {(activePanel !== null || showAttachedList || showSavedSkills || showSavedMcp) && (
         <div
-          className="absolute left-0 right-0 bottom-full mb-2 flex flex-col gap-2"
+          className="absolute top-0 left-full ml-2 flex flex-col gap-2"
           style={{ pointerEvents: "auto" }}
         >
-          {showAttachedList && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+          {/* Attached Subagents List */}
+          {(showAttachedList || activePanel === "subagents") && (isClaudeSession || isAgentic) && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Bot className="w-3 h-3" />
+                  <span>Attached Subagents</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activePanel === "subagents" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => {
+                      setActivePanel(activePanel === "subagents" ? null : "subagents");
+                    }}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => {
+                      setShowAttachedList(false);
+                      if (activePanel === "subagents") {
+                        setActivePanel(null);
+                      }
+                    }}
+                    className="h-5 w-5 nodrag"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
               <div className="px-2 py-2 text-xs space-y-1">
                 {attachedNames.length === 0 && (
                   <div className="text-[var(--foreground-muted)]">No subagents attached.</div>
@@ -873,6 +984,122 @@ export function TerminalBlock({
                       className="text-[10px] h-5 px-2 nodrag"
                     >
                       Detach
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Saved Skills List */}
+          {(showSavedSkills || activePanel === "agent-skills") && (isClaudeSession || isAgentic) && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Wand2 className="w-3 h-3" />
+                  <span>Saved Skills</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activePanel === "agent-skills" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => {
+                      setActivePanel(activePanel === "agent-skills" ? null : "agent-skills");
+                    }}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => {
+                      setShowSavedSkills(false);
+                      if (activePanel === "agent-skills") {
+                        setActivePanel(null);
+                      }
+                    }}
+                    className="h-5 w-5 nodrag"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+              <div className="px-2 py-2 text-xs space-y-1">
+                {savedSkills.length === 0 && (
+                  <div className="text-[var(--foreground-muted)]">No skills saved.</div>
+                )}
+                {savedSkills.map((skill) => (
+                  <div
+                    key={skill.id}
+                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                  >
+                    <span className="text-[var(--foreground)]">{skill.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteAgentSkillMutation.mutate(skill.id)}
+                      className="h-5 w-5 text-[var(--status-error)] nodrag"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Saved MCP Tools List */}
+          {(showSavedMcp || activePanel === "mcp-tools") && (isClaudeSession || isAgentic) && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Wrench className="w-3 h-3" />
+                  <span>Saved MCP Tools</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activePanel === "mcp-tools" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => {
+                      setActivePanel(activePanel === "mcp-tools" ? null : "mcp-tools");
+                    }}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Add
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => {
+                      setShowSavedMcp(false);
+                      if (activePanel === "mcp-tools") {
+                        setActivePanel(null);
+                      }
+                    }}
+                    className="h-5 w-5 nodrag"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              </div>
+              <div className="px-2 py-2 text-xs space-y-1">
+                {savedMcpTools.length === 0 && (
+                  <div className="text-[var(--foreground-muted)]">No MCP tools saved.</div>
+                )}
+                {savedMcpTools.map((tool) => (
+                  <div
+                    key={tool.id}
+                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                  >
+                    <span className="text-[var(--foreground)]">{tool.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteMcpToolMutation.mutate(tool.id)}
+                      className="h-5 w-5 text-[var(--status-error)] nodrag"
+                    >
+                      <Trash2 className="w-3 h-3" />
                     </Button>
                   </div>
                 ))}
@@ -952,25 +1179,28 @@ export function TerminalBlock({
 
           {/* Subagents Panel */}
           {activePanel === "subagents" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant={activeSubagentTab === "saved" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveSubagentTab("saved")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Saved
-                  </Button>
-                  <Button
-                    variant={activeSubagentTab === "browse" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveSubagentTab("browse")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Browse
-                  </Button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--foreground)]">Add subagents</span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant={activeSubagentTab === "saved" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveSubagentTab("saved")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Saved
+                    </Button>
+                    <Button
+                      variant={activeSubagentTab === "browse" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveSubagentTab("browse")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Public
+                    </Button>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
@@ -992,38 +1222,38 @@ export function TerminalBlock({
                     {savedSubagents.map((item) => (
                       <div
                         key={item.id}
-                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                        className="rounded border border-[var(--border)] bg-[var(--background)] p-2"
                       >
-                        <div>
+                        <div className="flex items-center justify-between gap-2">
                           <div className="font-medium text-[var(--foreground)]">
                             {item.name}
                           </div>
-                          {item.description && (
-                            <div className="text-[10px] text-[var(--foreground-muted)]">
-                              {item.description}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleUseSavedSubagent(item)}
-                            className="text-[10px] h-5 px-2 nodrag"
-                          >
-                            Attach
-                          </Button>
-                          {terminalMeta.subagentIds.includes(item.id) && (
+                          <div className="flex items-center gap-1">
                             <Button
-                              variant="ghost"
+                              variant="secondary"
                               size="sm"
-                              onClick={() => handleDetachSubagent(item.id)}
+                              onClick={() => handleUseSavedSubagent(item)}
                               className="text-[10px] h-5 px-2 nodrag"
                             >
-                              Detach
+                              Attach
                             </Button>
-                          )}
+                            {terminalMeta.subagentIds.includes(item.id) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDetachSubagent(item.id)}
+                                className="text-[10px] h-5 px-2 nodrag"
+                              >
+                                Detach
+                              </Button>
+                            )}
+                          </div>
                         </div>
+                        {item.description && (
+                          <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                            {item.description}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1048,34 +1278,34 @@ export function TerminalBlock({
                             {category.items.map((item) => (
                               <div
                                 key={item.id}
-                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                                className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
                               >
-                                <div>
+                                <div className="flex items-center justify-between gap-2">
                                   <div className="font-medium text-[var(--foreground)]">
                                     {item.name}
                                   </div>
-                                  <div className="text-[10px] text-[var(--foreground-muted)]">
-                                    {item.description}
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={() => handleUseBrowseSubagent(item)}
+                                      className="text-[10px] h-5 px-2 nodrag"
+                                    >
+                                      Attach
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => handleSaveSubagent(item)}
+                                      disabled={savedNames.has(item.name)}
+                                      className="text-[10px] h-5 px-2 nodrag"
+                                    >
+                                      {savedNames.has(item.name) ? "Saved" : "Save"}
+                                    </Button>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-1">
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => handleUseBrowseSubagent(item)}
-                                    className="text-[10px] h-5 px-2 nodrag"
-                                  >
-                                    Attach
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleSaveSubagent(item)}
-                                    disabled={savedNames.has(item.name)}
-                                    className="text-[10px] h-5 px-2 nodrag"
-                                  >
-                                    {savedNames.has(item.name) ? "Saved" : "Save"}
-                                  </Button>
+                                <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                                  {item.description}
                                 </div>
                               </div>
                             ))}
@@ -1091,25 +1321,28 @@ export function TerminalBlock({
 
           {/* Agent Skills Panel */}
           {activePanel === "agent-skills" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant={activeSkillsTab === "saved" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveSkillsTab("saved")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Saved
-                  </Button>
-                  <Button
-                    variant={activeSkillsTab === "browse" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveSkillsTab("browse")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Browse
-                  </Button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--foreground)]">Add skills</span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant={activeSkillsTab === "saved" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveSkillsTab("saved")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Saved
+                    </Button>
+                    <Button
+                      variant={activeSkillsTab === "browse" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveSkillsTab("browse")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Public
+                    </Button>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
@@ -1131,29 +1364,29 @@ export function TerminalBlock({
                     {savedSkills.map((item) => (
                       <div
                         key={item.id}
-                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                        className="rounded border border-[var(--border)] bg-[var(--background)] p-2"
                       >
-                        <div>
+                        <div className="flex items-center justify-between gap-2">
                           <div className="font-medium text-[var(--foreground)]">
                             {item.name}
                           </div>
-                          {item.description && (
-                            <div className="text-[10px] text-[var(--foreground-muted)]">
-                              {item.description}
-                            </div>
-                          )}
-                          <div className="text-[10px] text-[var(--accent-primary)] font-mono">
-                            {item.command}
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => deleteAgentSkillMutation.mutate(item.id)}
+                            className="h-5 w-5 text-[var(--status-error)] nodrag"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => deleteAgentSkillMutation.mutate(item.id)}
-                          className="h-5 w-5 text-[var(--status-error)] nodrag"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                        {item.description && (
+                          <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                            {item.description}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-[var(--accent-primary)] font-mono mt-1">
+                          {item.command}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1178,28 +1411,28 @@ export function TerminalBlock({
                             {category.items.map((item) => (
                               <div
                                 key={item.id}
-                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                                className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
                               >
-                                <div>
+                                <div className="flex items-center justify-between gap-2">
                                   <div className="font-medium text-[var(--foreground)]">
                                     {item.name}
                                   </div>
-                                  <div className="text-[10px] text-[var(--foreground-muted)]">
-                                    {item.description}
-                                  </div>
-                                  <div className="text-[10px] text-[var(--accent-primary)] font-mono">
-                                    {item.command}
-                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleSaveAgentSkill(item)}
+                                    disabled={savedSkillNames.has(item.name)}
+                                    className="text-[10px] h-5 px-2 nodrag"
+                                  >
+                                    {savedSkillNames.has(item.name) ? "Saved" : "Save"}
+                                  </Button>
                                 </div>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleSaveAgentSkill(item)}
-                                  disabled={savedSkillNames.has(item.name)}
-                                  className="text-[10px] h-5 px-2 nodrag"
-                                >
-                                  {savedSkillNames.has(item.name) ? "Saved" : "Save"}
-                                </Button>
+                                <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                                  {item.description}
+                                </div>
+                                <div className="text-[10px] text-[var(--accent-primary)] font-mono mt-1">
+                                  {item.command}
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -1237,25 +1470,28 @@ export function TerminalBlock({
 
           {/* MCP Tools Panel */}
           {activePanel === "mcp-tools" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant={activeMcpTab === "saved" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveMcpTab("saved")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Saved
-                  </Button>
-                  <Button
-                    variant={activeMcpTab === "browse" ? "primary" : "ghost"}
-                    size="sm"
-                    onClick={() => setActiveMcpTab("browse")}
-                    className="text-[10px] h-5 px-2 nodrag"
-                  >
-                    Browse
-                  </Button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--foreground)]">Add MCP tools</span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant={activeMcpTab === "saved" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveMcpTab("saved")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Saved
+                    </Button>
+                    <Button
+                      variant={activeMcpTab === "browse" ? "primary" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveMcpTab("browse")}
+                      className="text-[10px] h-5 px-2 nodrag"
+                    >
+                      Public
+                    </Button>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
@@ -1277,29 +1513,29 @@ export function TerminalBlock({
                     {savedMcpTools.map((item) => (
                       <div
                         key={item.id}
-                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                        className="rounded border border-[var(--border)] bg-[var(--background)] p-2"
                       >
-                        <div>
+                        <div className="flex items-center justify-between gap-2">
                           <div className="font-medium text-[var(--foreground)]">
                             {item.name}
                           </div>
-                          {item.description && (
-                            <div className="text-[10px] text-[var(--foreground-muted)]">
-                              {item.description}
-                            </div>
-                          )}
-                          <div className="text-[10px] text-[var(--accent-primary)] font-mono">
-                            {item.transport}
-                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => deleteMcpToolMutation.mutate(item.id)}
+                            className="h-5 w-5 text-[var(--status-error)] nodrag"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => deleteMcpToolMutation.mutate(item.id)}
-                          className="h-5 w-5 text-[var(--status-error)] nodrag"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
+                        {item.description && (
+                          <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                            {item.description}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-[var(--accent-primary)] font-mono mt-1">
+                          {item.transport}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1324,28 +1560,28 @@ export function TerminalBlock({
                             {category.items.map((item) => (
                               <div
                                 key={item.id}
-                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                                className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
                               >
-                                <div>
+                                <div className="flex items-center justify-between gap-2">
                                   <div className="font-medium text-[var(--foreground)]">
                                     {item.name}
                                   </div>
-                                  <div className="text-[10px] text-[var(--foreground-muted)]">
-                                    {item.description}
-                                  </div>
-                                  <div className="text-[10px] text-[var(--accent-primary)] font-mono">
-                                    {item.transport}
-                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleSaveMcpTool(item)}
+                                    disabled={savedMcpNames.has(item.name)}
+                                    className="text-[10px] h-5 px-2 nodrag"
+                                  >
+                                    {savedMcpNames.has(item.name) ? "Saved" : "Save"}
+                                  </Button>
                                 </div>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleSaveMcpTool(item)}
-                                  disabled={savedMcpNames.has(item.name)}
-                                  className="text-[10px] h-5 px-2 nodrag"
-                                >
-                                  {savedMcpNames.has(item.name) ? "Saved" : "Save"}
-                                </Button>
+                                <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
+                                  {item.description}
+                                </div>
+                                <div className="text-[10px] text-[var(--accent-primary)] font-mono mt-1">
+                                  {item.transport}
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -1383,113 +1619,148 @@ export function TerminalBlock({
         </div>
       )}
 
-      {(isClaudeSession || isAgentic) && (
-        <div
-          className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] text-xs"
-          style={{ pointerEvents: "none" }}
-        >
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
-            <span>{terminalMeta.name}</span>
-            <button
-              type="button"
-              onClick={() => setShowAttachedList((prev) => !prev)}
-              className="flex items-center gap-1 text-[10px] font-medium text-[var(--foreground)] nodrag"
-              style={{ pointerEvents: "auto" }}
-            >
-              <span className="truncate max-w-[180px]">
-                {attachedNames.length > 0 ? attachedNames.join(" · ") : "No subagents"}
-              </span>
-              <span className="text-[10px] text-[var(--foreground-muted)]">
-                ({attachedNames.length})
-              </span>
-            </button>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant={activePanel !== null ? "primary" : "ghost"}
-                size="icon-sm"
-                className="h-5 w-5 nodrag"
-                style={{ pointerEvents: "auto" }}
-              >
-                <Menu className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem onClick={() => setActivePanel("secrets")} className="gap-2">
-                <Key className="w-3 h-3" />
-                <span>Secrets</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2">
-                <Bot className="w-3 h-3" />
-                <span>Subagents</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2">
-                <Wand2 className="w-3 h-3" />
-                <span>Agent Skills</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActivePanel("plugins")} className="gap-2">
-                <Puzzle className="w-3 h-3" />
-                <span>Plugins</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2">
-                <Wrench className="w-3 h-3" />
-                <span>MCP Tools</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
-                <Volume2 className="w-3 h-3" />
-                <span>TTS Voice</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
-
       {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
       <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
-        <div className="flex items-center gap-1.5">
-          <Terminal className="w-3 h-3 text-[var(--foreground-muted)]" />
-          <span className="text-[16px] font-medium text-[var(--foreground)]">
+        <div className="flex items-center gap-1.5" style={{ pointerEvents: "auto" }}>
+          {terminalName === "Claude Code" ? (
+            <img src="/icons/claude.ico" alt="Claude Code icon" title="Claude Code icon" className="w-4 h-4" />
+          ) : terminalName === "Gemini CLI" ? (
+            <img src="/icons/gemini.ico" alt="Gemini CLI icon" title="Gemini CLI icon" className="w-4 h-4" />
+          ) : terminalName === "Codex" ? (
+            <img src="/icons/codex.ico" alt="Codex icon" title="Codex icon" className="w-4 h-4" />
+          ) : terminalName === "OpenCode" ? (
+            <img src="/icons/opencode.ico" alt="OpenCode icon" title="OpenCode icon" className="w-4 h-4" />
+          ) : (
+            <span title="Terminal icon">
+              <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
+            </span>
+          )}
+          <span className="text-[16px] font-medium text-[var(--foreground)]" title={terminalName}>
             {terminalName}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
-          {/* Connection status */}
+        <div className="flex items-center gap-1.5" style={{ pointerEvents: "auto" }}>
+          {/* Connection status - colored dot + edit/view icon */}
           {session && (
-            <Badge
-              variant={isConnected ? "success" : isFailed ? "error" : "secondary"}
-              size="sm"
+            <span
+              title={
+                isConnecting
+                  ? "Connecting..."
+                  : isConnected
+                    ? "Connected - you can edit"
+                    : isFailed
+                      ? "Connection failed"
+                      : "Disconnected"
+              }
+              className="flex items-center gap-1"
             >
               <div
                 className={cn(
-                  "w-1.5 h-1.5 rounded-full mr-1",
+                  "w-2 h-2 rounded-full",
                   isConnected
-                    ? "bg-[var(--status-success)] animate-pulse"
-                    : isFailed
-                      ? "bg-[var(--status-error)]"
-                      : "bg-[var(--foreground-subtle)]"
+                    ? "bg-green-500"
+                    : isConnecting
+                      ? "bg-yellow-500 animate-pulse"
+                      : isFailed
+                        ? "bg-red-500"
+                        : "bg-gray-400"
                 )}
               />
-              {isConnecting
-                ? "..."
-                : isConnected
-                  ? "Live"
-                  : isFailed
-                    ? "Err"
-                    : "Off"}
-            </Badge>
+              {isConnected ? (
+                <Pencil className="w-3 h-3 text-[var(--foreground-muted)]" />
+              ) : (
+                <Eye className="w-3 h-3 text-[var(--foreground-muted)]" />
+              )}
+            </span>
           )}
 
-          {/* Controller badge */}
-          {isConnected && (
-            <Badge variant={turnTaking.isController ? "success" : "secondary"} size="sm">
-              <User className="w-2 h-2 mr-0.5" />
-              {turnTaking.isController ? "You" : (turnTaking.controllerName || "—")}
-            </Badge>
-          )}
+          {/* Subagents button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isClaudeSession || isAgentic) {
+                setShowAttachedList((prev) => !prev);
+              }
+            }}
+            disabled={!isClaudeSession && !isAgentic}
+            title={
+              !isClaudeSession && !isAgentic
+                ? "Subagents (only available in agentic mode)"
+                : attachedNames.length > 0
+                  ? `Subagents: ${attachedNames.join(", ")}`
+                  : "No subagents attached - click to manage"
+            }
+            className={cn(
+              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+              isClaudeSession || isAgentic
+                ? showAttachedList || activePanel === "subagents"
+                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
+            )}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium">{attachedNames.length}</span>
+          </button>
+
+          {/* Skills button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isClaudeSession || isAgentic) {
+                setShowSavedSkills((prev) => !prev);
+              }
+            }}
+            disabled={!isClaudeSession && !isAgentic}
+            title={
+              !isClaudeSession && !isAgentic
+                ? "Skills (only available in agentic mode)"
+                : savedSkills.length > 0
+                  ? `Skills: ${savedSkills.map(s => s.name).join(", ")}`
+                  : "No skills saved - click to manage"
+            }
+            className={cn(
+              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+              isClaudeSession || isAgentic
+                ? showSavedSkills || activePanel === "agent-skills"
+                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
+            )}
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium">{savedSkills.length}</span>
+          </button>
+
+          {/* MCP Tools button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isClaudeSession || isAgentic) {
+                setShowSavedMcp((prev) => !prev);
+              }
+            }}
+            disabled={!isClaudeSession && !isAgentic}
+            title={
+              !isClaudeSession && !isAgentic
+                ? "MCP Tools (only available in agentic mode)"
+                : savedMcpTools.length > 0
+                  ? `MCP Tools: ${savedMcpTools.map(t => t.name).join(", ")}`
+                  : "No MCP tools saved - click to manage"
+            }
+            className={cn(
+              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+              isClaudeSession || isAgentic
+                ? showSavedMcp || activePanel === "mcp-tools"
+                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
+            )}
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-medium">{savedMcpTools.length}</span>
+          </button>
 
           {/* Agent status badge */}
           {agentState !== "idle" && agentState !== null && (
@@ -1502,11 +1773,55 @@ export function TerminalBlock({
                     : "error"
               }
               size="sm"
+              title={agentState === "running" ? "Agent is running" : agentState === "paused" ? "Agent is paused" : "Agent stopped"}
             >
               <Bot className="w-2 h-2 mr-0.5" />
               {agentState === "running" ? "Agent" : agentState}
             </Badge>
           )}
+
+          {/* Settings menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={activePanel !== null ? "primary" : "ghost"}
+                size="icon-sm"
+                className="h-7 w-7 nodrag"
+                style={{ pointerEvents: "auto" }}
+                title="Terminal settings"
+              >
+                <Settings className="w-5 h-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={() => setActivePanel("secrets")} className="gap-2">
+                <Key className="w-3 h-3" />
+                <span>Secrets</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                <Bot className="w-3 h-3" />
+                <span>Subagents</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                <Wand2 className="w-3 h-3" />
+                <span>Agent Skills</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("plugins")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                <Puzzle className="w-3 h-3" />
+                <span>Plugins</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                <Wrench className="w-3 h-3" />
+                <span>MCP Tools</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
+                <Volume2 className="w-3 h-3" />
+                <span>TTS Voice</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1578,93 +1893,39 @@ export function TerminalBlock({
             </div>
           </div>
         )}
-      </div>
 
-      {/* Footer controls - compact, pointer-events: none to allow drag, buttons get pointer-events: auto */}
-      <div className="flex items-center justify-between px-2 py-1 border-t border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
-        {/* Control actions */}
-        <div>
-          {!session && (
-            <div className="text-[10px] text-[var(--foreground-subtle)]">
-              Connecting...
+        {/* Disconnected overlay - show when session exists but connection lost or PTY closed */}
+        {session && (isFailed || isDisconnected || ptyClosed) && (
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+            <div className="bg-[var(--background-elevated)] px-6 py-4 rounded-lg border border-[var(--border)] flex flex-col items-center gap-3">
+              <AlertCircle className="w-8 h-8 text-[var(--foreground-muted)]" />
+              <span className="text-sm text-[var(--foreground)]">
+                Session ended
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleReopen}
+                  isLoading={isCreatingSession}
+                  leftIcon={<RefreshCw className="w-4 h-4" />}
+                  style={{ pointerEvents: "auto" }}
+                >
+                  Reopen
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={handleDeleteBlock}
+                  leftIcon={<Trash2 className="w-4 h-4" />}
+                  style={{ pointerEvents: "auto" }}
+                >
+                  Delete
+                </Button>
+              </div>
             </div>
-          )}
-
-          {session && !isConnected && !isConnecting && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => terminalActions.reconnect()}
-              className="text-[10px] h-5 px-2"
-              style={{ pointerEvents: "auto" }}
-            >
-              Reconnect
-            </Button>
-          )}
-
-          {session && isConnected && turnTaking.isController && (
-            <div className="flex items-center gap-1 text-[10px] text-[var(--foreground-subtle)]">
-              <div className="w-1.5 h-1.5 rounded-full bg-[var(--status-success)] animate-pulse" />
-              Control active
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-subtle)]">
-          {session && (
-            <div>
-              Owner: {session.ownerName || "—"}
-            </div>
-          )}
-
-          {/* Agent controls */}
-          {agentState !== "idle" && agentState !== null && (
-            <div className="flex items-center gap-1" style={{ pointerEvents: "auto" }}>
-              {isAgentRunning && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={handlePauseAgent}
-                    title="Pause agent"
-                    className="h-5 w-5"
-                  >
-                    <Pause className="w-3 h-3" />
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={handleStopAgent}
-                    className="text-[10px] h-5 px-2"
-                  >
-                    Stop
-                  </Button>
-                </>
-              )}
-              {agentState === "paused" && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={handleResumeAgent}
-                    title="Resume agent"
-                    className="h-5 w-5"
-                  >
-                    <Play className="w-3 h-3" />
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={handleStopAgent}
-                    className="text-[10px] h-5 px-2"
-                  >
-                    Stop
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );

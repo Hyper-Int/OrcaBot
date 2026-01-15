@@ -46,25 +46,30 @@ export function LinkBlock({ id, data, selected }: NodeProps<LinkNode>) {
       )}
       includeHandles={false}
     >
-      <div onClick={handleClick} className="p-3">
+      <div onClick={handleClick} className="p-3" title={`Open ${hostname}`}>
         {/* Favicon and hostname */}
         <div className="flex items-center gap-2 mb-2">
           {data.favicon ? (
             <img
               src={data.favicon}
-              alt=""
+              alt={`${hostname} favicon`}
+              title={`${hostname} favicon`}
               className="w-4 h-4 rounded"
               onError={(e) => {
                 e.currentTarget.style.display = "none";
               }}
             />
           ) : (
-            <Globe className="w-4 h-4 text-[var(--foreground-subtle)]" />
+            <span title="Link icon">
+              <Globe className="w-4 h-4 text-[var(--foreground-subtle)]" />
+            </span>
           )}
           <span className="text-xs text-[var(--foreground-subtle)] truncate">
             {hostname}
           </span>
-          <ExternalLink className="w-3 h-3 text-[var(--foreground-subtle)] ml-auto" />
+          <span title="Opens in new tab" className="ml-auto">
+            <ExternalLink className="w-3 h-3 text-[var(--foreground-subtle)]" />
+          </span>
         </div>
 
         {/* Title */}

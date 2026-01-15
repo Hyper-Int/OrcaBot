@@ -79,6 +79,31 @@ export interface UserSubagent {
   updatedAt: string;
 }
 
+export interface UserAgentSkill {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  command: string;
+  args: string[];
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserMcpTool {
+  id: string;
+  userId: string;
+  name: string;
+  description: string;
+  serverUrl: string;
+  transport: 'stdio' | 'sse' | 'streamable-http';
+  config: Record<string, unknown>;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserIntegration {
   id: string;
   userId: string;

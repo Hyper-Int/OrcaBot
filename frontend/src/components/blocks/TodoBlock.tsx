@@ -102,8 +102,9 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           className="text-sm font-medium text-[var(--foreground)] bg-transparent focus:outline-none flex-1"
+          title="Edit todo list title"
         />
-        <Badge variant="secondary" size="sm">
+        <Badge variant="secondary" size="sm" title={`${completedCount} of ${items.length} items completed`}>
           {completedCount}/{items.length}
         </Badge>
       </div>
@@ -123,6 +124,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
                   ? "bg-[var(--status-success)] border-[var(--status-success)] text-white"
                   : "border-[var(--border-strong)] hover:border-[var(--accent-primary)]"
               )}
+              title={item.completed ? "Mark as incomplete" : "Mark as complete"}
             >
               {item.completed && <Check className="w-3 h-3" />}
             </button>
@@ -139,6 +141,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
             <button
               onClick={() => removeItem(item.id)}
               className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-opacity"
+              title="Remove item"
             >
               <X className="w-3 h-3 text-[var(--foreground-subtle)]" />
             </button>
@@ -171,6 +174,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
           <button
             onClick={() => setIsAdding(true)}
             className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--background-hover)] rounded transition-colors"
+            title="Add new todo item"
           >
             <Plus className="w-4 h-4" />
             Add item

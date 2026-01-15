@@ -170,6 +170,13 @@ export interface AgentStateEvent {
 }
 
 /**
+ * PTY closed event (server -> client)
+ */
+export interface PtyClosedEvent {
+  type: "pty_closed";
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -179,4 +186,5 @@ export type IncomingControlEvent =
   | ControlGrantedEvent
   | ControlRevokedEvent
   | ControlExpiredEvent
-  | AgentStateEvent;
+  | AgentStateEvent
+  | PtyClosedEvent;

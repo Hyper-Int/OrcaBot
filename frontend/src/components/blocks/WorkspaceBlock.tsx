@@ -178,8 +178,10 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       includeHandles={false}
     >
       <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-        <Folder className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
-        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]">
+        <span title="Workspace icon">
+          <Folder className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+        </span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]" title="Workspace files and integrations">
           Workspace
         </span>
       </div>

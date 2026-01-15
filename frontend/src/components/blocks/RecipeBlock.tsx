@@ -27,10 +27,10 @@ interface RecipeData extends Record<string, unknown> {
 type RecipeNode = Node<RecipeData, "recipe">;
 
 const statusIcons: Record<StepStatus, React.ReactNode> = {
-  pending: <Circle className="w-4 h-4 text-[var(--foreground-subtle)]" />,
-  running: <Loader2 className="w-4 h-4 text-[var(--accent-primary)] animate-spin" />,
-  completed: <Check className="w-4 h-4 text-[var(--status-success)]" />,
-  failed: <AlertCircle className="w-4 h-4 text-[var(--status-error)]" />,
+  pending: <span title="Pending"><Circle className="w-4 h-4 text-[var(--foreground-subtle)]" /></span>,
+  running: <span title="Running"><Loader2 className="w-4 h-4 text-[var(--accent-primary)] animate-spin" /></span>,
+  completed: <span title="Completed"><Check className="w-4 h-4 text-[var(--status-success)]" /></span>,
+  failed: <span title="Failed"><AlertCircle className="w-4 h-4 text-[var(--status-error)]" /></span>,
 };
 
 export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
@@ -69,10 +69,12 @@ export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             className="text-sm font-medium text-[var(--foreground)] bg-transparent focus:outline-none"
+            title="Edit recipe title"
           />
           <Badge
             variant={isRunning ? "warning" : completedCount === steps.length ? "success" : "secondary"}
             size="sm"
+            title={isRunning ? "Recipe is running" : `${completedCount} of ${steps.length} steps completed`}
           >
             {isRunning ? "Running" : `${completedCount}/${steps.length}`}
           </Badge>
@@ -118,6 +120,7 @@ export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
           disabled={isRunning}
           leftIcon={isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
           className="w-full"
+          title={isRunning ? "Recipe is currently running" : "Execute all recipe steps"}
         >
           {isRunning ? "Running..." : "Run Recipe"}
         </Button>

@@ -27,6 +27,10 @@ polish
 test
 add payment options
 
+env vars / secrets component
+aws/google cloud/azure component
+datadog/splunk component
+
 DONE
 
 DREAM GOALS
