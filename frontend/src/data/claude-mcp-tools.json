@@ -1,0 +1,165 @@
+{
+  "categories": [
+    {
+      "id": "file-systems",
+      "title": "File Systems",
+      "items": [
+        {
+          "id": "filesystem-local",
+          "name": "Local Filesystem",
+          "description": "Access to local filesystem operations",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-filesystem",
+            "args": ["--allow-write"]
+          }
+        },
+        {
+          "id": "gdrive",
+          "name": "Google Drive",
+          "description": "Access Google Drive files and folders",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-gdrive"
+          }
+        }
+      ]
+    },
+    {
+      "id": "databases",
+      "title": "Databases",
+      "items": [
+        {
+          "id": "sqlite",
+          "name": "SQLite",
+          "description": "Query and manage SQLite databases",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-sqlite"
+          }
+        },
+        {
+          "id": "postgres",
+          "name": "PostgreSQL",
+          "description": "Connect to PostgreSQL databases",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-postgres"
+          }
+        }
+      ]
+    },
+    {
+      "id": "apis",
+      "title": "APIs & Services",
+      "items": [
+        {
+          "id": "github",
+          "name": "GitHub",
+          "description": "GitHub API integration for repos, issues, PRs",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-github"
+          }
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "description": "Send messages and interact with Slack",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-slack"
+          }
+        },
+        {
+          "id": "linear",
+          "name": "Linear",
+          "description": "Linear issue tracking integration",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-linear"
+          }
+        }
+      ]
+    },
+    {
+      "id": "search",
+      "title": "Search & Web",
+      "items": [
+        {
+          "id": "brave-search",
+          "name": "Brave Search",
+          "description": "Web search via Brave Search API",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-brave-search"
+          }
+        },
+        {
+          "id": "fetch",
+          "name": "Web Fetch",
+          "description": "Fetch and parse web pages",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-fetch"
+          }
+        },
+        {
+          "id": "puppeteer",
+          "name": "Puppeteer",
+          "description": "Browser automation with Puppeteer",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-puppeteer"
+          }
+        }
+      ]
+    },
+    {
+      "id": "utilities",
+      "title": "Utilities",
+      "items": [
+        {
+          "id": "memory",
+          "name": "Memory",
+          "description": "Persistent memory across conversations",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-memory"
+          }
+        },
+        {
+          "id": "time",
+          "name": "Time",
+          "description": "Time and timezone utilities",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-time"
+          }
+        },
+        {
+          "id": "sequential-thinking",
+          "name": "Sequential Thinking",
+          "description": "Enhanced reasoning capabilities",
+          "serverUrl": "npx",
+          "transport": "stdio",
+          "config": {
+            "command": "@anthropic/mcp-server-sequential-thinking"
+          }
+        }
+      ]
+    }
+  ]
+}

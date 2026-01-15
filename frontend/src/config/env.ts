@@ -31,6 +31,9 @@ export const API = {
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     subagents: `${CLOUDFLARE_API_URL}/subagents`,
+    secrets: `${CLOUDFLARE_API_URL}/secrets`,
+    agentSkills: `${CLOUDFLARE_API_URL}/agent-skills`,
+    mcpTools: `${CLOUDFLARE_API_URL}/mcp-tools`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

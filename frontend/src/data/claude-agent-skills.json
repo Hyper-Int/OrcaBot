@@ -1,0 +1,146 @@
+{
+  "categories": [
+    {
+      "id": "code-analysis",
+      "title": "Code Analysis",
+      "items": [
+        {
+          "id": "lint-check",
+          "name": "Lint Check",
+          "description": "Run linting tools on the codebase",
+          "command": "/lint",
+          "args": []
+        },
+        {
+          "id": "type-check",
+          "name": "Type Check",
+          "description": "Run TypeScript type checking",
+          "command": "/typecheck",
+          "args": []
+        },
+        {
+          "id": "find-dead-code",
+          "name": "Find Dead Code",
+          "description": "Identify unused code in the project",
+          "command": "/find-dead-code",
+          "args": []
+        },
+        {
+          "id": "analyze-deps",
+          "name": "Analyze Dependencies",
+          "description": "Check for outdated or vulnerable dependencies",
+          "command": "/analyze-deps",
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "items": [
+        {
+          "id": "run-tests",
+          "name": "Run Tests",
+          "description": "Execute the test suite",
+          "command": "/test",
+          "args": []
+        },
+        {
+          "id": "coverage-report",
+          "name": "Coverage Report",
+          "description": "Generate test coverage report",
+          "command": "/coverage",
+          "args": []
+        },
+        {
+          "id": "watch-tests",
+          "name": "Watch Tests",
+          "description": "Run tests in watch mode",
+          "command": "/test-watch",
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "git-operations",
+      "title": "Git Operations",
+      "items": [
+        {
+          "id": "git-status",
+          "name": "Git Status",
+          "description": "Show the working tree status",
+          "command": "/git-status",
+          "args": []
+        },
+        {
+          "id": "commit-staged",
+          "name": "Commit Staged",
+          "description": "Commit staged changes with a message",
+          "command": "/commit",
+          "args": []
+        },
+        {
+          "id": "create-pr",
+          "name": "Create PR",
+          "description": "Create a pull request",
+          "command": "/create-pr",
+          "args": []
+        },
+        {
+          "id": "sync-branch",
+          "name": "Sync Branch",
+          "description": "Sync current branch with remote",
+          "command": "/sync",
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "build-deploy",
+      "title": "Build & Deploy",
+      "items": [
+        {
+          "id": "build-project",
+          "name": "Build Project",
+          "description": "Build the project for production",
+          "command": "/build",
+          "args": []
+        },
+        {
+          "id": "dev-server",
+          "name": "Dev Server",
+          "description": "Start the development server",
+          "command": "/dev",
+          "args": []
+        },
+        {
+          "id": "deploy-preview",
+          "name": "Deploy Preview",
+          "description": "Deploy a preview build",
+          "command": "/deploy-preview",
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "documentation",
+      "title": "Documentation",
+      "items": [
+        {
+          "id": "generate-docs",
+          "name": "Generate Docs",
+          "description": "Generate API documentation",
+          "command": "/docs",
+          "args": []
+        },
+        {
+          "id": "readme-check",
+          "name": "README Check",
+          "description": "Validate README completeness",
+          "command": "/readme-check",
+          "args": []
+        }
+      ]
+    }
+  ]
+}

@@ -14,11 +14,31 @@ import {
   Plug,
   Loader2,
   AlertCircle,
+  Menu,
+  Key,
+  Wand2,
+  Puzzle,
+  Wrench,
+  Volume2,
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Trash2,
+  X,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
-import { Button, Badge } from "@/components/ui";
+import {
+  Button,
+  Badge,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Input,
+} from "@/components/ui";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { ConnectionMarkers } from "./ConnectionMarkers";
 import {
@@ -29,10 +49,29 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { createSession } from "@/lib/api/cloudflare";
-import { createSubagent, deleteSubagent, listSubagents, type UserSubagent } from "@/lib/api/cloudflare";
+import {
+  createSubagent,
+  deleteSubagent,
+  listSubagents,
+  type UserSubagent,
+  createSecret,
+  deleteSecret,
+  listSecrets,
+  type UserSecret,
+  createAgentSkill,
+  deleteAgentSkill,
+  listAgentSkills,
+  type UserAgentSkill,
+  createMcpTool,
+  deleteMcpTool,
+  listMcpTools,
+  type UserMcpTool,
+} from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
+import agentSkillsCatalog from "@/data/claude-agent-skills.json";
+import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -67,6 +106,37 @@ type SubagentCatalogCategory = {
   title: string;
   items: SubagentCatalogItem[];
 };
+
+type AgentSkillCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  command: string;
+  args?: string[];
+};
+
+type AgentSkillCatalogCategory = {
+  id: string;
+  title: string;
+  items: AgentSkillCatalogItem[];
+};
+
+type McpToolCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  serverUrl: string;
+  transport: "stdio" | "sse" | "streamable-http";
+  config?: Record<string, unknown>;
+};
+
+type McpToolCatalogCategory = {
+  id: string;
+  title: string;
+  items: McpToolCatalogItem[];
+};
+
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "plugins" | "mcp-tools" | "tts-voice" | null;
 
 type TerminalContentState = {
   name: string;
@@ -131,10 +201,14 @@ export function TerminalBlock({
   const queryClient = useQueryClient();
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
-  const [showSubagents, setShowSubagents] = React.useState(false);
+  const [activePanel, setActivePanel] = React.useState<ActivePanel>(null);
   const [activeSubagentTab, setActiveSubagentTab] = React.useState<"saved" | "browse">("saved");
+  const [activeSkillsTab, setActiveSkillsTab] = React.useState<"saved" | "browse">("saved");
+  const [activeMcpTab, setActiveMcpTab] = React.useState<"saved" | "browse">("saved");
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
   const [showAttachedList, setShowAttachedList] = React.useState(false);
+  const [newSecretName, setNewSecretName] = React.useState("");
+  const [newSecretValue, setNewSecretValue] = React.useState("");
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const setTerminalRef = React.useCallback(
@@ -155,6 +229,8 @@ export function TerminalBlock({
   const outputBufferRef = React.useRef("");
   const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
+  const skillsCatalog = agentSkillsCatalog as { categories: AgentSkillCatalogCategory[] };
+  const mcpCatalog = mcpToolsCatalog as { categories: McpToolCatalogCategory[] };
 
   React.useEffect(() => {
     createdBrowserUrlsRef.current.clear();
@@ -164,16 +240,41 @@ export function TerminalBlock({
       browserScanTimeoutRef.current = null;
     }
     setIsClaudeSession(false);
-    setShowSubagents(false);
+    setActivePanel(null);
     autoControlRequestedRef.current = false;
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
 
+  // Secrets queries and mutations
+  const secretsQuery = useQuery({
+    queryKey: ["secrets"],
+    queryFn: () => listSecrets(),
+    enabled: activePanel === "secrets",
+    staleTime: 60000,
+  });
+
+  const createSecretMutation = useMutation({
+    mutationFn: createSecret,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets"] });
+      setNewSecretName("");
+      setNewSecretValue("");
+    },
+  });
+
+  const deleteSecretMutation = useMutation({
+    mutationFn: deleteSecret,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets"] });
+    },
+  });
+
+  // Subagents queries and mutations
   const subagentsQuery = useQuery({
     queryKey: ["subagents"],
     queryFn: () => listSubagents(),
-    enabled: showSubagents,
+    enabled: activePanel === "subagents",
     staleTime: 60000,
   });
 
@@ -188,6 +289,50 @@ export function TerminalBlock({
     mutationFn: deleteSubagent,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["subagents"] });
+    },
+  });
+
+  // Agent Skills queries and mutations
+  const agentSkillsQuery = useQuery({
+    queryKey: ["agent-skills"],
+    queryFn: () => listAgentSkills(),
+    enabled: activePanel === "agent-skills",
+    staleTime: 60000,
+  });
+
+  const createAgentSkillMutation = useMutation({
+    mutationFn: createAgentSkill,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agent-skills"] });
+    },
+  });
+
+  const deleteAgentSkillMutation = useMutation({
+    mutationFn: deleteAgentSkill,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agent-skills"] });
+    },
+  });
+
+  // MCP Tools queries and mutations
+  const mcpToolsQuery = useQuery({
+    queryKey: ["mcp-tools"],
+    queryFn: () => listMcpTools(),
+    enabled: activePanel === "mcp-tools",
+    staleTime: 60000,
+  });
+
+  const createMcpToolMutation = useMutation({
+    mutationFn: createMcpTool,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mcp-tools"] });
+    },
+  });
+
+  const deleteMcpToolMutation = useMutation({
+    mutationFn: deleteMcpTool,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mcp-tools"] });
     },
   });
 
@@ -206,6 +351,33 @@ export function TerminalBlock({
     savedSubagents.forEach((item) => map.set(item.id, item));
     return map;
   }, [savedSubagents]);
+
+  // Agent Skills computed values
+  const savedSkills = agentSkillsQuery.data || [];
+  const savedSkillNames = React.useMemo(
+    () => new Set(savedSkills.map((item) => item.name)),
+    [savedSkills]
+  );
+  const savedSkillByName = React.useMemo(() => {
+    const map = new Map<string, UserAgentSkill>();
+    savedSkills.forEach((item) => map.set(item.name, item));
+    return map;
+  }, [savedSkills]);
+
+  // MCP Tools computed values
+  const savedMcpTools = mcpToolsQuery.data || [];
+  const savedMcpNames = React.useMemo(
+    () => new Set(savedMcpTools.map((item) => item.name)),
+    [savedMcpTools]
+  );
+  const savedMcpByName = React.useMemo(() => {
+    const map = new Map<string, UserMcpTool>();
+    savedMcpTools.forEach((item) => map.set(item.name, item));
+    return map;
+  }, [savedMcpTools]);
+
+  // Secrets computed values
+  const savedSecrets = secretsQuery.data || [];
 
   const handleSaveSubagent = React.useCallback(
     (item: SubagentCatalogItem) => {
@@ -273,6 +445,46 @@ export function TerminalBlock({
   const attachedNames = React.useMemo(() => {
     return terminalMeta.subagentIds.map((id) => savedById.get(id)?.name || "Unknown");
   }, [terminalMeta.subagentIds, savedById]);
+
+  // Agent Skills handlers
+  const handleSaveAgentSkill = React.useCallback(
+    (item: AgentSkillCatalogItem) => {
+      if (savedSkillNames.has(item.name)) return;
+      createAgentSkillMutation.mutate({
+        name: item.name,
+        description: item.description,
+        command: item.command,
+        args: item.args || [],
+        source: "catalog",
+      });
+    },
+    [createAgentSkillMutation, savedSkillNames]
+  );
+
+  // MCP Tools handlers
+  const handleSaveMcpTool = React.useCallback(
+    (item: McpToolCatalogItem) => {
+      if (savedMcpNames.has(item.name)) return;
+      createMcpToolMutation.mutate({
+        name: item.name,
+        description: item.description,
+        serverUrl: item.serverUrl,
+        transport: item.transport,
+        config: item.config,
+        source: "catalog",
+      });
+    },
+    [createMcpToolMutation, savedMcpNames]
+  );
+
+  // Secrets handlers
+  const handleAddSecret = React.useCallback(() => {
+    if (!newSecretName.trim() || !newSecretValue.trim()) return;
+    createSecretMutation.mutate({
+      name: newSecretName.trim(),
+      value: newSecretValue.trim(),
+    });
+  }, [createSecretMutation, newSecretName, newSecretValue]);
 
   const toggleCategory = React.useCallback((categoryId: string) => {
     setExpandedCategories((prev) => ({
@@ -634,7 +846,8 @@ export function TerminalBlock({
         overflow: "visible",
       }}
     >
-      {(isClaudeSession || isAgentic) && (showAttachedList || showSubagents) && (
+      {/* Panel overlay - shows above terminal when a panel is open */}
+      {(isClaudeSession || isAgentic) && (showAttachedList || activePanel !== null) && (
         <div
           className="absolute left-0 right-0 bottom-full mb-2 flex flex-col gap-2"
           style={{ pointerEvents: "auto" }}
@@ -645,18 +858,18 @@ export function TerminalBlock({
                 {attachedNames.length === 0 && (
                   <div className="text-[var(--foreground-muted)]">No subagents attached.</div>
                 )}
-                {terminalMeta.subagentIds.map((id) => (
+                {terminalMeta.subagentIds.map((subId) => (
                   <div
-                    key={id}
+                    key={subId}
                     className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
                   >
                     <span className="text-[var(--foreground)]">
-                      {savedById.get(id)?.name || "Unknown"}
+                      {savedById.get(subId)?.name || "Unknown"}
                     </span>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDetachSubagent(id)}
+                      onClick={() => handleDetachSubagent(subId)}
                       className="text-[10px] h-5 px-2 nodrag"
                     >
                       Detach
@@ -667,29 +880,110 @@ export function TerminalBlock({
             </div>
           )}
 
-          {showSubagents && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
-              <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border)]">
+          {/* Secrets Panel */}
+          {activePanel === "secrets" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Key className="w-3 h-3" />
+                  <span>Secrets</span>
+                </div>
                 <Button
-                  variant={activeSubagentTab === "saved" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveSubagentTab("saved")}
-                  className="text-[10px] h-5 px-2 nodrag"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
                 >
-                  Saved
+                  <X className="w-3 h-3" />
                 </Button>
+              </div>
+              <div className="p-2 space-y-2 text-xs">
+                <div className="flex gap-1">
+                  <Input
+                    placeholder="Name"
+                    value={newSecretName}
+                    onChange={(e) => setNewSecretName(e.target.value)}
+                    className="h-6 text-xs flex-1 nodrag"
+                  />
+                  <Input
+                    type="password"
+                    placeholder="Value"
+                    value={newSecretValue}
+                    onChange={(e) => setNewSecretValue(e.target.value)}
+                    className="h-6 text-xs flex-1 nodrag"
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleAddSecret}
+                    disabled={!newSecretName.trim() || !newSecretValue.trim()}
+                    className="h-6 px-2 nodrag"
+                  >
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+                <div className="max-h-40 overflow-auto space-y-1">
+                  {secretsQuery.isLoading && (
+                    <div className="text-[var(--foreground-muted)]">Loading...</div>
+                  )}
+                  {!secretsQuery.isLoading && savedSecrets.length === 0 && (
+                    <div className="text-[var(--foreground-muted)]">No secrets configured.</div>
+                  )}
+                  {savedSecrets.map((secret) => (
+                    <div
+                      key={secret.id}
+                      className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                    >
+                      <span className="text-[var(--foreground)] font-mono">{secret.name}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => deleteSecretMutation.mutate(secret.id)}
+                        className="h-5 w-5 text-[var(--status-error)] nodrag"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Subagents Panel */}
+          {activePanel === "subagents" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activeSubagentTab === "saved" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveSubagentTab("saved")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Saved
+                  </Button>
+                  <Button
+                    variant={activeSubagentTab === "browse" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveSubagentTab("browse")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Browse
+                  </Button>
+                </div>
                 <Button
-                  variant={activeSubagentTab === "browse" ? "primary" : "ghost"}
-                  size="sm"
-                  onClick={() => setActiveSubagentTab("browse")}
-                  className="text-[10px] h-5 px-2 nodrag"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
                 >
-                  Browse
+                  <X className="w-3 h-3" />
                 </Button>
               </div>
               <div className="max-h-56 overflow-auto px-2 pb-2 text-xs">
                 {activeSubagentTab === "saved" ? (
-                  <div className="space-y-2">
+                  <div className="space-y-2 pt-2">
                     {!subagentsQuery.isLoading && savedSubagents.length === 0 && (
                       <div className="text-[var(--foreground-muted)]">
                         No saved subagents yet.
@@ -734,20 +1028,22 @@ export function TerminalBlock({
                     ))}
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-3 pt-2">
                     {catalog.categories.map((category) => (
                       <div key={category.id} className="rounded border border-[var(--border)]">
                         <button
                           type="button"
-                          onClick={() => toggleCategory(category.id)}
+                          onClick={() => toggleCategory(`subagent-${category.id}`)}
                           className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[var(--foreground)] bg-[var(--background)] nodrag"
                         >
                           <span>{category.title}</span>
-                          <span className="text-[10px] text-[var(--foreground-muted)]">
-                            {expandedCategories[category.id] ? "Hide" : "Show"}
-                          </span>
+                          {expandedCategories[`subagent-${category.id}`] ? (
+                            <ChevronDown className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          )}
                         </button>
-                        {expandedCategories[category.id] && (
+                        {expandedCategories[`subagent-${category.id}`] && (
                           <div className="p-2 space-y-2">
                             {category.items.map((item) => (
                               <div
@@ -792,6 +1088,298 @@ export function TerminalBlock({
               </div>
             </div>
           )}
+
+          {/* Agent Skills Panel */}
+          {activePanel === "agent-skills" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activeSkillsTab === "saved" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveSkillsTab("saved")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Saved
+                  </Button>
+                  <Button
+                    variant={activeSkillsTab === "browse" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveSkillsTab("browse")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Browse
+                  </Button>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="max-h-56 overflow-auto px-2 pb-2 text-xs">
+                {activeSkillsTab === "saved" ? (
+                  <div className="space-y-2 pt-2">
+                    {!agentSkillsQuery.isLoading && savedSkills.length === 0 && (
+                      <div className="text-[var(--foreground-muted)]">
+                        No saved skills yet.
+                      </div>
+                    )}
+                    {savedSkills.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                      >
+                        <div>
+                          <div className="font-medium text-[var(--foreground)]">
+                            {item.name}
+                          </div>
+                          {item.description && (
+                            <div className="text-[10px] text-[var(--foreground-muted)]">
+                              {item.description}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-[var(--accent-primary)] font-mono">
+                            {item.command}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => deleteAgentSkillMutation.mutate(item.id)}
+                          className="h-5 w-5 text-[var(--status-error)] nodrag"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-2">
+                    {skillsCatalog.categories.map((category) => (
+                      <div key={category.id} className="rounded border border-[var(--border)]">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(`skill-${category.id}`)}
+                          className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[var(--foreground)] bg-[var(--background)] nodrag"
+                        >
+                          <span>{category.title}</span>
+                          {expandedCategories[`skill-${category.id}`] ? (
+                            <ChevronDown className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          )}
+                        </button>
+                        {expandedCategories[`skill-${category.id}`] && (
+                          <div className="p-2 space-y-2">
+                            {category.items.map((item) => (
+                              <div
+                                key={item.id}
+                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                              >
+                                <div>
+                                  <div className="font-medium text-[var(--foreground)]">
+                                    {item.name}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--foreground-muted)]">
+                                    {item.description}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--accent-primary)] font-mono">
+                                    {item.command}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleSaveAgentSkill(item)}
+                                  disabled={savedSkillNames.has(item.name)}
+                                  className="text-[10px] h-5 px-2 nodrag"
+                                >
+                                  {savedSkillNames.has(item.name) ? "Saved" : "Save"}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Plugins Panel (Placeholder) */}
+          {activePanel === "plugins" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-64">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Puzzle className="w-3 h-3" />
+                  <span>Plugins</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="p-3 text-xs text-[var(--foreground-muted)] text-center">
+                Plugins coming soon...
+              </div>
+            </div>
+          )}
+
+          {/* MCP Tools Panel */}
+          {activePanel === "mcp-tools" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant={activeMcpTab === "saved" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveMcpTab("saved")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Saved
+                  </Button>
+                  <Button
+                    variant={activeMcpTab === "browse" ? "primary" : "ghost"}
+                    size="sm"
+                    onClick={() => setActiveMcpTab("browse")}
+                    className="text-[10px] h-5 px-2 nodrag"
+                  >
+                    Browse
+                  </Button>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="max-h-56 overflow-auto px-2 pb-2 text-xs">
+                {activeMcpTab === "saved" ? (
+                  <div className="space-y-2 pt-2">
+                    {!mcpToolsQuery.isLoading && savedMcpTools.length === 0 && (
+                      <div className="text-[var(--foreground-muted)]">
+                        No saved MCP tools yet.
+                      </div>
+                    )}
+                    {savedMcpTools.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] p-2"
+                      >
+                        <div>
+                          <div className="font-medium text-[var(--foreground)]">
+                            {item.name}
+                          </div>
+                          {item.description && (
+                            <div className="text-[10px] text-[var(--foreground-muted)]">
+                              {item.description}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-[var(--accent-primary)] font-mono">
+                            {item.transport}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => deleteMcpToolMutation.mutate(item.id)}
+                          className="h-5 w-5 text-[var(--status-error)] nodrag"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-2">
+                    {mcpCatalog.categories.map((category) => (
+                      <div key={category.id} className="rounded border border-[var(--border)]">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(`mcp-${category.id}`)}
+                          className="w-full flex items-center justify-between px-2 py-1 text-[11px] font-semibold text-[var(--foreground)] bg-[var(--background)] nodrag"
+                        >
+                          <span>{category.title}</span>
+                          {expandedCategories[`mcp-${category.id}`] ? (
+                            <ChevronDown className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3 text-[var(--foreground-muted)]" />
+                          )}
+                        </button>
+                        {expandedCategories[`mcp-${category.id}`] && (
+                          <div className="p-2 space-y-2">
+                            {category.items.map((item) => (
+                              <div
+                                key={item.id}
+                                className="flex items-start justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background-elevated)] p-2"
+                              >
+                                <div>
+                                  <div className="font-medium text-[var(--foreground)]">
+                                    {item.name}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--foreground-muted)]">
+                                    {item.description}
+                                  </div>
+                                  <div className="text-[10px] text-[var(--accent-primary)] font-mono">
+                                    {item.transport}
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleSaveMcpTool(item)}
+                                  disabled={savedMcpNames.has(item.name)}
+                                  className="text-[10px] h-5 px-2 nodrag"
+                                >
+                                  {savedMcpNames.has(item.name) ? "Saved" : "Save"}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TTS Voice Panel (Placeholder) */}
+          {activePanel === "tts-voice" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-64">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Volume2 className="w-3 h-3" />
+                  <span>TTS Voice</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="p-3 text-xs text-[var(--foreground-muted)] text-center">
+                Text-to-speech coming soon...
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -816,15 +1404,46 @@ export function TerminalBlock({
               </span>
             </button>
           </div>
-          <Button
-            variant={showSubagents ? "primary" : "ghost"}
-            size="sm"
-            onClick={() => setShowSubagents((prev) => !prev)}
-            className="text-[10px] h-5 px-2"
-            style={{ pointerEvents: "auto" }}
-          >
-            Subagents
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={activePanel !== null ? "primary" : "ghost"}
+                size="icon-sm"
+                className="h-5 w-5 nodrag"
+                style={{ pointerEvents: "auto" }}
+              >
+                <Menu className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={() => setActivePanel("secrets")} className="gap-2">
+                <Key className="w-3 h-3" />
+                <span>Secrets</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2">
+                <Bot className="w-3 h-3" />
+                <span>Subagents</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2">
+                <Wand2 className="w-3 h-3" />
+                <span>Agent Skills</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("plugins")} className="gap-2">
+                <Puzzle className="w-3 h-3" />
+                <span>Plugins</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2">
+                <Wrench className="w-3 h-3" />
+                <span>MCP Tools</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
+                <Volume2 className="w-3 h-3" />
+                <span>TTS Voice</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
 
