@@ -19,6 +19,18 @@ function getRedirectBase(request: Request, env: Env): string {
   return new URL(request.url).origin;
 }
 
+/**
+ * Escape HTML special characters to prevent XSS attacks.
+ */
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function buildState(): string {
   return crypto.randomUUID();
 }
@@ -47,12 +59,13 @@ async function consumeState(env: Env, state: string, provider: string) {
 }
 
 function renderSuccessPage(providerLabel: string): Response {
+  const safeLabel = escapeHtml(providerLabel);
   return new Response(
     `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>${providerLabel} connected</title>
+    <title>${safeLabel} connected</title>
     <style>
       body { font-family: system-ui, sans-serif; padding: 32px; }
       .card { max-width: 520px; margin: 0 auto; }
@@ -63,7 +76,7 @@ function renderSuccessPage(providerLabel: string): Response {
   </head>
   <body>
     <div class="card">
-      <h1>${providerLabel} connected</h1>
+      <h1>${safeLabel} connected</h1>
       <p>You can close this tab and return to OrcaBot.</p>
       <button onclick="window.close()">Close tab</button>
     </div>
@@ -76,6 +89,7 @@ function renderSuccessPage(providerLabel: string): Response {
 }
 
 function renderErrorPage(message: string): Response {
+  const safeMessage = escapeHtml(message);
   return new Response(
     `<!doctype html>
 <html>
@@ -92,7 +106,7 @@ function renderErrorPage(message: string): Response {
   <body>
     <div class="card">
       <h1>Connection failed</h1>
-      <p>${message}</p>
+      <p>${safeMessage}</p>
     </div>
   </body>
 </html>`,
