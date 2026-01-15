@@ -33,7 +33,7 @@ import {
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
-import { useCollaboration } from "@/hooks/useCollaboration";
+import { useCollaboration, useDebouncedCallback } from "@/hooks";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
@@ -118,28 +118,6 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
 };
-
-// Debounce helper
-function useDebouncedCallback<T extends (...args: unknown[]) => void>(
-  callback: T,
-  delay: number
-): T {
-  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const callbackRef = React.useRef(callback);
-  callbackRef.current = callback;
-
-  return React.useCallback(
-    ((...args: unknown[]) => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      timeoutRef.current = setTimeout(() => {
-        callbackRef.current(...args);
-      }, delay);
-    }) as T,
-    [delay]
-  );
-}
 
 export default function DashboardPage() {
   const params = useParams();
