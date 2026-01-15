@@ -7,79 +7,14 @@
 
 import type { Env, Recipe, RecipeStep, Execution, Artifact } from '../types';
 import { SandboxClient } from '../sandbox/client';
+import {
+  checkDashboardAccess,
+  checkRecipeAccess,
+  checkExecutionAccess,
+} from '../auth/access';
 
 function generateId(): string {
   return crypto.randomUUID();
-}
-
-// Check if user has access to a dashboard
-async function checkDashboardAccess(
-  env: Env,
-  dashboardId: string,
-  userId: string,
-  requiredRole?: 'owner' | 'editor' | 'viewer'
-): Promise<{ hasAccess: boolean; role?: string }> {
-  const member = await env.DB.prepare(`
-    SELECT role FROM dashboard_members
-    WHERE dashboard_id = ? AND user_id = ?
-  `).bind(dashboardId, userId).first<{ role: string }>();
-
-  if (!member) {
-    return { hasAccess: false };
-  }
-
-  // Check role permissions in JavaScript for better mock compatibility
-  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
-  const userRoleLevel = roleHierarchy[member.role] || 0;
-  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
-
-  return {
-    hasAccess: userRoleLevel >= requiredLevel,
-    role: member.role,
-  };
-}
-
-// Check if user has access to a recipe (via its dashboard)
-async function checkRecipeAccess(
-  env: Env,
-  recipeId: string,
-  userId: string,
-  requiredRole?: 'owner' | 'editor' | 'viewer'
-): Promise<{ hasAccess: boolean; recipe?: Record<string, unknown> }> {
-  const recipe = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(recipeId).first();
-
-  if (!recipe) {
-    return { hasAccess: false };
-  }
-
-  // Recipes without dashboard_id are accessible to any authenticated user
-  if (!recipe.dashboard_id) {
-    return { hasAccess: true, recipe };
-  }
-
-  const { hasAccess } = await checkDashboardAccess(env, recipe.dashboard_id as string, userId, requiredRole);
-  return { hasAccess, recipe: hasAccess ? recipe : undefined };
-}
-
-// Check if user has access to an execution (via execution → recipe → dashboard)
-async function checkExecutionAccess(
-  env: Env,
-  executionId: string,
-  userId: string,
-  requiredRole?: 'owner' | 'editor' | 'viewer'
-): Promise<{ hasAccess: boolean; execution?: Record<string, unknown> }> {
-  const execution = await env.DB.prepare(`
-    SELECT * FROM executions WHERE id = ?
-  `).bind(executionId).first();
-
-  if (!execution) {
-    return { hasAccess: false };
-  }
-
-  const { hasAccess } = await checkRecipeAccess(env, execution.recipe_id as string, userId, requiredRole);
-  return { hasAccess, execution: hasAccess ? execution : undefined };
 }
 
 // List recipes (only those the user has access to)
