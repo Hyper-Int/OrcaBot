@@ -140,7 +140,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(`{"id":"` + session.ID + `","machine_id":"` + s.machine + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{
+		"id":         session.ID,
+		"machine_id": s.machine,
+	})
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -160,15 +163,19 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ptys := session.ListPTYs()
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ptys":[`))
-	for i, p := range ptys {
-		if i > 0 {
-			w.Write([]byte(","))
-		}
-		w.Write([]byte(`{"id":"` + p.ID + `"}`))
+
+	type ptyInfo struct {
+		ID string `json:"id"`
 	}
-	w.Write([]byte(`]}`))
+	ptyList := make([]ptyInfo, len(ptys))
+	for i, p := range ptys {
+		ptyList[i] = ptyInfo{ID: p.ID}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ptys": ptyList,
+	})
 }
 
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +202,7 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(`{"id":"` + pty.ID + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{"id": pty.ID})
 }
 
 func (s *Server) requireMachine(next http.HandlerFunc) http.HandlerFunc {
@@ -258,7 +265,10 @@ func (s *Server) handleStartAgent(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(`{"id":"` + agent.ID() + `","state":"` + string(agent.State()) + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{
+		"id":    agent.ID(),
+		"state": string(agent.State()),
+	})
 }
 
 func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +287,10 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"id":"` + agent.ID() + `","state":"` + string(agent.State()) + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{
+		"id":    agent.ID(),
+		"state": string(agent.State()),
+	})
 }
 
 func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +314,7 @@ func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"state":"` + string(agent.State()) + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{"state": string(agent.State())})
 }
 
 func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +338,7 @@ func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"state":"` + string(agent.State()) + `"}`))
+	json.NewEncoder(w).Encode(map[string]string{"state": string(agent.State())})
 }
 
 func (s *Server) handleStopAgent(w http.ResponseWriter, r *http.Request) {

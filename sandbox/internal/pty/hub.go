@@ -2,6 +2,7 @@ package pty
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
 )
 
@@ -396,7 +397,11 @@ func (h *Hub) broadcastAgentState(state string) {
 		Type:       "agent_state",
 		AgentState: state,
 	}
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal agent state event: %v", err)
+		return
+	}
 	h.broadcastControl(data)
 }
 
@@ -405,7 +410,11 @@ func (h *Hub) broadcastPtyClosed() {
 	event := ControlEvent{
 		Type: "pty_closed",
 	}
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal pty_closed event: %v", err)
+		return
+	}
 	h.broadcastControl(data)
 }
 
@@ -421,7 +430,11 @@ func (h *Hub) sendControlState(client chan HubMessage) {
 		Requests:   h.turn.PendingRequests(),
 		AgentState: agentState,
 	}
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal control state event: %v", err)
+		return
+	}
 	msg := HubMessage{IsBinary: false, Data: data}
 	select {
 	case client <- msg:
@@ -431,7 +444,11 @@ func (h *Hub) sendControlState(client chan HubMessage) {
 
 // broadcastControlEvent sends a control event to all clients
 func (h *Hub) broadcastControlEvent(event ControlEvent) {
-	data, _ := json.Marshal(event)
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal control event: %v", err)
+		return
+	}
 	h.broadcastControl(data)
 }
 
