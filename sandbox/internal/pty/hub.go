@@ -43,22 +43,24 @@ type Hub struct {
 	agentRunning bool
 	agentState   string // "running", "paused", or "stopped" (empty if not agent mode)
 
-	register   chan *ClientInfo
-	unregister chan chan HubMessage
-	stop       chan struct{}
-	stopOnce   sync.Once
+	register     chan *ClientInfo
+	unregister   chan chan HubMessage
+	stop         chan struct{}
+	stopOnce     sync.Once
+	readLoopDone chan struct{} // Signals when readLoop exits
 }
 
 // NewHub creates a new Hub for the given PTY.
 // If creatorID is provided, they are automatically assigned control.
 func NewHub(p *PTY, creatorID string) *Hub {
 	h := &Hub{
-		pty:        p,
-		turn:       NewTurnController(),
-		clients:    make(map[chan HubMessage]*ClientInfo),
-		register:   make(chan *ClientInfo),
-		unregister: make(chan chan HubMessage),
-		stop:       make(chan struct{}),
+		pty:          p,
+		turn:         NewTurnController(),
+		clients:      make(map[chan HubMessage]*ClientInfo),
+		register:     make(chan *ClientInfo),
+		unregister:   make(chan chan HubMessage),
+		stop:         make(chan struct{}),
+		readLoopDone: make(chan struct{}),
 	}
 
 	// Set up callback to broadcast when controller's grace period expires
@@ -105,6 +107,11 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 
+		case <-h.readLoopDone:
+			// PTY read failed, trigger cleanup
+			h.Stop()
+			return
+
 		case <-h.stop:
 			h.mu.Lock()
 			h.turn.Stop()
@@ -119,8 +126,11 @@ func (h *Hub) Run() {
 	}
 }
 
-// readLoop reads from PTY and broadcasts to all clients
+// readLoop reads from PTY and broadcasts to all clients.
+// Signals readLoopDone when it exits to enable proper cleanup.
 func (h *Hub) readLoop() {
+	defer close(h.readLoopDone)
+
 	buf := make([]byte, 32*1024) // 32KB buffer
 
 	for {

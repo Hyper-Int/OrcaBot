@@ -20,16 +20,42 @@ import { SandboxClient } from './sandbox/client';
 // Export Durable Object
 export { DashboardDO } from './dashboards/DurableObject';
 
-// CORS headers
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-User-ID, X-User-Email, X-User-Name',
-};
+// CORS headers (base - origin is added dynamically)
+const CORS_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
+const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name';
+
+/**
+ * Parse allowed origins from env. Returns null if all origins allowed (dev mode).
+ */
+function parseAllowedOrigins(env: Env): Set<string> | null {
+  if (!env.ALLOWED_ORIGINS) {
+    return null; // Dev mode - allow all
+  }
+  return new Set(
+    env.ALLOWED_ORIGINS.split(',')
+      .map(o => o.trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Check if origin is allowed. Rejects null/empty origins when allowlist is configured.
+ */
+function isOriginAllowed(origin: string | null, allowedOrigins: Set<string> | null): boolean {
+  // Dev mode - allow everything
+  if (allowedOrigins === null) {
+    return true;
+  }
+  // Reject null/empty origins (file://, sandboxed iframes, etc.)
+  if (!origin) {
+    return false;
+  }
+  return allowedOrigins.has(origin);
+}
 
 const EMBED_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
-function corsResponse(response: Response): Response {
+function corsResponse(response: Response, origin: string | null, allowedOrigins: Set<string> | null): Response {
   // Don't wrap WebSocket upgrade responses - they have a special webSocket property
   // that would be lost if we create a new Response
   if (response.status === 101) {
@@ -37,9 +63,20 @@ function corsResponse(response: Response): Response {
   }
 
   const newHeaders = new Headers(response.headers);
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
-    newHeaders.set(key, value);
+  newHeaders.set('Access-Control-Allow-Methods', CORS_METHODS);
+  newHeaders.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS);
+
+  // Set origin header based on validation
+  if (allowedOrigins === null) {
+    // Dev mode - allow all
+    newHeaders.set('Access-Control-Allow-Origin', '*');
+  } else if (origin && allowedOrigins.has(origin)) {
+    // Production mode - reflect allowed origin
+    newHeaders.set('Access-Control-Allow-Origin', origin);
+    newHeaders.set('Vary', 'Origin');
   }
+  // If origin not allowed, don't set Access-Control-Allow-Origin (browser will reject)
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -191,26 +228,40 @@ async function proxySandboxRequest(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin');
+    const allowedOrigins = parseAllowedOrigins(env);
+
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      const headers: Record<string, string> = {
+        'Access-Control-Allow-Methods': CORS_METHODS,
+        'Access-Control-Allow-Headers': CORS_ALLOWED_HEADERS,
+      };
+      if (allowedOrigins === null) {
+        headers['Access-Control-Allow-Origin'] = '*';
+      } else if (origin && allowedOrigins.has(origin)) {
+        headers['Access-Control-Allow-Origin'] = origin;
+        headers['Vary'] = 'Origin';
+      }
+      // If origin not allowed, don't include Access-Control-Allow-Origin
+      return new Response(null, { status: 204, headers });
     }
 
     try {
       // Check rate limit
       const rateLimitResult = await checkRateLimit(request, env);
       if (!rateLimitResult.allowed) {
-        return corsResponse(rateLimitResult.response!);
+        return corsResponse(rateLimitResult.response!, origin, allowedOrigins);
       }
 
       const response = await handleRequest(request, env);
-      return corsResponse(response);
+      return corsResponse(response, origin, allowedOrigins);
     } catch (error) {
       console.error('Request error:', error);
       return corsResponse(Response.json(
         { error: error instanceof Error ? error.message : 'Internal server error' },
         { status: 500 }
-      ));
+      ), origin, allowedOrigins);
     }
   },
 

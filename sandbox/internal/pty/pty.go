@@ -30,6 +30,10 @@ type PTY struct {
 
 	mu     sync.Mutex
 	closed bool
+
+	// Done channel caching to prevent goroutine leaks
+	doneOnce sync.Once
+	doneChan chan struct{}
 }
 
 // New creates a new PTY running the given shell
@@ -149,14 +153,17 @@ func (p *PTY) Close() error {
 	return p.file.Close()
 }
 
-// Done returns a channel that closes when the PTY process exits
+// Done returns a channel that closes when the PTY process exits.
+// The channel is cached to prevent goroutine leaks from multiple calls.
 func (p *PTY) Done() <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		if p.cmd != nil {
-			p.cmd.Wait()
-		}
-		close(done)
-	}()
-	return done
+	p.doneOnce.Do(func() {
+		p.doneChan = make(chan struct{})
+		go func() {
+			if p.cmd != nil {
+				p.cmd.Wait()
+			}
+			close(p.doneChan)
+		}()
+	})
+	return p.doneChan
 }

@@ -124,12 +124,29 @@ export function useTerminal(
     manager.connect();
 
     return () => {
-      unsubState();
-      unsubError();
-      unsubTurnTaking();
-      unsubAgentState();
-      unsubData();
-      manager.disconnect();
+      // Cleanup each subscription with error handling and logging
+      const cleanups = [
+        { name: 'stateChange', fn: unsubState },
+        { name: 'error', fn: unsubError },
+        { name: 'turnTaking', fn: unsubTurnTaking },
+        { name: 'agentState', fn: unsubAgentState },
+        { name: 'data', fn: unsubData },
+      ];
+
+      for (const { name, fn } of cleanups) {
+        try {
+          fn();
+        } catch (e) {
+          console.error(`[Terminal] Failed to cleanup ${name} subscription:`, e);
+        }
+      }
+
+      try {
+        manager.disconnect();
+      } catch (e) {
+        console.error('[Terminal] Failed to disconnect manager:', e);
+      }
+
       managerRef.current = null;
     };
   }, [sessionId, ptyId, userId, userName, enabled]);
