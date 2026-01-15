@@ -1,5 +1,14 @@
 import type { Env, UserAgentSkill } from '../types';
 
+function safeParseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string') return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function formatAgentSkill(row: Record<string, unknown>): UserAgentSkill {
   return {
     id: row.id as string,
@@ -7,7 +16,7 @@ function formatAgentSkill(row: Record<string, unknown>): UserAgentSkill {
     name: row.name as string,
     description: (row.description as string) || '',
     command: (row.command as string) || '',
-    args: JSON.parse((row.args as string) || '[]'),
+    args: safeParseJson<string[]>(row.args, []),
     source: (row.source as string) || 'custom',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,

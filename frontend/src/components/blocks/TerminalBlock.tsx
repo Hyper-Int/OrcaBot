@@ -1675,92 +1675,70 @@ export function TerminalBlock({
             </span>
           )}
 
-          {/* Subagents button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isClaudeSession || isAgentic) {
-                setShowAttachedList((prev) => !prev);
-              }
-            }}
-            disabled={!isClaudeSession && !isAgentic}
-            title={
-              !isClaudeSession && !isAgentic
-                ? "Subagents (only available in agentic mode)"
-                : attachedNames.length > 0
-                  ? `Subagents: ${attachedNames.join(", ")}`
-                  : "No subagents attached - click to manage"
-            }
-            className={cn(
-              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-              isClaudeSession || isAgentic
-                ? showAttachedList || activePanel === "subagents"
-                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
-            )}
-          >
-            <Bot className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium">{attachedNames.length}</span>
-          </button>
+          {/* Subagents, Skills, MCP Tools buttons - only shown in agentic mode */}
+          {(isClaudeSession || isAgentic) && (
+            <>
+              {/* Subagents button */}
+              <button
+                type="button"
+                onClick={() => setShowAttachedList((prev) => !prev)}
+                title={
+                  attachedNames.length > 0
+                    ? `Subagents: ${attachedNames.join(", ")}`
+                    : "No subagents attached - click to manage"
+                }
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  showAttachedList || activePanel === "subagents"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Bot className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-medium">{attachedNames.length}</span>
+              </button>
 
-          {/* Skills button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isClaudeSession || isAgentic) {
-                setShowSavedSkills((prev) => !prev);
-              }
-            }}
-            disabled={!isClaudeSession && !isAgentic}
-            title={
-              !isClaudeSession && !isAgentic
-                ? "Skills (only available in agentic mode)"
-                : savedSkills.length > 0
-                  ? `Skills: ${savedSkills.map(s => s.name).join(", ")}`
-                  : "No skills saved - click to manage"
-            }
-            className={cn(
-              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-              isClaudeSession || isAgentic
-                ? showSavedSkills || activePanel === "agent-skills"
-                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
-            )}
-          >
-            <Wand2 className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium">{savedSkills.length}</span>
-          </button>
+              {/* Skills button */}
+              <button
+                type="button"
+                onClick={() => setShowSavedSkills((prev) => !prev)}
+                title={
+                  savedSkills.length > 0
+                    ? `Skills: ${savedSkills.map(s => s.name).join(", ")}`
+                    : "No skills saved - click to manage"
+                }
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  showSavedSkills || activePanel === "agent-skills"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-medium">{savedSkills.length}</span>
+              </button>
 
-          {/* MCP Tools button */}
-          <button
-            type="button"
-            onClick={() => {
-              if (isClaudeSession || isAgentic) {
-                setShowSavedMcp((prev) => !prev);
-              }
-            }}
-            disabled={!isClaudeSession && !isAgentic}
-            title={
-              !isClaudeSession && !isAgentic
-                ? "MCP Tools (only available in agentic mode)"
-                : savedMcpTools.length > 0
-                  ? `MCP Tools: ${savedMcpTools.map(t => t.name).join(", ")}`
-                  : "No MCP tools saved - click to manage"
-            }
-            className={cn(
-              "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-              isClaudeSession || isAgentic
-                ? showSavedMcp || activePanel === "mcp-tools"
-                  ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                  : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                : "text-[var(--foreground-subtle)] opacity-50 cursor-not-allowed"
-            )}
-          >
-            <Wrench className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-medium">{savedMcpTools.length}</span>
-          </button>
+              {/* MCP Tools button */}
+              <button
+                type="button"
+                onClick={() => setShowSavedMcp((prev) => !prev)}
+                title={
+                  savedMcpTools.length > 0
+                    ? `MCP Tools: ${savedMcpTools.map(t => t.name).join(", ")}`
+                    : "No MCP tools saved - click to manage"
+                }
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  showSavedMcp || activePanel === "mcp-tools"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-medium">{savedMcpTools.length}</span>
+              </button>
+            </>
+          )}
 
           {/* Agent status badge */}
           {agentState !== "idle" && agentState !== null && (
@@ -1902,27 +1880,29 @@ export function TerminalBlock({
               <span className="text-sm text-[var(--foreground)]">
                 Session ended
               </span>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleReopen}
-                  isLoading={isCreatingSession}
-                  leftIcon={<RefreshCw className="w-4 h-4" />}
-                  style={{ pointerEvents: "auto" }}
-                >
-                  Reopen
-                </Button>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={handleDeleteBlock}
-                  leftIcon={<Trash2 className="w-4 h-4" />}
-                  style={{ pointerEvents: "auto" }}
-                >
-                  Delete
-                </Button>
-              </div>
+              {isOwner && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleReopen}
+                    isLoading={isCreatingSession}
+                    leftIcon={<RefreshCw className="w-4 h-4" />}
+                    style={{ pointerEvents: "auto" }}
+                  >
+                    Reopen
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDeleteBlock}
+                    leftIcon={<Trash2 className="w-4 h-4" />}
+                    style={{ pointerEvents: "auto" }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         )}

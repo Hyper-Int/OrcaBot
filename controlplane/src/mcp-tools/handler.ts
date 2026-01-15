@@ -1,5 +1,14 @@
 import type { Env, UserMcpTool } from '../types';
 
+function safeParseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string') return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function formatMcpTool(row: Record<string, unknown>): UserMcpTool {
   return {
     id: row.id as string,
@@ -8,7 +17,7 @@ function formatMcpTool(row: Record<string, unknown>): UserMcpTool {
     description: (row.description as string) || '',
     serverUrl: (row.server_url as string) || '',
     transport: (row.transport as 'stdio' | 'sse' | 'streamable-http') || 'stdio',
-    config: JSON.parse((row.config as string) || '{}'),
+    config: safeParseJson<Record<string, unknown>>(row.config, {}),
     source: (row.source as string) || 'custom',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -36,10 +45,18 @@ export async function createMcpTool(
     return Response.json({ error: 'name and serverUrl are required' }, { status: 400 });
   }
 
+  const validTransports = ['stdio', 'sse', 'streamable-http'] as const;
+  const transport = data.transport || 'stdio';
+  if (!validTransports.includes(transport)) {
+    return Response.json(
+      { error: `transport must be one of: ${validTransports.join(', ')}` },
+      { status: 400 }
+    );
+  }
+
   const id = data.id || crypto.randomUUID();
   const config = JSON.stringify(data.config || {});
   const description = data.description || '';
-  const transport = data.transport || 'stdio';
   const source = data.source || 'custom';
 
   await env.DB.prepare(
