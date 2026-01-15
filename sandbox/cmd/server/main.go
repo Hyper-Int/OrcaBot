@@ -156,10 +156,8 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 	ptys := session.ListPTYs()
@@ -179,10 +177,8 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -228,16 +224,35 @@ func sandboxMachineID() string {
 	return ""
 }
 
-func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-	ptyId := r.PathValue("ptyId")
-
+// getSessionOrError retrieves a session by ID and returns it.
+// If the session doesn't exist, it writes a 404 error response and returns nil.
+func (s *Server) getSessionOrError(w http.ResponseWriter, sessionId string) *sessions.Session {
 	session, err := s.sessions.Get(sessionId)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
+		return nil
+	}
+	return session
+}
+
+// writeFSError writes an appropriate HTTP error response for filesystem errors.
+func writeFSError(w http.ResponseWriter, err error) {
+	switch err {
+	case fs.ErrNotFound:
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case fs.ErrPathTraversal:
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
-	if err := session.DeletePTY(ptyId); err != nil {
+	if err := session.DeletePTY(r.PathValue("ptyId")); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -245,11 +260,8 @@ func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStartAgent(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -272,11 +284,8 @@ func (s *Server) handleStartAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -294,11 +303,8 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -318,11 +324,8 @@ func (s *Server) handlePauseAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -342,11 +345,8 @@ func (s *Server) handleResumeAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStopAgent(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
-
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -361,27 +361,19 @@ func (s *Server) handleStopAgent(w http.ResponseWriter, r *http.Request) {
 // Filesystem handlers
 
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "/"
 	}
 
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
 	entries, err := session.Workspace().List(path)
 	if err != nil {
-		if err == fs.ErrNotFound {
-			http.Error(w, err.Error(), http.StatusNotFound)
-		} else if err == fs.ErrPathTraversal {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeFSError(w, err)
 		return
 	}
 
@@ -390,28 +382,20 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		http.Error(w, "path parameter required", http.StatusBadRequest)
 		return
 	}
 
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
 	data, err := session.Workspace().Read(path)
 	if err != nil {
-		if err == fs.ErrNotFound {
-			http.Error(w, err.Error(), http.StatusNotFound)
-		} else if err == fs.ErrPathTraversal {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeFSError(w, err)
 		return
 	}
 
@@ -420,16 +404,14 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		http.Error(w, "path parameter required", http.StatusBadRequest)
 		return
 	}
 
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
@@ -440,11 +422,7 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := session.Workspace().Write(path, data); err != nil {
-		if err == fs.ErrPathTraversal {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeFSError(w, err)
 		return
 	}
 
@@ -452,27 +430,19 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		http.Error(w, "path parameter required", http.StatusBadRequest)
 		return
 	}
 
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
 	if err := session.Workspace().Delete(path); err != nil {
-		if err == fs.ErrNotFound {
-			http.Error(w, err.Error(), http.StatusNotFound)
-		} else if err == fs.ErrPathTraversal {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeFSError(w, err)
 		return
 	}
 
@@ -480,28 +450,20 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatFile(w http.ResponseWriter, r *http.Request) {
-	sessionId := r.PathValue("sessionId")
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		http.Error(w, "path parameter required", http.StatusBadRequest)
 		return
 	}
 
-	session, err := s.sessions.Get(sessionId)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	session := s.getSessionOrError(w, r.PathValue("sessionId"))
+	if session == nil {
 		return
 	}
 
 	info, err := session.Workspace().Stat(path)
 	if err != nil {
-		if err == fs.ErrNotFound {
-			http.Error(w, err.Error(), http.StatusNotFound)
-		} else if err == fs.ErrPathTraversal {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
+		writeFSError(w, err)
 		return
 	}
 
