@@ -7,96 +7,13 @@
 
 import type { Env, Schedule } from '../types';
 import * as recipes from '../recipes/handler';
+import {
+  checkRecipeAccess,
+  checkScheduleAccess,
+} from '../auth/access';
 
 function generateId(): string {
   return crypto.randomUUID();
-}
-
-// Check if user has access to a schedule (via its recipe → dashboard)
-async function checkScheduleAccess(
-  env: Env,
-  scheduleId: string,
-  userId: string,
-  requiredRole?: 'owner' | 'editor' | 'viewer'
-): Promise<{ hasAccess: boolean; schedule?: Record<string, unknown> }> {
-  const schedule = await env.DB.prepare(`
-    SELECT * FROM schedules WHERE id = ?
-  `).bind(scheduleId).first();
-
-  if (!schedule) {
-    return { hasAccess: false };
-  }
-
-  // Check access to the associated recipe
-  const recipe = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(schedule.recipe_id).first();
-
-  if (!recipe) {
-    return { hasAccess: false };
-  }
-
-  // Recipes without dashboard_id are accessible to any authenticated user
-  if (!recipe.dashboard_id) {
-    return { hasAccess: true, schedule };
-  }
-
-  // Check dashboard membership
-  const member = await env.DB.prepare(`
-    SELECT role FROM dashboard_members
-    WHERE dashboard_id = ? AND user_id = ?
-  `).bind(recipe.dashboard_id, userId).first<{ role: string }>();
-
-  if (!member) {
-    return { hasAccess: false };
-  }
-
-  // Check role permissions in JavaScript
-  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
-  const userRoleLevel = roleHierarchy[member.role] || 0;
-  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
-  const hasAccess = userRoleLevel >= requiredLevel;
-
-  return { hasAccess, schedule: hasAccess ? schedule : undefined };
-}
-
-// Check if user has access to a recipe (for creating schedules)
-async function checkRecipeAccessForSchedule(
-  env: Env,
-  recipeId: string,
-  userId: string,
-  requiredRole?: 'owner' | 'editor' | 'viewer'
-): Promise<{ hasAccess: boolean; recipe?: Record<string, unknown> }> {
-  const recipe = await env.DB.prepare(`
-    SELECT * FROM recipes WHERE id = ?
-  `).bind(recipeId).first();
-
-  if (!recipe) {
-    return { hasAccess: false };
-  }
-
-  // Recipes without dashboard_id are accessible to any authenticated user
-  if (!recipe.dashboard_id) {
-    return { hasAccess: true, recipe };
-  }
-
-  // Check dashboard membership
-  const member = await env.DB.prepare(`
-    SELECT role FROM dashboard_members
-    WHERE dashboard_id = ? AND user_id = ?
-  `).bind(recipe.dashboard_id, userId).first<{ role: string }>();
-
-  if (!member) {
-    return { hasAccess: false };
-  }
-
-  // Check role permissions in JavaScript
-  const roleHierarchy: Record<string, number> = { owner: 3, editor: 2, viewer: 1 };
-  const userRoleLevel = roleHierarchy[member.role] || 0;
-  const requiredLevel = requiredRole ? roleHierarchy[requiredRole] : 0;
-  const hasAccess = userRoleLevel >= requiredLevel;
-
-  return { hasAccess, recipe: hasAccess ? recipe : undefined };
 }
 
 // Parse a cron field and return matching values (exported for testing)
@@ -201,7 +118,7 @@ export async function listSchedules(
 ): Promise<Response> {
   // If recipeId specified, verify access first
   if (recipeId) {
-    const { hasAccess } = await checkRecipeAccessForSchedule(env, recipeId, userId, 'viewer');
+    const { hasAccess } = await checkRecipeAccess(env, recipeId, userId, 'viewer');
     if (!hasAccess) {
       return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
     }
@@ -289,7 +206,7 @@ export async function createSchedule(
   }
 ): Promise<Response> {
   // Verify user has editor access to the recipe
-  const { hasAccess } = await checkRecipeAccessForSchedule(env, data.recipeId, userId, 'editor');
+  const { hasAccess } = await checkRecipeAccess(env, data.recipeId, userId, 'editor');
 
   if (!hasAccess) {
     return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
