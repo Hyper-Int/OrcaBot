@@ -180,7 +180,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
               title="Browser"
               src={url}
               className="w-full h-full"
-              sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
               referrerPolicy="no-referrer"
             />
           </div>

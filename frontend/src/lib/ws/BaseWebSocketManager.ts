@@ -219,6 +219,8 @@ export abstract class BaseWebSocketManager {
         // Convert Blob to ArrayBuffer
         event.data.arrayBuffer().then((buffer) => {
           this.handleBinaryMessage(buffer);
+        }).catch((error) => {
+          console.error('[WS] Failed to convert Blob to ArrayBuffer:', error);
         });
       }
     };

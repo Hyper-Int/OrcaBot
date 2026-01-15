@@ -26,12 +26,14 @@ export class DashboardDO implements DurableObject {
   private items: Map<string, DashboardItem> = new Map();
   private terminalSessions: Map<string, Session> = new Map();
   private edges: Map<string, DashboardEdge> = new Map();
+  private initPromise: Promise<void>;
 
   constructor(state: DurableObjectState) {
     this.state = state;
 
     // Restore state from storage if available
-    this.state.blockConcurrencyWhile(async () => {
+    // Store the promise for explicit await in fetch() as defense-in-depth
+    this.initPromise = this.state.blockConcurrencyWhile(async () => {
       const stored = await this.state.storage.get<{
         dashboard: Dashboard | null;
         items: [string, DashboardItem][];
@@ -49,6 +51,8 @@ export class DashboardDO implements DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // Ensure initialization is complete (defense-in-depth)
+    await this.initPromise;
     const url = new URL(request.url);
     const path = url.pathname;
 

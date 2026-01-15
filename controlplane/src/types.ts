@@ -17,6 +17,8 @@ export interface Env {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   OAUTH_REDIRECT_BASE?: string;
+  /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
+  ALLOWED_ORIGINS?: string;
 }
 
 // User types
