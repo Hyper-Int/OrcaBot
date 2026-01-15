@@ -3,6 +3,8 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import type { TerminalHandle, TerminalProps, TerminalTheme } from "./types";
+import type { Terminal } from "xterm";
+import type { FitAddon } from "@xterm/addon-fit";
 
 interface XtermTheme extends TerminalTheme {}
 
@@ -20,8 +22,8 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
     ref
   ) {
     const containerRef = React.useRef<HTMLDivElement>(null);
-    const terminalRef = React.useRef<any>(null);
-    const fitAddonRef = React.useRef<any>(null);
+    const terminalRef = React.useRef<Terminal | null>(null);
+    const fitAddonRef = React.useRef<FitAddon | null>(null);
     const [isLoading, setIsLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
     const callbacksRef = React.useRef({
