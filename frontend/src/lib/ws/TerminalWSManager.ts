@@ -49,6 +49,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
     new Set();
   private onAgentStateChangeHandlers: Set<(state: AgentState) => void> =
     new Set();
+  private onPtyClosedHandlers: Set<() => void> = new Set();
 
   constructor(
     sessionId: string,
@@ -190,6 +191,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
     return () => this.onAgentStateChangeHandlers.delete(handler);
   }
 
+  /**
+   * Subscribe to PTY closed events
+   */
+  onPtyClosed(handler: () => void): () => void {
+    this.onPtyClosedHandlers.add(handler);
+    return () => this.onPtyClosedHandlers.delete(handler);
+  }
+
   // ===== Protected overrides =====
 
   protected handleBinaryMessage(data: ArrayBuffer): void {
@@ -277,6 +286,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "agent_state":
         this.updateAgentState(message.agent_state);
         break;
+
+      case "pty_closed":
+        this.notifyPtyClosed();
+        break;
     }
   }
 
@@ -347,5 +360,9 @@ export class TerminalWSManager extends BaseWebSocketManager {
     this.onAgentStateChangeHandlers.forEach((handler) =>
       handler(this.agentState)
     );
+  }
+
+  private notifyPtyClosed(): void {
+    this.onPtyClosedHandlers.forEach((handler) => handler());
   }
 }

@@ -14,6 +14,8 @@ import * as sessions from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as agentSkills from './agent-skills/handler';
+import * as mcpTools from './mcp-tools/handler';
 import * as integrations from './integrations/handler';
 import { SandboxClient } from './sandbox/client';
 
@@ -530,6 +532,58 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
+  }
+
+  // ============================================
+  // Agent Skills routes
+  // ============================================
+
+  // GET /agent-skills - List saved agent skills
+  if (segments[0] === 'agent-skills' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agentSkills.listAgentSkills(env, auth.user!.id);
+  }
+
+  // POST /agent-skills - Create agent skill
+  if (segments[0] === 'agent-skills' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return agentSkills.createAgentSkill(env, auth.user!.id, data);
+  }
+
+  // DELETE /agent-skills/:id - Delete agent skill
+  if (segments[0] === 'agent-skills' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return agentSkills.deleteAgentSkill(env, auth.user!.id, segments[1]);
+  }
+
+  // ============================================
+  // MCP Tools routes
+  // ============================================
+
+  // GET /mcp-tools - List saved MCP tools
+  if (segments[0] === 'mcp-tools' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return mcpTools.listMcpTools(env, auth.user!.id);
+  }
+
+  // POST /mcp-tools - Create MCP tool
+  if (segments[0] === 'mcp-tools' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return mcpTools.createMcpTool(env, auth.user!.id, data);
+  }
+
+  // DELETE /mcp-tools/:id - Delete MCP tool
+  if (segments[0] === 'mcp-tools' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return mcpTools.deleteMcpTool(env, auth.user!.id, segments[1]);
   }
 
   // ============================================

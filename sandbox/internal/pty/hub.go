@@ -108,7 +108,8 @@ func (h *Hub) Run() {
 			h.mu.Unlock()
 
 		case <-h.readLoopDone:
-			// PTY read failed, trigger cleanup
+			// PTY read failed - broadcast pty_closed before cleanup
+			h.broadcastPtyClosed()
 			h.Stop()
 			return
 
@@ -394,6 +395,15 @@ func (h *Hub) broadcastAgentState(state string) {
 	event := ControlEvent{
 		Type:       "agent_state",
 		AgentState: state,
+	}
+	data, _ := json.Marshal(event)
+	h.broadcastControl(data)
+}
+
+// broadcastPtyClosed notifies all clients that the PTY has closed
+func (h *Hub) broadcastPtyClosed() {
+	event := ControlEvent{
+		Type: "pty_closed",
 	}
 	data, _ := json.Marshal(event)
 	h.broadcastControl(data)

@@ -17,6 +17,7 @@ export interface UseTerminalState {
   connectionState: ConnectionState;
   turnTaking: TurnTakingState;
   agentState: AgentState;
+  ptyClosed: boolean;
   error: Error | null;
 }
 
@@ -69,6 +70,7 @@ export function useTerminal(
   const [turnTaking, setTurnTaking] =
     React.useState<TurnTakingState>(DEFAULT_TURN_TAKING);
   const [agentState, setAgentState] = React.useState<AgentState>(null);
+  const [ptyClosed, setPtyClosed] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
 
   // Store callbacks in ref to avoid re-subscribing
@@ -85,6 +87,8 @@ export function useTerminal(
     }
 
     console.log(`[Terminal] Creating TerminalWSManager for session ${sessionId}, pty ${ptyId}`);
+    // Reset ptyClosed state for new connection
+    setPtyClosed(false);
     const config: TerminalWSConfig = {
       userId,
       userName,
@@ -120,6 +124,12 @@ export function useTerminal(
       callbacksRef.current?.onData?.(data);
     });
 
+    // Subscribe to pty closed events
+    const unsubPtyClosed = manager.onPtyClosed(() => {
+      console.log(`[Terminal] PTY closed`);
+      setPtyClosed(true);
+    });
+
     // Connect
     manager.connect();
 
@@ -131,6 +141,7 @@ export function useTerminal(
         { name: 'turnTaking', fn: unsubTurnTaking },
         { name: 'agentState', fn: unsubAgentState },
         { name: 'data', fn: unsubData },
+        { name: 'ptyClosed', fn: unsubPtyClosed },
       ];
 
       for (const { name, fn } of cleanups) {
@@ -191,6 +202,7 @@ export function useTerminal(
     connectionState,
     turnTaking,
     agentState,
+    ptyClosed,
     error,
   };
 

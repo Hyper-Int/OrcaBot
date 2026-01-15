@@ -121,6 +121,37 @@ CREATE TABLE IF NOT EXISTS user_subagents (
 
 CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
 
+-- User agent skills (Claude Code slash command favorites)
+CREATE TABLE IF NOT EXISTS user_agent_skills (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL DEFAULT '',
+  args TEXT NOT NULL DEFAULT '[]',
+  source TEXT NOT NULL DEFAULT 'custom',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_agent_skills_user ON user_agent_skills(user_id);
+
+-- User MCP tools (Model Context Protocol tool configurations)
+CREATE TABLE IF NOT EXISTS user_mcp_tools (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  server_url TEXT NOT NULL DEFAULT '',
+  transport TEXT NOT NULL DEFAULT 'stdio' CHECK (transport IN ('stdio', 'sse', 'streamable-http')),
+  config TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL DEFAULT 'custom',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_mcp_tools_user ON user_mcp_tools(user_id);
+
 -- OAuth state (short-lived)
 CREATE TABLE IF NOT EXISTS oauth_states (
   state TEXT PRIMARY KEY,
