@@ -5,6 +5,7 @@ import { type NodeProps, type Node } from "@xyflow/react";
 import { ExternalLink, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
 
 interface LinkData extends Record<string, unknown> {
   content: string; // URL
@@ -12,6 +13,8 @@ interface LinkData extends Record<string, unknown> {
   description?: string;
   favicon?: string;
   size: { width: number; height: number };
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type LinkNode = Node<LinkData, "link">;
@@ -24,9 +27,10 @@ function getHostname(url: string): string {
   }
 }
 
-export function LinkBlock({ data, selected }: NodeProps<LinkNode>) {
+export function LinkBlock({ id, data, selected }: NodeProps<LinkNode>) {
   const url = data.content || "";
   const hostname = getHostname(url);
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   const handleClick = () => {
     if (url) {
@@ -40,6 +44,7 @@ export function LinkBlock({ data, selected }: NodeProps<LinkNode>) {
       className={cn(
         "cursor-pointer hover:border-[var(--border-strong)] transition-colors"
       )}
+      includeHandles={false}
     >
       <div onClick={handleClick} className="p-3">
         {/* Favicon and hostname */}
@@ -81,6 +86,11 @@ export function LinkBlock({ data, selected }: NodeProps<LinkNode>) {
           </p>
         </div>
       </div>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
     </BlockWrapper>
   );
 }

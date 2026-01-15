@@ -6,6 +6,7 @@ import { Play, Check, Circle, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { Button, Badge } from "@/components/ui";
+import { ConnectionHandles } from "./ConnectionHandles";
 
 type StepStatus = "pending" | "running" | "completed" | "failed";
 
@@ -19,6 +20,8 @@ interface RecipeData extends Record<string, unknown> {
   content: string; // JSON stringified recipe data
   title?: string;
   size: { width: number; height: number };
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type RecipeNode = Node<RecipeData, "recipe">;
@@ -30,7 +33,7 @@ const statusIcons: Record<StepStatus, React.ReactNode> = {
   failed: <AlertCircle className="w-4 h-4 text-[var(--status-error)]" />,
 };
 
-export function RecipeBlock({ data, selected }: NodeProps<RecipeNode>) {
+export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
   const [title, setTitle] = React.useState(data.title || "Recipe");
   const [steps, setSteps] = React.useState<RecipeStep[]>(() => {
     try {
@@ -47,6 +50,7 @@ export function RecipeBlock({ data, selected }: NodeProps<RecipeNode>) {
 
   const isRunning = steps.some((step) => step.status === "running");
   const completedCount = steps.filter((step) => step.status === "completed").length;
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   const handleRun = () => {
     // This would trigger the actual recipe execution via API
@@ -118,6 +122,11 @@ export function RecipeBlock({ data, selected }: NodeProps<RecipeNode>) {
           {isRunning ? "Running..." : "Run Recipe"}
         </Button>
       </div>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
     </BlockWrapper>
   );
 }

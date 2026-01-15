@@ -47,6 +47,17 @@ export interface DashboardItem {
   updatedAt: string;
 }
 
+export interface DashboardEdge {
+  id: string;
+  dashboardId: string;
+  sourceItemId: string;
+  targetItemId: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DashboardMember {
   dashboardId: string;
   userId: string;
@@ -190,6 +201,7 @@ export interface DashboardDOState {
   items: Map<string, DashboardItem>;
   presence: Map<string, PresenceInfo>;
   sessions: Map<string, Session>;
+  edges: Map<string, DashboardEdge>;
 }
 
 export interface PresenceInfo {
@@ -209,6 +221,8 @@ export type CollabMessage =
   | { type: 'item_update'; item: DashboardItem }
   | { type: 'item_create'; item: DashboardItem }
   | { type: 'item_delete'; itemId: string }
+  | { type: 'edge_create'; edge: DashboardEdge }
+  | { type: 'edge_delete'; edge_id: string }
   | { type: 'presence'; users: PresenceInfo[] }
   | { type: 'session_update'; session: Session };
 

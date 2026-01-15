@@ -4,6 +4,7 @@ import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 
 type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
@@ -13,6 +14,8 @@ interface NoteData extends Record<string, unknown> {
   color?: NoteColor;
   size: { width: number; height: number };
   onContentChange?: (content: string) => void;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type NoteNode = Node<NoteData, "note">;
@@ -25,9 +28,10 @@ const colorClasses: Record<NoteColor, string> = {
   purple: "bg-violet-100/90 border-violet-200 dark:bg-violet-900/30 dark:border-violet-800/50",
 };
 
-export function NoteBlock({ data, selected }: NodeProps<NoteNode>) {
+export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
   const [content, setContent] = React.useState(data.content || "");
   const color = data.color || "yellow";
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   // Sync content from server
   React.useEffect(() => {
@@ -58,6 +62,7 @@ export function NoteBlock({ data, selected }: NodeProps<NoteNode>) {
         "p-4 flex flex-col",
         colorClasses[color]
       )}
+      includeHandles={false}
     >
       <textarea
         value={content}
@@ -68,6 +73,11 @@ export function NoteBlock({ data, selected }: NodeProps<NoteNode>) {
           "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
           "focus:outline-none"
         )}
+      />
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
       />
     </BlockWrapper>
   );

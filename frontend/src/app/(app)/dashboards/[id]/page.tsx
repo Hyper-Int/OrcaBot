@@ -8,12 +8,12 @@ import {
   ArrowLeft,
   StickyNote,
   CheckSquare,
-  Link2,
   Globe,
   Terminal,
   Users,
   Settings,
   Share2,
+  GitMerge,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,9 +34,9 @@ import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration } from "@/hooks/useCollaboration";
-import { getDashboard, createItem, updateItem, deleteItem } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
-import type { DashboardItem, Dashboard, Session } from "@/types/dashboard";
+import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
 
 type BlockType = DashboardItem["type"];
@@ -51,11 +51,27 @@ type BlockTool = {
   };
 };
 
+type PendingConnection = {
+  nodeId: string;
+  handleId: string;
+  kind: "source" | "target";
+};
+
+const toFlowEdge = (edge: DashboardEdge): Edge => ({
+  id: edge.id,
+  source: edge.sourceItemId,
+  target: edge.targetItemId,
+  sourceHandle: edge.sourceHandle,
+  targetHandle: edge.targetHandle,
+  type: "smoothstep",
+  animated: true,
+  style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+});
+
 // Only include types that exist in the DB schema
 const blockTools: BlockTool[] = [
   { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
-  { type: "link", icon: <Link2 className="w-4 h-4" />, label: "Link" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
@@ -137,6 +153,11 @@ export default function DashboardPage() {
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
   const [newLinkUrl, setNewLinkUrl] = React.useState("");
+  const [connectorMode, setConnectorMode] = React.useState(false);
+  const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
+  const hasPendingConnection = Boolean(pendingConnection);
+  const [connectionCursor, setConnectionCursor] = React.useState<{ x: number; y: number } | null>(null);
+  const cursorRef = React.useRef<{ x: number; y: number } | null>(null);
 
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
@@ -199,6 +220,7 @@ export default function DashboardPage() {
   const pendingItemIdsRef = React.useRef<Set<string>>(new Set());
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
+  const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
   const workspaceCreateRequestedRef = React.useRef(false);
 
   // Fetch dashboard data with better caching
@@ -218,15 +240,24 @@ export default function DashboardPage() {
   const dashboard = data?.dashboard;
   const items = data?.items ?? [];
   const sessions = data?.sessions ?? [];
+  const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
+  const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(toFlowEdge), [edgesFromData]);
 
   // Create item mutation
   const createItemMutation = useMutation({
     mutationFn: ({
       clientTempId: _clientTempId,
       sourceId: _sourceId,
+      sourceHandle: _sourceHandle,
+      targetHandle: _targetHandle,
       ...item
-    }: Parameters<typeof createItem>[1] & { clientTempId?: string; sourceId?: string; sourceHandle?: string }) =>
+    }: Parameters<typeof createItem>[1] & {
+      clientTempId?: string;
+      sourceId?: string;
+      sourceHandle?: string;
+      targetHandle?: string;
+    }) =>
       createItem(dashboardId, item),
     onMutate: async (item) => {
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
@@ -234,6 +265,7 @@ export default function DashboardPage() {
         dashboard: Dashboard;
         items: DashboardItem[];
         sessions: Session[];
+        edges: DashboardEdge[];
         role: string;
       }>(["dashboard", dashboardId]);
 
@@ -252,17 +284,34 @@ export default function DashboardPage() {
 
       queryClient.setQueryData(
         ["dashboard", dashboardId],
-        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
           if (!oldData) return oldData;
+          const existingEdges = oldData.edges ?? [];
+          const nextEdges = item.sourceId
+            ? [
+                ...existingEdges,
+                {
+                  id: `edge-${item.sourceId}-${tempId}-${item.sourceHandle ?? "auto"}-${item.targetHandle ?? "auto"}`,
+                  dashboardId,
+                  sourceItemId: item.sourceId,
+                  targetItemId: tempId,
+                  sourceHandle: item.sourceHandle,
+                  targetHandle: item.targetHandle,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                } satisfies DashboardEdge,
+              ]
+            : oldData.edges;
           return {
             ...oldData,
             items: [...oldData.items, optimisticItem],
+            edges: nextEdges ?? existingEdges,
           };
         }
       );
 
       if (item.sourceId) {
-        const edgeId = `edge-${item.sourceId}-${tempId}`;
+        const edgeId = `edge-${item.sourceId}-${tempId}-${item.sourceHandle ?? "auto"}-${item.targetHandle ?? "auto"}`;
         setEdges((prev) => {
           if (prev.some((edge) => edge.id === edgeId)) return prev;
           return [
@@ -272,6 +321,7 @@ export default function DashboardPage() {
               source: item.sourceId as string,
               target: tempId,
               sourceHandle: item.sourceHandle,
+              targetHandle: item.targetHandle,
               type: "smoothstep",
               animated: true,
               style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
@@ -280,12 +330,18 @@ export default function DashboardPage() {
         });
       }
 
-      return { previous, tempId, sourceId: item.sourceId, sourceHandle: item.sourceHandle };
+      return {
+        previous,
+        tempId,
+        sourceId: item.sourceId,
+        sourceHandle: item.sourceHandle,
+        targetHandle: item.targetHandle,
+      };
     },
     onSuccess: (createdItem, _variables, context) => {
       queryClient.setQueryData(
         ["dashboard", dashboardId],
-        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
           if (!oldData) return oldData;
           const hasTemp = context?.tempId
             ? oldData.items.some((item) => item.id === context.tempId)
@@ -295,23 +351,35 @@ export default function DashboardPage() {
                 item.id === context?.tempId ? createdItem : item
               )
             : [...oldData.items, createdItem];
+          const existingEdges = oldData.edges ?? [];
+          const nextEdges = context?.tempId
+            ? existingEdges.filter((edge) => edge.targetItemId !== context.tempId)
+            : existingEdges;
           return {
             ...oldData,
             items: nextItems,
+            edges: nextEdges,
           };
         }
       );
       if (context?.sourceId) {
+        createEdgeMutation.mutate({
+          sourceItemId: context.sourceId,
+          targetItemId: createdItem.id,
+          sourceHandle: context.sourceHandle,
+          targetHandle: context.targetHandle,
+        });
         setEdges((prev) => {
           const next = prev.filter(
             (edge) =>
               !(edge.source === context.sourceId && edge.target === context.tempId)
           );
           next.push({
-            id: `edge-${context.sourceId}-${createdItem.id}`,
+            id: `edge-${context.sourceId}-${createdItem.id}-${context.sourceHandle ?? "auto"}-${context.targetHandle ?? "auto"}`,
             source: context.sourceId,
             target: createdItem.id,
             sourceHandle: context.sourceHandle,
+            targetHandle: context.targetHandle,
             type: "smoothstep",
             animated: true,
             style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
@@ -334,6 +402,34 @@ export default function DashboardPage() {
         );
       }
       toast.error(`Failed to add block: ${error.message}`);
+    },
+  });
+
+  const createEdgeMutation = useMutation({
+    mutationFn: (edge: {
+      sourceItemId: string;
+      targetItemId: string;
+      sourceHandle?: string;
+      targetHandle?: string;
+    }) => createEdge(dashboardId, edge),
+    onSuccess: (createdEdge) => {
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          const existingEdges = oldData.edges ?? [];
+          if (existingEdges.some((edge) => edge.id === createdEdge.id)) {
+            return oldData;
+          }
+          return {
+            ...oldData,
+            edges: [...existingEdges, createdEdge],
+          };
+        }
+      );
+    },
+    onError: (error) => {
+      toast.error(`Failed to save connection: ${error.message}`);
     },
   });
 
@@ -363,17 +459,21 @@ export default function DashboardPage() {
         dashboard: Dashboard;
         items: DashboardItem[];
         sessions: Session[];
+        edges: DashboardEdge[];
         role: string;
       }>(["dashboard", dashboardId]);
       const previousEdges = edges;
 
       queryClient.setQueryData(
         ["dashboard", dashboardId],
-        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
           if (!oldData) return oldData;
           return {
             ...oldData,
             items: oldData.items.filter((item) => item.id !== itemId),
+            edges: oldData.edges.filter(
+              (edge) => edge.sourceItemId !== itemId && edge.targetItemId !== itemId
+            ),
           };
         }
       );
@@ -416,6 +516,7 @@ export default function DashboardPage() {
 
   // Add block handler
   const handleAddBlock = (tool: BlockTool) => {
+    setConnectorMode(false);
     if (tool.type === "link") {
       setIsAddLinkOpen(true);
       return;
@@ -445,22 +546,41 @@ export default function DashboardPage() {
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
         : { x: 140 + Math.random() * 200, y: 140 + Math.random() * 200 };
-    createItemMutation.mutate({
-      type: "browser",
-      content: url,
-      position,
-      size: defaultSizes.browser,
-      sourceId,
-      sourceHandle: "terminal-right",
-    });
-  },
-  [createItemMutation]
-);
+      createItemMutation.mutate({
+        type: "browser",
+        content: url,
+        position,
+        size: defaultSizes.browser,
+        sourceId,
+        sourceHandle: "right-out",
+        targetHandle: "left-in",
+      });
+    },
+    [createItemMutation]
+  );
+
+  const hasEdgeBetween = React.useCallback(
+    (
+      sourceId: string,
+      targetId: string,
+      sourceHandle?: string,
+      targetHandle?: string
+    ) =>
+      edges.some(
+        (edge) =>
+          edge.source === sourceId &&
+          edge.target === targetId &&
+          edge.sourceHandle === sourceHandle &&
+          edge.targetHandle === targetHandle
+      ),
+    [edges]
+  );
 
   // Add link handler
   const handleAddLink = (e: React.FormEvent) => {
     e.preventDefault();
     if (newLinkUrl.trim()) {
+      setConnectorMode(false);
       createItemMutation.mutate({
         type: "link",
         content: newLinkUrl.trim(),
@@ -481,7 +601,7 @@ export default function DashboardPage() {
     // This prevents the "bounce back" where nodes are rebuilt from stale items
     queryClient.setQueryData(
       ["dashboard", dashboardId],
-      (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; role: string } | undefined) => {
+      (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
         if (!oldData) return oldData;
         return {
           ...oldData,
@@ -502,6 +622,94 @@ export default function DashboardPage() {
     // Flush to REST API after debounce for persistence
     flushPendingUpdates();
   }, [flushPendingUpdates, collabActions, queryClient, dashboardId]);
+
+  const handleConnectorClick = React.useCallback(
+    (nodeId: string, handleId: string, kind: "source" | "target") => {
+      if (role === "viewer" || !connectorMode) return;
+
+      setPendingConnection((current) => {
+        if (!current) {
+          if (cursorRef.current) {
+            setConnectionCursor(cursorRef.current);
+          }
+          return { nodeId, handleId, kind };
+        }
+
+        const isBidirectionalHandle = (id: string) =>
+          id.startsWith("top-") || id.startsWith("bottom-");
+        const flipHandleKind = (id: string) =>
+          id.endsWith("-in") ? id.replace("-in", "-out") : id.replace("-out", "-in");
+
+        if (current.nodeId === nodeId && current.handleId === handleId) {
+          return null;
+        }
+
+        let nextClick = { nodeId, handleId, kind };
+        if (current.kind === kind) {
+          if (isBidirectionalHandle(current.handleId) && isBidirectionalHandle(handleId)) {
+            nextClick = {
+              nodeId,
+              handleId: flipHandleKind(handleId),
+              kind: kind === "source" ? "target" : "source",
+            };
+          } else {
+            toast.error("Select an opposite connector to complete the link.");
+            return current;
+          }
+        }
+
+        const source = current.kind === "source"
+          ? current
+          : nextClick;
+        const target = current.kind === "target"
+          ? current
+          : nextClick;
+
+        if (source.nodeId === target.nodeId) {
+          toast.error("Connect to a different block.");
+          return null;
+        }
+
+        const edgeId = `edge-${source.nodeId}-${target.nodeId}-${source.handleId}-${target.handleId}`;
+        setEdges((prev) => {
+          if (prev.some((edge) => edge.id === edgeId)) return prev;
+          return [
+            ...prev,
+            {
+              id: edgeId,
+              source: source.nodeId,
+              target: target.nodeId,
+              sourceHandle: source.handleId,
+              targetHandle: target.handleId,
+              type: "smoothstep",
+              animated: true,
+              style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+            },
+          ];
+        });
+
+        createEdgeMutation.mutate({
+          sourceItemId: source.nodeId,
+          targetItemId: target.nodeId,
+          sourceHandle: source.handleId,
+          targetHandle: target.handleId,
+        });
+
+        return null;
+      });
+    },
+    [connectorMode, role, setEdges, createEdgeMutation]
+  );
+
+  const handleCursorMove = React.useCallback(
+    (point: { x: number; y: number }) => {
+      cursorRef.current = point;
+      if (pendingConnection) {
+        setConnectionCursor(point);
+      }
+    },
+    [pendingConnection]
+  );
 
   // Listen for item changes from other users via WebSocket
   React.useEffect(() => {
@@ -524,6 +732,26 @@ export default function DashboardPage() {
 
     // Update ref for next comparison
     prevCollabItemsRef.current = currentItems;
+
+    const prevEdges = prevCollabEdgesRef.current;
+    const currentEdges = collabState.edges;
+    const prevEdgeIds = new Set(prevEdges.map((edge) => edge.id));
+    const currentEdgeIds = new Set(currentEdges.map((edge) => edge.id));
+    const addedEdges = currentEdges.filter((edge) => !prevEdgeIds.has(edge.id));
+    const removedEdges = prevEdges.filter((edge) => !currentEdgeIds.has(edge.id));
+    prevCollabEdgesRef.current = currentEdges;
+
+    if (addedEdges.length > 0 || removedEdges.length > 0) {
+      setEdges((prev) => {
+        const next = prev.filter((edge) => !removedEdges.some((removed) => removed.id === edge.id));
+        addedEdges.forEach((edge) => {
+          if (!next.some((existing) => existing.id === edge.id)) {
+            next.push(toFlowEdge(edge));
+          }
+        });
+        return next;
+      });
+    }
 
     if (removedItemIds.length > 0) {
       setEdges((prev) =>
@@ -549,7 +777,7 @@ export default function DashboardPage() {
     if (collabState.sessions.length > 0) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
     }
-  }, [collabState.items, collabState.sessions, queryClient, dashboardId, setEdges]);
+  }, [collabState.items, collabState.sessions, collabState.edges, queryClient, dashboardId, setEdges]);
 
   // Item delete handler
   const handleItemDelete = (itemId: string) => {
@@ -605,24 +833,148 @@ export default function DashboardPage() {
       .filter((item) => item.type === "terminal")
       .map((item) => item.id);
 
+    const createdEdges: Array<{ sourceItemId: string; targetItemId: string }> = [];
+
     setEdges((prev) => {
+      let changed = false;
       const next = [...prev];
       terminalIds.forEach((terminalId) => {
-        const edgeId = `edge-${terminalId}-${workspaceItem.id}`;
-        if (next.some((edge) => edge.id === edgeId)) return;
+        const alreadyLinked = prev.some(
+          (edge) =>
+            edge.source === terminalId &&
+            edge.target === workspaceItem.id &&
+            edge.sourceHandle === "bottom-out" &&
+            edge.targetHandle === "top-in"
+        );
+        if (alreadyLinked) return;
+        const edgeId = `edge-${terminalId}-${workspaceItem.id}-workspace`;
         next.push({
           id: edgeId,
           source: terminalId,
           target: workspaceItem.id,
-          sourceHandle: "workspace",
+          sourceHandle: "bottom-out",
+          targetHandle: "top-in",
           type: "smoothstep",
           animated: true,
           style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
         });
+        changed = true;
+        if (!terminalId.startsWith("temp-") && !workspaceItem.id.startsWith("temp-")) {
+          createdEdges.push({ sourceItemId: terminalId, targetItemId: workspaceItem.id });
+        }
       });
-      return next;
+      return changed ? next : prev;
     });
-  }, [data, items, setEdges]);
+
+    createdEdges.forEach(({ sourceItemId, targetItemId }) => {
+      createEdgeMutation.mutate({
+        sourceItemId,
+        targetItemId,
+        sourceHandle: "bottom-out",
+        targetHandle: "top-in",
+      });
+    });
+  }, [data, items, setEdges, createEdgeMutation]);
+
+  React.useEffect(() => {
+    if (!connectorMode) {
+      setPendingConnection(null);
+      setConnectionCursor(null);
+    }
+  }, [connectorMode]);
+
+  React.useEffect(() => {
+    if (!edgesFromDataFlow.length) return;
+    setEdges((prev) => {
+      const existingIds = new Set(prev.map((edge) => edge.id));
+      let changed = false;
+      const next = [...prev];
+      edgesFromDataFlow.forEach((edge) => {
+        if (!existingIds.has(edge.id)) {
+          next.push(edge);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [edgesFromDataFlow, setEdges]);
+
+  React.useEffect(() => {
+    if (!pendingConnection) {
+      setConnectionCursor(null);
+    }
+  }, [pendingConnection]);
+
+  const pendingEdge = React.useMemo(() => {
+    if (!pendingConnection || !connectionCursor) return null;
+    const cursorId = "__connector-cursor__";
+    const sourceItem = items.find((item) => item.id === pendingConnection.nodeId);
+    const sourcePosition = sourceItem?.position ?? { x: 0, y: 0 };
+    const sourceSize = sourceItem?.size ?? { width: 0, height: 0 };
+    const sourceCenter = {
+      x: sourcePosition.x + sourceSize.width / 2,
+      y: sourcePosition.y + sourceSize.height / 2,
+    };
+    const dx = connectionCursor.x - sourceCenter.x;
+    const dy = connectionCursor.y - sourceCenter.y;
+    const axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    const cursorSide = axis === "x"
+      ? (dx >= 0 ? "left" : "right")
+      : (dy >= 0 ? "top" : "bottom");
+    const cursorTargetHandle = `cursor-target-${cursorSide}`;
+    const cursorSourceHandle = `cursor-source-${cursorSide}`;
+    const base = {
+      id: `edge-${pendingConnection.nodeId}-${cursorId}-${pendingConnection.handleId}`,
+      type: "step" as const,
+      animated: true,
+      style: {
+        stroke: "var(--accent-primary)",
+        strokeWidth: 2,
+        strokeDasharray: "4 4",
+      },
+    };
+
+    if (pendingConnection.kind === "source") {
+      return {
+        ...base,
+        source: pendingConnection.nodeId,
+        sourceHandle: pendingConnection.handleId,
+        target: cursorId,
+        targetHandle: cursorTargetHandle,
+      };
+    }
+
+    return {
+      ...base,
+      source: cursorId,
+      sourceHandle: cursorSourceHandle,
+      target: pendingConnection.nodeId,
+      targetHandle: pendingConnection.handleId,
+    };
+  }, [pendingConnection, connectionCursor, items]);
+
+  const cursorNode = React.useMemo(() => {
+    if (!pendingConnection || !connectionCursor) return null;
+    return {
+      id: "__connector-cursor__",
+      type: "cursor",
+      position: connectionCursor,
+      data: {},
+      selectable: false,
+      draggable: false,
+      connectable: false,
+      focusable: false,
+      style: {
+        width: 1,
+        height: 1,
+        opacity: 0,
+        pointerEvents: "none",
+      },
+    } as const;
+  }, [pendingConnection, connectionCursor]);
+
+  const edgesToRender = pendingEdge ? [...edges, pendingEdge] : edges;
+  const extraNodes = cursorNode ? [cursorNode] : [];
 
   if (!isAuthenticated) {
     return null;
@@ -795,6 +1147,24 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
               ))}
+              <div className="h-6 w-px bg-[var(--border)] mx-2" />
+              <Tooltip
+                content={connectorMode ? "Exit connect mode" : "Connect blocks"}
+                side="bottom"
+              >
+                <Button
+                  variant={connectorMode ? "secondary" : "ghost"}
+                  size="icon-sm"
+                  onClick={() => setConnectorMode((prev) => !prev)}
+                  disabled={role === "viewer"}
+                  className="relative"
+                >
+                  <GitMerge className="w-4 h-4" />
+                  {connectorMode && hasPendingConnection && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                  )}
+                </Button>
+              </Tooltip>
             </div>
           </div>
           <Canvas
@@ -802,13 +1172,20 @@ export default function DashboardPage() {
             sessions={sessions}
             onItemChange={handleItemChange}
             onItemDelete={handleItemDelete}
-            edges={edges}
+            edges={edgesToRender}
             onEdgesChange={onEdgesChange}
             onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
             onViewportChange={(next) => {
               viewportRef.current = next;
             }}
+            onCursorMove={connectorMode ? handleCursorMove : undefined}
+            onCanvasClick={() => {
+              if (connectorMode) setConnectorMode(false);
+            }}
+            onConnectorClick={role === "viewer" ? undefined : handleConnectorClick}
+            connectorMode={connectorMode}
             fitViewEnabled={false}
+            extraNodes={extraNodes}
             readOnly={role === "viewer"}
           />
           {/* Remote cursors overlay */}

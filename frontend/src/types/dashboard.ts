@@ -45,6 +45,20 @@ export interface DashboardItem {
 }
 
 /**
+ * Connection edge between blocks
+ */
+export interface DashboardEdge {
+  id: string;
+  dashboardId: string;
+  sourceItemId: string;
+  targetItemId: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Note block content
  */
 export interface NoteContent {

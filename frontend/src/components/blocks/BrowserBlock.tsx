@@ -4,6 +4,7 @@ import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
 import { ExternalLink, Globe } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
 import { Button, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { checkEmbeddable } from "@/lib/api/cloudflare";
@@ -14,6 +15,8 @@ interface BrowserData extends Record<string, unknown> {
   size: { width: number; height: number };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
 type BrowserNode = Node<BrowserData, "browser">;
@@ -35,10 +38,11 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
+export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const [draftUrl, setDraftUrl] = React.useState(data.content || "");
   const [isEmbeddable, setIsEmbeddable] = React.useState(true);
   const lastEmbeddableRef = React.useRef<boolean | null>(null);
+  const connectorsVisible = selected || Boolean(data.connectorMode);
 
   React.useEffect(() => {
     setDraftUrl(data.content || "");
@@ -132,9 +136,10 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
     return (
       <BlockWrapper
         selected={selected}
-        className="p-0 overflow-hidden flex flex-col"
+        className="p-0 flex flex-col overflow-visible"
         minWidth={250}
         minHeight={130}
+        includeHandles={false}
       >
         {header}
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 bg-[var(--background-elevated)] p-2">
@@ -149,6 +154,11 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
             Open in new tab
           </Button>
         </div>
+        <ConnectionHandles
+          nodeId={id}
+          visible={connectorsVisible}
+          onConnectorClick={data.onConnectorClick}
+        />
       </BlockWrapper>
     );
   }
@@ -156,9 +166,10 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 overflow-hidden flex flex-col"
+      className="p-0 flex flex-col overflow-visible"
       minWidth={200}
       minHeight={30}
+      includeHandles={false}
     >
       {header}
 
@@ -179,6 +190,11 @@ export function BrowserBlock({ data, selected }: NodeProps<BrowserNode>) {
           </div>
         )}
       </div>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
     </BlockWrapper>
   );
 }

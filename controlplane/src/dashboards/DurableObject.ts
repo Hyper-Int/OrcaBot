@@ -9,7 +9,7 @@
  * NOT a database - can be rebuilt from D1 at any time.
  */
 
-import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session } from '../types';
+import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session, DashboardEdge } from '../types';
 
 interface WebSocketAttachment {
   userId: string;
@@ -25,6 +25,7 @@ export class DashboardDO implements DurableObject {
   private dashboard: Dashboard | null = null;
   private items: Map<string, DashboardItem> = new Map();
   private terminalSessions: Map<string, Session> = new Map();
+  private edges: Map<string, DashboardEdge> = new Map();
 
   constructor(state: DurableObjectState) {
     this.state = state;
@@ -35,12 +36,14 @@ export class DashboardDO implements DurableObject {
         dashboard: Dashboard | null;
         items: [string, DashboardItem][];
         terminalSessions: [string, Session][];
+        edges: [string, DashboardEdge][];
       }>('state');
 
       if (stored) {
         this.dashboard = stored.dashboard;
         this.items = new Map(stored.items);
         this.terminalSessions = new Map(stored.terminalSessions);
+        this.edges = new Map(stored.edges);
       }
     });
   }
@@ -76,11 +79,13 @@ export class DashboardDO implements DurableObject {
         dashboard: Dashboard;
         items: DashboardItem[];
         sessions: Session[];
+        edges?: DashboardEdge[];
       };
 
       this.dashboard = data.dashboard;
       this.items = new Map(data.items.map(i => [i.id, i]));
       this.terminalSessions = new Map(data.sessions.map(s => [s.id, s]));
+      this.edges = new Map((data.edges ?? []).map(e => [e.id, e]));
 
       await this.persistState();
 
@@ -93,6 +98,7 @@ export class DashboardDO implements DurableObject {
         items: Array.from(this.items.values()),
         presence: Array.from(this.presence.values()),
         sessions: Array.from(this.terminalSessions.values()),
+        edges: Array.from(this.edges.values()),
       });
     }
 
@@ -126,6 +132,22 @@ export class DashboardDO implements DurableObject {
       this.terminalSessions.set(session.id, session);
       await this.persistState();
       this.broadcast({ type: 'session_update', session });
+      return Response.json({ success: true });
+    }
+
+    if (path === '/edge' && request.method === 'POST') {
+      const edge = await request.json() as DashboardEdge;
+      this.edges.set(edge.id, edge);
+      await this.persistState();
+      this.broadcast({ type: 'edge_create', edge });
+      return Response.json({ success: true });
+    }
+
+    if (path === '/edge' && request.method === 'DELETE') {
+      const { edgeId } = await request.json() as { edgeId: string };
+      this.edges.delete(edgeId);
+      await this.persistState();
+      this.broadcast({ type: 'edge_delete', edge_id: edgeId });
       return Response.json({ success: true });
     }
 
@@ -252,6 +274,7 @@ export class DashboardDO implements DurableObject {
       dashboard: this.dashboard,
       items: Array.from(this.items.entries()),
       terminalSessions: Array.from(this.terminalSessions.entries()),
+      edges: Array.from(this.edges.entries()),
     });
   }
 }

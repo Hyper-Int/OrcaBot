@@ -2,7 +2,7 @@
  * Dashboard API Handlers
  */
 
-import type { Env, Dashboard, DashboardItem } from '../types';
+import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -57,6 +57,19 @@ function formatSession(row: Record<string, unknown>) {
   };
 }
 
+function formatEdge(row: Record<string, unknown>): DashboardEdge {
+  return {
+    id: row.id as string,
+    dashboardId: row.dashboard_id as string,
+    sourceItemId: row.source_item_id as string,
+    targetItemId: row.target_item_id as string,
+    sourceHandle: (row.source_handle as string | null) ?? undefined,
+    targetHandle: (row.target_handle as string | null) ?? undefined,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
 // List dashboards for a user
 export async function listDashboards(
   env: Env,
@@ -108,10 +121,15 @@ export async function getDashboard(
     SELECT * FROM sessions WHERE dashboard_id = ? AND status != 'stopped'
   `).bind(dashboardId).all();
 
+  const edgeRows = await env.DB.prepare(`
+    SELECT * FROM dashboard_edges WHERE dashboard_id = ?
+  `).bind(dashboardId).all();
+
   return Response.json({
     dashboard: formatDashboard(dashboardRow),
     items: itemRows.results.map(formatItem),
     sessions: sessionRows.results.map(formatSession),
+    edges: edgeRows.results.map(formatEdge),
     role: access.role,
   });
 }
@@ -305,6 +323,11 @@ export async function deleteItem(
     return Response.json({ error: 'Not found or no edit access' }, { status: 404 });
   }
 
+  const edgeRows = await env.DB.prepare(`
+    SELECT id FROM dashboard_edges
+    WHERE dashboard_id = ? AND (source_item_id = ? OR target_item_id = ?)
+  `).bind(dashboardId, itemId, itemId).all<{ id: string }>();
+
   await env.DB.prepare(`
     DELETE FROM dashboard_items WHERE id = ? AND dashboard_id = ?
   `).bind(itemId, dashboardId).run();
@@ -315,6 +338,115 @@ export async function deleteItem(
   await stub.fetch(new Request('http://do/item', {
     method: 'DELETE',
     body: JSON.stringify({ itemId }),
+  }));
+  for (const edge of edgeRows.results) {
+    await stub.fetch(new Request('http://do/edge', {
+      method: 'DELETE',
+      body: JSON.stringify({ edgeId: edge.id }),
+    }));
+  }
+
+  return new Response(null, { status: 204 });
+}
+
+// Create dashboard edge
+export async function createEdge(
+  env: Env,
+  dashboardId: string,
+  userId: string,
+  edge: {
+    sourceItemId: string;
+    targetItemId: string;
+    sourceHandle?: string;
+    targetHandle?: string;
+  }
+): Promise<Response> {
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, userId).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'Not found or no edit access' }, { status: 404 });
+  }
+
+  const existingEdge = await env.DB.prepare(`
+    SELECT * FROM dashboard_edges
+    WHERE dashboard_id = ?
+      AND source_item_id = ?
+      AND target_item_id = ?
+      AND COALESCE(source_handle, '') = COALESCE(?, '')
+      AND COALESCE(target_handle, '') = COALESCE(?, '')
+  `).bind(
+    dashboardId,
+    edge.sourceItemId,
+    edge.targetItemId,
+    edge.sourceHandle ?? '',
+    edge.targetHandle ?? ''
+  ).first();
+
+  if (existingEdge) {
+    return Response.json({ edge: formatEdge(existingEdge) }, { status: 200 });
+  }
+
+  const now = new Date().toISOString();
+  const id = generateId();
+
+  await env.DB.prepare(`
+    INSERT INTO dashboard_edges (id, dashboard_id, source_item_id, target_item_id, source_handle, target_handle, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    dashboardId,
+    edge.sourceItemId,
+    edge.targetItemId,
+    edge.sourceHandle ?? null,
+    edge.targetHandle ?? null,
+    now,
+    now
+  ).run();
+
+  const savedEdge = await env.DB.prepare(`
+    SELECT * FROM dashboard_edges WHERE id = ?
+  `).bind(id).first();
+
+  const formattedEdge = formatEdge(savedEdge!);
+
+  const doId = env.DASHBOARD.idFromName(dashboardId);
+  const stub = env.DASHBOARD.get(doId);
+  await stub.fetch(new Request('http://do/edge', {
+    method: 'POST',
+    body: JSON.stringify(formattedEdge),
+  }));
+
+  return Response.json({ edge: formattedEdge }, { status: 201 });
+}
+
+// Delete dashboard edge
+export async function deleteEdge(
+  env: Env,
+  dashboardId: string,
+  edgeId: string,
+  userId: string
+): Promise<Response> {
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, userId).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'Not found or no edit access' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM dashboard_edges WHERE id = ? AND dashboard_id = ?
+  `).bind(edgeId, dashboardId).run();
+
+  const doId = env.DASHBOARD.idFromName(dashboardId);
+  const stub = env.DASHBOARD.get(doId);
+  await stub.fetch(new Request('http://do/edge', {
+    method: 'DELETE',
+    body: JSON.stringify({ edgeId }),
   }));
 
   return new Response(null, { status: 204 });

@@ -1,4 +1,4 @@
-import type { DashboardItem, Session } from "./dashboard";
+import type { DashboardItem, DashboardEdge, Session } from "./dashboard";
 
 /**
  * Cursor position on the canvas
@@ -139,6 +139,16 @@ export interface SessionUpdateMessage {
   session: Session;
 }
 
+export interface EdgeCreateMessage {
+  type: "edge_create";
+  edge: DashboardEdge;
+}
+
+export interface EdgeDeleteMessage {
+  type: "edge_delete";
+  edge_id: string;
+}
+
 /**
  * All incoming collaboration messages
  */
@@ -150,6 +160,8 @@ export type IncomingCollabMessage =
   | ItemUpdateIncoming
   | ItemCreateIncoming
   | ItemDeleteMessage
+  | EdgeCreateMessage
+  | EdgeDeleteMessage
   | PresenceMessage
   | SessionUpdateMessage;
 
