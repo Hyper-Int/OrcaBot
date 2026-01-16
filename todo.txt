@@ -1,17 +1,49 @@
+AI config
+  LLM provider keys
+  Voice provider keys
+
+harden
+	generate new tokens
+		- SANDBOX_INTERNAL_TOKEN
+		- INTERNAL_API_TOKEN
+		- SANDBOX_URL
+
+FIX SANDBOX PERFORMANCE ISSUE
+
+small bugs
+  when changing light mode terminals screens clear
+  codex missing icon
+  session not found on workspace after closing terminals
+
+CAN WE OPEN A BROWSER INSIDE TERMINAL?
+
+Error Codes (E79XXX):                                                                                                          
+  - E79101, E79102: MCP tools errors
+  - E79201-E79204: Session errors
+  - E79301-E79304: Dashboard errors
+  - E79401-E79403: Auth errors
+  - E79501-E79502: Recipe errors
+  - E79601: Rate limit errors
+  - E79701: Sandbox auth unauthorized
+  - E79702-E79704: WebSocket session/PTY/agent not found
+  - E79705: Path parameter required 
+
 deploy to cloudflare
 point orcabot.com and orcabot.ai at it
 test gate for me and anthony
 
+add blue borders
+
 add all cloud drives
 combine drive contents appropriately
-connect subagents
 
 add flip mechanic to turn terminals into cute chatbots
 make connections pipe outputs around appropriately
 
-add skills
-add commands
-add mcp tools
+integrate subagents
+integrate skills
+integrate commands
+integrate mcp tools
 
 add talkito
 add sessionito
@@ -36,3 +68,32 @@ DONE
 DREAM GOALS
 * Can someone use OrcaBot to set up Gas Town? Ralph? BMAD?
 * Is this Turing complete? Can someone create OrcaBot in OrcaBot?
+
+work out what
+https://orcabot-controlplane.YOUR_SUBDOMAIN.workers.dev
+8  * - CF_ACCESS_TEAM_DOMAIN: Your team domain (e.g., "myteam" for myteam.cloudflareaccess.com) 
+9  * - CF_ACCESS_AUD: The Application Audience (AUD) tag from CF Access dashboard    
+
+  These come from your Cloudflare Zero Trust dashboard:                                                                          
+                                                                                                                                 
+  CF_ACCESS_TEAM_DOMAIN:                                                                                                         
+  - When you set up Cloudflare Zero Trust, you pick a team name
+  - If your login URL is https://mycompany.cloudflareaccess.com, then CF_ACCESS_TEAM_DOMAIN = "mycompany"
+  - It's whatever you chose, not a UUID
+                                                                                                                                 
+  CF_ACCESS_AUD:                                                                                                                 
+  - This is the "Application Audience (AUD) Tag"
+  - Found in: Zero Trust → Access → Applications → [Your App] → Overview
+  - It's a long hex string like a1b2c3d4e5f6... (not a UUID format, but similar purpose)
+  - Uniquely identifies your Access application   
+
+theres lots of secret tokens in the repo
+is it a problem if the repo is private?
+should we add some watermarks?
+
+  Next Steps                                                                                                                     
+                                                                                                                                 
+  1. Set up Cloudflare Access - Follow DEPLOYMENT.md Step 1
+  2. Deploy control plane with production config - Step 2
+  3. Deploy frontend to Cloudflare Pages - Step 4
+  4. Remove dev login from frontend UI (the "Dev mode login" button)   
