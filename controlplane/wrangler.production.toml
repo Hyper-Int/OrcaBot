@@ -12,6 +12,11 @@ name = "orcabot-controlplane"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
+# Custom domain - serves the worker at api.orcabot.com
+routes = [
+  { pattern = "api.orcabot.com", custom_domain = true }
+]
+
 [vars]
 # Authentication - Dev auth DISABLED, CF Access required
 DEV_AUTH_ENABLED = "false"
@@ -19,11 +24,11 @@ DEV_AUTH_ENABLED = "false"
 # SANDBOX_URL is set via wrangler secret (not exposed in config)
 
 # Cloudflare Access configuration (set these for your team)
-# CF_ACCESS_TEAM_DOMAIN = "your-team"  # e.g., "myteam" for myteam.cloudflareaccess.com
-# CF_ACCESS_AUD = "your-application-aud-tag"  # From CF Access dashboard
+CF_ACCESS_TEAM_DOMAIN = "orcabot"
+CF_ACCESS_AUD = "08425b491a830f9bd30d6ef7f92e7b3d1d64490cabd1e5502dcb70f6adbec5e2"
 
 # CORS - Only allow your production frontend
-ALLOWED_ORIGINS = "https://orcabot.pages"
+ALLOWED_ORIGINS = "https://orcabot.com"
 
 # OAuth (client IDs only - secrets go in wrangler secret)
 # GOOGLE_CLIENT_ID = "your-google-client-id"
@@ -56,7 +61,7 @@ new_sqlite_classes = ["DashboardDO"]
 [[d1_databases]]
 binding = "DB"
 database_name = "orcabot-db-production"
-database_id = "YOUR_PRODUCTION_DATABASE_ID"  # Create with: wrangler d1 create orcabot-db-production
+database_id = "93828ba8-1160-49ec-8d82-6c1bc52800a1"
 
 # Cron triggers for background tasks
 [triggers]

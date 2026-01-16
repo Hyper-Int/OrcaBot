@@ -3,6 +3,8 @@
 
 "use client";
 
+export const runtime = "edge";
+
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -1026,7 +1028,7 @@ export default function DashboardPage() {
 
           <div className="flex items-center gap-2 justify-center min-w-0">
             <h1 className="text-sm font-medium text-[var(--foreground)] truncate max-w-[40vw] text-center">
-              {dashboard.name}
+              {dashboard?.name}
             </h1>
             {role !== "owner" && (
               <span className="text-xs text-[var(--foreground-subtle)] px-2 py-0.5 bg-[var(--background)] rounded">

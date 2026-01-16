@@ -18,7 +18,6 @@ import {
   type EdgeChange,
   type OnNodesChange,
   type OnNodeDrag,
-  type OnNodeDragStart,
   type NodeChange,
   type ReactFlowInstance,
 } from "@xyflow/react";
@@ -159,7 +158,7 @@ export function Canvas({
       }),
     [getZIndex]
   );
-  const [nodes, setNodes, onNodesChange] = useNodesState(() => {
+  const initialNodes = React.useMemo(() => {
     const baseNodes = applyZIndex(
       itemsToNodes(
         items,
@@ -178,8 +177,9 @@ export function Canvas({
       )
     );
     return [...baseNodes, ...extraNodes];
-  });
-  const [edges, , onEdgesChange] = useEdgesState([]);
+  }, []);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, , onEdgesChange] = useEdgesState<Edge>([]);
   const edgesToRender = controlledEdges ?? edges;
   const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
 
@@ -246,7 +246,7 @@ export function Canvas({
     [onNodesChange, onItemChange, nodes, bringToFront]
   );
 
-  const handleNodeDragStart: OnNodeDragStart = React.useCallback(
+  const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
       bringToFront(node.id);
     },
