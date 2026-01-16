@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
@@ -26,6 +27,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// Start memory monitor for leak detection
+	memMonitor := debug.NewMemoryMonitor(debug.DefaultConfig())
+	memMonitor.Start()
 
 	sessionManager := sessions.NewManager()
 	server := NewServer(sessionManager)
@@ -39,6 +44,15 @@ func main() {
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
+	// SIGQUIT dumps goroutine stacks for debugging hangs/leaks
+	debugDump := make(chan os.Signal, 1)
+	signal.Notify(debugDump, syscall.SIGQUIT)
+	go func() {
+		for range debugDump {
+			memMonitor.DumpGoroutineStacks()
+		}
+	}()
+
 	// Start server in goroutine
 	go func() {
 		log.Printf("Starting server on :%s", port)
@@ -51,6 +65,9 @@ func main() {
 	sig := <-shutdown
 	log.Printf("Received signal %v, shutting down...", sig)
 
+	// Dump final memory stats before shutdown
+	memMonitor.DumpGoroutineStacks()
+
 	// Create context with timeout for graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -62,6 +79,9 @@ func main() {
 
 	// Close all sessions (kills PTYs, agents, cleans up workspaces)
 	sessionManager.Shutdоwn()
+
+	// Stop memory monitor
+	memMonitor.Stop()
 
 	log.Println("Server stopped")
 }
