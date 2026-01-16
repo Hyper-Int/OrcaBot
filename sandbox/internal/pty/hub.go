@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 )
 
 // HubMessage represents a message sent through the hub to clients.
@@ -33,6 +34,10 @@ type ControlEvent struct {
 	Requests   []string `json:"requests,omitempty"`
 }
 
+// IdleTimeout is how long a hub stays alive with no connected clients.
+// After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
+const IdleTimeout = 60 * time.Second
+
 // Hub manages multiple clients connected to a single PTY
 type Hub struct {
 	pty  *PTY
@@ -52,6 +57,10 @@ type Hub struct {
 	stop         chan struct{}
 	stopOnce     sync.Once
 	readLoopDone chan struct{} // Signals when readLoop exits
+
+	// Idle timeout: stops hub if no clients for IdleTimeout duration
+	idleTimer *time.Timer
+	idleChan  chan struct{}
 }
 
 // NewHub creates a new Hub for the given PTY.
@@ -65,6 +74,7 @@ func NewHub(p *PTY, creatorID string) *Hub {
 		unregister:   make(chan chan HubMessage),
 		stop:         make(chan struct{}),
 		readLoopDone: make(chan struct{}),
+		idleChan:     make(chan struct{}),
 	}
 
 	// Set up callback to broadcast when controller's grace period expires
@@ -93,6 +103,11 @@ func (h *Hub) Run() {
 		select {
 		case info := <-h.register:
 			h.mu.Lock()
+			// Cancel idle timer if a client connects
+			if h.idleTimer != nil {
+				h.idleTimer.Stop()
+				h.idleTimer = nil
+			}
 			h.clients[info.Output] = info
 			h.mu.Unlock()
 			// Send current control state to new client
@@ -109,7 +124,21 @@ func (h *Hub) Run() {
 					h.turn.Disconnect(info.UserID)
 				}
 			}
+			// Start idle timer when last client disconnects
+			clientCount := len(h.clients)
+			if clientCount == 0 && h.idleTimer == nil {
+				h.idleTimer = time.AfterFunc(IdleTimeout, func() {
+					close(h.idleChan)
+				})
+				log.Printf("Hub: no clients, starting %v idle timeout", IdleTimeout)
+			}
 			h.mu.Unlock()
+
+		case <-h.idleChan:
+			// Idle timeout expired with no clients - stop to prevent goroutine leak
+			log.Printf("Hub: idle timeout expired, stopping PTY")
+			h.Stop()
+			return
 
 		case <-h.readLoopDone:
 			// PTY read failed - broadcast pty_closed before cleanup
@@ -120,6 +149,11 @@ func (h *Hub) Run() {
 		case <-h.stop:
 			h.mu.Lock()
 			h.turn.Stop()
+			// Cancel idle timer if running
+			if h.idleTimer != nil {
+				h.idleTimer.Stop()
+				h.idleTimer = nil
+			}
 			// Close all client channels
 			for client := range h.clients {
 				close(client)
