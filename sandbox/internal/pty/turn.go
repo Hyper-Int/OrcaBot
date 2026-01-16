@@ -162,15 +162,19 @@ func (tc *TurnController) RevokeControl(userID string) bool {
 	return true
 }
 
-// Disconnect marks a user as disconnected and starts grace period if controller
+// Disconnect marks a user as disconnected and starts grace period if controller.
+// Also removes any pending control requests from this user.
 func (tc *TurnController) Disconnect(userID string) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
-	tc.disconnected[userID] = true
+	// Remove any pending control request from this user
+	tc.removeRequestLocked(userID)
 
-	// Start grace period timer if this is the controller
+	// Only track disconnection and start grace period for the controller
 	if tc.controller == userID {
+		tc.disconnected[userID] = true
+
 		// Cancel existing timer if any
 		if timer, ok := tc.graceTimers[userID]; ok {
 			timer.Stop()

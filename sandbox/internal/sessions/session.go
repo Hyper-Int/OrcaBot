@@ -77,6 +77,15 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	}
 
 	hub := pty.NewHub(p, creatorID)
+
+	// Register cleanup callback for when hub auto-stops (idle timeout, PTY closed)
+	ptyID := p.ID
+	hub.SetOnStop(func() {
+		s.mu.Lock()
+		delete(s.ptys, ptyID)
+		s.mu.Unlock()
+	})
+
 	go hub.Run()
 
 	info := &PTYInfo{

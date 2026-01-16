@@ -7,11 +7,11 @@
 
 // API URLs with defaults
 export const CLOUDFLARE_API_URL =
-  process.env.NEXT_PUBLIC_CLOUDFLARE_API_URL ||
-  "https://orcabot-controlplane.robbomacrae.workers.dev";
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://orcabot-controlplane.orcabot.workers.dev";
 
 export const DEV_MODE_ENABLED =
-  process.env.NEXT_PUBLIC_DEV_MODE_ENABLED !== "false";
+  process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
 
 /**
  * Environment object for convenience
