@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Base WebSocket manager with connection state machine and reconnection logic
  *

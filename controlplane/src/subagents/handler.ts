@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 import type { Env, UserSubagent } from '../types';
 
 function formatSubagent(row: Record<string, unknown>): UserSubagent {
@@ -32,7 +35,7 @@ export async function createSubagent(
   data: Partial<UserSubagent>
 ): Promise<Response> {
   if (!data.name || !data.prompt) {
-    return Response.json({ error: 'name and prompt are required' }, { status: 400 });
+    return Response.json({ error: 'E79721: name and prompt are required' }, { status: 400 });
   }
 
   const id = data.id || crypto.randomUUID();
@@ -62,7 +65,7 @@ export async function deleteSubagent(env: Env, userId: string, id: string): Prom
     .run();
 
   if (result.meta.changes === 0) {
-    return Response.json({ error: 'Subagent not found' }, { status: 404 });
+    return Response.json({ error: 'E79722: Subagent not found' }, { status: 404 });
   }
 
   return new Response(null, { status: 204 });

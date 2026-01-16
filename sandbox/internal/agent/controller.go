@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package agent
 
 import (
@@ -35,7 +38,7 @@ type Controller struct {
 }
 
 // NewController creates a new agent controller
-func NewController(id, shell string, cols, rows uint16) (*Controller, error) {
+func NewCоntrоller(id, shell string, cols, rows uint16) (*Controller, error) {
 	if shell == "" {
 		shell = pty.DefaultShell()
 	}
@@ -134,7 +137,7 @@ func (c *Controller) Resume() error {
 // 1. SIGINT (3 times with 500ms delay)
 // 2. SIGTERM (wait 1s)
 // 3. SIGKILL
-func (c *Controller) Stop() error {
+func (c *Controller) Stоp() error {
 	c.mu.Lock()
 	if c.state == StateStopped {
 		c.mu.Unlock()
@@ -152,7 +155,7 @@ func (c *Controller) Stop() error {
 		c.pty.Signal(pty.SIGINT)
 		select {
 		case <-done:
-			c.markStopped()
+			c.markStоpped()
 			return nil
 		case <-time.After(500 * time.Millisecond):
 		}
@@ -162,7 +165,7 @@ func (c *Controller) Stop() error {
 	c.pty.Signal(pty.SIGTERM)
 	select {
 	case <-done:
-		c.markStopped()
+		c.markStоpped()
 		return nil
 	case <-time.After(1 * time.Second):
 	}
@@ -171,17 +174,17 @@ func (c *Controller) Stop() error {
 	c.pty.Signal(pty.SIGKILL)
 	select {
 	case <-done:
-		c.markStopped()
+		c.markStоpped()
 		return nil
 	case <-time.After(1 * time.Second):
 		// Process should be dead by now, but close PTY anyway
-		c.markStopped()
+		c.markStоpped()
 		return nil
 	}
 }
 
 // markStopped updates state and cleans up
-func (c *Controller) markStopped() {
+func (c *Controller) markStоpped() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -205,7 +208,7 @@ func (c *Controller) Resize(cols, rows uint16) error {
 }
 
 // RunCommand executes a command and waits for output
-func (c *Controller) RunCommand(command string, timeout time.Duration) ([]byte, error) {
+func (c *Controller) RunCоmmand(command string, timeout time.Duration) ([]byte, error) {
 	c.mu.RLock()
 	state := c.state
 	c.mu.RUnlock()

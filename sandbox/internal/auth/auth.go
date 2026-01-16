@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package auth
 
 import (
@@ -23,7 +26,7 @@ func NewMiddleware() *Middleware {
 func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.isAuthenticated(r) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "E79701: Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -34,7 +37,7 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 func (m *Middleware) RequireAuthFunc(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !m.isAuthenticated(r) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "E79701: Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next(w, r)

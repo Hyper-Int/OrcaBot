@@ -8,11 +8,11 @@ import (
 )
 
 func TestAgentControllerCreate(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	if ac.ID() != "test-agent" {
 		t.Errorf("expected ID 'test-agent', got '%s'", ac.ID())
@@ -24,11 +24,11 @@ func TestAgentControllerCreate(t *testing.T) {
 }
 
 func TestAgentControllerPauseResume(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	// Pause
 	err = ac.Pause()
@@ -52,12 +52,12 @@ func TestAgentControllerPauseResume(t *testing.T) {
 }
 
 func TestAgentControllerStop(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
 
-	err = ac.Stop()
+	err = ac.Stоp()
 	if err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestAgentControllerStop(t *testing.T) {
 
 func TestAgentControllerStopEscalation(t *testing.T) {
 	// Start a process that ignores SIGINT
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestAgentControllerStopEscalation(t *testing.T) {
 	// Stop should still work (escalates to SIGTERM/SIGKILL)
 	done := make(chan error)
 	go func() {
-		done <- ac.Stop()
+		done <- ac.Stоp()
 	}()
 
 	select {
@@ -99,11 +99,11 @@ func TestAgentControllerStopEscalation(t *testing.T) {
 }
 
 func TestAgentControllerHub(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	hub := ac.Hub()
 	if hub == nil {
@@ -132,11 +132,11 @@ func TestAgentControllerHub(t *testing.T) {
 }
 
 func TestAgentControllerWriteWhenPaused(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	ac.Pause()
 
@@ -147,12 +147,12 @@ func TestAgentControllerWriteWhenPaused(t *testing.T) {
 }
 
 func TestAgentControllerWriteWhenStopped(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
 
-	ac.Stop()
+	ac.Stоp()
 
 	// Write to stopped agent should error
 	_, err = ac.Write([]byte("echo test\n"))
@@ -162,32 +162,32 @@ func TestAgentControllerWriteWhenStopped(t *testing.T) {
 }
 
 func TestAgentControllerDoubleStop(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
 
-	err = ac.Stop()
+	err = ac.Stоp()
 	if err != nil {
 		t.Fatalf("first stop failed: %v", err)
 	}
 
 	// Second stop should be safe (no-op)
-	err = ac.Stop()
+	err = ac.Stоp()
 	if err != nil {
 		t.Fatalf("second stop failed: %v", err)
 	}
 }
 
 func TestAgentControllerRunCommand(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	// Run a command and capture output
-	output, err := ac.RunCommand("echo hello_from_agent", 5*time.Second)
+	output, err := ac.RunCоmmand("echo hello_from_agent", 5*time.Second)
 	if err != nil {
 		t.Fatalf("run command failed: %v", err)
 	}
@@ -198,11 +198,11 @@ func TestAgentControllerRunCommand(t *testing.T) {
 }
 
 func TestAgentSoftLockBlocksHumanInput(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	hub := ac.Hub()
 
@@ -213,7 +213,7 @@ func TestAgentSoftLockBlocksHumanInput(t *testing.T) {
 
 	// Human input via hub.Write should be silently dropped when agent is running
 	// First, a human needs to take control (which should work)
-	hub.TakeControl("human1")
+	hub.TakeCоntrol("human1")
 
 	// But writing should be blocked because agent is running
 	n, err := hub.Write("human1", []byte("echo human_input\n"))
@@ -226,11 +226,11 @@ func TestAgentSoftLockBlocksHumanInput(t *testing.T) {
 }
 
 func TestAgentSoftLockAllowsInputWhenPaused(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	hub := ac.Hub()
 
@@ -245,7 +245,7 @@ func TestAgentSoftLockAllowsInputWhenPaused(t *testing.T) {
 	}
 
 	// Human takes control
-	hub.TakeControl("human1")
+	hub.TakeCоntrol("human1")
 
 	// Human input should now be allowed
 	n, err := hub.Write("human1", []byte("echo human_input\n"))
@@ -258,17 +258,17 @@ func TestAgentSoftLockAllowsInputWhenPaused(t *testing.T) {
 }
 
 func TestAgentSoftLockResumeBlocksHumanInput(t *testing.T) {
-	ac, err := NewController("test-agent", "/bin/sh", 80, 24)
+	ac, err := NewCоntrоller("test-agent", "/bin/sh", 80, 24)
 	if err != nil {
 		t.Fatalf("failed to create agent controller: %v", err)
 	}
-	defer ac.Stop()
+	defer ac.Stоp()
 
 	hub := ac.Hub()
 
 	// Pause and let human take control
 	ac.Pause()
-	hub.TakeControl("human1")
+	hub.TakeCоntrol("human1")
 
 	// Resume the agent
 	if err := ac.Resume(); err != nil {

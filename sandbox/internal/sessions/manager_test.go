@@ -11,7 +11,7 @@ func setupTestManager(t *testing.T) (*Manager, func()) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	return NewManagerWithWorkspace(dir), func() { os.RemoveAll(dir) }
+	return NewManagerWithWоrkspace(dir), func() { os.RemoveAll(dir) }
 }
 
 func TestManagerCreate(t *testing.T) {

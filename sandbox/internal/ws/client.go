@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package ws
 
 import (
@@ -102,13 +105,13 @@ func (c *Client) ReadPump() {
 				log.Printf("invalid control message: %v", err)
 				continue
 			}
-			c.handleControl(msg)
+			c.handleCоntrоl(msg)
 		}
 	}
 }
 
 // handleControl processes control messages
-func (c *Client) handleControl(msg ControlMessage) {
+func (c *Client) handleCоntrоl(msg ControlMessage) {
 	switch msg.Type {
 	case "resize":
 		if msg.Cols > 0 && msg.Rows > 0 {
@@ -117,22 +120,22 @@ func (c *Client) handleControl(msg ControlMessage) {
 
 	case "take_control":
 		if c.userID != "" {
-			c.hub.TakeControl(c.userID)
+			c.hub.TakeCоntrol(c.userID)
 		}
 
 	case "request_control":
 		if c.userID != "" {
-			c.hub.RequestControl(c.userID)
+			c.hub.RequestCоntrol(c.userID)
 		}
 
 	case "grant_control":
 		if c.userID != "" && msg.To != "" {
-			c.hub.GrantControl(c.userID, msg.To)
+			c.hub.GrantCоntrol(c.userID, msg.To)
 		}
 
 	case "revoke_control":
 		if c.userID != "" {
-			c.hub.RevokeControl(c.userID)
+			c.hub.RevоkeCоntrol(c.userID)
 		}
 
 	case "ping":

@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Database Schema
  *
@@ -236,6 +239,15 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 CREATE INDEX IF NOT EXISTS idx_schedules_recipe ON schedules(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at);
+
+-- System health (cached health check results)
+CREATE TABLE IF NOT EXISTS system_health (
+  service TEXT PRIMARY KEY,
+  is_healthy INTEGER NOT NULL DEFAULT 0,
+  last_check_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_error TEXT,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 // Initialize the database

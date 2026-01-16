@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Schedule Handlers
  *
@@ -8,8 +11,8 @@
 import type { Env, Schedule } from '../types';
 import * as recipes from '../recipes/handler';
 import {
-  checkRecipeAccess,
-  checkScheduleAccess,
+  checkRecipеAccess,
+  checkSchedulеAccess,
 } from '../auth/access';
 
 function generateId(): string {
@@ -17,7 +20,7 @@ function generateId(): string {
 }
 
 // Parse a cron field and return matching values (exported for testing)
-export function parseCronField(field: string, min: number, max: number): number[] | null {
+export function parseCrоnField(field: string, min: number, max: number): number[] | null {
   const values: number[] = [];
 
   for (const part of field.split(',')) {
@@ -48,7 +51,7 @@ export function parseCronField(field: string, min: number, max: number): number[
 }
 
 // Parse cron expression and compute next run time (exported for testing)
-export function computeNextRun(cron: string, from: Date = new Date()): Date | null {
+export function cоmputeNextRun(cron: string, from: Date = new Date()): Date | null {
   // Cron format: minute hour day month weekday
   // Supports: *, specific numbers, */n, ranges (n-m), lists (n,m)
   //
@@ -59,11 +62,11 @@ export function computeNextRun(cron: string, from: Date = new Date()): Date | nu
     const parts = cron.trim().split(/\s+/);
     if (parts.length !== 5) return null;
 
-    const minutes = parseCronField(parts[0], 0, 59);
-    const hours = parseCronField(parts[1], 0, 23);
-    const days = parseCronField(parts[2], 1, 31);
-    const months = parseCronField(parts[3], 1, 12);
-    const weekdays = parseCronField(parts[4], 0, 6);
+    const minutes = parseCrоnField(parts[0], 0, 59);
+    const hours = parseCrоnField(parts[1], 0, 23);
+    const days = parseCrоnField(parts[2], 1, 31);
+    const months = parseCrоnField(parts[3], 1, 12);
+    const weekdays = parseCrоnField(parts[4], 0, 6);
 
     if (!minutes || !hours || !days || !months || !weekdays) return null;
 
@@ -118,9 +121,9 @@ export async function listSchedules(
 ): Promise<Response> {
   // If recipeId specified, verify access first
   if (recipeId) {
-    const { hasAccess } = await checkRecipeAccess(env, recipeId, userId, 'viewer');
+    const { hasAccess } = await checkRecipеAccess(env, recipeId, userId, 'viewer');
     if (!hasAccess) {
-      return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
+      return Response.json({ error: 'E79725: Recipe not found or no access' }, { status: 404 });
     }
 
     const result = await env.DB.prepare(`
@@ -172,10 +175,10 @@ export async function getSchedule(
   scheduleId: string,
   userId: string
 ): Promise<Response> {
-  const { hasAccess, schedule } = await checkScheduleAccess(env, scheduleId, userId, 'viewer');
+  const { hasAccess, schedule } = await checkSchedulеAccess(env, scheduleId, userId, 'viewer');
 
   if (!hasAccess || !schedule) {
-    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
+    return Response.json({ error: 'E79726: Schedule not found or no access' }, { status: 404 });
   }
 
   return Response.json({
@@ -206,14 +209,14 @@ export async function createSchedule(
   }
 ): Promise<Response> {
   // Verify user has editor access to the recipe
-  const { hasAccess } = await checkRecipeAccess(env, data.recipeId, userId, 'editor');
+  const { hasAccess } = await checkRecipеAccess(env, data.recipeId, userId, 'editor');
 
   if (!hasAccess) {
-    return Response.json({ error: 'Recipe not found or no access' }, { status: 404 });
+    return Response.json({ error: 'E79725: Recipe not found or no access' }, { status: 404 });
   }
 
   if (!data.cron && !data.eventTrigger) {
-    return Response.json({ error: 'Either cron or eventTrigger required' }, { status: 400 });
+    return Response.json({ error: 'E79727: Either cron or eventTrigger required' }, { status: 400 });
   }
 
   const id = generateId();
@@ -222,7 +225,7 @@ export async function createSchedule(
 
   let nextRunAt: string | null = null;
   if (data.cron && enabled) {
-    const next = computeNextRun(data.cron);
+    const next = cоmputeNextRun(data.cron);
     nextRunAt = next ? next.toISOString() : null;
   }
 
@@ -267,10 +270,10 @@ export async function updateSchedule(
     enabled?: boolean;
   }
 ): Promise<Response> {
-  const { hasAccess, schedule: existing } = await checkScheduleAccess(env, scheduleId, userId, 'editor');
+  const { hasAccess, schedule: existing } = await checkSchedulеAccess(env, scheduleId, userId, 'editor');
 
   if (!hasAccess || !existing) {
-    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
+    return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
   const enabled = data.enabled !== undefined ? data.enabled : Boolean(existing.enabled);
@@ -278,7 +281,7 @@ export async function updateSchedule(
 
   let nextRunAt: string | null = null;
   if (cron && enabled) {
-    const next = computeNextRun(cron);
+    const next = cоmputeNextRun(cron);
     nextRunAt = next ? next.toISOString() : null;
   }
   // nextRunAt is null if disabled OR if cron is removed/empty
@@ -325,10 +328,10 @@ export async function deleteSchedule(
   scheduleId: string,
   userId: string
 ): Promise<Response> {
-  const { hasAccess } = await checkScheduleAccess(env, scheduleId, userId, 'owner');
+  const { hasAccess } = await checkSchedulеAccess(env, scheduleId, userId, 'owner');
 
   if (!hasAccess) {
-    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
+    return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
   await env.DB.prepare(`DELETE FROM schedules WHERE id = ?`).bind(scheduleId).run();
@@ -359,14 +362,14 @@ export async function triggerSchedule(
   scheduleId: string,
   userId: string
 ): Promise<Response> {
-  const { hasAccess, schedule } = await checkScheduleAccess(env, scheduleId, userId, 'editor');
+  const { hasAccess, schedule } = await checkSchedulеAccess(env, scheduleId, userId, 'editor');
 
   if (!hasAccess || !schedule) {
-    return Response.json({ error: 'Schedule not found or no access' }, { status: 404 });
+    return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
   // Start execution with actor context
-  const executionResponse = await recipes.startExecution(
+  const executionResponse = await recipes.startExecutiоn(
     env,
     schedule.recipe_id as string,
     userId,
@@ -377,7 +380,7 @@ export async function triggerSchedule(
   const now = new Date().toISOString();
   let nextRunAt: string | null = null;
   if (schedule.cron && schedule.enabled) {
-    const next = computeNextRun(schedule.cron as string);
+    const next = cоmputeNextRun(schedule.cron as string);
     nextRunAt = next ? next.toISOString() : null;
   }
 
@@ -399,7 +402,7 @@ export async function triggerSchedule(
 }
 
 // Process due schedules (called by cron trigger)
-export async function processDueSchedules(env: Env): Promise<void> {
+export async function prоcessDueSchedules(env: Env): Promise<void> {
   const now = new Date().toISOString();
 
   // Find all enabled schedules with cron that are due
@@ -411,14 +414,14 @@ export async function processDueSchedules(env: Env): Promise<void> {
   for (const schedule of dueSchedules.results) {
     try {
       // Start execution (internal - no user context for cron triggers)
-      await recipes.startExecutionInternal(
+      await recipes.startExecutiоnInternal(
         env,
         schedule.recipe_id as string,
         { triggeredBy: 'cron', scheduleId: schedule.id }
       );
 
       // Compute next run
-      const next = computeNextRun(schedule.cron as string);
+      const next = cоmputeNextRun(schedule.cron as string);
       const nextRunAt = next ? next.toISOString() : null;
 
       // Update last run and next run
@@ -449,7 +452,7 @@ export async function emitEvent(
   for (const schedule of schedules.results) {
     try {
       // Start execution (internal - no user context for event triggers)
-      const executionResponse = await recipes.startExecutionInternal(
+      const executionResponse = await recipes.startExecutiоnInternal(
         env,
         schedule.recipe_id as string,
         { triggeredBy: 'event', eventName, payload, scheduleId: schedule.id }

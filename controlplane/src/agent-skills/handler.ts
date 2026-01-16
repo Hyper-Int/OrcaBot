@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 import type { Env, UserAgentSkill } from '../types';
 
 function safeParseJson<T>(value: unknown, fallback: T): T {
@@ -41,7 +44,7 @@ export async function createAgentSkill(
   data: Partial<UserAgentSkill>
 ): Promise<Response> {
   if (!data.name || !data.command) {
-    return Response.json({ error: 'name and command are required' }, { status: 400 });
+    return Response.json({ error: 'E79723: name and command are required' }, { status: 400 });
   }
 
   const id = data.id || crypto.randomUUID();
@@ -71,7 +74,7 @@ export async function deleteAgentSkill(env: Env, userId: string, id: string): Pr
     .run();
 
   if (result.meta.changes === 0) {
-    return Response.json({ error: 'Agent skill not found' }, { status: 404 });
+    return Response.json({ error: 'E79724: Agent skill not found' }, { status: 404 });
   }
 
   return new Response(null, { status: 204 });

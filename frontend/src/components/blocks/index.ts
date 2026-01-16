@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 export { BlockWrapper } from "./BlockWrapper";
 export { NoteBlock } from "./NoteBlock";
 export { TodoBlock } from "./TodoBlock";

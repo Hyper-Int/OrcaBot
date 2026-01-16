@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package pty
 
 import (
@@ -84,7 +87,7 @@ func NewHub(p *PTY, creatorID string) *Hub {
 // Run starts the hub's event loop
 func (h *Hub) Run() {
 	// Start reading from PTY
-	go h.readLoop()
+	go h.readLооp()
 
 	for {
 		select {
@@ -130,7 +133,7 @@ func (h *Hub) Run() {
 
 // readLoop reads from PTY and broadcasts to all clients.
 // Signals readLoopDone when it exits to enable proper cleanup.
-func (h *Hub) readLoop() {
+func (h *Hub) readLооp() {
 	defer close(h.readLoopDone)
 
 	buf := make([]byte, 32*1024) // 32KB buffer
@@ -263,7 +266,7 @@ func (h *Hub) Signal(sig Signal) error {
 }
 
 // TakeControl attempts to take control (only works if no one has control)
-func (h *Hub) TakeControl(userID string) bool {
+func (h *Hub) TakeCоntrol(userID string) bool {
 	if h.turn.TakeControl(userID) {
 		h.broadcastControlEvent(ControlEvent{
 			Type:       "control_taken",
@@ -276,7 +279,7 @@ func (h *Hub) TakeControl(userID string) bool {
 
 // RequestControl requests control from the current controller.
 // If no one currently has control, the requester is granted control immediately.
-func (h *Hub) RequestControl(userID string) {
+func (h *Hub) RequestCоntrol(userID string) {
 	// If no controller, auto-grant instead of queueing
 	if !h.turn.HasController() {
 		if h.turn.TakeControl(userID) {
@@ -297,7 +300,7 @@ func (h *Hub) RequestControl(userID string) {
 }
 
 // GrantControl transfers control from current controller to another user
-func (h *Hub) GrantControl(fromUserID, toUserID string) bool {
+func (h *Hub) GrantCоntrol(fromUserID, toUserID string) bool {
 	if h.turn.GrantControl(fromUserID, toUserID) {
 		h.broadcastControlEvent(ControlEvent{
 			Type:       "control_granted",
@@ -311,7 +314,7 @@ func (h *Hub) GrantControl(fromUserID, toUserID string) bool {
 }
 
 // RevokeControl releases control (only the controller can revoke)
-func (h *Hub) RevokeControl(userID string) bool {
+func (h *Hub) RevоkeCоntrol(userID string) bool {
 	if h.turn.RevokeControl(userID) {
 		h.broadcastControlEvent(ControlEvent{
 			Type: "control_revoked",
@@ -323,12 +326,12 @@ func (h *Hub) RevokeControl(userID string) bool {
 }
 
 // Controller returns the current controller's user ID
-func (h *Hub) Controller() string {
+func (h *Hub) Cоntrоller() string {
 	return h.turn.Controller()
 }
 
 // IsController checks if the given user is the current controller
-func (h *Hub) IsController(userID string) bool {
+func (h *Hub) IsCоntrоller(userID string) bool {
 	return h.turn.IsController(userID)
 }
 
@@ -426,7 +429,7 @@ func (h *Hub) sendControlState(client chan HubMessage) {
 
 	event := ControlEvent{
 		Type:       "control_state",
-		Controller: h.turn.Controller(),
+		Controller: h.Cоntrоller(),
 		Requests:   h.turn.PendingRequests(),
 		AgentState: agentState,
 	}

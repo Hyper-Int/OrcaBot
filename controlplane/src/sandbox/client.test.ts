@@ -31,7 +31,7 @@ describe('SandboxClient', () => {
 
   describe('Session Management', () => {
     it('should create a session', async () => {
-      const session = await client.createSession();
+      const session = await client.createSessiоn();
 
       expect(session).toHaveProperty('id');
       expect(session.id).toMatch(/^session-\d+$/);
@@ -39,7 +39,7 @@ describe('SandboxClient', () => {
     });
 
     it('should delete a session', async () => {
-      const session = await client.createSession();
+      const session = await client.createSessiоn();
       await expect(client.deleteSession(session.id)).resolves.not.toThrow();
     });
 

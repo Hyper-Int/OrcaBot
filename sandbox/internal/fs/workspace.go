@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package fs
 
 import (
@@ -30,7 +33,7 @@ type Workspace struct {
 }
 
 // NewWorkspace creates a new workspace rooted at the given path
-func NewWorkspace(root string) *Workspace {
+func NewWоrkspace(root string) *Workspace {
 	// Resolve symlinks in root to ensure consistent path comparisons
 	// (e.g., on macOS /var -> /private/var)
 	absRoot, err := filepath.EvalSymlinks(root)
@@ -48,7 +51,7 @@ func (w *Workspace) Root() string {
 
 // resolvePath safely resolves a path within the workspace
 // Returns an error if the path would escape the workspace
-func (w *Workspace) resolvePath(path string) (string, error) {
+func (w *Workspace) resоlvePath(path string) (string, error) {
 	// First check: reject any path containing ..
 	if strings.Contains(path, "..") {
 		return "", ErrPathTraversal
@@ -114,7 +117,7 @@ func isPathWithin(path, root string) bool {
 
 // List returns entries in a directory
 func (w *Workspace) List(path string) ([]FileInfo, error) {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +159,7 @@ func (w *Workspace) List(path string) ([]FileInfo, error) {
 
 // Read returns the contents of a file
 func (w *Workspace) Read(path string) ([]byte, error) {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +177,7 @@ func (w *Workspace) Read(path string) ([]byte, error) {
 
 // Write writes content to a file, creating directories as needed
 func (w *Workspace) Write(path string, content []byte) error {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return err
 	}
@@ -190,7 +193,7 @@ func (w *Workspace) Write(path string, content []byte) error {
 
 // Delete removes a file or directory (recursively)
 func (w *Workspace) Delete(path string) error {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return err
 	}
@@ -214,7 +217,7 @@ func (w *Workspace) Delete(path string) error {
 
 // Stat returns information about a file or directory
 func (w *Workspace) Stat(path string) (*FileInfo, error) {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +248,7 @@ func (w *Workspace) Stat(path string) (*FileInfo, error) {
 
 // Mkdir creates a directory
 func (w *Workspace) Mkdir(path string) error {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return err
 	}
@@ -255,7 +258,7 @@ func (w *Workspace) Mkdir(path string) error {
 
 // Exists checks if a file or directory exists
 func (w *Workspace) Exists(path string) (bool, error) {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return false, err
 	}
@@ -273,7 +276,7 @@ func (w *Workspace) Exists(path string) (bool, error) {
 
 // Walk walks the workspace tree
 func (w *Workspace) Walk(path string, fn func(path string, info FileInfo) error) error {
-	resolved, err := w.resolvePath(path)
+	resolved, err := w.resоlvePath(path)
 	if err != nil {
 		return err
 	}

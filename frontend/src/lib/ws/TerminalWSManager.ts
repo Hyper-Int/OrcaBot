@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * WebSocket manager for terminal PTY streaming and turn-taking
  *

@@ -25,7 +25,7 @@ func setupTurnTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, fun
 	os.Setenv("SANDBOX_INTERNAL_TOKEN", testAPIToken)
 	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 
-	sm := sessions.NewManagerWithWorkspace(dir)
+	sm := sessions.NewManagerWithWоrkspace(dir)
 	router := NewRouter(sm)
 
 	mux := http.NewServeMux()
@@ -263,7 +263,7 @@ func TestTurnTakingNonControllerCannotGrant(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify user1 is still controller
-	if !ptyInfo.Hub.IsController("user1") {
+	if !ptyInfo.Hub.IsCоntrоller("user1") {
 		t.Error("user1 should still be controller")
 	}
 }

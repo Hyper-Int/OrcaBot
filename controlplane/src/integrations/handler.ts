@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 import type { Env } from '../types';
 import type { AuthContext } from '../auth/middleware';
 import { requireAuth } from '../auth/middleware';
@@ -116,7 +119,7 @@ function renderErrorPage(message: string): Response {
   );
 }
 
-export async function connectGoogleDrive(
+export async function cоnnectGoogleDrive(
   request: Request,
   env: Env,
   auth: AuthContext
@@ -147,7 +150,7 @@ export async function connectGoogleDrive(
   return Response.redirect(url.toString(), 302);
 }
 
-export async function callbackGoogleDrive(
+export async function callbackGооgleDrive(
   request: Request,
   env: Env
 ): Promise<Response> {
@@ -231,7 +234,7 @@ export async function callbackGoogleDrive(
   return renderSuccessPage('Google Drive');
 }
 
-export async function connectGithub(
+export async function cоnnectGithub(
   request: Request,
   env: Env,
   auth: AuthContext

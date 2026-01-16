@@ -28,7 +28,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *sessions.Manager, func())
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	sm := sessions.NewManagerWithWorkspace(dir)
+	sm := sessions.NewManagerWithWоrkspace(dir)
 	router := NewRouter(sm)
 
 	mux := http.NewServeMux()

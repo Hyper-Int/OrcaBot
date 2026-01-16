@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package pty
 
 import (
@@ -7,8 +10,8 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/creack/pty"
-	"github.com/google/uuid"
 )
 
 // Signal types for PTY control
@@ -70,8 +73,13 @@ func newWithCmd(cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
 	if err != nil {
 		return nil, err
 	}
+	ptyID, err := id.New()
+	if err != nil {
+		ptmx.Close()
+		return nil, err
+	}
 	return &PTY{
-		ID:   uuid.New().String(),
+		ID:   ptyID,
 		file: ptmx,
 		cmd:  cmd,
 	}, nil

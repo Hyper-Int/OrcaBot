@@ -1,0 +1,63 @@
+# Production configuration for orcabot-controlplane
+# Deploy with: wrangler deploy -c wrangler.production.toml
+#
+# SECRETS (set via wrangler secret):
+#   wrangler secret put SANDBOX_URL -c wrangler.production.toml
+#   wrangler secret put SANDBOX_INTERNAL_TOKEN -c wrangler.production.toml
+#   wrangler secret put INTERNAL_API_TOKEN -c wrangler.production.toml
+#   wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.production.toml
+#   wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.production.toml
+
+name = "orcabot-controlplane"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Authentication - Dev auth DISABLED, CF Access required
+DEV_AUTH_ENABLED = "false"
+
+# SANDBOX_URL is set via wrangler secret (not exposed in config)
+
+# Cloudflare Access configuration (set these for your team)
+# CF_ACCESS_TEAM_DOMAIN = "your-team"  # e.g., "myteam" for myteam.cloudflareaccess.com
+# CF_ACCESS_AUD = "your-application-aud-tag"  # From CF Access dashboard
+
+# CORS - Only allow your production frontend
+# ALLOWED_ORIGINS = "https://orcabot.pages.dev"
+
+# OAuth (client IDs only - secrets go in wrangler secret)
+# GOOGLE_CLIENT_ID = "your-google-client-id"
+# GITHUB_CLIENT_ID = "your-github-client-id"
+
+# Rate limiting - unauthenticated (strict)
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1"
+simple = { limit = 10, period = 60 }  # 10 requests per minute per IP
+
+# Rate limiting - authenticated (generous)
+[[unsafe.bindings]]
+name = "RATE_LIMITER_AUTH"
+type = "ratelimit"
+namespace_id = "2"
+simple = { limit = 200, period = 60 }  # 200 requests per minute per user
+
+# Durable Objects for real-time collaboration
+[[durable_objects.bindings]]
+name = "DASHBOARD"
+class_name = "DashboardDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DashboardDO"]
+
+# D1 Database - Use production database
+[[d1_databases]]
+binding = "DB"
+database_name = "orcabot-db-production"
+database_id = "YOUR_PRODUCTION_DATABASE_ID"  # Create with: wrangler d1 create orcabot-db-production
+
+# Cron triggers for background tasks
+[triggers]
+crons = ["* * * * *"]  # Every minute: health checks + schedule processing

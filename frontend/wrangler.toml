@@ -1,0 +1,10 @@
+name = "orcabot-frontend"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = ".vercel/output/static"
+
+# Compatibility flags for Next.js
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# API endpoint for control plane
+NEXT_PUBLIC_API_URL = "https://orcabot-controlplane.YOUR_SUBDOMAIN.workers.dev"

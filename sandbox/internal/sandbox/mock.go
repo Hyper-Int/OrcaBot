@@ -1,10 +1,13 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package sandbox
 
 import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
 // MockLauncher implements Launcher for testing without real Fly API calls
@@ -44,11 +47,20 @@ func (m *MockLauncher) Create(spec MachineSpec) (*Machine, error) {
 
 	spec.ApplySize()
 
+	machineID, err := id.New()
+	if err != nil {
+		return nil, err
+	}
+	privateSuffix, err := id.New()
+	if err != nil {
+		return nil, err
+	}
+
 	machine := &Machine{
-		ID:        uuid.New().String(),
+		ID:        machineID,
 		Name:      spec.Name,
 		State:     StateStarted,
-		PrivateIP: "10.0.0." + uuid.New().String()[:1],
+		PrivateIP: "10.0.0." + privateSuffix[:1],
 		Region:    spec.Region,
 		CreatedAt: time.Now(),
 		Spec:      spec,

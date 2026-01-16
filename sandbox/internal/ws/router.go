@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package ws
 
 import (
@@ -93,13 +96,13 @@ func (r *Router) HandleWebSocket(w http.ResponseWriter, req *http.Request) {
 
 	session, err := r.sessions.Get(sessionId)
 	if err != nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		http.Error(w, "E79702: session not found", http.StatusNotFound)
 		return
 	}
 
 	ptyInfo, err := session.GetPTY(ptyId)
 	if err != nil {
-		http.Error(w, "pty not found", http.StatusNotFound)
+		http.Error(w, "E79703: pty not found", http.StatusNotFound)
 		return
 	}
 
@@ -125,13 +128,13 @@ func (r *Router) HandleAgentWebSocket(w http.ResponseWriter, req *http.Request) 
 
 	session, err := r.sessions.Get(sessionId)
 	if err != nil {
-		http.Error(w, "session not found", http.StatusNotFound)
+		http.Error(w, "E79702: session not found", http.StatusNotFound)
 		return
 	}
 
 	agent, err := session.GetAgent()
 	if err != nil {
-		http.Error(w, "agent not found", http.StatusNotFound)
+		http.Error(w, "E79704: agent not found", http.StatusNotFound)
 		return
 	}
 
