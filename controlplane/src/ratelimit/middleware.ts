@@ -15,53 +15,38 @@ export interface RateLimitResult {
   response?: Response;
 }
 
-/**
- * Check rate limit for the request
- * Uses different limits for authenticated (200/min) vs unauthenticated (10/min) requests
- * Returns allowed: true if within limits, or a 429 response if exceeded
- */
-export async function checkRatеLimit(
-  request: Request,
-  env: Env
+type RateLimiterBinding = {
+  limit: (options: { key: string }) => Promise<{ success: boolean }>;
+};
+
+function buildRateLimitResponse(message: string): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'E79601: Too many requests',
+      message,
+    }),
+    {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '60',
+      },
+    }
+  );
+}
+
+async function applyRateLimit(
+  limiter: RateLimiterBinding,
+  key: string,
+  message: string
 ): Promise<RateLimitResult> {
-  // Skip rate limiting if not configured (e.g., in tests)
-  if (!env.RATE_LIMITER) {
-    return { allowed: true };
-  }
-
-  // Check if request appears authenticated (has user ID header)
-  const userId = request.headers.get('X-User-ID');
-  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-
-  // Use appropriate rate limiter based on authentication
-  // Authenticated: 200/min per user, Unauthenticated: 10/min per IP
-  const isAuthenticated = !!userId;
-  const rateLimiter = isAuthenticated && env.RATE_LIMITER_AUTH
-    ? env.RATE_LIMITER_AUTH
-    : env.RATE_LIMITER;
-  const key = isAuthenticated ? `user:${userId}` : `ip:${ip}`;
-
   try {
-    const result = await rateLimiter.limit({ key });
+    const result = await limiter.limit({ key });
 
     if (!result.success) {
       return {
         allowed: false,
-        response: new Response(
-          JSON.stringify({
-            error: 'E79601: Too many requests',
-            message: isAuthenticated
-              ? 'Rate limit exceeded. Please slow down.'
-              : 'Rate limit exceeded. Please try again later.',
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '60',
-            },
-          }
-        ),
+        response: buildRateLimitResponse(message),
       };
     }
 
@@ -71,6 +56,43 @@ export async function checkRatеLimit(
     console.error('Rate limiting error:', error);
     return { allowed: true };
   }
+}
+
+/**
+ * Check rate limit for the request
+ * Uses different limits for authenticated (200/min) vs unauthenticated (10/min) requests
+ * Returns allowed: true if within limits, or a 429 response if exceeded
+ */
+export async function checkRateLimitIp(
+  request: Request,
+  env: Env
+): Promise<RateLimitResult> {
+  if (!env.RATE_LIMITER) {
+    return { allowed: true };
+  }
+
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  return applyRateLimit(
+    env.RATE_LIMITER as RateLimiterBinding,
+    `ip:${ip}`,
+    'Too many unauthenticated requests from your IP.'
+  );
+}
+
+export async function checkRateLimitUser(
+  userId: string,
+  env: Env
+): Promise<RateLimitResult> {
+  const limiter = env.RATE_LIMITER_AUTH || env.RATE_LIMITER;
+  if (!limiter) {
+    return { allowed: true };
+  }
+
+  return applyRateLimit(
+    limiter as RateLimiterBinding,
+    `user:${userId}`,
+    'Rate limit exceeded. Please slow down.'
+  );
 }
 
 /**
@@ -84,31 +106,9 @@ export async function checkRatеLimitByKey(
     return { allowed: true };
   }
 
-  try {
-    const result = await env.RATE_LIMITER.limit({ key });
-
-    if (!result.success) {
-      return {
-        allowed: false,
-        response: new Response(
-          JSON.stringify({
-            error: 'E79601: Too many requests',
-            message: 'Rate limit exceeded for this operation.',
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': '60',
-            },
-          }
-        ),
-      };
-    }
-
-    return { allowed: true };
-  } catch (error) {
-    console.error('Rate limiting error:', error);
-    return { allowed: true };
-  }
+  return applyRateLimit(
+    env.RATE_LIMITER as RateLimiterBinding,
+    key,
+    'Rate limit exceeded for this operation.'
+  );
 }

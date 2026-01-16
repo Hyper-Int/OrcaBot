@@ -10,7 +10,7 @@
 
 import type { Env, DashboardItem, RecipeStep } from './types';
 import { authenticate, requireAuth, requireInternalAuth } from './auth/middleware';
-import { checkRatеLimit } from './ratelimit/middleware';
+import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
@@ -253,10 +253,10 @@ export default {
     }
 
     try {
-      // Check rate limit
-      const rateLimitResult = await checkRatеLimit(request, env);
-      if (!rateLimitResult.allowed) {
-        return cоrsRespоnse(rateLimitResult.response!, origin, allowedOrigins);
+      // Early IP-based rate limit (cheap guard against abuse)
+      const ipLimitResult = await checkRateLimitIp(request, env);
+      if (!ipLimitResult.allowed) {
+        return cоrsRespоnse(ipLimitResult.response!, origin, allowedOrigins);
       }
 
       const response = await handleRequest(request, env);
@@ -287,7 +287,18 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Health check - uses cached status (no outbound calls, prevents amplification)
   if (path === '/health' && method === 'GET') {
-    const sandboxHealth = await getCachedHealth(env.DB, 'sandbox');
+    let sandboxHealth;
+    try {
+      sandboxHealth = await getCachedHealth(env.DB, 'sandbox');
+    } catch (error) {
+      // Initialize schema on first run to ensure health cache table exists.
+      await initializeDatabase(env.DB);
+      return Response.json({
+        status: 'ok',
+        sandbox: 'unknown',
+        message: 'Health check not yet cached (initializing schema)',
+      });
+    }
 
     // If no cached health yet, report unknown (cron hasn't run)
     if (!sandboxHealth) {
@@ -318,6 +329,14 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Authenticate
   const auth = await authenticate(request, env);
+
+  // Authenticated user rate limit (per-user)
+  if (auth.user) {
+    const userLimitResult = await checkRateLimitUser(auth.user.id, env);
+    if (!userLimitResult.allowed) {
+      return userLimitResult.response!;
+    }
+  }
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);

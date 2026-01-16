@@ -61,6 +61,9 @@ type Hub struct {
 	// Idle timeout: stops hub if no clients for IdleTimeout duration
 	idleTimer *time.Timer
 	idleChan  chan struct{}
+
+	// onStop callback invoked when hub stops (for cleanup by owner)
+	onStop func()
 }
 
 // NewHub creates a new Hub for the given PTY.
@@ -254,7 +257,17 @@ func (h *Hub) Stop() {
 		close(h.stop)
 		// Close the PTY (kills process, closes file descriptor)
 		h.pty.Close()
+		// Notify owner for cleanup (e.g., remove from session's PTY map)
+		if h.onStop != nil {
+			h.onStop()
+		}
 	})
+}
+
+// SetOnStop sets a callback invoked when the hub stops.
+// Use this to clean up references to the hub (e.g., remove from session's PTY map).
+func (h *Hub) SetOnStop(fn func()) {
+	h.onStop = fn
 }
 
 // ClientCount returns the number of connected clients

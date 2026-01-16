@@ -7,4 +7,4 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 # API endpoint for control plane
-NEXT_PUBLIC_API_URL = "https://orcabot-controlplane.YOUR_SUBDOMAIN.workers.dev"
+NEXT_PUBLIC_API_URL = "https://orcabot-controlplane.orcabot.workers.dev"
