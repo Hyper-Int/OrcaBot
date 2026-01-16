@@ -10,8 +10,8 @@ import {
   createSchedule,
   deleteSchedule,
   updateSchedule,
-  parseCronField,
-  computeNextRun,
+  parseCrоnField,
+  cоmputeNextRun,
 } from './handler';
 import {
   createTestContext,
@@ -149,51 +149,51 @@ describe('Schedule Handlers', () => {
 });
 
 describe('Cron Parsing', () => {
-  describe('parseCronField()', () => {
+  describe('parseCrоnField()', () => {
     it('should parse wildcard (*)', () => {
-      const result = parseCronField('*', 0, 59);
+      const result = parseCrоnField('*', 0, 59);
       expect(result).toHaveLength(60);
       expect(result![0]).toBe(0);
       expect(result![59]).toBe(59);
     });
 
     it('should parse specific number', () => {
-      const result = parseCronField('30', 0, 59);
+      const result = parseCrоnField('30', 0, 59);
       expect(result).toEqual([30]);
     });
 
     it('should parse step values (*/n)', () => {
-      const result = parseCronField('*/15', 0, 59);
+      const result = parseCrоnField('*/15', 0, 59);
       expect(result).toEqual([0, 15, 30, 45]);
     });
 
     it('should parse range (n-m)', () => {
-      const result = parseCronField('1-5', 0, 59);
+      const result = parseCrоnField('1-5', 0, 59);
       expect(result).toEqual([1, 2, 3, 4, 5]);
     });
 
     it('should parse list (n,m,o)', () => {
-      const result = parseCronField('0,15,30,45', 0, 59);
+      const result = parseCrоnField('0,15,30,45', 0, 59);
       expect(result).toEqual([0, 15, 30, 45]);
     });
 
     it('should return null for invalid value', () => {
-      expect(parseCronField('60', 0, 59)).toBeNull();
-      expect(parseCronField('-1', 0, 59)).toBeNull();
-      expect(parseCronField('abc', 0, 59)).toBeNull();
+      expect(parseCrоnField('60', 0, 59)).toBeNull();
+      expect(parseCrоnField('-1', 0, 59)).toBeNull();
+      expect(parseCrоnField('abc', 0, 59)).toBeNull();
     });
 
     it('should return null for invalid range', () => {
-      expect(parseCronField('5-3', 0, 59)).toBeNull(); // start > end
-      expect(parseCronField('0-100', 0, 59)).toBeNull(); // exceeds max
+      expect(parseCrоnField('5-3', 0, 59)).toBeNull(); // start > end
+      expect(parseCrоnField('0-100', 0, 59)).toBeNull(); // exceeds max
     });
   });
 
-  describe('computeNextRun()', () => {
+  describe('cоmputeNextRun()', () => {
     it('should compute next run for simple cron', () => {
       // Every hour at minute 0
       const from = new Date('2024-01-15T10:30:00Z');
-      const next = computeNextRun('0 * * * *', from);
+      const next = cоmputeNextRun('0 * * * *', from);
 
       expect(next).not.toBeNull();
       expect(next!.getUTCMinutes()).toBe(0);
@@ -203,7 +203,7 @@ describe('Cron Parsing', () => {
     it('should compute next run for specific time', () => {
       // Daily at 9:00 AM - test from 8:00 AM so next run is same day
       const from = new Date('2024-01-15T08:00:00Z');
-      const next = computeNextRun('0 9 * * *', from);
+      const next = cоmputeNextRun('0 9 * * *', from);
 
       expect(next).not.toBeNull();
       expect(next!.getUTCHours()).toBe(9);
@@ -214,22 +214,22 @@ describe('Cron Parsing', () => {
     it('should compute next run for step values', () => {
       // Every 15 minutes
       const from = new Date('2024-01-15T10:07:00Z');
-      const next = computeNextRun('*/15 * * * *', from);
+      const next = cоmputeNextRun('*/15 * * * *', from);
 
       expect(next).not.toBeNull();
       expect(next!.getUTCMinutes()).toBe(15);
     });
 
     it('should return null for invalid cron', () => {
-      expect(computeNextRun('invalid')).toBeNull();
-      expect(computeNextRun('* * *')).toBeNull(); // too few fields
-      expect(computeNextRun('60 * * * *')).toBeNull(); // invalid minute
+      expect(cоmputeNextRun('invalid')).toBeNull();
+      expect(cоmputeNextRun('* * *')).toBeNull(); // too few fields
+      expect(cоmputeNextRun('60 * * * *')).toBeNull(); // invalid minute
     });
 
     it('should handle weekday constraints', () => {
       // Only on Monday (1)
       const from = new Date('2024-01-15T10:00:00Z'); // Monday
-      const next = computeNextRun('0 9 * * 1', from);
+      const next = cоmputeNextRun('0 9 * * 1', from);
 
       expect(next).not.toBeNull();
       expect(next!.getUTCDay()).toBe(1); // Monday
@@ -239,7 +239,7 @@ describe('Cron Parsing', () => {
       // Run on 15th of month OR on Monday (standard cron OR semantics)
       // From: Monday Jan 15 - next should be Jan 15 at 09:00 (matches day-of-month)
       const from = new Date('2024-01-15T08:00:00Z'); // Monday Jan 15
-      const next = computeNextRun('0 9 15 * 1', from);
+      const next = cоmputeNextRun('0 9 15 * 1', from);
 
       expect(next).not.toBeNull();
       // Should match because day-of-month (15) matches
@@ -250,7 +250,7 @@ describe('Cron Parsing', () => {
       // Run on 1st of month OR on Monday
       // From: Monday Jan 15 - next should be Jan 15 (matches Monday)
       const from = new Date('2024-01-15T08:00:00Z'); // Monday Jan 15
-      const next = computeNextRun('0 9 1 * 1', from);
+      const next = cоmputeNextRun('0 9 1 * 1', from);
 
       expect(next).not.toBeNull();
       // Should match because weekday (Monday) matches, even though day-of-month doesn't

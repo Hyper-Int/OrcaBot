@@ -122,7 +122,7 @@ func TestTurnControllerRevokeOnlyByController(t *testing.T) {
 	}
 }
 
-func TestTurnControllerIsController(t *testing.T) {
+func TestTurnControllerIsCоntrоller(t *testing.T) {
 	tc := NewTurnController()
 
 	tc.TakeControl("user1")

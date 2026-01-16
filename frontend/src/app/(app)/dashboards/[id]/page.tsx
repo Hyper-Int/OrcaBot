@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 "use client";
 
 import * as React from "react";
@@ -341,8 +344,9 @@ export default function DashboardPage() {
         }
       );
       if (context?.sourceId) {
+        const sourceId = context.sourceId;
         createEdgeMutation.mutate({
-          sourceItemId: context.sourceId,
+          sourceItemId: sourceId,
           targetItemId: createdItem.id,
           sourceHandle: context.sourceHandle,
           targetHandle: context.targetHandle,
@@ -350,11 +354,11 @@ export default function DashboardPage() {
         setEdges((prev) => {
           const next = prev.filter(
             (edge) =>
-              !(edge.source === context.sourceId && edge.target === context.tempId)
+              !(edge.source === sourceId && edge.target === context.tempId)
           );
           next.push({
-            id: `edge-${context.sourceId}-${createdItem.id}-${context.sourceHandle ?? "auto"}-${context.targetHandle ?? "auto"}`,
-            source: context.sourceId,
+            id: `edge-${sourceId}-${createdItem.id}-${context.sourceHandle ?? "auto"}-${context.targetHandle ?? "auto"}`,
+            source: sourceId,
             target: createdItem.id,
             sourceHandle: context.sourceHandle,
             targetHandle: context.targetHandle,

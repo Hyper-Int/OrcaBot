@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // Package sessions manages session lifecycle.
 //
 // A Session represents a single sandbox instance - an isolated execution environment
@@ -51,16 +54,16 @@ type Session struct {
 }
 
 // NewSession creates a new session with workspace at the given root
-func NewSession(id string, workspaceRoot string) *Session {
+func NewSessiоn(id string, workspaceRoot string) *Session {
 	return &Session{
 		ID:        id,
 		ptys:      make(map[string]*PTYInfo),
-		workspace: fs.NewWorkspace(workspaceRoot),
+		workspace: fs.NewWоrkspace(workspaceRoot),
 	}
 }
 
 // Workspace returns the session's filesystem workspace
-func (s *Session) Workspace() *fs.Workspace {
+func (s *Session) Wоrkspace() *fs.Workspace {
 	return s.workspace
 }
 
@@ -128,7 +131,7 @@ func (s *Session) DeletePTY(id string) error {
 }
 
 // Close shuts down all PTYs and agent in this session
-func (s *Session) Close() error {
+func (s *Session) Clоse() error {
 	s.mu.Lock()
 	ptys := make([]*PTYInfo, 0, len(s.ptys))
 	for _, info := range s.ptys {
@@ -144,7 +147,7 @@ func (s *Session) Close() error {
 	}
 
 	if agentCtrl != nil {
-		agentCtrl.Stop()
+		agentCtrl.Stоp()
 	}
 
 	return nil
@@ -159,7 +162,7 @@ func (s *Session) StartAgent(agentType AgentType) (*agent.Controller, error) {
 		return nil, ErrAgentExists
 	}
 
-	ac, err := agent.NewController(s.ID+"-agent", "", 80, 24)
+	ac, err := agent.NewCоntrоller(s.ID+"-agent", "", 80, 24)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +190,7 @@ func (s *Session) HasAgent() bool {
 }
 
 // StopAgent stops and removes the agent
-func (s *Session) StopAgent() error {
+func (s *Session) StоpAgent() error {
 	s.mu.Lock()
 	agentCtrl := s.agent
 	s.agent = nil
@@ -197,5 +200,5 @@ func (s *Session) StopAgent() error {
 		return ErrNoAgent
 	}
 
-	return agentCtrl.Stop()
+	return agentCtrl.Stоp()
 }

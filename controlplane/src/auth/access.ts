@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Shared Access Control Utilities
  *
@@ -14,7 +17,7 @@ const ROLE_HIERARCHY: Record<string, number> = { owner: 3, editor: 2, viewer: 1 
 /**
  * Check if a user's role meets or exceeds the required role level.
  */
-export function hasRequiredRole(userRole: string, requiredRole?: Role): boolean {
+export function hasRequiredRоle(userRole: string, requiredRole?: Role): boolean {
   const userRoleLevel = ROLE_HIERARCHY[userRole] || 0;
   const requiredLevel = requiredRole ? ROLE_HIERARCHY[requiredRole] : 0;
   return userRoleLevel >= requiredLevel;
@@ -23,7 +26,7 @@ export function hasRequiredRole(userRole: string, requiredRole?: Role): boolean 
 /**
  * Check if user has access to a dashboard.
  */
-export async function checkDashboardAccess(
+export async function checkDashbоardAccess(
   env: Env,
   dashboardId: string,
   userId: string,
@@ -39,7 +42,7 @@ export async function checkDashboardAccess(
   }
 
   return {
-    hasAccess: hasRequiredRole(member.role, requiredRole),
+    hasAccess: hasRequiredRоle(member.role, requiredRole),
     role: member.role,
   };
 }
@@ -48,7 +51,7 @@ export async function checkDashboardAccess(
  * Check if user has access to a recipe (via its dashboard).
  * Recipes without a dashboard_id are accessible to any authenticated user.
  */
-export async function checkRecipeAccess(
+export async function checkRecipеAccess(
   env: Env,
   recipeId: string,
   userId: string,
@@ -67,14 +70,14 @@ export async function checkRecipeAccess(
     return { hasAccess: true, recipe };
   }
 
-  const { hasAccess } = await checkDashboardAccess(env, recipe.dashboard_id as string, userId, requiredRole);
+  const { hasAccess } = await checkDashbоardAccess(env, recipe.dashboard_id as string, userId, requiredRole);
   return { hasAccess, recipe: hasAccess ? recipe : undefined };
 }
 
 /**
  * Check if user has access to an execution (via execution → recipe → dashboard).
  */
-export async function checkExecutionAccess(
+export async function checkExecutiоnAccess(
   env: Env,
   executionId: string,
   userId: string,
@@ -88,14 +91,14 @@ export async function checkExecutionAccess(
     return { hasAccess: false };
   }
 
-  const { hasAccess } = await checkRecipeAccess(env, execution.recipe_id as string, userId, requiredRole);
+  const { hasAccess } = await checkRecipеAccess(env, execution.recipe_id as string, userId, requiredRole);
   return { hasAccess, execution: hasAccess ? execution : undefined };
 }
 
 /**
  * Check if user has access to a schedule (via schedule → recipe → dashboard).
  */
-export async function checkScheduleAccess(
+export async function checkSchedulеAccess(
   env: Env,
   scheduleId: string,
   userId: string,
@@ -109,6 +112,6 @@ export async function checkScheduleAccess(
     return { hasAccess: false };
   }
 
-  const { hasAccess } = await checkRecipeAccess(env, schedule.recipe_id as string, userId, requiredRole);
+  const { hasAccess } = await checkRecipеAccess(env, schedule.recipe_id as string, userId, requiredRole);
   return { hasAccess, schedule: hasAccess ? schedule : undefined };
 }

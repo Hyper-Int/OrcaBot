@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 package sessions
 
 import (
@@ -6,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/google/uuid"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
 var (
@@ -27,11 +30,11 @@ func NewManager() *Manager {
 	if base == "" {
 		base = "/workspace"
 	}
-	return NewManagerWithWorkspace(base)
+	return NewManagerWithWоrkspace(base)
 }
 
 // NewManagerWithWorkspace creates a manager with a custom workspace base path
-func NewManagerWithWorkspace(workspaceBase string) *Manager {
+func NewManagerWithWоrkspace(workspaceBase string) *Manager {
 	return &Manager{
 		sessions:      make(map[string]*Session),
 		workspaceBase: workspaceBase,
@@ -40,18 +43,21 @@ func NewManagerWithWorkspace(workspaceBase string) *Manager {
 
 // Create creates a new session with a workspace directory
 func (m *Manager) Create() (*Session, error) {
-	id := uuid.New().String()
+	sessionID, err := id.New()
+	if err != nil {
+		return nil, err
+	}
 
 	// Create workspace directory for this session
-	workspacePath := filepath.Join(m.workspaceBase, id)
+	workspacePath := filepath.Join(m.workspaceBase, sessionID)
 	if err := os.MkdirAll(workspacePath, 0755); err != nil {
 		return nil, err
 	}
 
-	session := NewSession(id, workspacePath)
+	session := NewSessiоn(sessionID, workspacePath)
 
 	m.mu.Lock()
-	m.sessions[id] = session
+	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
 	return session, nil
@@ -81,7 +87,7 @@ func (m *Manager) Delete(id string) error {
 	m.mu.Unlock()
 
 	// Close PTYs and agent
-	if err := session.Close(); err != nil {
+	if err := session.Clоse(); err != nil {
 		return err
 	}
 
@@ -105,7 +111,7 @@ func (m *Manager) List() []string {
 }
 
 // Shutdown closes all sessions gracefully
-func (m *Manager) Shutdown() {
+func (m *Manager) Shutdоwn() {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
 	ids := make([]string, 0, len(m.sessions))
@@ -118,7 +124,7 @@ func (m *Manager) Shutdown() {
 
 	// Close all sessions
 	for i, session := range sessions {
-		session.Close()
+		session.Clоse()
 		// Clean up workspace directory
 		workspacePath := filepath.Join(m.workspaceBase, ids[i])
 		os.RemoveAll(workspacePath)

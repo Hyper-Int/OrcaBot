@@ -1,1 +1,14 @@
+# OS
 .DS_Store
+Thumbs.db
+
+# Secrets - NEVER commit these
+.dev.vars
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+.watermark-lint.sh

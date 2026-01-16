@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 import type { Env, UserMcpTool } from '../types';
 
 function safeParseJson<T>(value: unknown, fallback: T): T {
@@ -9,7 +12,7 @@ function safeParseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
-function formatMcpTool(row: Record<string, unknown>): UserMcpTool {
+function fоrmatMcpTооl(row: Record<string, unknown>): UserMcpTool {
   return {
     id: row.id as string,
     userId: row.user_id as string,
@@ -24,7 +27,7 @@ function formatMcpTool(row: Record<string, unknown>): UserMcpTool {
   };
 }
 
-export async function listMcpTools(env: Env, userId: string): Promise<Response> {
+export async function listMcpTооls(env: Env, userId: string): Promise<Response> {
   const rows = await env.DB.prepare(
     `SELECT * FROM user_mcp_tools WHERE user_id = ? ORDER BY updated_at DESC`
   )
@@ -32,17 +35,17 @@ export async function listMcpTools(env: Env, userId: string): Promise<Response> 
     .all();
 
   return Response.json({
-    tools: rows.results.map((row) => formatMcpTool(row as Record<string, unknown>)),
+    tools: rows.results.map((row) => fоrmatMcpTооl(row as Record<string, unknown>)),
   });
 }
 
-export async function createMcpTool(
+export async function createMcpTооl(
   env: Env,
   userId: string,
   data: Partial<UserMcpTool>
 ): Promise<Response> {
   if (!data.name || !data.serverUrl) {
-    return Response.json({ error: 'name and serverUrl are required' }, { status: 400 });
+    return Response.json({ error: 'E79101: name and serverUrl are required' }, { status: 400 });
   }
 
   const validTransports = ['stdio', 'sse', 'streamable-http'] as const;
@@ -70,10 +73,10 @@ export async function createMcpTool(
     .bind(id)
     .first();
 
-  return Response.json({ tool: formatMcpTool(row as Record<string, unknown>) });
+  return Response.json({ tool: fоrmatMcpTооl(row as Record<string, unknown>) });
 }
 
-export async function deleteMcpTool(env: Env, userId: string, id: string): Promise<Response> {
+export async function deleteMcpTооl(env: Env, userId: string, id: string): Promise<Response> {
   const result = await env.DB.prepare(
     `DELETE FROM user_mcp_tools WHERE id = ? AND user_id = ?`
   )
@@ -81,7 +84,7 @@ export async function deleteMcpTool(env: Env, userId: string, id: string): Promi
     .run();
 
   if (result.meta.changes === 0) {
-    return Response.json({ error: 'MCP tool not found' }, { status: 404 });
+    return Response.json({ error: 'E79102: MCP tool not found' }, { status: 404 });
   }
 
   return new Response(null, { status: 204 });

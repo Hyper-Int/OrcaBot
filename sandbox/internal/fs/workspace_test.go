@@ -19,7 +19,7 @@ func TestWorkspaceList(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Create some files
 	os.WriteFile(filepath.Join(root, "file1.txt"), []byte("hello"), 0644)
@@ -52,7 +52,7 @@ func TestWorkspaceRead(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	content := []byte("test content here")
 	os.WriteFile(filepath.Join(root, "test.txt"), content, 0644)
@@ -72,7 +72,7 @@ func TestWorkspaceWrite(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	content := []byte("new file content")
 	err := ws.Write("/newfile.txt", content)
@@ -95,7 +95,7 @@ func TestWorkspaceWriteCreatesDirs(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	content := []byte("nested content")
 	err := ws.Write("/a/b/c/file.txt", content)
@@ -118,7 +118,7 @@ func TestWorkspaceDelete(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Create file
 	os.WriteFile(filepath.Join(root, "todelete.txt"), []byte("bye"), 0644)
@@ -140,7 +140,7 @@ func TestWorkspaceDeleteDir(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Create dir with files
 	os.MkdirAll(filepath.Join(root, "toremove", "subdir"), 0755)
@@ -164,7 +164,7 @@ func TestWorkspaceStat(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Create file
 	os.WriteFile(filepath.Join(root, "statme.txt"), []byte("hello world"), 0644)
@@ -191,7 +191,7 @@ func TestWorkspaceStatDir(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	os.Mkdir(filepath.Join(root, "mydir"), 0755)
 
@@ -210,7 +210,7 @@ func TestWorkspacePathTraversalRead(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Try to read outside workspace
 	_, err := ws.Read("/../../../etc/passwd")
@@ -228,7 +228,7 @@ func TestWorkspacePathTraversalWrite(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Try to write outside workspace
 	err := ws.Write("/../../../tmp/evil.txt", []byte("bad"))
@@ -241,7 +241,7 @@ func TestWorkspacePathTraversalDelete(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Try to delete outside workspace
 	err := ws.Delete("/../../../tmp")
@@ -254,7 +254,7 @@ func TestWorkspacePathTraversalList(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Try to list outside workspace
 	_, err := ws.List("/../../../etc")
@@ -267,7 +267,7 @@ func TestWorkspaceReadNotFound(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	_, err := ws.Read("/nonexistent.txt")
 	if err == nil {
@@ -279,7 +279,7 @@ func TestWorkspaceDeleteNotFound(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	err := ws.Delete("/nonexistent.txt")
 	if err == nil {
@@ -291,7 +291,7 @@ func TestWorkspaceListNotFound(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	_, err := ws.List("/nonexistent")
 	if err == nil {
@@ -317,7 +317,7 @@ func TestWorkspaceSiblingDirectoryBypass(t *testing.T) {
 	// Create a file in the evil sibling
 	os.WriteFile(filepath.Join(evilRoot, "secret.txt"), []byte("evil data"), 0644)
 
-	ws := NewWorkspace(workspaceRoot)
+	ws := NewWоrkspace(workspaceRoot)
 
 	// Create a symlink inside workspace pointing to workspace-evil
 	symlinkPath := filepath.Join(workspaceRoot, "sibling")
@@ -338,7 +338,7 @@ func TestWorkspaceSymlinkEscape(t *testing.T) {
 	root := setupTestWorkspace(t)
 	defer os.RemoveAll(root)
 
-	ws := NewWorkspace(root)
+	ws := NewWоrkspace(root)
 
 	// Create a symlink inside workspace pointing outside
 	symlinkPath := filepath.Join(root, "escape")

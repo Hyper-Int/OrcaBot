@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  listDashboards,
-  createDashboard,
+  listDashbоards,
+  createDashbоard,
   upsertItem,
 } from './handler';
 import {
@@ -29,9 +29,9 @@ describe('Dashboard Handlers', () => {
     await seedUser(ctx.db, testUser);
   });
 
-  describe('createDashboard()', () => {
+  describe('createDashbоard()', () => {
     it('should create a new dashboard', async () => {
-      const response = await createDashboard(ctx.env, testUser.id, { name: 'My Dashboard' });
+      const response = await createDashbоard(ctx.env, testUser.id, { name: 'My Dashboard' });
       const data = await response.json();
 
       expect(response.status).toBe(201);
@@ -41,7 +41,7 @@ describe('Dashboard Handlers', () => {
     });
 
     it('should set timestamps on creation', async () => {
-      const response = await createDashboard(ctx.env, testUser.id, { name: 'Test' });
+      const response = await createDashbоard(ctx.env, testUser.id, { name: 'Test' });
       const data = await response.json();
 
       expect(data.dashboard.createdAt).toBeTruthy();
@@ -51,7 +51,7 @@ describe('Dashboard Handlers', () => {
 
   describe('Database operations', () => {
     it('should insert dashboard into database', async () => {
-      await createDashboard(ctx.env, testUser.id, { name: 'DB Test' });
+      await createDashbоard(ctx.env, testUser.id, { name: 'DB Test' });
 
       const result = await ctx.db.prepare(`
         SELECT * FROM dashboards WHERE owner_id = ?
@@ -62,7 +62,7 @@ describe('Dashboard Handlers', () => {
     });
 
     it('should create dashboard_members entry', async () => {
-      const response = await createDashboard(ctx.env, testUser.id, { name: 'Member Test' });
+      const response = await createDashbоard(ctx.env, testUser.id, { name: 'Member Test' });
       const { dashboard } = await response.json();
 
       const member = await ctx.db.prepare(`
@@ -77,7 +77,7 @@ describe('Dashboard Handlers', () => {
 
   describe('API Response Shape', () => {
     it('should return camelCase keys in dashboard response', async () => {
-      const response = await createDashboard(ctx.env, testUser.id, { name: 'Shape Test' });
+      const response = await createDashbоard(ctx.env, testUser.id, { name: 'Shape Test' });
       const data = await response.json() as { dashboard: Record<string, unknown> };
 
       // Should have camelCase keys

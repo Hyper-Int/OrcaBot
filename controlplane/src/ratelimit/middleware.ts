@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Rate Limiting Middleware
  *
@@ -14,9 +17,10 @@ export interface RateLimitResult {
 
 /**
  * Check rate limit for the request
+ * Uses different limits for authenticated (200/min) vs unauthenticated (10/min) requests
  * Returns allowed: true if within limits, or a 429 response if exceeded
  */
-export async function checkRateLimit(
+export async function checkRatеLimit(
   request: Request,
   env: Env
 ): Promise<RateLimitResult> {
@@ -25,21 +29,30 @@ export async function checkRateLimit(
     return { allowed: true };
   }
 
-  // Use user ID if authenticated, otherwise use IP
+  // Check if request appears authenticated (has user ID header)
   const userId = request.headers.get('X-User-ID');
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const key = userId || `ip:${ip}`;
+
+  // Use appropriate rate limiter based on authentication
+  // Authenticated: 200/min per user, Unauthenticated: 10/min per IP
+  const isAuthenticated = !!userId;
+  const rateLimiter = isAuthenticated && env.RATE_LIMITER_AUTH
+    ? env.RATE_LIMITER_AUTH
+    : env.RATE_LIMITER;
+  const key = isAuthenticated ? `user:${userId}` : `ip:${ip}`;
 
   try {
-    const result = await env.RATE_LIMITER.limit({ key });
+    const result = await rateLimiter.limit({ key });
 
     if (!result.success) {
       return {
         allowed: false,
         response: new Response(
           JSON.stringify({
-            error: 'Too many requests',
-            message: 'Rate limit exceeded. Please try again later.',
+            error: 'E79601: Too many requests',
+            message: isAuthenticated
+              ? 'Rate limit exceeded. Please slow down.'
+              : 'Rate limit exceeded. Please try again later.',
           }),
           {
             status: 429,
@@ -63,7 +76,7 @@ export async function checkRateLimit(
 /**
  * Rate limit by a custom key (e.g., for specific endpoints)
  */
-export async function checkRateLimitByKey(
+export async function checkRatеLimitByKey(
   key: string,
   env: Env
 ): Promise<RateLimitResult> {
@@ -79,7 +92,7 @@ export async function checkRateLimitByKey(
         allowed: false,
         response: new Response(
           JSON.stringify({
-            error: 'Too many requests',
+            error: 'E79601: Too many requests',
             message: 'Rate limit exceeded for this operation.',
           }),
           {

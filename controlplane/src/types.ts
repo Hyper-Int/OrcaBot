@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // Rate limiter binding type
 export interface RateLimiter {
   limit: (options: { key: string }) => Promise<{ success: boolean }>;
@@ -8,7 +11,10 @@ export interface Env {
   DB: D1Database;
   DASHBOARD: DurableObjectNamespace;
   SANDBOX_URL: string;
+  /** Rate limiter for unauthenticated requests (10/min) */
   RATE_LIMITER: RateLimiter;
+  /** Rate limiter for authenticated requests (200/min) */
+  RATE_LIMITER_AUTH: RateLimiter;
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
@@ -19,6 +25,10 @@ export interface Env {
   OAUTH_REDIRECT_BASE?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
   ALLOWED_ORIGINS?: string;
+  /** Cloudflare Access team domain (e.g., "myteam" for myteam.cloudflareaccess.com) */
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access Application Audience (AUD) tag */
+  CF_ACCESS_AUD?: string;
 }
 
 // User types

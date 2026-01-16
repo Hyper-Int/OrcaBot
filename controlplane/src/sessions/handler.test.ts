@@ -16,7 +16,7 @@ import {
 } from '../../tests/helpers';
 import { createMockSandboxServer } from '../../tests/mocks/sandbox';
 import { SandboxClient } from '../sandbox/client';
-import { createSession } from './handler';
+import { createSessiоn } from './handler';
 import type { TestContext } from '../../tests/helpers';
 
 describe('Session Handlers', () => {
@@ -46,7 +46,7 @@ describe('Session Handlers', () => {
     it('should create session via sandbox client', async () => {
       const client = new SandboxClient(ctx.env.SANDBOX_URL);
 
-      const session = await client.createSession();
+      const session = await client.createSessiоn();
 
       expect(session).toHaveProperty('id');
       expect(session.id).toBeTruthy();
@@ -61,7 +61,7 @@ describe('Session Handlers', () => {
       const dashboard = await seedDashboard(ctx.db, testUser.id);
       const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
 
-      const response = await createSession(ctx.env, dashboard.id, item.id, testUser.id, testUser.name);
+      const response = await createSessiоn(ctx.env, dashboard.id, item.id, testUser.id, testUser.name);
       expect(response.status).toBe(201);
 
       const data = await response.json();

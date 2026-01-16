@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 /**
  * Sandbox Client
  *
@@ -42,7 +45,7 @@ export class SandboxClient {
   }
 
   // Session management
-  async createSession(): Promise<SandboxSession> {
+  async createSessiоn(): Promise<SandboxSession> {
     const res = await fetch(`${this.baseUrl}/sessions`, {
       method: 'POST',
       headers: this.authHeaders(),

@@ -1,3 +1,6 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 export { Cursor } from "./Cursor";
 export { CursorOverlay } from "./CursorOverlay";
 export { PresenceList } from "./PresenceList";

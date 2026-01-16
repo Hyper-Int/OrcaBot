@@ -29,7 +29,7 @@ func setupTestManager(t *testing.T) (*sessions.Manager, func()) {
 	os.Setenv("SANDBOX_INTERNAL_TOKEN", testAPIToken)
 	os.Setenv("ALLOWED_ORIGINS", "http://localhost:*,http://127.0.0.1:*")
 
-	return sessions.NewManagerWithWorkspace(dir), func() {
+	return sessions.NewManagerWithWоrkspace(dir), func() {
 		os.RemoveAll(dir)
 		os.Unsetenv("SANDBOX_INTERNAL_TOKEN")
 		os.Unsetenv("ALLOWED_ORIGINS")

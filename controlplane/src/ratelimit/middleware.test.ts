@@ -3,16 +3,16 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { checkRateLimit, checkRateLimitByKey } from './middleware';
+import { checkRatеLimit, checkRatеLimitByKey } from './middleware';
 import type { Env } from '../types';
 
 describe('Rate Limiting Middleware', () => {
-  describe('checkRateLimit()', () => {
+  describe('checkRatеLimit()', () => {
     it('should allow request when rate limiter is not configured', async () => {
       const request = new Request('http://localhost/test');
       const env = {} as Env;
 
-      const result = await checkRateLimit(request, env);
+      const result = await checkRatеLimit(request, env);
 
       expect(result.allowed).toBe(true);
       expect(result.response).toBeUndefined();
@@ -28,7 +28,7 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      const result = await checkRateLimit(request, env);
+      const result = await checkRatеLimit(request, env);
 
       expect(result.allowed).toBe(true);
     });
@@ -43,7 +43,7 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      const result = await checkRateLimit(request, env);
+      const result = await checkRatеLimit(request, env);
 
       expect(result.allowed).toBe(false);
       expect(result.response).toBeDefined();
@@ -64,7 +64,7 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      await checkRateLimit(request, env);
+      await checkRatеLimit(request, env);
 
       expect(capturedKey).toBe('user-123');
     });
@@ -83,7 +83,7 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      await checkRateLimit(request, env);
+      await checkRatеLimit(request, env);
 
       expect(capturedKey).toBe('ip:192.168.1.1');
     });
@@ -98,17 +98,17 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      const result = await checkRateLimit(request, env);
+      const result = await checkRatеLimit(request, env);
 
       expect(result.allowed).toBe(true);
     });
   });
 
-  describe('checkRateLimitByKey()', () => {
+  describe('checkRatеLimitByKey()', () => {
     it('should allow when rate limiter is not configured', async () => {
       const env = {} as Env;
 
-      const result = await checkRateLimitByKey('custom-key', env);
+      const result = await checkRatеLimitByKey('custom-key', env);
 
       expect(result.allowed).toBe(true);
     });
@@ -124,7 +124,7 @@ describe('Rate Limiting Middleware', () => {
         },
       } as unknown as Env;
 
-      await checkRateLimitByKey('api:expensive-operation', env);
+      await checkRatеLimitByKey('api:expensive-operation', env);
 
       expect(capturedKey).toBe('api:expensive-operation');
     });
