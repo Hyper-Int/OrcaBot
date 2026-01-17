@@ -1,14 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-"use client";
-
-import dynamic from "next/dynamic";
+import DashboardsPage from "./page.client";
 
 export const runtime = "edge";
 
-const DashboardsPage = dynamic(() => import("./page.client"), {
-  ssr: false,
-});
-
-export default DashboardsPage;
+export default function DashboardsRoute() {
+  return <DashboardsPage />;
+}
