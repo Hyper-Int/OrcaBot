@@ -6,6 +6,8 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
+export const runtime = "edge";
+
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
