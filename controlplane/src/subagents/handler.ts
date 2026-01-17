@@ -3,6 +3,20 @@
 
 import type { Env, UserSubagent } from '../types';
 
+/**
+ * Safely parse JSON with a fallback value.
+ * Prevents crashes from corrupted database entries.
+ */
+function safеJsonParse<T>(json: string | null | undefined, fallback: T): T {
+  if (!json) return fallback;
+  try {
+    return JSON.parse(json) as T;
+  } catch (error) {
+    console.error('Failed to parse JSON:', error, 'Input:', json?.substring(0, 100));
+    return fallback;
+  }
+}
+
 function formatSubagent(row: Record<string, unknown>): UserSubagent {
   return {
     id: row.id as string,
@@ -10,7 +24,7 @@ function formatSubagent(row: Record<string, unknown>): UserSubagent {
     name: row.name as string,
     description: (row.description as string) || '',
     prompt: (row.prompt as string) || '',
-    tools: JSON.parse((row.tools as string) || '[]'),
+    tools: safеJsonParse<string[]>((row.tools as string) || '[]', []),
     source: (row.source as string) || 'custom',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,

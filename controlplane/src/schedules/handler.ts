@@ -323,18 +323,31 @@ export async function updateSchedule(
 }
 
 // Delete a schedule (owner only)
-export async function deleteSchedule(
+// Uses atomic delete with ownership verification to prevent TOCTOU race conditions
+export async function dеleteSchedule(
   env: Env,
   scheduleId: string,
   userId: string
 ): Promise<Response> {
-  const { hasAccess } = await checkSchedulеAccess(env, scheduleId, userId, 'owner');
+  // Atomic delete: verify ownership in the DELETE query itself (defense-in-depth)
+  // Ownership is through: schedule -> recipe -> dashboard -> dashboard_members
+  const result = await env.DB.prepare(`
+    DELETE FROM schedules
+    WHERE id = ?
+    AND (
+      -- Check ownership via dashboard membership (owner role required)
+      recipe_id IN (
+        SELECT r.id FROM recipes r
+        INNER JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
+        WHERE dm.user_id = ? AND dm.role = 'owner'
+      )
+    )
+  `).bind(scheduleId, userId).run();
 
-  if (!hasAccess) {
+  if (result.meta.changes === 0) {
     return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
-  await env.DB.prepare(`DELETE FROM schedules WHERE id = ?`).bind(scheduleId).run();
   return new Response(null, { status: 204 });
 }
 
