@@ -12,6 +12,7 @@ interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isAuthResolved: boolean;
 }
 
 interface AuthActions {
@@ -29,6 +30,16 @@ interface AuthActions {
    * Set loading state
    */
   setLoading: (loading: boolean) => void;
+
+  /**
+   * Set authenticated user (OAuth bootstrap)
+   */
+  setUser: (user: User | null) => void;
+
+  /**
+   * Mark auth resolution status
+   */
+  setAuthResolved: (resolved: boolean) => void;
 }
 
 type AuthStore = AuthState & AuthActions;
@@ -54,6 +65,7 @@ export const useAuthStore = create<AuthStore>()(
       user: null,
       isAuthenticated: false,
       isLoading: false,
+      isAuthResolved: false,
 
       // Actions
       loginDevMode: (name: string, email: string) => {
@@ -68,6 +80,7 @@ export const useAuthStore = create<AuthStore>()(
           user,
           isAuthenticated: true,
           isLoading: false,
+          isAuthResolved: true,
         });
       },
 
@@ -76,11 +89,25 @@ export const useAuthStore = create<AuthStore>()(
           user: null,
           isAuthenticated: false,
           isLoading: false,
+          isAuthResolved: true,
         });
       },
 
       setLoading: (loading: boolean) => {
         set({ isLoading: loading });
+      },
+
+      setUser: (user: User | null) => {
+        set({
+          user,
+          isAuthenticated: Boolean(user),
+          isLoading: false,
+          isAuthResolved: true,
+        });
+      },
+
+      setAuthResolved: (resolved: boolean) => {
+        set({ isAuthResolved: resolved });
       },
     }),
     {
@@ -88,6 +115,7 @@ export const useAuthStore = create<AuthStore>()(
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        isAuthResolved: state.isAuthResolved,
       }),
     }
   )

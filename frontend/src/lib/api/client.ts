@@ -34,6 +34,7 @@ export async function apiFetch<T>(
       ...authHeaders,
       ...options.headers,
     },
+    credentials: "include",
   });
 
   if (!response.ok) {

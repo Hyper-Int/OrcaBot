@@ -131,7 +131,7 @@ export default function DashboardPage() {
   const dashboardId = params.id as string;
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, isAuthResolved } = useAuthStore();
 
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
@@ -151,7 +151,7 @@ export default function DashboardPage() {
     dashboardId,
     userId: user?.id || "",
     userName: user?.name || "",
-    enabled: isAuthenticated && !!dashboardId && !!user?.id,
+    enabled: isAuthenticated && isAuthResolved && !!dashboardId && !!user?.id,
   });
 
   // Convert PresenceInfo to PresenceUser (add isCurrentUser flag)
@@ -214,7 +214,7 @@ export default function DashboardPage() {
   } = useQuery({
     queryKey: ["dashboard", dashboardId],
     queryFn: () => getDashboard(dashboardId),
-    enabled: isAuthenticated && !!dashboardId,
+    enabled: isAuthenticated && isAuthResolved && !!dashboardId,
     staleTime: 30000, // Consider data fresh for 30 seconds
     refetchOnWindowFocus: false, // Don't refetch on window focus
     refetchInterval: false, // Don't auto-refetch
@@ -773,10 +773,13 @@ export default function DashboardPage() {
 
   // Redirect if not authenticated
   React.useEffect(() => {
+    if (!isAuthResolved) {
+      return;
+    }
     if (!isAuthenticated) {
       router.push("/login");
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isAuthResolved, router]);
 
   React.useEffect(() => {
     if (!data) return;
@@ -960,7 +963,7 @@ export default function DashboardPage() {
   const edgesToRender = pendingEdge ? [...edges, pendingEdge] : edges;
   const extraNodes = cursorNode ? [cursorNode] : [];
 
-  if (!isAuthenticated) {
+  if (!isAuthResolved || !isAuthenticated) {
     return null;
   }
 

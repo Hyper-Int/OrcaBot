@@ -7,6 +7,9 @@ import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
+import { API } from "@/config/env";
+import { useAuthStore } from "@/stores/auth-store";
+import type { User } from "@/types";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -36,12 +39,58 @@ interface ProvidersProps {
   children: React.ReactNode;
 }
 
+function AuthBootstrapper() {
+  const { isAuthenticated, isAuthResolved, setUser, setAuthResolved } =
+    useAuthStore();
+
+  React.useEffect(() => {
+    if (isAuthenticated || isAuthResolved) {
+      return;
+    }
+
+    let isActive = true;
+
+    const bootstrap = async () => {
+      try {
+        const response = await fetch(API.cloudflare.usersMe, {
+          credentials: "include",
+        });
+
+        if (!isActive) return;
+
+        if (response.ok) {
+          const data = (await response.json()) as { user?: User };
+          if (data.user) {
+            setUser(data.user);
+            return;
+          }
+        }
+
+        setAuthResolved(true);
+      } catch {
+        if (isActive) {
+          setAuthResolved(true);
+        }
+      }
+    };
+
+    void bootstrap();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isAuthenticated, isAuthResolved, setUser, setAuthResolved]);
+
+  return null;
+}
+
 export function Providers({ children }: ProvidersProps) {
   const queryClient = getQueryClient();
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={200}>
+        <AuthBootstrapper />
         {children}
         <Toaster
           position="bottom-right"

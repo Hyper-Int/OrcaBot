@@ -10,6 +10,9 @@ export const CLOUDFLARE_API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "https://orcabot-controlplane.orcabot.workers.dev";
 
+export const SITE_URL =
+  process.env.NEXT_PUBLIC_SITE_URL || "https://orcabot.com";
+
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
 
@@ -18,6 +21,7 @@ export const DEV_MODE_ENABLED =
  */
 export const env = {
   CLOUDFLARE_API_URL,
+  SITE_URL,
   DEV_MODE_ENABLED,
 };
 

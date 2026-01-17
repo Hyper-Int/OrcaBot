@@ -8,12 +8,17 @@ import { useRouter } from "next/navigation";
 import { Zap } from "lucide-react";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
-import { DEV_MODE_ENABLED } from "@/config/env";
+import { API, DEV_MODE_ENABLED, SITE_URL } from "@/config/env";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { isAuthenticated, loginDevMode, isLoading, setLoading } =
-    useAuthStore();
+  const {
+    isAuthenticated,
+    isAuthResolved,
+    loginDevMode,
+    isLoading,
+    setLoading,
+  } = useAuthStore();
 
   const [showDevLogin, setShowDevLogin] = React.useState(false);
   const [name, setName] = React.useState("");
@@ -22,10 +27,10 @@ export default function LoginPage() {
 
   // Redirect if already authenticated
   React.useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthResolved && isAuthenticated) {
       router.push("/dashboards");
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isAuthResolved, router]);
 
   const handleDevLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,8 +61,12 @@ export default function LoginPage() {
   };
 
   const handleGoogleLogin = () => {
-    // TODO: Implement Google OAuth
-    setError("Google OAuth is not yet implemented. Please use Dev mode.");
+    setError("");
+    const redirectUrl = `${SITE_URL.replace(/\/$/, "")}/`;
+    const loginUrl = `${API.cloudflare.base}/auth/google/login?redirect=${encodeURIComponent(
+      redirectUrl
+    )}`;
+    window.location.assign(loginUrl);
   };
 
   return (

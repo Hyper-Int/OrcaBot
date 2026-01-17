@@ -36,6 +36,7 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
+import { API } from "@/config/env";
 import { listDashboards, createDashboard, deleteDashboard } from "@/lib/api/cloudflare";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
@@ -43,7 +44,7 @@ import type { Dashboard } from "@/types/dashboard";
 export default function DashboardsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user, logout, isAuthenticated } = useAuthStore();
+  const { user, logout, isAuthenticated, isAuthResolved } = useAuthStore();
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
@@ -51,10 +52,13 @@ export default function DashboardsPage() {
 
   // Redirect if not authenticated
   React.useEffect(() => {
+    if (!isAuthResolved) {
+      return;
+    }
     if (!isAuthenticated) {
       router.push("/login");
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isAuthResolved, router]);
 
   // Fetch dashboards
   const {
@@ -64,7 +68,7 @@ export default function DashboardsPage() {
   } = useQuery({
     queryKey: ["dashboards"],
     queryFn: listDashboards,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isAuthResolved,
   });
 
   // Create dashboard mutation
@@ -102,12 +106,20 @@ export default function DashboardsPage() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API.cloudflare.base}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // Ignore logout errors and clear local state anyway.
+    }
     logout();
     router.push("/login");
   };
 
-  if (!isAuthenticated) {
+  if (!isAuthResolved || !isAuthenticated) {
     return null;
   }
 
