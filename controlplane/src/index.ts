@@ -20,6 +20,8 @@ import * as subagents from './subagents/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
 import * as integrations from './integrations/handler';
+import * as googleAuth from './auth/google';
+import * as authLogout from './auth/logout';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 
 // Export Durable Object
@@ -71,14 +73,13 @@ function cоrsRespоnse(response: Response, origin: string | null, allowedOrigin
   newHeaders.set('Access-Control-Allow-Methods', CORS_METHODS);
   newHeaders.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS);
 
-  // Set origin header based on validation
-  if (allowedOrigins === null) {
-    // Dev mode - allow all
-    newHeaders.set('Access-Control-Allow-Origin', '*');
-  } else if (origin && allowedOrigins.has(origin)) {
-    // Production mode - reflect allowed origin
+  const allowOrigin = origin && (allowedOrigins === null || allowedOrigins.has(origin));
+  if (allowOrigin) {
     newHeaders.set('Access-Control-Allow-Origin', origin);
     newHeaders.set('Vary', 'Origin');
+    newHeaders.set('Access-Control-Allow-Credentials', 'true');
+  } else if (allowedOrigins === null) {
+    newHeaders.set('Access-Control-Allow-Origin', '*');
   }
   // If origin not allowed, don't set Access-Control-Allow-Origin (browser will reject)
 
@@ -242,11 +243,13 @@ export default {
         'Access-Control-Allow-Methods': CORS_METHODS,
         'Access-Control-Allow-Headers': CORS_ALLOWED_HEADERS,
       };
-      if (allowedOrigins === null) {
-        headers['Access-Control-Allow-Origin'] = '*';
-      } else if (origin && allowedOrigins.has(origin)) {
+      const allowOrigin = origin && (allowedOrigins === null || allowedOrigins.has(origin));
+      if (allowOrigin) {
         headers['Access-Control-Allow-Origin'] = origin;
         headers['Vary'] = 'Origin';
+        headers['Access-Control-Allow-Credentials'] = 'true';
+      } else if (allowedOrigins === null) {
+        headers['Access-Control-Allow-Origin'] = '*';
       }
       // If origin not allowed, don't include Access-Control-Allow-Origin
       return new Response(null, { status: 204, headers });
@@ -340,6 +343,21 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
+
+  // GET /auth/google/login - Google OAuth login
+  if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'login' && method === 'GET') {
+    return googleAuth.loginWithGoogle(request, env);
+  }
+
+  // GET /auth/google/callback - Google OAuth callback
+  if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'callback' && method === 'GET') {
+    return googleAuth.callbackGoogle(request, env);
+  }
+
+  // POST /auth/logout - clear session cookie
+  if (segments[0] === 'auth' && segments[1] === 'logout' && segments.length === 2 && method === 'POST') {
+    return authLogout.logout(request, env);
+  }
 
   // GET /embed-check - Check if a URL can be embedded in an iframe
   if (segments[0] === 'embed-check' && segments.length === 1 && method === 'GET') {

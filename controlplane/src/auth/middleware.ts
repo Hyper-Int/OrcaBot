@@ -11,6 +11,7 @@
 
 import type { Env, User } from '../types';
 import { validateCfAccessTоken, cfAccessUserIdFrоmSub } from './cf-access';
+import { getUserForSession } from './sessions';
 
 export interface AuthContext {
   user: User | null;
@@ -22,6 +23,11 @@ export async function authenticate(
   request: Request,
   env: Env
 ): Promise<AuthContext> {
+  const sessionUser = await getUserForSession(request, env);
+  if (sessionUser) {
+    return { user: sessionUser, isAuthenticated: true };
+  }
+
   // Try Cloudflare Access first (production mode)
   if (env.CF_ACCESS_TEAM_DOMAIN && env.CF_ACCESS_AUD) {
     return authenticateWithCfAccеss(request, env);

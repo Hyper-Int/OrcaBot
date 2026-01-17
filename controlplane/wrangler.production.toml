@@ -31,7 +31,8 @@ CF_ACCESS_AUD = "08425b491a830f9bd30d6ef7f92e7b3d1d64490cabd1e5502dcb70f6adbec5e
 ALLOWED_ORIGINS = "https://orcabot.com"
 
 # OAuth (client IDs only - secrets go in wrangler secret)
-# GOOGLE_CLIENT_ID = "your-google-client-id"
+FRONTEND_URL = "https://orcabot.com"
+GOOGLE_CLIENT_ID = "800055652303-t2jus6l3rlkle2fd3a0vrtihs974o6ul.apps.googleusercontent.com"
 # GITHUB_CLIENT_ID = "your-github-client-id"
 
 # Rate limiting - unauthenticated (strict)
