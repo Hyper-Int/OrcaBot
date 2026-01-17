@@ -227,10 +227,15 @@ export async function callbackGoogle(
     sub: string;
     email: string;
     name?: string;
+    email_verified?: boolean;
   };
 
   if (!userInfo.email || !userInfo.sub) {
     return renderErrorPage('Google profile missing required fields.');
+  }
+
+  if (userInfo.email_verified !== true) {
+    return renderErrorPage('Google account email is not verified.');
   }
 
   const userId = await findOrCreateUser(env, userInfo);

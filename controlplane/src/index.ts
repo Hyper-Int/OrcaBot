@@ -910,7 +910,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (segments[0] === 'schedules' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return schedules.deleteSchedule(env, segments[1], auth.user!.id);
+    return schedules.dеleteSchedule(env, segments[1], auth.user!.id);
   }
 
   // POST /schedules/:id/enable - Enable schedule

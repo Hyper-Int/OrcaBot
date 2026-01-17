@@ -20,6 +20,20 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * Safely parse JSON with a fallback value.
+ * Prevents crashes from corrupted database entries.
+ */
+function safеJsonParse<T>(json: string | null | undefined, fallback: T): T {
+  if (!json) return fallback;
+  try {
+    return JSON.parse(json) as T;
+  } catch (error) {
+    console.error('Failed to parse JSON:', error, 'Input:', json?.substring(0, 100));
+    return fallback;
+  }
+}
+
 // List recipes (only those the user has access to)
 export async function listRecipеs(
   env: Env,
@@ -55,7 +69,7 @@ export async function listRecipеs(
     dashboardId: r.dashboard_id,
     name: r.name,
     description: r.description,
-    steps: JSON.parse(r.steps as string),
+    steps: safеJsonParse<RecipeStep[]>(r.steps as string, []),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }));
@@ -81,7 +95,7 @@ export async function getRecipе(
       dashboardId: recipe.dashboard_id,
       name: recipe.name,
       description: recipe.description,
-      steps: JSON.parse(recipe.steps as string),
+      steps: safеJsonParse<RecipeStep[]>(recipe.steps as string, []),
       createdAt: recipe.created_at,
       updatedAt: recipe.updated_at,
     }
@@ -180,7 +194,7 @@ export async function updateRecipe(
       dashboardId: updated!.dashboard_id,
       name: updated!.name,
       description: updated!.description,
-      steps: JSON.parse(updated!.steps as string),
+      steps: safеJsonParse<RecipeStep[]>(updated!.steps as string, []),
       createdAt: updated!.created_at,
       updatedAt: updated!.updated_at,
     }
@@ -245,7 +259,7 @@ async function createExecutiоn(
   recipe: Record<string, unknown>,
   context?: Record<string, unknown>
 ): Promise<Response> {
-  const steps = JSON.parse(recipe.steps as string) as RecipeStep[];
+  const steps = safеJsonParse<RecipeStep[]>(recipe.steps as string, []);
   const firstStepId = steps.length > 0 ? steps[0].id : null;
 
   const id = generateId();
@@ -306,7 +320,7 @@ export async function getExecutiоn(
       recipeId: execution.recipe_id,
       status: execution.status,
       currentStepId: execution.current_step_id,
-      context: JSON.parse(execution.context as string),
+      context: safеJsonParse<Record<string, unknown>>(execution.context as string, {}),
       startedAt: execution.started_at,
       completedAt: execution.completed_at,
       error: execution.error,
@@ -345,7 +359,7 @@ export async function listExecutiоns(
     recipeId: e.recipe_id,
     status: e.status,
     currentStepId: e.current_step_id,
-    context: JSON.parse(e.context as string),
+    context: safеJsonParse<Record<string, unknown>>(e.context as string, {}),
     startedAt: e.started_at,
     completedAt: e.completed_at,
     error: e.error,

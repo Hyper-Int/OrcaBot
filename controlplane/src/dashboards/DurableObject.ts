@@ -19,6 +19,30 @@ interface WebSocketAttachment {
   userName: string;
 }
 
+// Rate limiter for error logging to prevent log spam
+class RatеLimitedLogger {
+  private lastLogTime = 0;
+  private suppressedCount = 0;
+  private readonly minIntervalMs: number;
+
+  constructor(minIntervalMs = 5000) {
+    this.minIntervalMs = minIntervalMs;
+  }
+
+  warn(code: string, message: string, detail?: string): void {
+    const now = Date.now();
+    if (now - this.lastLogTime < this.minIntervalMs) {
+      this.suppressedCount++;
+      return;
+    }
+
+    const suppressed = this.suppressedCount > 0 ? ` (${this.suppressedCount} similar suppressed)` : '';
+    console.warn(`${code}: ${message}${suppressed}`, detail ? `- ${detail.substring(0, 100)}` : '');
+    this.lastLogTime = now;
+    this.suppressedCount = 0;
+  }
+}
+
 export class DashboardDO implements DurableObject {
   private state: DurableObjectState;
   private sessions: Map<WebSocket, WebSocketAttachment> = new Map();
@@ -30,6 +54,8 @@ export class DashboardDO implements DurableObject {
   private terminalSessions: Map<string, Session> = new Map();
   private edges: Map<string, DashboardEdge> = new Map();
   private initPromise: Promise<void>;
+  // Rate-limited logger for WebSocket parse errors
+  private parseErrorLogger = new RatеLimitedLogger(5000);
 
   constructor(state: DurableObjectState) {
     this.state = state;
@@ -232,8 +258,14 @@ export class DashboardDO implements DurableObject {
           break;
         }
       }
-    } catch {
-      // Ignore invalid messages
+    } catch (error) {
+      // Log parse failures with rate limiting to prevent log spam from misbehaving clients
+      const preview = typeof message === 'string' ? message.substring(0, 100) : '[non-string]';
+      this.parseErrorLogger.warn(
+        'E79801',
+        'Failed to parse WebSocket collaboration message',
+        preview
+      );
     }
   }
 
