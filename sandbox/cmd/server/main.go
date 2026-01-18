@@ -93,9 +93,11 @@ type Server struct {
 	wsRouter *ws.Router
 	auth     *auth.Middleware
 	machine  string
-	driveMirror   *drive.Mirror
-	driveSyncMu   sync.Mutex
-	driveSyncActive map[string]bool
+	driveMirror       *drive.Mirror
+	driveSyncMu       sync.Mutex
+	driveSyncActive   map[string]bool
+	mirrorSyncMu      sync.Mutex
+	mirrorSyncActive  map[string]bool
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -108,8 +110,9 @@ func NewServer(sm *sessions.Manager) *Server {
 		wsRouter: ws.NewRouter(sm),
 		auth:     authMiddleware,
 		machine:  sandbоxMachineID(),
-		driveMirror:   drive.NewMirrorFromEnv(),
-		driveSyncActive: make(map[string]bool),
+		driveMirror:      drive.NewMirrorFromEnv(),
+		driveSyncActive:  make(map[string]bool),
+		mirrorSyncActive: make(map[string]bool),
 	}
 }
 
@@ -135,6 +138,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleListPTYs)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
+
+	// Mirror sync
+	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrorSync)))
 
 	// WebSocket for PTYs - auth checked via token, origin validated by upgrader
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleWebSocket)))

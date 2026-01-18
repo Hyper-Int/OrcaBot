@@ -44,6 +44,10 @@ function driveManifestKey(dashboardId: string): string {
   return `drive/${dashboardId}/manifest.json`;
 }
 
+function mirrorManifestKey(provider: string, dashboardId: string): string {
+  return `mirror/${provider}/${dashboardId}/manifest.json`;
+}
+
 async function triggerDriveMirrorSync(
   env: Env,
   dashboardId: string,
@@ -80,6 +84,40 @@ async function triggerDriveMirrorSync(
     body: JSON.stringify({
       dashboard_id: dashboardId,
       folder_name: mirror.folder_name,
+    }),
+  });
+}
+
+async function triggerMirrorSync(
+  env: Env,
+  provider: 'github' | 'box' | 'onedrive',
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string,
+  folderName: string
+) {
+  const manifest = await env.DRIVE_CACHE.head(mirrorManifestKey(provider, dashboardId));
+  if (!manifest) {
+    return;
+  }
+
+  await env.DB.prepare(`
+    UPDATE ${provider}_mirrors
+    SET status = 'syncing_workspace', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/mirror/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
+      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
+    },
+    body: JSON.stringify({
+      provider,
+      dashboard_id: dashboardId,
+      folder_name: folderName,
     }),
   });
 }
@@ -213,6 +251,63 @@ export async function createSessiоn(
       await triggerDriveMirrorSync(env, dashboardId, sandboxSessionId, sandboxMachineId);
     } catch {
       // Best-effort drive hydration.
+    }
+
+    try {
+      const githubMirror = await env.DB.prepare(`
+        SELECT repo_owner, repo_name FROM github_mirrors
+        WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ repo_owner: string; repo_name: string }>();
+      if (githubMirror) {
+        await triggerMirrorSync(
+          env,
+          'github',
+          dashboardId,
+          sandboxSessionId,
+          sandboxMachineId,
+          `${githubMirror.repo_owner}/${githubMirror.repo_name}`
+        );
+      }
+    } catch {
+      // Best-effort github hydration.
+    }
+
+    try {
+      const boxMirror = await env.DB.prepare(`
+        SELECT folder_name FROM box_mirrors
+        WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ folder_name: string }>();
+      if (boxMirror) {
+        await triggerMirrorSync(
+          env,
+          'box',
+          dashboardId,
+          sandboxSessionId,
+          sandboxMachineId,
+          boxMirror.folder_name
+        );
+      }
+    } catch {
+      // Best-effort box hydration.
+    }
+
+    try {
+      const onedriveMirror = await env.DB.prepare(`
+        SELECT folder_name FROM onedrive_mirrors
+        WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ folder_name: string }>();
+      if (onedriveMirror) {
+        await triggerMirrorSync(
+          env,
+          'onedrive',
+          dashboardId,
+          sandboxSessionId,
+          sandboxMachineId,
+          onedriveMirror.folder_name
+        );
+      }
+    } catch {
+      // Best-effort onedrive hydration.
     }
 
     return Response.json({ session }, { status: 201 });
