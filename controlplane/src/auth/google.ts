@@ -28,6 +28,34 @@ function getAllowedRedirects(env: Env): Set<string> | null {
   );
 }
 
+function parseAllowList(value?: string): Set<string> | null {
+  if (!value) {
+    return null;
+  }
+  const entries = value
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.length > 0 ? new Set(entries) : null;
+}
+
+function isAllowedEmail(env: Env, email: string): boolean {
+  const allowEmails = parseAllowList(env.AUTH_ALLOWED_EMAILS);
+  const allowDomains = parseAllowList(env.AUTH_ALLOWED_DOMAINS);
+
+  if (!allowEmails && !allowDomains) {
+    return true;
+  }
+
+  const normalized = email.trim().toLowerCase();
+  if (allowEmails?.has(normalized)) {
+    return true;
+  }
+
+  const domain = normalized.split('@')[1] || '';
+  return Boolean(domain && allowDomains?.has(domain));
+}
+
 function resolvePostLoginRedirect(request: Request, env: Env): string {
   const url = new URL(request.url);
   const redirectParam = url.searchParams.get('redirect');
@@ -236,6 +264,10 @@ export async function callbackGoogle(
 
   if (userInfo.email_verified !== true) {
     return renderErrorPage('Google account email is not verified.');
+  }
+
+  if (!isAllowedEmail(env, userInfo.email)) {
+    return renderErrorPage('This Google account is not allowed to sign in.');
   }
 
   const userId = await findOrCreateUser(env, userInfo);
