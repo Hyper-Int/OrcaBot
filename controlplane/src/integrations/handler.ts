@@ -91,6 +91,139 @@ function renderSuccessPage(providerLabel: string): Response {
   );
 }
 
+function renderDrivePickerPage(accessToken: string, apiKey: string): Response {
+  const tokenJson = JSON.stringify(accessToken);
+  const apiKeyJson = JSON.stringify(apiKey);
+  return new Response(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Google Drive connected</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 32px; }
+      .card { max-width: 520px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 0 0 16px; color: #4b5563; }
+      button { padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #111827; color: #fff; cursor: pointer; }
+      .status { font-size: 12px; margin-top: 12px; color: #6b7280; }
+    </style>
+    <script src="https://apis.google.com/js/api.js"></script>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Google Drive connected</h1>
+      <p>Select a Drive folder to link to OrcaBot.</p>
+      <button id="picker-button" type="button">Select Drive folder</button>
+      <div class="status" id="status">Waiting for selection...</div>
+    </div>
+    <script>
+      const accessToken = ${tokenJson};
+      const apiKey = ${apiKeyJson};
+      const statusEl = document.getElementById('status');
+      const buttonEl = document.getElementById('picker-button');
+      let pickerLoaded = false;
+
+      function setStatus(message) {
+        if (statusEl) statusEl.textContent = message;
+      }
+
+      function onPickerReady() {
+        pickerLoaded = true;
+        openPicker();
+      }
+
+      function openPicker() {
+        if (!pickerLoaded) return;
+        const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+          .setIncludeFolders(true)
+          .setSelectFolderEnabled(true);
+        const picker = new google.picker.PickerBuilder()
+          .addView(view)
+          .setOAuthToken(accessToken)
+          .setDeveloperKey(apiKey)
+          .setOrigin(window.location.origin)
+          .setCallback(pickerCallback)
+          .build();
+        picker.setVisible(true);
+      }
+
+      function pickerCallback(data) {
+        if (data.action !== google.picker.Action.PICKED) {
+          if (data.action === google.picker.Action.CANCEL) {
+            setStatus('Folder selection canceled.');
+          }
+          return;
+        }
+
+        const doc = data.docs && data.docs[0];
+        if (!doc) {
+          setStatus('No folder selected.');
+          return;
+        }
+
+        const payload = {
+          folderId: doc.id,
+          folderName: doc.name || doc.title || 'Untitled folder',
+        };
+
+        setStatus('Saving folder selection...');
+        fetch('/integrations/google/drive/folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(payload),
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              const errorText = await response.text();
+              throw new Error(errorText || 'Failed to save selection.');
+            }
+            return response.json();
+          })
+          .then(() => {
+            setStatus('Folder linked. You can close this tab and return to OrcaBot.');
+          })
+          .catch((error) => {
+            setStatus(error.message || 'Failed to save selection.');
+          });
+      }
+
+      function onApiLoad() {
+        if (!window.gapi || !window.gapi.load) {
+          setStatus('Failed to load Google Picker API.');
+          return;
+        }
+        window.gapi.load('picker', { callback: onPickerReady });
+      }
+
+      if (window.gapi && window.gapi.load) {
+        onApiLoad();
+      } else {
+        window.addEventListener('load', onApiLoad);
+      }
+
+      if (buttonEl) {
+        buttonEl.addEventListener('click', () => {
+          if (!pickerLoaded) {
+            setStatus('Loading Google Picker...');
+            return;
+          }
+          openPicker();
+        });
+      }
+    </script>
+  </body>
+</html>`,
+    {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      },
+    }
+  );
+}
+
 function renderErrorPage(message: string): Response {
   const safeMessage = escapeHtml(message);
   return new Response(
@@ -231,7 +364,55 @@ export async function callbackGооgleDrive(
     metadata
   ).run();
 
-  return renderSuccessPage('Google Drive');
+  if (!env.GOOGLE_API_KEY) {
+    return renderErrorPage('Google API key is not configured.');
+  }
+
+  return renderDrivePickerPage(tokenData.access_token, env.GOOGLE_API_KEY);
+}
+
+export async function setGoogleDriveFolder(
+  request: Request,
+  env: Env,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { folderId?: string; folderName?: string };
+  if (!data.folderId) {
+    return Response.json({ error: 'E79821: folderId is required' }, { status: 400 });
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_drive'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!record) {
+    return Response.json({ error: 'E79822: Google Drive not connected' }, { status: 404 });
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(record.metadata || '{}') as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+
+  metadata.drive_folder = {
+    id: data.folderId,
+    name: data.folderName || '',
+    linked_at: new Date().toISOString(),
+  };
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET metadata = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'google_drive'
+  `).bind(JSON.stringify(metadata), auth.user!.id).run();
+
+  return Response.json({ ok: true });
 }
 
 export async function cоnnectGithub(
