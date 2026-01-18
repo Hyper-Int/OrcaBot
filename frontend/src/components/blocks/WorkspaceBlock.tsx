@@ -8,18 +8,25 @@ import { type NodeProps, type Node } from "@xyflow/react";
 import { Folder, Cloud, Github, Box, HardDrive } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
-import { Button } from "@/components/ui";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   listSessionFiles,
   deleteSessionFile,
   getGoogleDriveIntegration,
   getGoogleDriveSyncStatus,
+  getGoogleDriveManifest,
   syncGoogleDrive,
-  syncGoogleDriveLargeFiles,
   unlinkGoogleDriveFolder,
   type GoogleDriveIntegration,
   type GoogleDriveSyncStatus,
+  type GoogleDriveManifest,
 } from "@/lib/api/cloudflare";
 import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { useAuthStore } from "@/stores/auth-store";
@@ -49,6 +56,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [drivePickerOpen, setDrivePickerOpen] = React.useState(false);
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const apiOrigin = React.useMemo(() => new URL(API.cloudflare.base).origin, []);
+  const allowDelete = Boolean(sessionId);
 
   const openIntegration = React.useCallback(
     (provider: IntegrationProvider) => {
@@ -113,6 +121,65 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     [sessionId]
   );
 
+  const buildDrivePreviewEntries = React.useCallback((manifest: GoogleDriveManifest) => {
+    const entryMap: Record<string, SessionFileEntry[]> = {};
+    const addEntry = (parent: string, entry: SessionFileEntry) => {
+      entryMap[parent] = entryMap[parent] ?? [];
+      entryMap[parent].push(entry);
+    };
+    const ensureDir = (dirPath: string) => {
+      if (dirPath === "/") return;
+      const parent = dirPath.split("/").slice(0, -1).join("/") || "/";
+      const name = dirPath.split("/").slice(-1)[0];
+      if (!entryMap[parent]?.some((entry) => entry.is_dir && entry.name === name)) {
+        addEntry(parent, {
+          name,
+          path: dirPath,
+          size: 0,
+          is_dir: true,
+          mod_time: "",
+          mode: "",
+        });
+      }
+    };
+
+    const basePath = `/${manifest.folderPath}`;
+    const baseParts = basePath.split("/").filter(Boolean);
+    let currentPath = "";
+    for (const part of baseParts) {
+      currentPath = `${currentPath}/${part}`;
+      ensureDir(currentPath);
+    }
+
+    manifest.directories.forEach((dir) => {
+      const fullPath = dir ? `${basePath}/${dir}` : basePath;
+      ensureDir(fullPath);
+    });
+
+    manifest.entries.forEach((entry) => {
+      const fullPath = entry.path ? `${basePath}/${entry.path}` : basePath;
+      const parent = fullPath.split("/").slice(0, -1).join("/") || "/";
+      addEntry(parent, {
+        name: entry.name,
+        path: fullPath,
+        size: entry.size,
+        is_dir: false,
+        mod_time: entry.modifiedTime ?? "",
+        mode: "",
+      });
+    });
+
+    Object.keys(entryMap).forEach((key) => {
+      entryMap[key].sort((a, b) => {
+        if (a.is_dir && !b.is_dir) return -1;
+        if (!a.is_dir && b.is_dir) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    });
+
+    return entryMap;
+  }, []);
+
   React.useEffect(() => {
     setExpandedPaths(new Set(["/"]));
     setFileEntries({});
@@ -121,6 +188,30 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       loadFiles("/");
     }
   }, [sessionId, loadFiles]);
+
+  React.useEffect(() => {
+    if (sessionId || !driveIntegration?.connected || !data.dashboardId) {
+      return;
+    }
+    let isActive = true;
+    getGoogleDriveManifest(data.dashboardId)
+      .then((manifestResponse) => {
+        if (!isActive) return;
+        if (!manifestResponse.manifest) {
+          setFileEntries({});
+          return;
+        }
+        setFileError(null);
+        setFileEntries(buildDrivePreviewEntries(manifestResponse.manifest));
+      })
+      .catch((error) => {
+        if (!isActive) return;
+        setFileError(error instanceof Error ? error.message : "Failed to load Drive preview");
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [buildDrivePreviewEntries, data.dashboardId, driveIntegration?.connected, sessionId]);
 
   const loadDriveIntegration = React.useCallback(async () => {
     if (!user) return;
@@ -200,39 +291,6 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     return () => clearInterval(interval);
   }, [driveSyncing, loadDriveStatus]);
 
-  const handleSyncDrive = React.useCallback(async () => {
-    if (!data.dashboardId) return;
-    setDriveSyncing(true);
-    void loadDriveStatus();
-    void syncGoogleDrive(data.dashboardId)
-      .then(() => loadDriveStatus())
-      .catch((error) => {
-        setFileError(error instanceof Error ? error.message : "Failed to sync Drive");
-        void loadDriveStatus();
-      });
-  }, [data.dashboardId, loadDriveStatus]);
-
-  const handleSyncLargeFiles = React.useCallback(async () => {
-    if (!data.dashboardId || !driveStatus?.largeFiles?.length) return;
-    const totalBytes = driveStatus.largeFiles.reduce((sum, file) => sum + (file.size || 0), 0);
-    const totalMb = Math.round(totalBytes / (1024 * 1024));
-    const ok = window.confirm(
-      `This will sync ${driveStatus.largeFiles.length} large file(s) (~${totalMb} MB). Continue?`
-    );
-    if (!ok) return;
-    setDriveSyncing(true);
-    void loadDriveStatus();
-    void syncGoogleDriveLargeFiles(
-      data.dashboardId,
-      driveStatus.largeFiles.map((file) => file.id)
-    )
-      .then(() => loadDriveStatus())
-      .catch((error) => {
-        setFileError(error instanceof Error ? error.message : "Failed to sync large files");
-        void loadDriveStatus();
-      });
-  }, [data.dashboardId, driveStatus, loadDriveStatus]);
-
   const handleUnlinkDrive = React.useCallback(async () => {
     if (!data.dashboardId) return;
     const ok = window.confirm("Unlink this Drive folder from the dashboard?");
@@ -287,7 +345,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 )}
                 <span className="truncate text-[var(--foreground)]">{entry.name}</span>
               </div>
-              {!isDir && (
+              {!isDir && allowDelete && (
                 <button
                   type="button"
                   onClick={() => handleDeletePath(entry.path, path)}
@@ -304,7 +362,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
         );
       });
     },
-    [expandedPaths, fileEntries, handleDeletePath, togglePath]
+    [allowDelete, expandedPaths, fileEntries, handleDeletePath, togglePath]
   );
 
   React.useEffect(() => {
@@ -319,14 +377,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const rootEntries = fileEntries["/"] || [];
   const showFiles = rootEntries.length > 0;
-
-  const driveCacheProgress = driveStatus?.totalBytes
-    ? Math.min(100, Math.round(((driveStatus.cacheSyncedBytes || 0) / driveStatus.totalBytes) * 100))
-    : 0;
-  const driveWorkspaceProgress = driveStatus?.totalBytes
-    ? Math.min(100, Math.round(((driveStatus.workspaceSyncedBytes || 0) / driveStatus.totalBytes) * 100))
-    : 0;
-  const driveFolderLabel = driveStatus?.folder?.name || driveIntegration?.folder?.name || null;
+  const isDriveLinked = Boolean(driveIntegration?.connected && driveIntegration?.folder);
   const drivePickerUrl = React.useMemo(() => {
     const url = new URL(`${API.cloudflare.base}/integrations/google/drive/picker`);
     if (data.dashboardId) {
@@ -361,108 +412,76 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
         <div className="flex-1 min-h-0 border-r border-[var(--border)] bg-white text-[var(--foreground)] dark:bg-[var(--background)]">
           {(driveIntegration?.connected || sessionId) ? (
             <div className="h-full overflow-auto">
-              {driveIntegration?.connected && (
-                <div className="px-2 py-2 border-b border-[var(--border)]">
-                  <div className="flex items-center justify-between gap-2 text-[10px] text-[var(--foreground-muted)]">
-                    <span className="truncate" title={driveFolderLabel || "Drive linked"}>
-                      Drive: {driveFolderLabel || "Not linked"}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {driveStatus?.connected && (
-                        <button
-                          type="button"
-                          onClick={handleUnlinkDrive}
-                          className="text-[10px] text-[var(--status-error)] hover:underline nodrag"
-                        >
-                          Unlink
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => openIntegration("google-drive")}
-                        className="text-[10px] text-[var(--accent-primary)] hover:underline nodrag"
-                      >
-                        Change
-                      </button>
-                    </div>
-                  </div>
-                  {driveStatus?.connected && (
-                    <div className="mt-2 space-y-1 text-[10px] text-[var(--foreground-muted)]">
-                      <div className="flex items-center justify-between">
-                        <span>Status: {driveStatus.status || "idle"}</span>
-                        <button
-                          type="button"
-                          onClick={handleSyncDrive}
-                          className="text-[10px] text-[var(--accent-primary)] hover:underline nodrag"
-                        >
-                          Sync
-                        </button>
-                      </div>
-                      <div className="h-1.5 bg-[var(--background-elevated)] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-[var(--accent-primary)]"
-                          style={{ width: `${driveCacheProgress}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span>Cache: {driveCacheProgress}%</span>
-                        <span>Workspace: {driveWorkspaceProgress}%</span>
-                      </div>
-                      {driveStatus.largeFiles && driveStatus.largeFiles.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleSyncLargeFiles}
-                          className="text-[10px] text-[var(--status-warning)] hover:underline nodrag"
-                        >
-                          Sync {driveStatus.largeFiles.length} large file(s)
-                        </button>
-                      )}
-                      {driveStatus.syncError && (
-                        <div className="text-[10px] text-[var(--status-error)]">
-                          {driveStatus.syncError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!driveStatus?.connected && (
-                    <div className="mt-2 text-[10px] text-[var(--foreground-muted)]">
-                      Choose a folder to link this dashboard.
-                    </div>
-                  )}
-                </div>
-              )}
               {fileError && (
                 <div className="px-2 py-1 text-[10px] text-[var(--status-error)]">
                   {fileError}
                 </div>
               )}
-              {sessionId && showFiles ? (
-                renderFileTree("/", 0)
+              {showFiles ? (
+                <div>
+                  {renderFileTree("/", 0)}
+                  {!sessionId && (
+                    <div className="px-2 py-2 text-[10px] text-[var(--foreground-muted)]">
+                      Start a terminal to make edits.
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="px-2 py-2 text-[10px] text-[var(--foreground-muted)]">
-                  {sessionId ? "Files will appear here." : "Start a terminal to load."}
+                  {sessionId ? "Files will appear here." : "Start a terminal to make edits."}
                 </div>
               )}
             </div>
           ) : (
             <div className="h-full flex items-center justify-center text-[10px] text-[var(--foreground-muted)] px-3 text-center">
-              {sessionId ? "Files will appear here." : "Start a terminal to load."}
+              {sessionId ? "Files will appear here." : "Start a terminal to make edits."}
             </div>
           )}
         </div>
         <div className="w-36 bg-[var(--background)] px-2 py-2">
           <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => openIntegration("google-drive")}
-              disabled={!user}
-              className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
-              title="Connect Google Drive"
-            >
-              <Cloud className="w-4 h-4" />
-              <span>Drive</span>
-            </Button>
+            {isDriveLinked ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!user}
+                    className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
+                    title="Manage Google Drive"
+                  >
+                    <Cloud className="w-4 h-4" />
+                    <span>Drive</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-44">
+                  <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+                    Drive: {driveIntegration?.folder?.name ?? "Linked"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => openIntegration("google-drive")}>
+                    Change folder
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleUnlinkDrive}
+                    className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                  >
+                    Unlink
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => openIntegration("google-drive")}
+                disabled={!user}
+                className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
+                title="Connect Google Drive"
+              >
+                <Cloud className="w-4 h-4" />
+                <span>Drive</span>
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="sm"

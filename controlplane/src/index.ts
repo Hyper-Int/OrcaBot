@@ -588,6 +588,11 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return integrations.getGoogleDriveSyncStatus(request, env, auth);
   }
 
+  // GET /integrations/google/drive/manifest
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'manifest' && method === 'GET') {
+    return integrations.getGoogleDriveManifest(request, env, auth);
+  }
+
   // POST /integrations/google/drive/sync
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'sync' && segments.length === 4 && method === 'POST') {
     return integrations.syncGoogleDriveMirror(request, env, auth);

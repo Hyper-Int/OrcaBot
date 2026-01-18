@@ -1369,6 +1369,55 @@ export async function getDriveManifestInternal(
   });
 }
 
+export async function getGoogleDriveManifest(
+  request: Request,
+  env: Env,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'E79838: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor', 'viewer')
+  `).bind(dashboardId, auth.user!.id).first();
+
+  if (!access) {
+    return Response.json({ error: 'E79839: Not found or no access' }, { status: 404 });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT folder_id, folder_name FROM drive_mirrors
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ folder_id: string; folder_name: string }>();
+
+  if (!mirror) {
+    return Response.json({ connected: false });
+  }
+
+  const manifestObject = await env.DRIVE_CACHE.get(driveManifestKey(dashboardId));
+  if (!manifestObject) {
+    return Response.json({
+      connected: true,
+      folder: { id: mirror.folder_id, name: mirror.folder_name },
+      manifest: null,
+    });
+  }
+
+  const manifest = await manifestObject.json<DriveManifest>();
+  return Response.json({
+    connected: true,
+    folder: { id: mirror.folder_id, name: mirror.folder_name },
+    manifest,
+  });
+}
+
 export async function getDriveFileInternal(
   request: Request,
   env: Env

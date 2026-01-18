@@ -231,6 +231,28 @@ export function TerminalBlock({
   const [session, setSession] = React.useState<Session | null>(
     data.session || null
   );
+  const upsertDashboardSession = React.useCallback(
+    (nextSession: Session) => {
+      if (!data.dashboardId) return;
+      queryClient.setQueryData(
+        ["dashboard", data.dashboardId],
+        (oldData:
+          | { sessions: Session[]; [key: string]: unknown }
+          | undefined) => {
+          if (!oldData) return oldData;
+          const sessions = Array.isArray(oldData.sessions) ? oldData.sessions : [];
+          const hasSession = sessions.some((entry) => entry.id === nextSession.id);
+          return {
+            ...oldData,
+            sessions: hasSession
+              ? sessions.map((entry) => (entry.id === nextSession.id ? nextSession : entry))
+              : [...sessions, nextSession],
+          };
+        }
+      );
+    },
+    [data.dashboardId, queryClient]
+  );
   const autoControlRequestedRef = React.useRef(false);
 
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
@@ -732,6 +754,7 @@ export function TerminalBlock({
       const newSession = await createSession(data.dashboardId, id);
       console.log(`[TerminalBlock] Session created:`, newSession);
       setSession(newSession);
+      upsertDashboardSession(newSession);
 
       // Clear terminal and show connecting message
       if (isReady) {
@@ -790,6 +813,7 @@ export function TerminalBlock({
       const newSession = await createSession(data.dashboardId, id);
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
+      upsertDashboardSession(newSession);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Failed to create session";
       setSessionError(errorMsg);
@@ -799,7 +823,7 @@ export function TerminalBlock({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [data.dashboardId, isReady, session, id, stopSession]);
+  }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {

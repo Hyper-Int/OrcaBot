@@ -37,6 +37,29 @@ export interface GoogleDriveSyncStatus {
   syncError?: string | null;
 }
 
+export interface GoogleDriveManifest {
+  version: number;
+  folderId: string;
+  folderName: string;
+  folderPath: string;
+  updatedAt: string;
+  directories: string[];
+  entries: Array<{
+    id: string;
+    name: string;
+    path: string;
+    mimeType: string;
+    size: number;
+    modifiedTime: string | null;
+  }>;
+}
+
+export interface GoogleDriveManifestResponse {
+  connected: boolean;
+  folder?: GoogleDriveFolder | null;
+  manifest?: GoogleDriveManifest | null;
+}
+
 export async function getGoogleDriveIntegration(
   dashboardId?: string
 ): Promise<GoogleDriveIntegration> {
@@ -61,6 +84,14 @@ export async function getGoogleDriveSyncStatus(
   const url = new URL(API.cloudflare.googleDriveStatus);
   url.searchParams.set("dashboard_id", dashboardId);
   return apiGet<GoogleDriveSyncStatus>(url.toString());
+}
+
+export async function getGoogleDriveManifest(
+  dashboardId: string
+): Promise<GoogleDriveManifestResponse> {
+  const url = new URL(API.cloudflare.googleDriveManifest);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<GoogleDriveManifestResponse>(url.toString());
 }
 
 export async function syncGoogleDrive(dashboardId: string): Promise<{ ok: boolean }> {

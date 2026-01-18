@@ -44,6 +44,7 @@ export const API = {
     googleDriveIntegration: `${CLOUDFLARE_API_URL}/integrations/google/drive`,
     googleDriveFolder: `${CLOUDFLARE_API_URL}/integrations/google/drive/folder`,
     googleDriveStatus: `${CLOUDFLARE_API_URL}/integrations/google/drive/status`,
+    googleDriveManifest: `${CLOUDFLARE_API_URL}/integrations/google/drive/manifest`,
     googleDriveSync: `${CLOUDFLARE_API_URL}/integrations/google/drive/sync`,
     googleDriveSyncLarge: `${CLOUDFLARE_API_URL}/integrations/google/drive/sync/large`,
     ws: (dashboardId: string) =>
