@@ -48,4 +48,35 @@ describe('Google OAuth', () => {
     const usersTable = ctx.db._tables.get('users') || [];
     expect(usersTable.length).toBe(0);
   });
+
+  it('rejects Google emails not on the allowlist', async () => {
+    ctx.env.AUTH_ALLOWED_EMAILS = 'allowed@example.com';
+
+    await ctx.db.prepare(`
+      INSERT INTO auth_states (state, redirect_url)
+      VALUES (?, ?)
+    `).bind('state-2', 'https://orcabot.com/').run();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ access_token: 'token' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ sub: 'sub-2', email: 'blocked@example.com', email_verified: true }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      ));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const request = new Request('http://localhost/auth/google/callback?code=code-2&state=state-2');
+    const response = await callbackGoogle(request, ctx.env);
+
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('not allowed');
+
+    const usersTable = ctx.db._tables.get('users') || [];
+    expect(usersTable.length).toBe(0);
+  });
 });

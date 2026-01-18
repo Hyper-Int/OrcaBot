@@ -14,7 +14,7 @@ compatibility_date = "2024-01-01"
 
 # Custom domain - serves the worker at api.orcabot.com
 routes = [
-  { pattern = "api.orcabot.com", custom_domain = true }
+  { pattern = "api.orcabot.com", custom_domain = true, zone_name = "orcabot.com" }
 ]
 
 [vars]
@@ -24,8 +24,6 @@ DEV_AUTH_ENABLED = "false"
 # SANDBOX_URL is set via wrangler secret (not exposed in config)
 
 # Cloudflare Access configuration (set these for your team)
-CF_ACCESS_TEAM_DOMAIN = "orcabot"
-CF_ACCESS_AUD = "08425b491a830f9bd30d6ef7f92e7b3d1d64490cabd1e5502dcb70f6adbec5e2"
 
 # CORS - Only allow your production frontend
 ALLOWED_ORIGINS = "https://orcabot.com"
