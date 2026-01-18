@@ -10,6 +10,7 @@ export interface RateLimiter {
 export interface Env {
   DB: D1Database;
   DASHBOARD: DurableObjectNamespace;
+  DRIVE_CACHE: R2Bucket;
   SANDBOX_URL: string;
   /** Rate limiter for unauthenticated requests (10/min) */
   RATE_LIMITER: RateLimiter;

@@ -40,6 +40,50 @@ async function getDashbоardSandbоx(env: Env, dashboardId: string) {
   }>();
 }
 
+function driveManifestKey(dashboardId: string): string {
+  return `drive/${dashboardId}/manifest.json`;
+}
+
+async function triggerDriveMirrorSync(
+  env: Env,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string
+) {
+  const mirror = await env.DB.prepare(`
+    SELECT folder_name FROM drive_mirrors
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ folder_name: string }>();
+
+  if (!mirror) {
+    return;
+  }
+
+  const manifest = await env.DRIVE_CACHE.head(driveManifestKey(dashboardId));
+  if (!manifest) {
+    return;
+  }
+
+  await env.DB.prepare(`
+    UPDATE drive_mirrors
+    SET status = 'syncing_workspace', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/drive/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
+      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
+    },
+    body: JSON.stringify({
+      dashboard_id: dashboardId,
+      folder_name: mirror.folder_name,
+    }),
+  });
+}
+
 // Create a session for a terminal item
 export async function createSessiоn(
   env: Env,
@@ -164,6 +208,12 @@ export async function createSessiоn(
       method: 'PUT',
       body: JSON.stringify(session),
     }));
+
+    try {
+      await triggerDriveMirrorSync(env, dashboardId, sandboxSessionId, sandboxMachineId);
+    } catch {
+      // Best-effort drive hydration.
+    }
 
     return Response.json({ session }, { status: 201 });
   } catch (error) {

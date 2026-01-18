@@ -12,11 +12,13 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
@@ -91,6 +93,9 @@ type Server struct {
 	wsRouter *ws.Router
 	auth     *auth.Middleware
 	machine  string
+	driveMirror   *drive.Mirror
+	driveSyncMu   sync.Mutex
+	driveSyncActive map[string]bool
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -103,6 +108,8 @@ func NewServer(sm *sessions.Manager) *Server {
 		wsRouter: ws.NewRouter(sm),
 		auth:     authMiddleware,
 		machine:  sandbоxMachineID(),
+		driveMirror:   drive.NewMirrorFromEnv(),
+		driveSyncActive: make(map[string]bool),
 	}
 }
 
@@ -146,6 +153,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handlePutFile)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeleteFile)))
 	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.requireMachine(s.handleStatFile)))
+	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleDriveSync)))
 
 	return mux
 }

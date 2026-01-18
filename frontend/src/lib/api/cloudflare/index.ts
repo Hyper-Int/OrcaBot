@@ -9,3 +9,4 @@ export * from "./files";
 export * from "./secrets";
 export * from "./agent-skills";
 export * from "./mcp-tools";
+export * from "./integrations";

@@ -8,7 +8,7 @@
  * Routes requests to appropriate handlers.
  */
 
-import type { Env, DashboardItem, RecipeStep } from './types';
+import type { Env, DashboardItem, RecipeStep, Session } from './types';
 import { authenticate, requireAuth, requireInternalAuth } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
@@ -563,9 +563,39 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return integrations.callbackGооgleDrive(request, env);
   }
 
+  // GET /integrations/google/drive
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments.length === 3 && method === 'GET') {
+    return integrations.getGoogleDriveIntegration(request, env, auth);
+  }
+
+  // GET /integrations/google/drive/picker
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'picker' && method === 'GET') {
+    return integrations.renderGoogleDrivePicker(request, env, auth);
+  }
+
   // POST /integrations/google/drive/folder
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'folder' && method === 'POST') {
     return integrations.setGoogleDriveFolder(request, env, auth);
+  }
+
+  // DELETE /integrations/google/drive/folder
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'folder' && method === 'DELETE') {
+    return integrations.unlinkGoogleDriveFolder(request, env, auth);
+  }
+
+  // GET /integrations/google/drive/status
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'status' && method === 'GET') {
+    return integrations.getGoogleDriveSyncStatus(request, env, auth);
+  }
+
+  // POST /integrations/google/drive/sync
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'sync' && segments.length === 4 && method === 'POST') {
+    return integrations.syncGoogleDriveMirror(request, env, auth);
+  }
+
+  // POST /integrations/google/drive/sync/large
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'sync' && segments[4] === 'large' && method === 'POST') {
+    return integrations.syncGoogleDriveLargeFiles(request, env, auth);
   }
 
   // GET /integrations/github/connect
@@ -749,7 +779,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       ? auth.user!.id
       : '';
 
-    return prоxySandbоxWebSоcket(
+    const proxyResponse = await prоxySandbоxWebSоcket(
       request,
       env,
       session.sandbox_session_id as string,
@@ -757,6 +787,39 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       proxyUserId,
       session.sandbox_machine_id as string
     );
+
+    if (proxyResponse.status === 404 && session.status !== 'stopped') {
+      const now = new Date().toISOString();
+      await env.DB.prepare(`
+        UPDATE sessions SET status = 'stopped', stopped_at = ? WHERE id = ?
+      `).bind(now, session.id).run();
+
+      const updatedSession: Session = {
+        id: session.id as string,
+        dashboardId: session.dashboard_id as string,
+        itemId: session.item_id as string,
+        ownerUserId: session.owner_user_id as string,
+        ownerName: session.owner_name as string,
+        sandboxSessionId: session.sandbox_session_id as string,
+        sandboxMachineId: session.sandbox_machine_id as string,
+        ptyId: session.pty_id as string,
+        status: 'stopped',
+        region: session.region as string,
+        createdAt: session.created_at as string,
+        stoppedAt: now,
+      };
+
+      const doId = env.DASHBOARD.idFromName(session.dashboard_id as string);
+      const stub = env.DASHBOARD.get(doId);
+      await stub.fetch(new Request('http://do/session', {
+        method: 'PUT',
+        body: JSON.stringify(updatedSession),
+      }));
+
+      return Response.json({ error: 'E79740: PTY not found (session expired)' }, { status: 410 });
+    }
+
+    return proxyResponse;
   }
 
   // ============================================
@@ -861,6 +924,27 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       content: string;
     };
     return recipes.addArtifact(env, segments[2], data);
+  }
+
+  // GET /internal/drive/manifest
+  if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'manifest' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return integrations.getDriveManifestInternal(request, env);
+  }
+
+  // GET /internal/drive/file
+  if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'file' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return integrations.getDriveFileInternal(request, env);
+  }
+
+  // POST /internal/drive/sync/progress
+  if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'sync' && segments[3] === 'progress' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return integrations.updateDriveSyncProgressInternal(request, env);
   }
 
   // ============================================

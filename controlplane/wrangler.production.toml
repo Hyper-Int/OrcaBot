@@ -62,6 +62,10 @@ binding = "DB"
 database_name = "orcabot-db-production"
 database_id = "93828ba8-1160-49ec-8d82-6c1bc52800a1"
 
+[[r2_buckets]]
+binding = "DRIVE_CACHE"
+bucket_name = "orcabot-drive-cache"
+
 # Cron triggers for background tasks
 [triggers]
 crons = ["* * * * *"]  # Every minute: health checks + schedule processing

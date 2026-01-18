@@ -607,12 +607,16 @@ export function TerminalBlock({
             foreground: "#e6e6e6",
             cursor: "#e6e6e6",
             selection: "rgba(255,255,255,0.2)",
+            selectionBackground: "rgba(255,255,255,0.2)",
+            selectionInactiveBackground: "rgba(255,255,255,0.12)",
           }
         : {
             background: "#ffffff",
             foreground: "#0f172a",
             cursor: "#0f172a",
             selection: "rgba(15,23,42,0.2)",
+            selectionBackground: "rgba(15,23,42,0.2)",
+            selectionInactiveBackground: "rgba(15,23,42,0.12)",
           },
     [theme]
   );
@@ -753,7 +757,7 @@ export function TerminalBlock({
   }, [deleteElements, id]);
 
   // Reopen terminal - stops old session and creates new one
-  const handleReopen = async () => {
+  const handleReopen = React.useCallback(async () => {
     if (!data.dashboardId) {
       setSessionError("Dashboard ID not found");
       return;
@@ -795,7 +799,7 @@ export function TerminalBlock({
     } finally {
       setIsCreatingSession(false);
     }
-  };
+  }, [data.dashboardId, isReady, session, id, stopSession]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {
@@ -817,6 +821,39 @@ export function TerminalBlock({
       // Control is requested separately once connected.
     }
   }, [isConnected, session, isReady]);
+
+  const autoReopenAttemptedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isConnected) {
+      autoReopenAttemptedRef.current = false;
+    }
+  }, [isConnected, session?.id]);
+
+  React.useEffect(() => {
+    if (!session || !isOwner) {
+      return;
+    }
+    if (!isFailed && !isDisconnected && !ptyClosed) {
+      return;
+    }
+    if (session.status !== "stopped") {
+      return;
+    }
+    if (isCreatingSession || autoReopenAttemptedRef.current) {
+      return;
+    }
+    autoReopenAttemptedRef.current = true;
+    terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
+    void handleReopen();
+  }, [
+    session,
+    isOwner,
+    isFailed,
+    isDisconnected,
+    ptyClosed,
+    isCreatingSession,
+    handleReopen,
+  ]);
 
   React.useEffect(() => {
     if (!isConnected) {
