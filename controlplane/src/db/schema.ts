@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   state TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -182,6 +183,29 @@ CREATE TABLE IF NOT EXISTS user_integrations (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider
   ON user_integrations(user_id, provider);
+
+-- Drive mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS drive_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  folder_id TEXT NOT NULL,
+  folder_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing_cache', 'syncing_workspace', 'ready', 'error')),
+  total_files INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  cache_synced_files INTEGER NOT NULL DEFAULT 0,
+  cache_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_files INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  large_files INTEGER NOT NULL DEFAULT 0,
+  large_bytes INTEGER NOT NULL DEFAULT 0,
+  last_sync_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_drive_mirrors_user ON drive_mirrors(user_id);
 
 -- Auth sessions (first-party login)
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -283,6 +307,14 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE oauth_states ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'
     `).run();
   } catch {
     // Column already exists.

@@ -61,7 +61,10 @@ function itemsToNodes(
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void,
   connectorMode?: boolean
 ): Node[] {
-  const workspaceSession = sessions.find((s) => s.status === "active");
+  const workspaceSession =
+    sessions.find((s) => s.status === "active")
+    ?? sessions.find((s) => s.status === "creating")
+    ?? sessions[0];
   return items.map((item) => {
     // Find active session for terminal items
     const session = item.type === "terminal"

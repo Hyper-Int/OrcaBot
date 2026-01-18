@@ -1,6 +1,7 @@
 .PHONY: help install install-frontend install-controlplane install-sandbox \
 	dev-frontend dev-controlplane dev-sandbox \
 	build build-frontend build-controlplane build-sandbox \
+	deploy-frontend deploy-controlplane \
 	test test-frontend test-controlplane test-sandbox \
 	lint lint-frontend typecheck-controlplane clean
 
@@ -62,6 +63,12 @@ lint-frontend:
 
 typecheck-controlplane:
 	npm --prefix controlplane run typecheck
+
+deploy-frontend:
+	npm --prefix frontend run workers:deploy
+
+deploy-controlplane:
+	wrangler deploy -c wrangler.production.toml
 
 clean:
 	$(MAKE) -C sandbox clean

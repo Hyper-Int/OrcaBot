@@ -41,6 +41,11 @@ export const API = {
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
     agentSkills: `${CLOUDFLARE_API_URL}/agent-skills`,
     mcpTools: `${CLOUDFLARE_API_URL}/mcp-tools`,
+    googleDriveIntegration: `${CLOUDFLARE_API_URL}/integrations/google/drive`,
+    googleDriveFolder: `${CLOUDFLARE_API_URL}/integrations/google/drive/folder`,
+    googleDriveStatus: `${CLOUDFLARE_API_URL}/integrations/google/drive/status`,
+    googleDriveSync: `${CLOUDFLARE_API_URL}/integrations/google/drive/sync`,
+    googleDriveSyncLarge: `${CLOUDFLARE_API_URL}/integrations/google/drive/sync/large`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>
