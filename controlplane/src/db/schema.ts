@@ -207,6 +207,77 @@ CREATE TABLE IF NOT EXISTS drive_mirrors (
 
 CREATE INDEX IF NOT EXISTS idx_drive_mirrors_user ON drive_mirrors(user_id);
 
+-- GitHub mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS github_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  repo_id TEXT NOT NULL,
+  repo_owner TEXT NOT NULL,
+  repo_name TEXT NOT NULL,
+  repo_branch TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing_cache', 'syncing_workspace', 'ready', 'error')),
+  total_files INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  cache_synced_files INTEGER NOT NULL DEFAULT 0,
+  cache_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_files INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  large_files INTEGER NOT NULL DEFAULT 0,
+  large_bytes INTEGER NOT NULL DEFAULT 0,
+  last_sync_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_github_mirrors_user ON github_mirrors(user_id);
+
+-- Box mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS box_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  folder_id TEXT NOT NULL,
+  folder_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing_cache', 'syncing_workspace', 'ready', 'error')),
+  total_files INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  cache_synced_files INTEGER NOT NULL DEFAULT 0,
+  cache_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_files INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  large_files INTEGER NOT NULL DEFAULT 0,
+  large_bytes INTEGER NOT NULL DEFAULT 0,
+  last_sync_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_box_mirrors_user ON box_mirrors(user_id);
+
+-- OneDrive mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS onedrive_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  folder_id TEXT NOT NULL,
+  folder_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing_cache', 'syncing_workspace', 'ready', 'error')),
+  total_files INTEGER NOT NULL DEFAULT 0,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  cache_synced_files INTEGER NOT NULL DEFAULT 0,
+  cache_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_files INTEGER NOT NULL DEFAULT 0,
+  workspace_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  large_files INTEGER NOT NULL DEFAULT 0,
+  large_bytes INTEGER NOT NULL DEFAULT 0,
+  last_sync_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_onedrive_mirrors_user ON onedrive_mirrors(user_id);
+
 -- Auth sessions (first-party login)
 CREATE TABLE IF NOT EXISTS user_sessions (
   id TEXT PRIMARY KEY,

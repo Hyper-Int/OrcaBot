@@ -26,6 +26,10 @@ export interface Env {
   GOOGLE_API_KEY?: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  BOX_CLIENT_ID?: string;
+  BOX_CLIENT_SECRET?: string;
+  ONEDRIVE_CLIENT_ID?: string;
+  ONEDRIVE_CLIENT_SECRET?: string;
   OAUTH_REDIRECT_BASE?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
