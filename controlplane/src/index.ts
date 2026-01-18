@@ -69,7 +69,9 @@ function cоrsRespоnse(response: Response, origin: string | null, allowedOrigin
     return response;
   }
 
-  const newHeaders = new Headers(response.headers);
+  // Preserve Set-Cookie headers by cloning the response instead of copying headers.
+  const newResponse = new Response(response.body, response);
+  const newHeaders = newResponse.headers;
   newHeaders.set('Access-Control-Allow-Methods', CORS_METHODS);
   newHeaders.set('Access-Control-Allow-Headers', CORS_ALLOWED_HEADERS);
 
@@ -83,11 +85,7 @@ function cоrsRespоnse(response: Response, origin: string | null, allowedOrigin
   }
   // If origin not allowed, don't set Access-Control-Allow-Origin (browser will reject)
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: newHeaders,
-  });
+  return newResponse;
 }
 
 function isPrivateHоstname(hostname: string): boolean {
@@ -563,6 +561,11 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // GET /integrations/google/drive/callback
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'callback' && method === 'GET') {
     return integrations.callbackGооgleDrive(request, env);
+  }
+
+  // POST /integrations/google/drive/folder
+  if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'folder' && method === 'POST') {
+    return integrations.setGoogleDriveFolder(request, env, auth);
   }
 
   // GET /integrations/github/connect

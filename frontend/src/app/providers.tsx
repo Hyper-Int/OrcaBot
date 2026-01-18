@@ -40,14 +40,15 @@ interface ProvidersProps {
 }
 
 function AuthBootstrapper() {
-  const { isAuthenticated, isAuthResolved, setUser, setAuthResolved } =
-    useAuthStore();
+  const { isAuthenticated, setUser, setAuthResolved } = useAuthStore();
+  const hasBootstrapped = React.useRef(false);
 
   React.useEffect(() => {
-    if (isAuthenticated || isAuthResolved) {
+    if (isAuthenticated || hasBootstrapped.current) {
       return;
     }
 
+    hasBootstrapped.current = true;
     let isActive = true;
 
     const bootstrap = async () => {
@@ -79,7 +80,7 @@ function AuthBootstrapper() {
     return () => {
       isActive = false;
     };
-  }, [isAuthenticated, isAuthResolved, setUser, setAuthResolved]);
+  }, [isAuthenticated, setUser, setAuthResolved]);
 
   return null;
 }
