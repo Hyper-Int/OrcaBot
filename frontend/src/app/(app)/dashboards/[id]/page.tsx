@@ -107,6 +107,18 @@ const terminalTools: BlockTool[] = [
   },
   {
     type: "terminal",
+    label: "GitHub Copilot CLI",
+    icon: <img src="/icons/github.png" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "copilot", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "Droid",
+    icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "droid", agentic: true },
+  },
+  {
+    type: "terminal",
     label: "Terminal",
     icon: <Terminal className="w-4 h-4" />,
   },

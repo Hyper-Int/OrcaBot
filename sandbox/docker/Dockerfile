@@ -72,6 +72,14 @@ RUN npm install -g @google/gemini-cli
 RUN curl -fsSL https://opencode.ai/install | bash \
     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
+# Install GitHub Copilot CLI
+RUN curl -fsSL https://gh.io/copilot-install | bash \
+    && if [ -x /root/.local/bin/copilot ]; then mv /root/.local/bin/copilot /usr/local/bin/copilot; fi
+
+# Install Droid CLI (Factory)
+RUN curl -fsSL https://app.factory.ai/cli | sh \
+    && if [ -x /root/.local/bin/droid ]; then mv /root/.local/bin/droid /usr/local/bin/droid; fi
+
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 777 /workspace
 

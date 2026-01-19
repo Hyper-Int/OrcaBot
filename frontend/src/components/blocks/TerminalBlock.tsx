@@ -1694,6 +1694,10 @@ export function TerminalBlock({
             <img src="/icons/codex.png" alt="Codex icon" title="Codex icon" className="w-4 h-4" />
           ) : terminalName === "OpenCode" ? (
             <img src="/icons/opencode.ico" alt="OpenCode icon" title="OpenCode icon" className="w-4 h-4" />
+          ) : terminalName === "GitHub Copilot CLI" ? (
+            <img src="/icons/github.png" alt="GitHub Copilot icon" title="GitHub Copilot icon" className="w-4 h-4" />
+          ) : terminalName === "Droid" ? (
+            <img src="/icons/droid.png" alt="Droid icon" title="Droid icon" className="w-4 h-4" />
           ) : (
             <span title="Terminal icon">
               <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
