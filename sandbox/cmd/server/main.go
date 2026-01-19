@@ -138,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleListPTYs)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
+	mux.HandleFunc("POST /sessions/{sessionId}/env", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionEnv)))
+	mux.HandleFunc("GET /sessions/{sessionId}/control", s.auth.RequireAuthFunc(s.requireMachine(s.handleControlWebSocket)))
 
 	// Mirror sync
 	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrоrSync)))

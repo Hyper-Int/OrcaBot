@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/creack/pty"
@@ -51,14 +52,22 @@ func New(shell string, cols, rows uint16) (*PTY, error) {
 // NewWithCommand creates a new PTY running the given command and optional working directory.
 // If command is empty, DefaultShell() is used.
 func NewWithCommand(command string, cols, rows uint16, dir string) (*PTY, error) {
+	return NewWithCommandEnv(command, cols, rows, dir, nil)
+}
+
+// NewWithCommandEnv creates a new PTY with extra environment variables.
+// If command is empty, DefaultShell() is used.
+func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		parts = []string{DefaultShell()}
 	}
 	cmd := exec.Command(parts[0], parts[1:]...)
-	cmd.Env = append(os.Environ(),
-		"TERM=xterm-256color",
-	)
+	env := append(os.Environ(), "TERM=xterm-256color")
+	for key, value := range extraEnv {
+		env = append(env, key+"="+value)
+	}
+	cmd.Env = env
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -109,6 +118,51 @@ func (p *PTY) Write(data []byte) (int, error) {
 	p.mu.Unlock()
 
 	return file.Write(data)
+}
+
+// WriteSilent writes to the PTY with echo temporarily disabled.
+func (p *PTY) WriteSilent(data []byte) (int, error) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return 0, os.ErrClosed
+	}
+	file := p.file
+	p.mu.Unlock()
+
+	fd := int(file.Fd())
+	termios, err := ioctlGetTermios(fd)
+	if err != nil {
+		return file.Write(data)
+	}
+	original := *termios
+	termios.Lflag &^= syscall.ECHO
+	if err := ioctlSetTermios(fd, termios); err != nil {
+		return file.Write(data)
+	}
+
+	n, writeErr := file.Write(data)
+
+	restore := original
+	_ = ioctlSetTermios(fd, &restore)
+	return n, writeErr
+}
+
+func ioctlGetTermios(fd int) (*syscall.Termios, error) {
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&termios)))
+	if errno != 0 {
+		return nil, errno
+	}
+	return &termios, nil
+}
+
+func ioctlSetTermios(fd int, termios *syscall.Termios) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(termios)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 // Resize changes the PTY window size

@@ -17,6 +17,7 @@ import * as sessions from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as secrets from './secrets/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
 import * as integrations from './integrations/handler';
@@ -203,6 +204,30 @@ async function prоxySandbоxWebSоcket(
   return fetch(proxyRequest);
 }
 
+async function prоxySandbоxControlWebSоcket(
+  request: Request,
+  env: Env,
+  sandboxSessionId: string,
+  machineId?: string
+): Promise<Response> {
+  const sandboxUrl = new URL(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/control`);
+
+  const headers = new Headers(request.headers);
+  headers.set('X-Internal-Token', env.SANDBOX_INTERNAL_TOKEN);
+  if (machineId) {
+    headers.set('X-Sandbox-Machine-ID', machineId);
+  }
+  headers.delete('Host');
+
+  const proxyRequest = new Request(sandboxUrl.toString(), {
+    method: request.method,
+    headers,
+    redirect: 'manual',
+  });
+
+  return fetch(proxyRequest);
+}
+
 async function prоxySandbоxRequest(
   request: Request,
   env: Env,
@@ -254,21 +279,6 @@ export default {
     }
 
     try {
-      const path = new URL(request.url).pathname;
-      const skipIpRateLimit =
-        path === '/auth/google/callback'
-        || path === '/auth/google/login'
-        || /^\/integrations\/[^/]+\/callback$/.test(path)
-        || /^\/integrations\/[^/]+\/connect$/.test(path);
-
-      // Early IP-based rate limit (cheap guard against abuse)
-      if (!skipIpRateLimit) {
-        const ipLimitResult = await checkRateLimitIp(request, env);
-        if (!ipLimitResult.allowed) {
-          return cоrsRespоnse(ipLimitResult.response!, origin, allowedOrigins);
-        }
-      }
-
       const response = await handleRequest(request, env);
       return cоrsRespоnse(response, origin, allowedOrigins);
     } catch (error) {
@@ -339,6 +349,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // Authenticate
   const auth = await authenticate(request, env);
+
+  // Unauthenticated IP rate limit (after auth to avoid double-limiting)
+  if (!auth.user) {
+    const skipIpRateLimit =
+      path === '/auth/google/callback'
+      || path === '/auth/google/login'
+      || /^\/integrations\/[^/]+\/callback$/.test(path)
+      || /^\/integrations\/[^/]+\/connect$/.test(path);
+
+    if (!skipIpRateLimit) {
+      const ipLimitResult = await checkRateLimitIp(request, env);
+      if (!ipLimitResult.allowed) {
+        return ipLimitResult.response!;
+      }
+    }
+  }
 
   // Authenticated user rate limit (per-user)
   if (auth.user) {
@@ -559,6 +585,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   // ============================================
+  // Secrets routes
+  // ============================================
+
+  // GET /secrets - List secrets
+  if (segments[0] === 'secrets' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    return secrets.listSecrets(env, auth.user!.id, dashboardId);
+  }
+
+  // ============================================
   // Integration routes
   // ============================================
 
@@ -770,11 +809,28 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return subagents.createSubagent(env, auth.user!.id, data);
   }
 
+  // POST /secrets - Create secret
+  if (segments[0] === 'secrets' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return secrets.createSecret(env, auth.user!.id, data);
+  }
+
   // DELETE /subagents/:id - Delete subagent
   if (segments[0] === 'subagents' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
+  }
+
+  // DELETE /secrets/:id - Delete secret
+  if (segments[0] === 'secrets' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    return secrets.deleteSecret(env, auth.user!.id, segments[1], dashboardId);
   }
 
   // ============================================
@@ -845,6 +901,40 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
     return sessions.getSessiоn(env, segments[1], auth.user!.id);
+  }
+
+  // WebSocket /sessions/:id/control - Session control channel (proxied)
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'control' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can control the session' }, { status: 403 });
+    }
+
+    return prоxySandbоxControlWebSоcket(
+      request,
+      env,
+      session.sandbox_session_id as string,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // POST /sessions/:id/env - Update session environment variables
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'env' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as { set?: Record<string, string>; unset?: string[]; applyNow?: boolean };
+    return sessions.updateSessiоnEnv(env, segments[1], auth.user!.id, data);
   }
 
   // GET /sessions/:id/files - List files in sandbox workspace

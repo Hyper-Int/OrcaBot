@@ -218,6 +218,77 @@ export async function stopSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Update session environment variables
+ */
+export async function updateSessionEnv(
+  sessionId: string,
+  payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean }
+): Promise<void> {
+  const base = API.cloudflare.base.replace(/^http/, "ws");
+  const wsUrl = `${base}/sessions/${sessionId}/control`;
+  const applyNow = Boolean(payload.applyNow);
+  const message = {
+    type: "env",
+    set: payload.set,
+    unset: payload.unset,
+    apply_now: applyNow,
+  };
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const timeout = window.setTimeout(() => {
+      ws.close();
+      reject(new Error("E79751: Control channel timeout"));
+    }, 8000);
+
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      ws.removeEventListener("message", onMessage);
+      ws.removeEventListener("error", onError);
+      ws.removeEventListener("close", onClose);
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error("E79752: Control channel error"));
+    };
+
+    const onClose = () => {
+      cleanup();
+      reject(new Error("E79753: Control channel closed"));
+    };
+
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (data?.type === "env_result" && data?.status === "ok") {
+          cleanup();
+          ws.close();
+          resolve();
+          return;
+        }
+        if (data?.type === "error") {
+          cleanup();
+          ws.close();
+          reject(new Error(data.error || "E79754: Control channel error"));
+        }
+      } catch {
+        cleanup();
+        ws.close();
+        reject(new Error("E79755: Invalid control response"));
+      }
+    };
+
+    ws.addEventListener("message", onMessage);
+    ws.addEventListener("error", onError);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify(message));
+    });
+  });
+}
+
+/**
  * Get the WebSocket URL for dashboard collaboration
  */
 export function getCollaborationWsUrl(

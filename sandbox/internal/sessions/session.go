@@ -15,6 +15,9 @@ package sessions
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
@@ -71,7 +74,11 @@ func (s *Session) Wоrkspace() *fs.Workspace {
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
 func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) {
-	p, err := pty.NewWithCommand(command, 80, 24, s.workspace.Root())
+	envVars := loadEnvFile(filepath.Join(s.workspace.Root(), ".env"))
+	if _, ok := envVars["HISTCONTROL"]; !ok {
+		envVars["HISTCONTROL"] = "ignorespace"
+	}
+	p, err := pty.NewWithCommandEnv(command, 80, 24, s.workspace.Root(), envVars)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +105,36 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	s.mu.Unlock()
 
 	return info, nil
+}
+
+func loadEnvFile(path string) map[string]string {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	lines := strings.Split(string(content), "\n")
+	env := map[string]string{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		if key != "" {
+			env[key] = value
+		}
+	}
+	return env
 }
 
 // GetPTY retrieves a PTY by ID

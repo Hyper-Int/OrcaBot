@@ -217,6 +217,9 @@ export async function deleteDashbоard(
     return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
   }
 
+  await env.DB.prepare(`DELETE FROM user_secrets WHERE dashboard_id = ?`)
+    .bind(dashboardId)
+    .run();
   await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
 
   return new Response(null, { status: 204 });

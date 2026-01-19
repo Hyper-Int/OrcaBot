@@ -155,6 +155,21 @@ CREATE TABLE IF NOT EXISTS user_mcp_tools (
 
 CREATE INDEX IF NOT EXISTS idx_user_mcp_tools_user ON user_mcp_tools(user_id);
 
+-- User secrets (environment variables)
+CREATE TABLE IF NOT EXISTS user_secrets (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_secrets_user ON user_secrets(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_secrets_dashboard ON user_secrets(dashboard_id);
+
 -- OAuth state (short-lived)
 CREATE TABLE IF NOT EXISTS oauth_states (
   state TEXT PRIMARY KEY,
@@ -386,6 +401,14 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE oauth_states ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE user_secrets ADD COLUMN dashboard_id TEXT NOT NULL DEFAULT ''
     `).run();
   } catch {
     // Column already exists.

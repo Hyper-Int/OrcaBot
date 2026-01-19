@@ -76,6 +76,11 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     checkOrigin,
 }
 
+// Upgrade upgrades an HTTP request to a WebSocket with sandbox origin checks.
+func Upgrade(w http.ResponseWriter, req *http.Request) (*websocket.Conn, error) {
+	return upgrader.Upgrade(w, req, nil)
+}
+
 // Router handles WebSocket connections to PTYs
 type Router struct {
 	sessions *sessions.Manager

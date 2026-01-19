@@ -70,5 +70,8 @@ deploy-frontend:
 deploy-controlplane:
 	wrangler deploy -c wrangler.production.toml
 
+logs-controlplane:
+	cd controlplane && npx wrangler tail --format=pretty
+
 clean:
 	$(MAKE) -C sandbox clean

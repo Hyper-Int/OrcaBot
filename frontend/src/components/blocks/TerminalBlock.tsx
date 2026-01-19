@@ -40,6 +40,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
@@ -53,7 +59,7 @@ import {
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { createSession, stopSession } from "@/lib/api/cloudflare";
+import { createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
 import {
   createSubagent,
   deleteSubagent,
@@ -148,6 +154,7 @@ type TerminalContentState = {
   subagentIds: string[];
   agentic?: boolean;
   bootCommand?: string;
+  terminalTheme?: "system" | "light" | "dark";
 };
 
 function parseTerminalContent(content: string | null | undefined): TerminalContentState {
@@ -165,6 +172,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         subagentIds,
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
+        terminalTheme: parsed.terminalTheme,
       };
     } catch {
       return { name: content, subagentIds: [] };
@@ -217,6 +225,7 @@ export function TerminalBlock({
   const [showSavedMcp, setShowSavedMcp] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
+  const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const setTerminalRef = React.useCallback(
@@ -278,25 +287,25 @@ export function TerminalBlock({
 
   // Secrets queries and mutations
   const secretsQuery = useQuery({
-    queryKey: ["secrets"],
-    queryFn: () => listSecrets(),
-    enabled: activePanel === "secrets",
+    queryKey: ["secrets", data.dashboardId],
+    queryFn: () => listSecrets(data.dashboardId),
+    enabled: activePanel === "secrets" && Boolean(data.dashboardId),
     staleTime: 60000,
   });
 
   const createSecretMutation = useMutation({
     mutationFn: createSecret,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets"] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
       setNewSecretName("");
       setNewSecretValue("");
     },
   });
 
   const deleteSecretMutation = useMutation({
-    mutationFn: deleteSecret,
+    mutationFn: ({ id }: { id: string }) => deleteSecret(id, data.dashboardId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets"] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
     },
   });
 
@@ -434,6 +443,7 @@ export function TerminalBlock({
           subagentIds: nextIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
         }),
       });
     },
@@ -450,6 +460,7 @@ export function TerminalBlock({
           subagentIds: nextIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
         }),
       });
     },
@@ -480,6 +491,22 @@ export function TerminalBlock({
       handleAttachSubagent(created.id);
     },
     [createSubagentMutation, handleAttachSubagent, savedByName]
+  );
+
+  const handleTerminalThemeChange = React.useCallback(
+    (nextTheme: "system" | "light" | "dark") => {
+      if (!data.onItemChange) return;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: nextTheme,
+        }),
+      });
+    },
+    [data, terminalMeta]
   );
 
   const attachedNames = React.useMemo(() => {
@@ -516,15 +543,6 @@ export function TerminalBlock({
     },
     [createMcpToolMutation, savedMcpNames]
   );
-
-  // Secrets handlers
-  const handleAddSecret = React.useCallback(() => {
-    if (!newSecretName.trim() || !newSecretValue.trim()) return;
-    createSecretMutation.mutate({
-      name: newSecretName.trim(),
-      value: newSecretValue.trim(),
-    });
-  }, [createSecretMutation, newSecretName, newSecretValue]);
 
   const toggleCategory = React.useCallback((categoryId: string) => {
     setExpandedCategories((prev) => ({
@@ -621,9 +639,11 @@ export function TerminalBlock({
   const isAgentic = terminalMeta.agentic === true;
   const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
+  const terminalThemeSetting = terminalMeta.terminalTheme ?? "system";
+  const resolvedTerminalTheme = terminalThemeSetting === "system" ? theme : terminalThemeSetting;
   const terminalTheme = React.useMemo(
     () =>
-      theme === "dark"
+      resolvedTerminalTheme === "dark"
         ? {
             background: "#0a0a0b",
             foreground: "#e6e6e6",
@@ -640,8 +660,47 @@ export function TerminalBlock({
             selectionBackground: "rgba(15,23,42,0.2)",
             selectionInactiveBackground: "rgba(15,23,42,0.12)",
           },
-    [theme]
+    [resolvedTerminalTheme]
   );
+  const canApplySecretsNow = isOwner && Boolean(session?.id);
+  const needsRestartForSecrets = isClaudeSession || isAgentic;
+
+  // Secrets handlers
+  const handleAddSecret = React.useCallback(async () => {
+    const name = newSecretName.trim();
+    const value = newSecretValue.trim();
+    if (!name || !value) return;
+    setNewSecretName("");
+    setNewSecretValue("");
+    try {
+      await createSecretMutation.mutateAsync({
+        dashboardId: data.dashboardId,
+        name,
+        value,
+      });
+      setPendingSecretApply({ name, value });
+      if (isOwner && session?.id) {
+        await updateSessionEnv(session.id, { set: { [name]: value }, applyNow: false });
+      }
+    } catch {
+      setNewSecretName(name);
+      setNewSecretValue(value);
+    }
+  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id]);
+
+  const handleDeleteSecret = React.useCallback(
+    async (secret: UserSecret) => {
+      await deleteSecretMutation.mutateAsync({ id: secret.id });
+      if (isOwner && session?.id) {
+        await updateSessionEnv(session.id, { unset: [secret.name], applyNow: false });
+      }
+      setPendingSecretApply((current) =>
+        current?.name === secret.name ? null : current
+      );
+    },
+    [deleteSecretMutation, isOwner, session?.id]
+  );
+
 
   // Border color based on state
   const getBorderColor = () => {
@@ -824,6 +883,31 @@ export function TerminalBlock({
       setIsCreatingSession(false);
     }
   }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
+
+  const handleApplySecretNow = React.useCallback(async () => {
+    if (!pendingSecretApply || !canApplySecretsNow) {
+      return;
+    }
+    if (needsRestartForSecrets) {
+      setPendingSecretApply(null);
+      await handleReopen();
+      return;
+    }
+    if (!session?.id) {
+      return;
+    }
+    await updateSessionEnv(session.id, {
+      set: { [pendingSecretApply.name]: pendingSecretApply.value },
+      applyNow: true,
+    });
+    setPendingSecretApply(null);
+  }, [
+    pendingSecretApply,
+    canApplySecretsNow,
+    needsRestartForSecrets,
+    handleReopen,
+    session?.id,
+  ]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {
@@ -1213,6 +1297,32 @@ export function TerminalBlock({
                     <Plus className="w-3 h-3" />
                   </Button>
                 </div>
+                {pendingSecretApply && (
+                  <div className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1">
+                    <div className="text-[10px] text-[var(--foreground-muted)]">
+                      Saved {pendingSecretApply.name}. {needsRestartForSecrets ? "Restart to apply now?" : "Apply to running terminal?"}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleApplySecretNow}
+                        disabled={!canApplySecretsNow}
+                        className="h-5 px-2 text-[10px] nodrag"
+                      >
+                        {needsRestartForSecrets ? `Restart ${terminalName || "terminal"}` : "Apply now"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setPendingSecretApply(null)}
+                        className="h-5 w-5 nodrag"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="max-h-40 overflow-auto space-y-1">
                   {secretsQuery.isLoading && (
                     <div className="text-[var(--foreground-muted)]">Loading...</div>
@@ -1229,7 +1339,7 @@ export function TerminalBlock({
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => deleteSecretMutation.mutate(secret.id)}
+                        onClick={() => handleDeleteSecret(secret)}
                         className="h-5 w-5 text-[var(--status-error)] nodrag"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -1844,6 +1954,25 @@ export function TerminalBlock({
                 <Key className="w-3 h-3" />
                 <span>Secrets</span>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <span>Theme</span>
+                  <span className="ml-auto text-[10px] text-[var(--foreground-muted)] capitalize">
+                    {terminalThemeSetting}
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={terminalThemeSetting}
+                    onValueChange={(value) => handleTerminalThemeChange(value as "system" | "light" | "dark")}
+                  >
+                    <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                 <Bot className="w-3 h-3" />

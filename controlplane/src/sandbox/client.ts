@@ -74,6 +74,27 @@ export class SandboxClient {
     }
   }
 
+  // Environment management
+  async updateEnv(
+    sessionId: string,
+    payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean },
+    machineId?: string
+  ): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to update env: ${res.status}`);
+    }
+  }
+
   // PTY management
   async createPty(sessionId: string, creatorId?: string, command?: string, machineId?: string): Promise<SandboxPty> {
     const shouldSendBody = Boolean(creatorId || command);

@@ -111,6 +111,12 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
         terminalRef.current = null;
         fitAddonRef.current = null;
       };
+    }, []);
+
+    React.useEffect(() => {
+      if (terminalRef.current) {
+        terminalRef.current.options.theme = theme as XtermTheme | undefined;
+      }
     }, [theme]);
 
     React.useEffect(() => {
