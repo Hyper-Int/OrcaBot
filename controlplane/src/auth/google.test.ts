@@ -22,9 +22,9 @@ describe('Google OAuth', () => {
 
   it('rejects unverified Google emails', async () => {
     await ctx.db.prepare(`
-      INSERT INTO auth_states (state, redirect_url)
-      VALUES (?, ?)
-    `).bind('state-1', 'https://orcabot.com/').run();
+      INSERT INTO auth_states (state, redirect_url, redirectUrl)
+      VALUES (?, ?, ?)
+    `).bind('state-1', 'https://orcabot.com/', 'https://orcabot.com/').run();
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(
@@ -53,9 +53,9 @@ describe('Google OAuth', () => {
     ctx.env.AUTH_ALLOWED_EMAILS = 'allowed@example.com';
 
     await ctx.db.prepare(`
-      INSERT INTO auth_states (state, redirect_url)
-      VALUES (?, ?)
-    `).bind('state-2', 'https://orcabot.com/').run();
+      INSERT INTO auth_states (state, redirect_url, redirectUrl)
+      VALUES (?, ?, ?)
+    `).bind('state-2', 'https://orcabot.com/', 'https://orcabot.com/').run();
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(

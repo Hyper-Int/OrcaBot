@@ -269,7 +269,7 @@ class MockD1PreparedStatement implements D1PreparedStatement {
     const tableName = tableMatch[1];
     const rows = this.tables.get(tableName) || [];
 
-    const whereMatch = this.query.match(/WHERE\s+(.+?)$/i);
+    const whereMatch = this.query.match(/WHERE\s+([\s\S]+?)$/i);
     if (whereMatch) {
       const conditions = this.parseWhereClause(whereMatch[1]);
       const newRows = rows.filter(row => !this.matchesConditions(row, conditions));

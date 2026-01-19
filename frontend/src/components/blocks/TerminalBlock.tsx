@@ -1691,7 +1691,7 @@ export function TerminalBlock({
           ) : terminalName === "Gemini CLI" ? (
             <img src="/icons/gemini.ico" alt="Gemini CLI icon" title="Gemini CLI icon" className="w-4 h-4" />
           ) : terminalName === "Codex" ? (
-            <img src="/icons/codex.ico" alt="Codex icon" title="Codex icon" className="w-4 h-4" />
+            <img src="/icons/codex.png" alt="Codex icon" title="Codex icon" className="w-4 h-4" />
           ) : terminalName === "OpenCode" ? (
             <img src="/icons/opencode.ico" alt="OpenCode icon" title="OpenCode icon" className="w-4 h-4" />
           ) : (

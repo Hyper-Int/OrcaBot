@@ -46,7 +46,7 @@ describe('Integration Tests', () => {
 
   describe('Dashboard workflow', () => {
     it('should create dashboard and list it', async () => {
-      const createRes = await dashboards.createDashboard(ctx.env, user.id, {
+      const createRes = await dashboards.createDashbоard(ctx.env, user.id, {
         name: 'My Project',
       });
       expect(createRes.status).toBe(201);
@@ -64,7 +64,7 @@ describe('Integration Tests', () => {
     });
 
     it('should add and retrieve items', async () => {
-      const createRes = await dashboards.createDashboard(ctx.env, user.id, { name: 'Test' });
+      const createRes = await dashboards.createDashbоard(ctx.env, user.id, { name: 'Test' });
       const { dashboard } = await createRes.json();
 
       // Add item
@@ -75,7 +75,7 @@ describe('Integration Tests', () => {
       expect(itemRes.status).toBe(201);
 
       // Get dashboard with items
-      const getRes = await dashboards.getDashboard(ctx.env, dashboard.id, user.id);
+      const getRes = await dashboards.getDashbоard(ctx.env, dashboard.id, user.id);
       const data = await getRes.json();
       expect(data.items).toHaveLength(1);
     });
@@ -84,7 +84,7 @@ describe('Integration Tests', () => {
   describe('Recipe workflow', () => {
     it('should create and execute recipe', async () => {
       // Create recipe
-      const createRes = await recipes.createRecipe(ctx.env, user.id, {
+      const createRes = await recipes.createRecipе(ctx.env, user.id, {
         name: 'Build Pipeline',
         steps: [
           { id: 's1', type: 'run_agent', name: 'Build', config: {}, nextStepId: null, onError: 'fail' },
@@ -94,7 +94,7 @@ describe('Integration Tests', () => {
       expect(recipe.name).toBe('Build Pipeline');
 
       // Start execution
-      const execRes = await recipes.startExecution(ctx.env, recipe.id, user.id, { env: 'prod' });
+      const execRes = await recipes.startExecutiоn(ctx.env, recipe.id, user.id, { env: 'prod' });
       expect(execRes.status).toBe(201);
 
       const { execution } = await execRes.json();
@@ -107,11 +107,11 @@ describe('Integration Tests', () => {
       const execution = await seedExecution(ctx.db, recipe.id, { status: 'running' });
 
       // Pause
-      const pauseRes = await recipes.pauseExecution(ctx.env, execution.id, user.id);
+      const pauseRes = await recipes.pauseExecutiоn(ctx.env, execution.id, user.id);
       expect((await pauseRes.json()).status).toBe('paused');
 
       // Resume
-      const resumeRes = await recipes.resumeExecution(ctx.env, execution.id, user.id);
+      const resumeRes = await recipes.resumeExecutiоn(ctx.env, execution.id, user.id);
       expect((await resumeRes.json()).status).toBe('running');
     });
 
@@ -213,7 +213,7 @@ describe('Integration Tests', () => {
       const client = new SandboxClient(ctx.env.SANDBOX_URL);
 
       // Create session
-      const session = await client.createSession();
+      const session = await client.createSessiоn();
       expect(session.id).toBeTruthy();
 
       // Delete session
