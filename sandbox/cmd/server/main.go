@@ -93,6 +93,7 @@ type Server struct {
 	wsRouter *ws.Router
 	auth     *auth.Middleware
 	machine  string
+	startedAt        time.Time
 	driveMirror       *drive.Mirror
 	driveSyncMu       sync.Mutex
 	driveSyncActive   map[string]bool
@@ -110,6 +111,7 @@ func NewServer(sm *sessions.Manager) *Server {
 		wsRouter: ws.NewRouter(sm),
 		auth:     authMiddleware,
 		machine:  sandbоxMachineID(),
+		startedAt:       time.Now(),
 		driveMirror:      drive.NewMirrorFromEnv(),
 		driveSyncActive:  make(map[string]bool),
 		mirrorSyncActive: make(map[string]bool),
@@ -139,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionEnv)))
+	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionMetrics)))
 	mux.HandleFunc("GET /sessions/{sessionId}/control", s.auth.RequireAuthFunc(s.requireMachine(s.handleControlWebSocket)))
 
 	// Mirror sync
