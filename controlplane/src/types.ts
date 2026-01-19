@@ -123,6 +123,16 @@ export interface UserMcpTool {
   updatedAt: string;
 }
 
+export interface UserSecret {
+  id: string;
+  userId: string;
+  dashboardId: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserIntegration {
   id: string;
   userId: string;

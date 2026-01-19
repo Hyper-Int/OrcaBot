@@ -357,6 +357,51 @@ export async function getSessiоn(
   });
 }
 
+export async function updateSessiоnEnv(
+  env: Env,
+  sessionId: string,
+  userId: string,
+  payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean }
+): Promise<Response> {
+  const session = await env.DB.prepare(`
+    SELECT s.* FROM sessions s
+    JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+    WHERE s.id = ? AND dm.user_id = ?
+  `).bind(sessionId, userId).first();
+
+  if (!session) {
+    return Response.json({ error: 'E79214: Session not found or no access' }, { status: 404 });
+  }
+
+  const set = payload.set || {};
+  const unset = payload.unset || [];
+  const hasSet = Object.keys(set).length > 0;
+  const hasUnset = unset.length > 0;
+  if (!hasSet && !hasUnset) {
+    return Response.json({ error: 'E79215: No env updates provided' }, { status: 400 });
+  }
+
+  for (const [key, value] of Object.entries(set)) {
+    if (typeof key !== 'string' || typeof value !== 'string') {
+      return Response.json({ error: 'E79216: Invalid env payload' }, { status: 400 });
+    }
+  }
+  for (const key of unset) {
+    if (typeof key !== 'string') {
+      return Response.json({ error: 'E79216: Invalid env payload' }, { status: 400 });
+    }
+  }
+
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  await sandbox.updateEnv(
+    session.sandbox_session_id as string,
+    { set, unset, applyNow: payload.applyNow },
+    (session.sandbox_machine_id as string) || undefined
+  );
+
+  return Response.json({ status: 'ok' });
+}
+
 // Stop a session
 export async function stоpSessiоn(
   env: Env,

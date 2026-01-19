@@ -4,6 +4,7 @@
 package pty
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"sync"
@@ -64,6 +65,11 @@ type Hub struct {
 
 	// onStop callback invoked when hub stops (for cleanup by owner)
 	onStop func()
+
+	suppressMu     sync.Mutex
+	suppressActive bool
+	suppressMarker []byte
+	suppressBuffer []byte
 }
 
 // NewHub creates a new Hub for the given PTY.
@@ -168,6 +174,15 @@ func (h *Hub) Run() {
 	}
 }
 
+// SuppressOutputUntil drops PTY output until the marker is observed.
+func (h *Hub) SuppressOutputUntil(marker string) {
+	h.suppressMu.Lock()
+	defer h.suppressMu.Unlock()
+	h.suppressActive = true
+	h.suppressMarker = []byte(marker)
+	h.suppressBuffer = nil
+}
+
 // readLoop reads from PTY and broadcasts to all clients.
 // Signals readLoopDone when it exits to enable proper cleanup.
 func (h *Hub) readLооp() {
@@ -193,6 +208,11 @@ func (h *Hub) readLооp() {
 
 // broadcast sends PTY output to all connected clients as binary messages
 func (h *Hub) broadcast(data []byte) {
+	data = h.filterSuppressed(data)
+	if len(data) == 0 {
+		return
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -204,6 +224,35 @@ func (h *Hub) broadcast(data []byte) {
 			// Client buffer full, skip (or could disconnect)
 		}
 	}
+}
+
+func (h *Hub) filterSuppressed(data []byte) []byte {
+	h.suppressMu.Lock()
+	defer h.suppressMu.Unlock()
+
+	if !h.suppressActive || len(h.suppressMarker) == 0 {
+		return data
+	}
+
+	combined := append(h.suppressBuffer, data...)
+	index := bytes.Index(combined, h.suppressMarker)
+	if index == -1 {
+		tailLen := len(h.suppressMarker) - 1
+		if tailLen < 0 {
+			tailLen = 0
+		}
+		if len(combined) > tailLen {
+			h.suppressBuffer = combined[len(combined)-tailLen:]
+		} else {
+			h.suppressBuffer = combined
+		}
+		return nil
+	}
+
+	after := combined[index+len(h.suppressMarker):]
+	h.suppressActive = false
+	h.suppressBuffer = nil
+	return after
 }
 
 // Register adds a client to receive PTY output (legacy - no user ID).
@@ -300,6 +349,11 @@ func (h *Hub) Write(userID string, data []byte) (int, error) {
 // Bypasses all human input gates - use only for agent-originated writes.
 func (h *Hub) WriteAgent(data []byte) (int, error) {
 	return h.pty.Write(data)
+}
+
+// WriteAgentSilent sends input to the PTY with echo suppressed.
+func (h *Hub) WriteAgentSilent(data []byte) (int, error) {
+	return h.pty.WriteSilent(data)
 }
 
 // Resize changes the PTY window size
