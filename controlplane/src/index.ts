@@ -960,6 +960,29 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     );
   }
 
+  // GET /sessions/:id/metrics - Sandbox metrics for a session
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'metrics' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/metrics`,
+      session.sandbox_machine_id as string
+    );
+  }
+
   // DELETE /sessions/:id/file - Delete file or directory in sandbox workspace
   if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'DELETE') {
     const authError = requireAuth(auth);

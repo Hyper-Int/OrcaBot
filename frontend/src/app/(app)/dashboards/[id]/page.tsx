@@ -17,6 +17,7 @@ import {
   Settings,
   Share2,
   GitMerge,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,7 +38,7 @@ import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration, useDebouncedCallback } from "@/hooks";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, getSessionMetrics } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -236,6 +237,45 @@ export default function DashboardPage() {
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
   const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(toFlowEdge), [edgesFromData]);
+
+  const metricsSessionId = React.useMemo(() => {
+    if (sessions.length === 0) {
+      return null;
+    }
+    const active = sessions.find((item) => item.status === "active");
+    return (active || sessions[0]).id;
+  }, [sessions]);
+
+  const metricsQuery = useQuery({
+    queryKey: ["sandbox-metrics", metricsSessionId],
+    queryFn: () => getSessionMetrics(metricsSessionId as string),
+    enabled: Boolean(metricsSessionId),
+    refetchInterval: 5000,
+    staleTime: 4000,
+  });
+
+  const [cpuPercent, setCpuPercent] = React.useState<number | null>(null);
+  const cpuSampleRef = React.useRef<{ totalMs: number; ts: number } | null>(null);
+
+  React.useEffect(() => {
+    if (!metricsQuery.data) {
+      return;
+    }
+    const totalMs = metricsQuery.data.cpuUserMs + metricsQuery.data.cpuSystemMs;
+    const now = Date.now();
+    const previous = cpuSampleRef.current;
+    cpuSampleRef.current = { totalMs, ts: now };
+    if (!previous) {
+      return;
+    }
+    const deltaMs = totalMs - previous.totalMs;
+    const deltaTime = now - previous.ts;
+    if (deltaTime <= 0) {
+      return;
+    }
+    const percent = (deltaMs / deltaTime) * 100;
+    setCpuPercent(Math.max(0, Math.min(100, percent)));
+  }, [metricsQuery.data?.cpuUserMs, metricsQuery.data?.cpuSystemMs]);
 
   // Create item mutation
   const createItemMutation = useMutation({
@@ -1161,6 +1201,33 @@ export default function DashboardPage() {
                     <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
                   )}
                 </Button>
+              </Tooltip>
+            </div>
+          </div>
+          <div className="absolute right-4 top-2 z-20 pointer-events-none">
+            <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
+              <Tooltip
+                content={
+                  typeof metricsQuery.data?.heapMB === "number"
+                    ? `CPU ${(cpuPercent ?? 0).toFixed(1)}% · Heap ${metricsQuery.data.heapMB.toFixed(1)}MB · Sys ${metricsQuery.data.sysMB.toFixed(1)}MB · Goroutines ${metricsQuery.data.goroutines}`
+                    : "Sandbox metrics unavailable"
+                }
+                side="bottom"
+              >
+                <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
+                  <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
+                    {typeof metricsQuery.data?.heapMB === "number" ? (
+                      <>
+                        <span>CPU {cpuPercent === null ? "…" : `${cpuPercent.toFixed(1)}%`}</span>
+                        <span>Heap {metricsQuery.data.heapMB.toFixed(1)}MB</span>
+                        <span>Sys {metricsQuery.data.sysMB.toFixed(1)}MB</span>
+                      </>
+                    ) : (
+                      <span>Metrics…</span>
+                    )}
+                  </div>
+                </div>
               </Tooltip>
             </div>
           </div>
