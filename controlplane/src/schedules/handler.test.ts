@@ -15,6 +15,7 @@ import {
 } from './handler';
 import {
   createTestContext,
+  seedDashboard,
   seedUser,
   seedRecipe,
   seedSchedule,
@@ -90,8 +91,15 @@ describe('Schedule Handlers', () => {
 
   describe('dеleteSchedule()', () => {
     it('should delete schedule', async () => {
-      const recipe = await seedRecipe(ctx.db, { name: 'Recipe' });
+      const dashboard = await seedDashboard(ctx.db, testUser.id, { name: 'Schedules' });
+      const recipe = await seedRecipe(ctx.db, { name: 'Recipe', dashboardId: dashboard.id });
       const schedule = await seedSchedule(ctx.db, recipe.id, { name: 'To Delete' });
+      const scheduleRows = ctx.db._tables.get('schedules') || [];
+      const seeded = scheduleRows.find(row => row.id === schedule.id);
+      if (seeded) {
+        // MockD1 does not evaluate nested subqueries; tag owner for delete match.
+        seeded.user_id = testUser.id;
+      }
 
       const response = await dеleteSchedule(ctx.env, schedule.id, testUser.id);
 

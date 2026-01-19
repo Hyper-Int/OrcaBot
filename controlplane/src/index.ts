@@ -564,7 +564,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /integrations/google/drive/connect
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'connect' && method === 'GET') {
-    return integrations.cоnnectGoogleDrive(request, env, auth);
+    return integrations.cоnnectGооgleDrive(request, env, auth);
   }
 
   // GET /integrations/google/drive/callback
@@ -574,42 +574,42 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /integrations/google/drive
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments.length === 3 && method === 'GET') {
-    return integrations.getGoogleDriveIntegration(request, env, auth);
+    return integrations.getGооgleDriveIntegratiоn(request, env, auth);
   }
 
   // GET /integrations/google/drive/picker
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'picker' && method === 'GET') {
-    return integrations.renderGoogleDrivePicker(request, env, auth);
+    return integrations.renderGооgleDrivePicker(request, env, auth);
   }
 
   // POST /integrations/google/drive/folder
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'folder' && method === 'POST') {
-    return integrations.setGoogleDriveFolder(request, env, auth);
+    return integrations.setGооgleDriveFоlder(request, env, auth);
   }
 
   // DELETE /integrations/google/drive/folder
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'folder' && method === 'DELETE') {
-    return integrations.unlinkGoogleDriveFolder(request, env, auth);
+    return integrations.unlinkGооgleDriveFоlder(request, env, auth);
   }
 
   // GET /integrations/google/drive/status
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'status' && method === 'GET') {
-    return integrations.getGoogleDriveSyncStatus(request, env, auth);
+    return integrations.getGооgleDriveSyncStatus(request, env, auth);
   }
 
   // GET /integrations/google/drive/manifest
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'manifest' && method === 'GET') {
-    return integrations.getGoogleDriveManifest(request, env, auth);
+    return integrations.getGооgleDriveManifest(request, env, auth);
   }
 
   // POST /integrations/google/drive/sync
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'sync' && segments.length === 4 && method === 'POST') {
-    return integrations.syncGoogleDriveMirror(request, env, auth);
+    return integrations.syncGооgleDriveMirrоr(request, env, auth);
   }
 
   // POST /integrations/google/drive/sync/large
   if (segments[0] === 'integrations' && segments[1] === 'google' && segments[2] === 'drive' && segments[3] === 'sync' && segments[4] === 'large' && method === 'POST') {
-    return integrations.syncGoogleDriveLargeFiles(request, env, auth);
+    return integrations.syncGооgleDriveLargeFiles(request, env, auth);
   }
 
   // GET /integrations/github/connect
@@ -624,22 +624,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /integrations/github
   if (segments[0] === 'integrations' && segments[1] === 'github' && segments.length === 2 && method === 'GET') {
-    return integrations.getGithubIntegration(request, env, auth);
+    return integrations.getGithubIntegratiоn(request, env, auth);
   }
 
   // GET /integrations/github/repos
   if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'repos' && method === 'GET') {
-    return integrations.getGithubRepos(request, env, auth);
+    return integrations.getGithubRepоs(request, env, auth);
   }
 
   // POST /integrations/github/repo
   if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'repo' && method === 'POST') {
-    return integrations.setGithubRepo(request, env, auth);
+    return integrations.setGithubRepо(request, env, auth);
   }
 
   // DELETE /integrations/github/repo
   if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'repo' && method === 'DELETE') {
-    return integrations.unlinkGithubRepo(request, env, auth);
+    return integrations.unlinkGithubRepо(request, env, auth);
   }
 
   // GET /integrations/github/status
@@ -649,7 +649,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // POST /integrations/github/sync
   if (segments[0] === 'integrations' && segments[1] === 'github' && segments[2] === 'sync' && segments.length === 3 && method === 'POST') {
-    return integrations.syncGithubMirror(request, env, auth);
+    return integrations.syncGithubMirrоr(request, env, auth);
   }
 
   // POST /integrations/github/sync/large
@@ -664,102 +664,102 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // GET /integrations/box/connect
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'connect' && method === 'GET') {
-    return integrations.connectBox(request, env, auth);
+    return integrations.cоnnectBоx(request, env, auth);
   }
 
   // GET /integrations/box/callback
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'callback' && method === 'GET') {
-    return integrations.callbackBox(request, env);
+    return integrations.callbackBоx(request, env);
   }
 
   // GET /integrations/box
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments.length === 2 && method === 'GET') {
-    return integrations.getBoxIntegration(request, env, auth);
+    return integrations.getBоxIntegratiоn(request, env, auth);
   }
 
   // GET /integrations/box/folders
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'folders' && method === 'GET') {
-    return integrations.getBoxFolders(request, env, auth);
+    return integrations.getBоxFоlders(request, env, auth);
   }
 
   // POST /integrations/box/folder
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'folder' && method === 'POST') {
-    return integrations.setBoxFolder(request, env, auth);
+    return integrations.setBоxFоlder(request, env, auth);
   }
 
   // DELETE /integrations/box/folder
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'folder' && method === 'DELETE') {
-    return integrations.unlinkBoxFolder(request, env, auth);
+    return integrations.unlinkBоxFоlder(request, env, auth);
   }
 
   // GET /integrations/box/status
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'status' && method === 'GET') {
-    return integrations.getBoxSyncStatus(request, env, auth);
+    return integrations.getBоxSyncStatus(request, env, auth);
   }
 
   // POST /integrations/box/sync
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'sync' && segments.length === 3 && method === 'POST') {
-    return integrations.syncBoxMirror(request, env, auth);
+    return integrations.syncBоxMirrоr(request, env, auth);
   }
 
   // POST /integrations/box/sync/large
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'sync' && segments[3] === 'large' && method === 'POST') {
-    return integrations.syncBoxLargeFiles(request, env, auth);
+    return integrations.syncBоxLargeFiles(request, env, auth);
   }
 
   // GET /integrations/box/manifest
   if (segments[0] === 'integrations' && segments[1] === 'box' && segments[2] === 'manifest' && method === 'GET') {
-    return integrations.getBoxManifest(request, env, auth);
+    return integrations.getBоxManifest(request, env, auth);
   }
 
   // GET /integrations/onedrive/connect
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'connect' && method === 'GET') {
-    return integrations.connectOnedrive(request, env, auth);
+    return integrations.cоnnectОnedrive(request, env, auth);
   }
 
   // GET /integrations/onedrive/callback
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'callback' && method === 'GET') {
-    return integrations.callbackOnedrive(request, env);
+    return integrations.callbackОnedrive(request, env);
   }
 
   // GET /integrations/onedrive
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments.length === 2 && method === 'GET') {
-    return integrations.getOnedriveIntegration(request, env, auth);
+    return integrations.getОnedriveIntegratiоn(request, env, auth);
   }
 
   // GET /integrations/onedrive/folders
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'folders' && method === 'GET') {
-    return integrations.getOnedriveFolders(request, env, auth);
+    return integrations.getОnedriveFоlders(request, env, auth);
   }
 
   // POST /integrations/onedrive/folder
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'folder' && method === 'POST') {
-    return integrations.setOnedriveFolder(request, env, auth);
+    return integrations.setОnedriveFоlder(request, env, auth);
   }
 
   // DELETE /integrations/onedrive/folder
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'folder' && method === 'DELETE') {
-    return integrations.unlinkOnedriveFolder(request, env, auth);
+    return integrations.unlinkОnedriveFоlder(request, env, auth);
   }
 
   // GET /integrations/onedrive/status
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'status' && method === 'GET') {
-    return integrations.getOnedriveSyncStatus(request, env, auth);
+    return integrations.getОnedriveSyncStatus(request, env, auth);
   }
 
   // POST /integrations/onedrive/sync
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'sync' && segments.length === 3 && method === 'POST') {
-    return integrations.syncOnedriveMirror(request, env, auth);
+    return integrations.syncОnedriveMirrоr(request, env, auth);
   }
 
   // POST /integrations/onedrive/sync/large
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'sync' && segments[3] === 'large' && method === 'POST') {
-    return integrations.syncOnedriveLargeFiles(request, env, auth);
+    return integrations.syncОnedriveLargeFiles(request, env, auth);
   }
 
   // GET /integrations/onedrive/manifest
   if (segments[0] === 'integrations' && segments[1] === 'onedrive' && segments[2] === 'manifest' && method === 'GET') {
-    return integrations.getOnedriveManifest(request, env, auth);
+    return integrations.getОnedriveManifest(request, env, auth);
   }
 
   // POST /subagents - Create subagent
@@ -1098,28 +1098,28 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'sync' && segments[3] === 'progress' && method === 'POST') {
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
-    return integrations.updateDriveSyncProgressInternal(request, env);
+    return integrations.updateDriveSyncPrоgressInternal(request, env);
   }
 
   // GET /internal/mirror/manifest
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'manifest' && method === 'GET') {
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
-    return integrations.getMirrorManifestInternal(request, env);
+    return integrations.getMirrоrManifestInternal(request, env);
   }
 
   // GET /internal/mirror/file
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'file' && method === 'GET') {
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
-    return integrations.getMirrorFileInternal(request, env);
+    return integrations.getMirrоrFileInternal(request, env);
   }
 
   // POST /internal/mirror/sync/progress
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'sync' && segments[3] === 'progress' && method === 'POST') {
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
-    return integrations.updateMirrorSyncProgressInternal(request, env);
+    return integrations.updateMirrоrSyncPrоgressInternal(request, env);
   }
 
   // ============================================

@@ -2,6 +2,7 @@ import * as React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReactFlowProvider } from "@xyflow/react";
 import { TerminalBlock } from "./TerminalBlock";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -76,33 +77,35 @@ function renderTerminal(sessionOwnerId: string, viewerId: string) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <TerminalBlock
-        id="terminal-1"
-        data={{
-          content: "Terminal",
-          size: { width: 420, height: 320 },
-          dashboardId: "dashboard-1",
-          session: {
-            id: "session-1",
+      <ReactFlowProvider>
+        <TerminalBlock
+          id="terminal-1"
+          data={{
+            content: "Terminal",
+            size: { width: 420, height: 320 },
             dashboardId: "dashboard-1",
-            itemId: "terminal-1",
-            ownerUserId: sessionOwnerId,
-            ownerName: "Owner",
-            sandboxSessionId: "sandbox-1",
-            ptyId: "pty-1",
-            status: "active",
-            region: "local",
-            createdAt: new Date().toISOString(),
-            stoppedAt: null,
-          },
-        }}
-        selected={false}
-        dragging={false}
-        positionAbsoluteX={0}
-        positionAbsoluteY={0}
-        width={420}
-        height={320}
-      />
+            session: {
+              id: "session-1",
+              dashboardId: "dashboard-1",
+              itemId: "terminal-1",
+              ownerUserId: sessionOwnerId,
+              ownerName: "Owner",
+              sandboxSessionId: "sandbox-1",
+              ptyId: "pty-1",
+              status: "active",
+              region: "local",
+              createdAt: new Date().toISOString(),
+              stoppedAt: null,
+            },
+          }}
+          selected={false}
+          dragging={false}
+          positionAbsoluteX={0}
+          positionAbsoluteY={0}
+          width={420}
+          height={320}
+        />
+      </ReactFlowProvider>
     </QueryClientProvider>
   );
 }
@@ -112,15 +115,13 @@ describe("TerminalBlock owner controls", () => {
     useTerminalMock.mockReset();
   });
 
-  it("shows control button for the owner", () => {
+  it("does not show view-only messaging for the owner", () => {
     renderTerminal("owner-1", "owner-1");
-    expect(screen.getByText("Owner: Owner")).toBeTruthy();
-    expect(screen.queryByText("Take Control")).toBeNull();
+    expect(screen.queryByText("View-only session")).toBeNull();
   });
 
-  it("hides control button for non-owners", () => {
+  it("shows view-only messaging for non-owners", () => {
     renderTerminal("owner-1", "viewer-1");
-    expect(screen.getAllByText("Owner: Owner").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Take Control")).toBeNull();
+    expect(screen.getAllByText("View-only session").length).toBeGreaterThan(0);
   });
 });
