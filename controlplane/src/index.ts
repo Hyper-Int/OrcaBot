@@ -255,6 +255,19 @@ async function prоxySandbоxRequest(
   return fetch(proxyRequest);
 }
 
+async function getSessiоnWithAccess(
+  env: Env,
+  sessionId: string,
+  userId: string
+): Promise<Record<string, unknown> | null> {
+  const session = await env.DB.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+      WHERE s.id = ? AND dm.user_id = ?
+    `).bind(sessionId, userId).first();
+  return session as Record<string, unknown> | null;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin');
@@ -908,11 +921,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
 
-    const session = await env.DB.prepare(`
-      SELECT s.* FROM sessions s
-      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-      WHERE s.id = ? AND dm.user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
@@ -942,11 +951,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
 
-    const session = await env.DB.prepare(`
-      SELECT s.* FROM sessions s
-      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-      WHERE s.id = ? AND dm.user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
@@ -965,11 +970,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
 
-    const session = await env.DB.prepare(`
-      SELECT s.* FROM sessions s
-      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-      WHERE s.id = ? AND dm.user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
@@ -988,11 +989,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
 
-    const session = await env.DB.prepare(`
-      SELECT s.* FROM sessions s
-      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-      WHERE s.id = ? AND dm.user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
@@ -1028,11 +1025,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     const authError = requireAuth(auth);
     if (authError) return authError;
 
-    const session = await env.DB.prepare(`
-      SELECT s.* FROM sessions s
-      JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-      WHERE s.id = ? AND dm.user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
