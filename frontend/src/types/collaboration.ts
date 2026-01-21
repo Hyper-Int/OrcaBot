@@ -152,6 +152,11 @@ export interface EdgeDeleteMessage {
   edge_id: string;
 }
 
+export interface BrowserOpenMessage {
+  type: "browser_open";
+  url: string;
+}
+
 /**
  * All incoming collaboration messages
  */
@@ -166,7 +171,8 @@ export type IncomingCollabMessage =
   | EdgeCreateMessage
   | EdgeDeleteMessage
   | PresenceMessage
-  | SessionUpdateMessage;
+  | SessionUpdateMessage
+  | BrowserOpenMessage;
 
 /**
  * All outgoing collaboration messages

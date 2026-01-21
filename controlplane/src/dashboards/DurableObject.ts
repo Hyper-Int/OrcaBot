@@ -53,6 +53,7 @@ export class DashboardDO implements DurableObject {
   private items: Map<string, DashboardItem> = new Map();
   private terminalSessions: Map<string, Session> = new Map();
   private edges: Map<string, DashboardEdge> = new Map();
+  private pendingBrowserOpenUrl: string | null = null;
   private initPromise: Promise<void>;
   // Rate-limited logger for WebSocket parse errors
   private parseErrorLogger = new RatеLimitedLogger(5000);
@@ -68,6 +69,7 @@ export class DashboardDO implements DurableObject {
         items: [string, DashboardItem][];
         terminalSessions: [string, Session][];
         edges: [string, DashboardEdge][];
+        pendingBrowserOpenUrl?: string | null;
       }>('state');
 
       if (stored) {
@@ -75,6 +77,7 @@ export class DashboardDO implements DurableObject {
         this.items = new Map(stored.items);
         this.terminalSessions = new Map(stored.terminalSessions);
         this.edges = new Map(stored.edges);
+        this.pendingBrowserOpenUrl = stored.pendingBrowserOpenUrl ?? null;
       }
     });
   }
@@ -184,6 +187,21 @@ export class DashboardDO implements DurableObject {
       return Response.json({ success: true });
     }
 
+    if (path === '/browser' && request.method === 'POST') {
+      const data = await request.json() as { url?: string };
+      const url = typeof data.url === 'string' ? data.url : '';
+      if (url) {
+        if (this.sessions.size === 0) {
+          this.pendingBrowserOpenUrl = url;
+          await this.persistState();
+        } else {
+          this.pendingBrowserOpenUrl = null;
+        }
+        this.broadcast({ type: 'browser_open', url });
+      }
+      return Response.json({ success: true });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 
@@ -226,6 +244,13 @@ export class DashboardDO implements DurableObject {
       })),
     });
     ws.send(stateMsg);
+
+    if (this.pendingBrowserOpenUrl) {
+      const pendingUrl = this.pendingBrowserOpenUrl;
+      this.pendingBrowserOpenUrl = null;
+      this.persistState().catch(() => {});
+      ws.send(JSON.stringify({ type: 'browser_open', url: pendingUrl }));
+    }
   }
 
   webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
@@ -314,6 +339,7 @@ export class DashboardDO implements DurableObject {
       items: Array.from(this.items.entries()),
       terminalSessions: Array.from(this.terminalSessions.entries()),
       edges: Array.from(this.edges.entries()),
+      pendingBrowserOpenUrl: this.pendingBrowserOpenUrl,
     });
   }
 }

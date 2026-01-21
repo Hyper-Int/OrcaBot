@@ -280,7 +280,8 @@ export type CollabMessage =
   | { type: 'edge_create'; edge: DashboardEdge }
   | { type: 'edge_delete'; edge_id: string }
   | { type: 'presence'; users: PresenceInfo[] }
-  | { type: 'session_update'; session: Session };
+  | { type: 'session_update'; session: Session }
+  | { type: 'browser_open'; url: string };
 
 // API response types
 export interface ApiResponse<T = unknown> {

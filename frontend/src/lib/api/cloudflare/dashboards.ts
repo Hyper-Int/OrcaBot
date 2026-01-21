@@ -321,6 +321,24 @@ export async function getSessionMetrics(sessionId: string): Promise<SandboxMetri
   };
 }
 
+export async function startDashboardBrowser(dashboardId: string): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/start`);
+}
+
+export async function stopDashboardBrowser(dashboardId: string): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/stop`);
+}
+
+export async function getDashboardBrowserStatus(
+  dashboardId: string
+): Promise<{ running: boolean; ready?: boolean }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/status`);
+}
+
+export async function openDashboardBrowser(dashboardId: string, url: string): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/open`, { url });
+}
+
 /**
  * Get the WebSocket URL for dashboard collaboration
  */

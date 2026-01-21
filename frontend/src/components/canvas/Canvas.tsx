@@ -150,7 +150,11 @@ export function Canvas({
     (nextNodes: Node[]) =>
       nextNodes.map((node) => {
         const base = getZIndex(node.id);
-        const zIndex = node.type === "terminal" ? base + 10000 : base;
+        const zIndex = node.type === "browser"
+          ? base + 12000
+          : node.type === "terminal"
+            ? base + 10000
+            : base;
         return {
           ...node,
           style: {

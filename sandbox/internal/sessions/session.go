@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
@@ -54,6 +55,7 @@ type Session struct {
 	ptys      map[string]*PTYInfo
 	agent     *agent.Controller
 	workspace *fs.Workspace
+	browser   *browser.Controller
 }
 
 // NewSession creates a new session with workspace at the given root
@@ -70,6 +72,55 @@ func (s *Session) Wоrkspace() *fs.Workspace {
 	return s.workspace
 }
 
+func (s *Session) StartBrowser() (browser.Status, error) {
+	s.mu.Lock()
+	if s.browser == nil {
+		s.browser = browser.NewController(s.workspace.Root())
+	}
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	return browserCtrl.Start()
+}
+
+func (s *Session) StopBrowser() {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl != nil {
+		browserCtrl.Stop()
+	}
+}
+
+func (s *Session) BrowserStatus() browser.Status {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return browser.Status{Running: false}
+	}
+	return browserCtrl.Status()
+}
+
+func (s *Session) OpenBrowserURL(target string) error {
+	s.mu.Lock()
+	if s.browser == nil {
+		s.browser = browser.NewController(s.workspace.Root())
+	}
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if status := browserCtrl.Status(); !status.Running {
+		if _, err := browserCtrl.Start(); err != nil {
+			return err
+		}
+	}
+
+	return browserCtrl.OpenURL(target)
+}
+
 // CreatePTY creates a new PTY in this session.
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
@@ -78,6 +129,13 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	if _, ok := envVars["HISTCONTROL"]; !ok {
 		envVars["HISTCONTROL"] = "ignorespace"
 	}
+	envVars["ORCABOT_SESSION_ID"] = s.ID
+	if token := os.Getenv("SANDBOX_INTERNAL_TOKEN"); token != "" {
+		envVars["ORCABOT_INTERNAL_TOKEN"] = token
+	}
+	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
+	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
+	envVars["CHROME_BIN"] = "/usr/bin/chromium"
 	p, err := pty.NewWithCommandEnv(command, 80, 24, s.workspace.Root(), envVars)
 	if err != nil {
 		return nil, err
@@ -194,6 +252,10 @@ func (s *Session) Clоse() error {
 
 	if agentCtrl != nil {
 		agentCtrl.Stоp()
+	}
+
+	if s.browser != nil {
+		s.browser.Stop()
 	}
 
 	return nil
