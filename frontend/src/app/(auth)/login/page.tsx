@@ -7,7 +7,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Zap } from "lucide-react";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
-import { useAuthStore } from "@/stores/auth-store";
+import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, SITE_URL } from "@/config/env";
 
 export default function LoginPage() {
@@ -16,6 +16,7 @@ export default function LoginPage() {
     isAuthenticated,
     isAuthResolved,
     loginDevMode,
+    logout,
     isLoading,
     setLoading,
   } = useAuthStore();
@@ -32,7 +33,7 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, isAuthResolved, router]);
 
-  const handleDevLogin = (e: React.FormEvent) => {
+  const handleDevLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -53,11 +54,29 @@ export default function LoginPage() {
     }
 
     setLoading(true);
-    // Simulate a brief delay for UX
-    setTimeout(() => {
-      loginDevMode(name, email);
+    loginDevMode(name, email);
+
+    try {
+      const response = await fetch(`${API.cloudflare.base}/auth/dev/session`, {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+        },
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to start dev session");
+      }
+
       router.push("/dashboards");
-    }, 300);
+    } catch (error) {
+      logout();
+      setError("Dev login failed. Please try again.");
+      console.warn("Dev session bootstrap failed:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGoogleLogin = () => {

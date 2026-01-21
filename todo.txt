@@ -1,16 +1,13 @@
-small bugs
-  when changing light mode terminals screens clear
-  codex missing icon
-  session not found on workspace after closing terminals
+OrcaBot Value Add
+	* instantly run claude code etc in the web no setup required
+	* secure: run agentic coders in an isolated sandbox
+	* test in an internal chromium browser
 
-big questions:
-  can we open a browser inside terminal?
+get running locally again
 
-point orcabot.ai at it
+can we make a local executable?
 
-add blue borders
-
-add and test onedrive and box
+check env variables are stored encrypted
 
 add flip mechanic to turn terminals into cute chatbots
 make connections pipe outputs around appropriately
@@ -20,6 +17,17 @@ integrate skills
 integrate commands
 integrate mcp tools
 
+	according to chatgpt:
+
+		claude code: all
+		codex cli: 
+
+add and test onedrive and box
+
+point orcabot.ai at it
+
+add model changer
+
 add talkito
 add sessionito
 add execution sandbox/canvas
@@ -27,6 +35,8 @@ add execution sandbox/canvas
 add schedule component
 add IFTTT
 add gmail
+
+add vault / secret store?
 
 add AI config?
   LLM provider keys

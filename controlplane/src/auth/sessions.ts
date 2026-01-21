@@ -92,13 +92,14 @@ export function buildSessionCookie(
     Math.floor((expiresDate.getTime() - Date.now()) / 1000)
   );
   const isSecure = new URL(request.url).protocol === 'https:';
+  const sameSite = isSecure ? 'None' : 'Lax';
 
   const parts = [
     `${SESSION_COOKIE_NAME}=${sessionId}`,
     'Path=/',
     `Max-Age=${maxAgeSeconds}`,
     'HttpOnly',
-    'SameSite=None',
+    `SameSite=${sameSite}`,
   ];
 
   if (isSecure) {
@@ -119,12 +120,13 @@ export async function deleteUserSession(
 
 export function buildClearSessionCookie(request: Request): string {
   const isSecure = new URL(request.url).protocol === 'https:';
+  const sameSite = isSecure ? 'None' : 'Lax';
   const parts = [
     `${SESSION_COOKIE_NAME}=`,
     'Path=/',
     'Max-Age=0',
     'HttpOnly',
-    'SameSite=None',
+    `SameSite=${sameSite}`,
   ];
   if (isSecure) {
     parts.push('Secure');
