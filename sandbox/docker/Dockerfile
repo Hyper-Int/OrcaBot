@@ -51,6 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     # Networking tools
     openssh-client \
+    # Browser stack
+    chromium \
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
@@ -79,6 +85,27 @@ RUN curl -fsSL https://gh.io/copilot-install | bash \
 # Install Droid CLI (Factory)
 RUN curl -fsSL https://app.factory.ai/cli | sh \
     && if [ -x /root/.local/bin/droid ]; then mv /root/.local/bin/droid /usr/local/bin/droid; fi
+
+# Install Playwright (browser automation) without bundled browsers
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
+
+# Install xdg-open wrapper to route URLs into the sandbox browser
+COPY docker/xdg-open.sh /usr/local/bin/xdg-open
+COPY docker/gio /usr/local/bin/gio
+RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/open \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/x-www-browser \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/sensible-browser \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/google-chrome \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/chrome \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/chromium-browser \
+    && if [ -x /usr/bin/xdg-open ]; then mv /usr/bin/xdg-open /usr/bin/xdg-open.real; fi \
+    && ln -sf /usr/local/bin/xdg-open /usr/bin/xdg-open \
+    && ln -sf /usr/local/bin/xdg-open /bin/xdg-open \
+    && if [ -x /usr/bin/gio ]; then mv /usr/bin/gio /usr/bin/gio.real; fi \
+    && ln -sf /usr/local/bin/gio /usr/bin/gio \
+    && if [ -x /usr/bin/gnome-open ]; then mv /usr/bin/gnome-open /usr/bin/gnome-open.real; fi \
+    && if [ -x /usr/bin/gnome-open.real ]; then ln -sf /usr/local/bin/xdg-open /usr/bin/gnome-open; fi
 
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 777 /workspace

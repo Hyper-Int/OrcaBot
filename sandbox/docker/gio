@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "open" ]; then
+  shift
+  exec /usr/local/bin/xdg-open "$@"
+fi
+
+echo "gio: unsupported command" >&2
+exit 1

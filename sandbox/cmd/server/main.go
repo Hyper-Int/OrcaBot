@@ -89,16 +89,16 @@ func main() {
 }
 
 type Server struct {
-	sessions *sessions.Manager
-	wsRouter *ws.Router
-	auth     *auth.Middleware
-	machine  string
+	sessions         *sessions.Manager
+	wsRouter         *ws.Router
+	auth             *auth.Middleware
+	machine          string
 	startedAt        time.Time
-	driveMirror       *drive.Mirror
-	driveSyncMu       sync.Mutex
-	driveSyncActive   map[string]bool
-	mirrorSyncMu      sync.Mutex
-	mirrorSyncActive  map[string]bool
+	driveMirror      *drive.Mirror
+	driveSyncMu      sync.Mutex
+	driveSyncActive  map[string]bool
+	mirrorSyncMu     sync.Mutex
+	mirrorSyncActive map[string]bool
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -107,11 +107,11 @@ func NewServer(sm *sessions.Manager) *Server {
 		log.Println("WARNING: SANDBOX_INTERNAL_TOKEN not set - authentication is disabled, all requests will be rejected")
 	}
 	return &Server{
-		sessions: sm,
-		wsRouter: ws.NewRouter(sm),
-		auth:     authMiddleware,
-		machine:  sandbоxMachineID(),
-		startedAt:       time.Now(),
+		sessions:         sm,
+		wsRouter:         ws.NewRouter(sm),
+		auth:             authMiddleware,
+		machine:          sandbоxMachineID(),
+		startedAt:        time.Now(),
 		driveMirror:      drive.NewMirrorFromEnv(),
 		driveSyncActive:  make(map[string]bool),
 		mirrorSyncActive: make(map[string]bool),
@@ -143,6 +143,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionEnv)))
 	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionMetrics)))
 	mux.HandleFunc("GET /sessions/{sessionId}/control", s.auth.RequireAuthFunc(s.requireMachine(s.handleControlWebSocket)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/start", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStart)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/stop", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStop)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/status", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStatus)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserOpen)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/{path...}", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserProxy)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserProxy)))
 
 	// Mirror sync
 	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrоrSync)))

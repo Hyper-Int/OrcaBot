@@ -5,17 +5,19 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { ExternalLink, Globe } from "lucide-react";
+import { Globe, RefreshCw, X } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
-import { Button, Input } from "@/components/ui";
-import { cn } from "@/lib/utils";
-import { checkEmbeddable } from "@/lib/api/cloudflare";
+import { Button } from "@/components/ui";
+import { API } from "@/config/env";
+import { ApiError } from "@/lib/api/client";
+import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface BrowserData extends Record<string, unknown> {
   content: string;
   size: { width: number; height: number };
+  dashboardId?: string;
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
@@ -24,154 +26,158 @@ interface BrowserData extends Record<string, unknown> {
 
 type BrowserNode = Node<BrowserData, "browser">;
 
-function normalizeUrl(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+type BrowserLease = {
+  count: number;
+  stopTimer?: number;
+};
+
+const browserLeases = new Map<string, BrowserLease>();
+
+function retainBrowser(dashboardId: string) {
+  const lease = browserLeases.get(dashboardId) || { count: 0 };
+  lease.count += 1;
+  if (lease.stopTimer) {
+    window.clearTimeout(lease.stopTimer);
+    lease.stopTimer = undefined;
+  }
+  browserLeases.set(dashboardId, lease);
+  if (lease.count === 1) {
+    return startDashboardBrowser(dashboardId);
+  }
+  return Promise.resolve();
 }
 
-function isValidUrl(value: string): boolean {
-  if (!value) return false;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
+function releaseBrowser(dashboardId: string) {
+  const lease = browserLeases.get(dashboardId);
+  if (!lease) return;
+  lease.count = Math.max(0, lease.count - 1);
+  if (lease.count === 0 && !lease.stopTimer) {
+    lease.stopTimer = window.setTimeout(() => {
+      const current = browserLeases.get(dashboardId);
+      if (!current || current.count > 0) return;
+      stopDashboardBrowser(dashboardId).catch(() => {});
+      browserLeases.delete(dashboardId);
+    }, 5000);
   }
+  browserLeases.set(dashboardId, lease);
 }
 
 export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
-  const [draftUrl, setDraftUrl] = React.useState(data.content || "");
-  const [isEmbeddable, setIsEmbeddable] = React.useState(true);
-  const lastEmbeddableRef = React.useRef<boolean | null>(null);
+  const [status, setStatus] = React.useState<"idle" | "starting" | "running" | "error">("idle");
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = React.useState(0);
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const lastOpenedRef = React.useRef<string | null>(null);
 
-  React.useEffect(() => {
-    setDraftUrl(data.content || "");
-  }, [data.content]);
-
-  const commitUrl = React.useCallback(() => {
-    const normalized = normalizeUrl(draftUrl);
-    setDraftUrl(normalized);
-    if (normalized !== data.content) {
-      data.onContentChange?.(normalized);
-    }
-  }, [draftUrl, data.content, data.onContentChange]);
-
-  const url = data.content || "";
-  const validUrl = isValidUrl(url);
-  const isCollapsed = validUrl && !isEmbeddable;
-
-  // Store onItemChange in a ref to avoid triggering effect on every render
-  const onItemChangeRef = React.useRef(data.onItemChange);
-  onItemChangeRef.current = data.onItemChange;
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    if (!validUrl) {
-      setIsEmbeddable(true);
-      lastEmbeddableRef.current = true;
-      return;
-    }
-
-    checkEmbeddable(url)
-      .then((result) => {
-        if (cancelled) return;
-        const embeddable = result.embeddable;
-        setIsEmbeddable(embeddable);
-        if (lastEmbeddableRef.current !== embeddable) {
-          const targetSize = embeddable
-            ? { width: 520, height: 360 }
-            : { width: 250, height: 130 };
-          onItemChangeRef.current?.({ size: targetSize });
-        }
-        lastEmbeddableRef.current = embeddable;
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setIsEmbeddable(true);
-          lastEmbeddableRef.current = true;
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [validUrl, url]);
-
-  const handleOpen = () => {
-    if (validUrl) {
-      window.open(url, "_blank", "noopener,noreferrer");
-    }
-  };
+  const dashboardId = data.dashboardId;
 
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <span title="Browser icon">
         <Globe className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
       </span>
-      <Input
-        value={draftUrl}
-        onChange={(e) => setDraftUrl(e.target.value)}
-        onBlur={commitUrl}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            commitUrl();
-          }
-        }}
-        placeholder="https://..."
-        title="Enter URL"
-        className={cn(
-          "h-6 text-xs bg-[var(--background-elevated)] nodrag",
-          "border-[var(--border)] focus:border-[var(--border-strong)]"
-        )}
-      />
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={handleOpen}
-        disabled={!validUrl}
-        title={validUrl ? "Open in new tab" : "Enter a valid URL"}
-        className="nodrag"
-      >
-        <ExternalLink className="w-3.5 h-3.5" />
-      </Button>
+      <div className="text-xs text-[var(--foreground-muted)]">
+        {status === "running" ? "Sandbox browser" : status === "starting" ? "Starting browser..." : "Browser stopped"}
+      </div>
+      <div className="ml-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setRefreshKey((prev) => prev + 1)}
+          disabled={status !== "running"}
+          title="Reload browser"
+          className="nodrag"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => {
+            if (!dashboardId) return;
+            stopDashboardBrowser(dashboardId).finally(() => {
+              setStatus("idle");
+            });
+          }}
+          disabled={!dashboardId || status === "idle"}
+          title="Stop browser"
+          className="nodrag"
+        >
+          <X className="w-3.5 h-3.5" />
+        </Button>
+      </div>
     </div>
   );
 
-  if (isCollapsed) {
-    return (
-      <BlockWrapper
-        selected={selected}
-        className="p-0 flex flex-col overflow-visible"
-        minWidth={250}
-        minHeight={130}
-        includeHandles={false}
-      >
-        {header}
-        <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-2 bg-[var(--background-elevated)] p-2">
-          <div className="text-xs text-[var(--foreground-muted)]">
-            Unable to display the webpage here
-          </div>
-          <Button
-            variant="primary"
-            onClick={handleOpen}
-            className="text-sm font-semibold nodrag w-full h-full"
-          >
-            Open in new tab
-          </Button>
-        </div>
-        <ConnectionHandles
-          nodeId={id}
-          visible={connectorsVisible}
-          onConnectorClick={data.onConnectorClick}
-        />
-      </BlockWrapper>
-    );
-  }
+  React.useEffect(() => {
+    if (!dashboardId) {
+      setStatus("error");
+      setErrorMessage("Missing dashboard id.");
+      return;
+    }
+
+    let cancelled = false;
+    setStatus("starting");
+    setErrorMessage(null);
+
+    retainBrowser(dashboardId)
+      .catch((err) => {
+        if (!cancelled) {
+          const message = err instanceof ApiError && err.message
+            ? err.message
+            : "Failed to start browser.";
+          setErrorMessage(message);
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        let attempts = 0;
+        const poll = async () => {
+          attempts += 1;
+          if (attempts % 6 === 0) {
+            startDashboardBrowser(dashboardId).catch(() => {});
+          }
+          const statusResponse = await getDashboardBrowserStatus(dashboardId);
+          if (cancelled) return;
+          if (statusResponse?.running && statusResponse?.ready !== false) {
+            setStatus("running");
+            setErrorMessage(null);
+            return;
+          }
+          if (attempts >= 40) {
+            setStatus("error");
+            setErrorMessage("Browser failed to start.");
+            return;
+          }
+          setTimeout(poll, 500);
+        };
+        void poll();
+      });
+
+    return () => {
+      cancelled = true;
+      releaseBrowser(dashboardId);
+    };
+  }, [dashboardId]);
+
+  React.useEffect(() => {
+    if (!dashboardId || status !== "running") {
+      return;
+    }
+    const url = typeof data.content === "string" ? data.content.trim() : "";
+    if (!url || url === lastOpenedRef.current) {
+      return;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return;
+    }
+    lastOpenedRef.current = url;
+    openDashboardBrowser(dashboardId, url).catch(() => {});
+  }, [dashboardId, status, data.content]);
+
+  const browserUrl = dashboardId
+    ? `${API.cloudflare.dashboards}/${dashboardId}/browser/?autoconnect=1&resize=scale&show_dot=true&path=dashboards/${dashboardId}/browser/websockify`
+    : "";
 
   return (
     <BlockWrapper
@@ -184,19 +190,18 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       {header}
 
       <div className="relative flex-1 min-h-0 bg-white flex flex-col">
-        {validUrl ? (
+        {status === "running" && browserUrl ? (
           <div className="flex-1 min-h-0">
             <iframe
+              key={refreshKey}
               title="Browser"
-              src={url}
+              src={browserUrl}
               className="w-full h-full"
-              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-              referrerPolicy="no-referrer"
             />
           </div>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--foreground-muted)]">
-            Enter a URL to load a page.
+            {errorMessage || "Starting browser..."}
           </div>
         )}
       </div>

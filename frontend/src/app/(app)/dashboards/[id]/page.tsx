@@ -38,7 +38,7 @@ import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration, useDebouncedCallback } from "@/hooks";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge, getSessionMetrics } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, getSessionMetrics, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -156,6 +156,8 @@ export default function DashboardPage() {
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
   const viewportRef = React.useRef({ x: 0, y: 0, zoom: 1 });
+  const browserOpenHandlerRef = React.useRef<(url: string) => void>(() => {});
+  const pendingBrowserUrlRef = React.useRef<string | null>(null);
 
   // Collaboration hook - real-time presence and updates
   const [collabState, collabActions] = useCollaboration({
@@ -163,6 +165,11 @@ export default function DashboardPage() {
     userId: user?.id || "",
     userName: user?.name || "",
     enabled: isAuthenticated && isAuthResolved && !!dashboardId && !!user?.id,
+    onMessage: (message) => {
+      if (message.type === "browser_open") {
+        browserOpenHandlerRef.current(message.url);
+      }
+    },
   });
 
   // Convert PresenceInfo to PresenceUser (add isCurrentUser flag)
@@ -237,6 +244,7 @@ export default function DashboardPage() {
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
   const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(toFlowEdge), [edgesFromData]);
+  const browserPrewarmRef = React.useRef(false);
 
   const metricsSessionId = React.useMemo(() => {
     if (sessions.length === 0) {
@@ -276,6 +284,22 @@ export default function DashboardPage() {
     const percent = (deltaMs / deltaTime) * 100;
     setCpuPercent(Math.max(0, Math.min(100, percent)));
   }, [metricsQuery.data?.cpuUserMs, metricsQuery.data?.cpuSystemMs]);
+
+  React.useEffect(() => {
+    if (!isAuthenticated || !isAuthResolved || !dashboardId) {
+      return;
+    }
+    if (browserPrewarmRef.current) {
+      return;
+    }
+    browserPrewarmRef.current = true;
+    startDashboardBrowser(dashboardId).catch(() => {});
+
+    return () => {
+      browserPrewarmRef.current = false;
+      stopDashboardBrowser(dashboardId).catch(() => {});
+    };
+  }, [dashboardId, isAuthenticated, isAuthResolved]);
 
   // Create item mutation
   const createItemMutation = useMutation({
@@ -592,6 +616,39 @@ export default function DashboardPage() {
     },
     [createItemMutation]
   );
+
+  const handleBrowserOpen = React.useCallback(
+    (url: string) => {
+      if (!url) return;
+      const existing = items.find((item) => item.type === "browser");
+      if (existing) {
+        updateItemMutation.mutate({
+          itemId: existing.id,
+          changes: { content: url },
+        });
+        return;
+      }
+      pendingBrowserUrlRef.current = url;
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
+    },
+    [items, updateItemMutation, queryClient, dashboardId]
+  );
+
+  React.useEffect(() => {
+    browserOpenHandlerRef.current = handleBrowserOpen;
+  }, [handleBrowserOpen]);
+
+  React.useEffect(() => {
+    if (!pendingBrowserUrlRef.current) return;
+    const existing = items.find((item) => item.type === "browser");
+    if (!existing) return;
+    const pendingUrl = pendingBrowserUrlRef.current;
+    pendingBrowserUrlRef.current = null;
+    updateItemMutation.mutate({
+      itemId: existing.id,
+      changes: { content: pendingUrl },
+    });
+  }, [items, updateItemMutation]);
 
   const hasEdgeBetween = React.useCallback(
     (

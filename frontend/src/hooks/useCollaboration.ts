@@ -19,6 +19,7 @@ export interface UseCollaborationOptions {
   userId: string;
   userName: string;
   enabled?: boolean;
+  onMessage?: (message: IncomingCollabMessage) => void;
 }
 
 export interface UseCollaborationState {
@@ -54,9 +55,10 @@ export interface UseCollaborationActions {
 export function useCollaboration(
   options: UseCollaborationOptions
 ): [UseCollaborationState, UseCollaborationActions] {
-  const { dashboardId, userId, userName, enabled = true } = options;
+  const { dashboardId, userId, userName, enabled = true, onMessage } = options;
 
   const managerRef = React.useRef<DashboardWSManager | null>(null);
+  const onMessageRef = React.useRef<UseCollaborationOptions["onMessage"]>(onMessage);
   const [isBootstrapped, setIsBootstrapped] = React.useState(false);
   const [connectionState, setConnectionState] =
     React.useState<ConnectionState>("disconnected");
@@ -93,6 +95,10 @@ export function useCollaboration(
     };
   }, [enabled, dashboardId, userId]);
 
+  React.useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
   // Initialize and manage WebSocket connection
   React.useEffect(() => {
     if (!enabled || !dashboardId || !userId || !isBootstrapped) {
@@ -121,6 +127,7 @@ export function useCollaboration(
     const unsubMessage = manager.onMessage((message) => {
       console.log(`[Collab] Message received:`, message.type);
       handleMessage(message);
+      onMessageRef.current?.(message);
     });
 
     // Connect
@@ -190,6 +197,8 @@ export function useCollaboration(
 
       case "edge_delete":
         setEdges((prev) => prev.filter((edge) => edge.id !== message.edge_id));
+        break;
+      case "browser_open":
         break;
     }
   }, []);

@@ -379,7 +379,7 @@ export function TerminalBlock({
 
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
-  const browserScanTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const oscBufferRef = React.useRef("");
   const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
   const skillsCatalog = agentSkillsCatalog as { categories: AgentSkillCatalogCategory[] };
   const mcpCatalog = mcpToolsCatalog as { categories: McpToolCatalogCategory[] };
@@ -387,10 +387,6 @@ export function TerminalBlock({
   React.useEffect(() => {
     createdBrowserUrlsRef.current.clear();
     outputBufferRef.current = "";
-    if (browserScanTimeoutRef.current) {
-      clearTimeout(browserScanTimeoutRef.current);
-      browserScanTimeoutRef.current = null;
-    }
     setIsClaudeSession(false);
     setActivePanel(null);
     autoControlRequestedRef.current = false;
@@ -665,27 +661,15 @@ export function TerminalBlock({
   }, []);
 
   const maybeCreateBrowserBlock = React.useCallback(
-    (text: string) => {
-      const urlRegex = /(https?:\/\/[^\s"'<>]+(?:\n[^\s"'<>]+)*)/g;
-      const strippedText = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-      const matches = strippedText.match(urlRegex);
-      if (!matches || matches.length === 0) {
+    (url: string) => {
+      if (createdBrowserUrlsRef.current.has(url)) {
         return;
       }
-
-      for (const rawUrl of matches) {
-        const flattened = rawUrl.replace(/\n/g, "");
-        const cleanedUrl = flattened.replace(/[)\],.;]+$/, "");
-        if (createdBrowserUrlsRef.current.has(cleanedUrl)) {
-          continue;
-        }
-        createdBrowserUrlsRef.current.add(cleanedUrl);
-        data.onCreateBrowserBlock?.(cleanedUrl, {
-          x: positionAbsoluteX + (width ?? data.size.width) + 24,
-          y: positionAbsoluteY + 24,
-        }, id);
-        return;
-      }
+      createdBrowserUrlsRef.current.add(url);
+      data.onCreateBrowserBlock?.(url, {
+        x: positionAbsoluteX + (width ?? data.size.width) + 24,
+        y: positionAbsoluteY + 24,
+      }, id);
     },
     [data, positionAbsoluteX, positionAbsoluteY, width]
   );
@@ -701,28 +685,42 @@ export function TerminalBlock({
     },
     {
       onData: React.useCallback((dataBytes: Uint8Array) => {
-        // Write received data to the terminal
         const text = new TextDecoder().decode(dataBytes);
-        terminalRef.current?.write(text);
-        outputBufferRef.current = (outputBufferRef.current + text).slice(-2000);
+        const markerStart = "\u001b]9;orcabot-open;";
+        const markerEnd = "\u001b\\";
+        const buffer = oscBufferRef.current + text;
+        let output = "";
+        let searchIndex = 0;
+        let incompleteIndex = -1;
+
+        while (true) {
+          const start = buffer.indexOf(markerStart, searchIndex);
+          if (start === -1) {
+            output += buffer.slice(searchIndex);
+            break;
+          }
+          const end = buffer.indexOf(markerEnd, start + markerStart.length);
+          if (end === -1) {
+            incompleteIndex = start;
+            output += buffer.slice(searchIndex, start);
+            break;
+          }
+          output += buffer.slice(searchIndex, start);
+          const url = buffer.slice(start + markerStart.length, end).trim();
+          if (url) {
+            maybeCreateBrowserBlock(url);
+          }
+          searchIndex = end + markerEnd.length;
+        }
+
+        oscBufferRef.current = incompleteIndex >= 0 ? buffer.slice(incompleteIndex) : "";
+        const cleaned = output;
+
+        terminalRef.current?.write(cleaned);
+        outputBufferRef.current = (outputBufferRef.current + cleaned).slice(-2000);
         if (!isClaudeSession && /Claude Code v/i.test(outputBufferRef.current)) {
           setIsClaudeSession(true);
         }
-
-        if (browserScanTimeoutRef.current) {
-          clearTimeout(browserScanTimeoutRef.current);
-        }
-
-        browserScanTimeoutRef.current = setTimeout(() => {
-          const buffer = outputBufferRef.current;
-          const parts = buffer.split("\n");
-          const pending = parts.pop() ?? "";
-          if (parts.length > 0) {
-            maybeCreateBrowserBlock(parts.join("\n"));
-          }
-          outputBufferRef.current = pending;
-        }, 250);
-
       }, [isClaudeSession, maybeCreateBrowserBlock]),
     }
   );
