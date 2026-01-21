@@ -19,7 +19,6 @@ import {
   Settings,
   Key,
   Wand2,
-  Puzzle,
   Wrench,
   Volume2,
   ChevronDown,
@@ -147,7 +146,7 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "plugins" | "mcp-tools" | "tts-voice" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | null;
 
 type TerminalContentState = {
   name: string;
@@ -1602,29 +1601,6 @@ export function TerminalBlock({
             />
           )}
 
-          {/* Plugins Panel (Placeholder) */}
-          {activePanel === "plugins" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-64">
-              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
-                  <Puzzle className="w-3 h-3" />
-                  <span>Plugins</span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => setActivePanel(null)}
-                  className="h-5 w-5 nodrag"
-                >
-                  <X className="w-3 h-3" />
-                </Button>
-              </div>
-              <div className="p-3 text-xs text-[var(--foreground-muted)] text-center">
-                Plugins coming soon...
-              </div>
-            </div>
-          )}
-
           {/* MCP Tools Panel */}
           {activePanel === "mcp-tools" && (
             <CatalogPanel
@@ -1775,25 +1751,27 @@ export function TerminalBlock({
           {/* Subagents, Skills, MCP Tools buttons - only shown in agentic mode */}
           {(isClaudeSession || isAgentic) && (
             <>
-              {/* Subagents button */}
-              <button
-                type="button"
-                onClick={() => setShowAttachedList((prev) => !prev)}
-                title={
-                  attachedNames.length > 0
-                    ? `Subagents: ${attachedNames.join(", ")}`
-                    : "No subagents attached - click to manage"
-                }
-                className={cn(
-                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-                  showAttachedList || activePanel === "subagents"
-                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                )}
-              >
-                <Bot className="w-3.5 h-3.5" />
-                <span className="text-[10px] font-medium">{attachedNames.length}</span>
-              </button>
+              {/* Subagents button - hidden for Gemini and Codex */}
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && (
+                <button
+                  type="button"
+                  onClick={() => setShowAttachedList((prev) => !prev)}
+                  title={
+                    attachedNames.length > 0
+                      ? `Subagents: ${attachedNames.join(", ")}`
+                      : "No subagents attached - click to manage"
+                  }
+                  className={cn(
+                    "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                    showAttachedList || activePanel === "subagents"
+                      ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                      : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                  )}
+                >
+                  <Bot className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-medium">{attachedNames.length}</span>
+                </button>
+              )}
 
               {/* Skills button */}
               <button
@@ -1893,17 +1871,15 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
-                <Bot className="w-3 h-3" />
-                <span>Subagents</span>
-              </DropdownMenuItem>
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && (
+                <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                  <Bot className="w-3 h-3" />
+                  <span>Subagents</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                 <Wand2 className="w-3 h-3" />
-                <span>Agent Skills</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActivePanel("plugins")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
-                <Puzzle className="w-3 h-3" />
-                <span>Plugins</span>
+                <span>Skills</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                 <Wrench className="w-3 h-3" />

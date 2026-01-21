@@ -12,6 +12,7 @@ help:
 	@echo "  make dev-controlplane  Run controlplane worker dev server"
 	@echo "  make dev-sandbox       Run sandbox server (local)"
 	@echo "  make build             Build all apps"
+	@echo "  make deploy            Deploy all apps"
 	@echo "  make test              Run tests for all apps"
 
 install: install-frontend install-controlplane
@@ -26,7 +27,7 @@ install-sandbox:
 	@echo "Sandbox uses Go modules; run 'go mod download' inside sandbox if needed."
 
 dev-frontend:
-	npm --prefix frontend run dev
+	npx wrangler dev -c frontend/wrangler.toml
 
 dev-controlplane:
 	npm --prefix controlplane run dev
@@ -37,10 +38,10 @@ dev-sandbox:
 build: build-frontend build-controlplane build-sandbox
 
 build-frontend:
-	npm --prefix frontend run build
+	npm --prefix frontend run workers:build
 
 build-controlplane:
-	npm --prefix controlplane run deploy
+	npm --prefix controlplane run build
 
 build-sandbox:
 	$(MAKE) -C sandbox build
@@ -68,10 +69,15 @@ deploy-frontend:
 	npm --prefix frontend run workers:deploy
 
 deploy-controlplane:
-	wrangler deploy -c wrangler.production.toml
+	cd controlplane && npx wrangler deploy -c wrangler.production.toml
 
 logs-controlplane:
 	cd controlplane && npx wrangler tail --format=pretty
+
+deploy: deploy-frontend deploy-controlplane deploy-sandbox
+
+deploy-sandbox:
+	$(MAKE) -C sandbox deploy
 
 clean:
 	$(MAKE) -C sandbox clean

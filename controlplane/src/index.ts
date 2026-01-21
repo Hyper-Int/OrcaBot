@@ -23,6 +23,7 @@ import * as mcpTools from './mcp-tools/handler';
 import * as integrations from './integrations/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
+import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 
 // Export Durable Object
@@ -428,6 +429,26 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // POST /auth/logout - clear session cookie
   if (segments[0] === 'auth' && segments[1] === 'logout' && segments.length === 2 && method === 'POST') {
     return authLogout.logout(request, env);
+  }
+
+  // POST /auth/dev/session - create session cookie in dev mode
+  if (segments[0] === 'auth' && segments[1] === 'dev' && segments[2] === 'session' && method === 'POST') {
+    if (env.DEV_AUTH_ENABLED !== 'true') {
+      return Response.json({ error: 'E79406: Dev auth disabled' }, { status: 403 });
+    }
+
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await createUserSession(env, auth.user!.id);
+    const cookie = buildSessionCookie(request, session.id, session.expiresAt);
+
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Set-Cookie': cookie,
+      },
+    });
   }
 
   // GET /embed-check - Check if a URL can be embedded in an iframe

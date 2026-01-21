@@ -4,20 +4,42 @@ This repo is a monorepo for Orcabot. Each app has its own `CLAUDE.md` with deepe
 
 ## Structure
 - `frontend` — Next.js dashboard UI
-- `cloudflare` — Cloudflare Worker control plane
+- `controlplane` — Cloudflare Worker control plane
 - `sandbox` — Go sandbox server
 
 ## App Guides
 - Frontend: `frontend/CLAUDE.md`
-- Cloudflare: `cloudflare/CLAUDE.md`
+- Control plane: `controlplane/CLAUDE.md`
 - Sandbox: `sandbox/CLAUDE.md`
 
-## Common Dev Commands
-- `make dev-frontend`
-- `make dev-cloudflare`
-- `make dev-sandbox`
-- `make build`
-- `make test`
+## Deploy (Prod)
+```
+cd sandbox && make deploy && cd ../controlplane && wrangler deploy -c wrangler.production.toml && cd ../frontend && npm run workers:deploy && cd ..
+```
+
+## Running Locally
+Sandbox:
+```
+docker run --rm -it \
+    -p 8080:8080 \
+    --cpus=2 --memory=4g \
+    -e SANDBOX_INTERNAL_TOKEN=... \
+    -e CONTROLPLANE_URL=http://localhost:8787 \
+    -e INTERNAL_API_TOKEN=... \
+    -e ALLOWED_ORIGINS=http://localhost:8788 \
+    -v orcabot-sandbox-workspace:/workspace \
+    orcabot-sandbox
+```
+
+Control plane:
+```
+npm run dev
+```
+
+Frontend:
+```
+npx wrangler dev
+```
 
 ## Auth + Control Plane Notes
 - Frontend never talks directly to sandbox; all traffic goes through the control plane.
