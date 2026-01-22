@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orcabot Desktop Profile",
+  "type": "object",
+  "properties": {
+    "controlplane": {
+      "type": "object",
+      "properties": {
+        "port": {"type": "integer"},
+        "internalToken": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "port": {"type": "integer"},
+        "internalToken": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "d1Path": {"type": "string"},
+        "kvPath": {"type": "string"},
+        "doPath": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

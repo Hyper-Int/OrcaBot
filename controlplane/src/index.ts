@@ -12,6 +12,12 @@ import type { Env, DashboardItem, RecipeStep, Session } from './types';
 import { authenticate, requireAuth, requireInternalAuth } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
+import { ensureDb, type EnvWithDb } from './db/remote';
+import {
+  ensureDriveCache,
+  isDesktopFeatureDisabledError,
+  type EnvWithDriveCache,
+} from './storage/drive-cache';
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
 import * as recipes from './recipes/handler';
@@ -281,8 +287,10 @@ async function prоxySandbоxWebSоcketPath(
   return fetch(proxyRequest);
 }
 
+type EnvWithBindings = EnvWithDb & EnvWithDriveCache;
+
 async function getSessiоnWithAccess(
-  env: Env,
+  env: EnvWithBindings,
   sessionId: string,
   userId: string
 ): Promise<Record<string, unknown> | null> {
@@ -296,8 +304,10 @@ async function getSessiоnWithAccess(
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const envWithDb = ensureDb(env);
+    const envWithBindings = ensureDriveCache(envWithDb);
     const origin = request.headers.get('Origin');
-    const allowedOrigins = parseAllоwedOrigins(env);
+    const allowedOrigins = parseAllоwedOrigins(envWithBindings);
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
@@ -318,9 +328,15 @@ export default {
     }
 
     try {
-      const response = await handleRequest(request, env);
+      const response = await handleRequest(request, envWithBindings);
       return cоrsRespоnse(response, origin, allowedOrigins);
     } catch (error) {
+      if (isDesktopFeatureDisabledError(error)) {
+        return cоrsRespоnse(Response.json(
+          { error: 'Desktop feature disabled', message: (error as Error).message },
+          { status: 501 }
+        ), origin, allowedOrigins);
+      }
       console.error('Request error:', error);
       return cоrsRespоnse(Response.json(
         { error: error instanceof Error ? error.message : 'Internal server error' },
@@ -331,15 +347,21 @@ export default {
 
   // Scheduled handler for cron triggers (runs every minute)
   async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
-    // Run health checks and schedule processing in parallel
-    await Promise.all([
-      checkAndCacheSandbоxHealth(env),
-      schedules.prоcessDueSchedules(env),
-    ]);
+    const envWithDb = ensureDb(env);
+    const envWithBindings = ensureDriveCache(envWithDb);
+    await checkAndCacheSandbоxHealth(envWithBindings);
+    try {
+      await schedules.prоcessDueSchedules(envWithBindings);
+    } catch (error) {
+      if (isDesktopFeatureDisabledError(error)) {
+        return;
+      }
+      throw error;
+    }
   },
 };
 
-async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleRequest(request: Request, env: EnvWithBindings): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -375,6 +397,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       ...(sandboxHealth.consecutiveFailures > 0 && {
         consecutiveFailures: sandboxHealth.consecutiveFailures,
       }),
+    });
+  }
+
+  if (path === '/_desktop/db-status' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    const tables = await env.DB.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+    ).all();
+    return Response.json({
+      ok: true,
+      tableCount: tables.results.length,
+      tables: tables.results.map(row => row.name),
     });
   }
 
@@ -454,7 +489,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // GET /embed-check - Check if a URL can be embedded in an iframe
   if (segments[0] === 'embed-check' && segments.length === 1 && method === 'GET') {
     const authError = requireAuth(auth);
-    if (authError) return authError;
+    if (authError && env.DEV_AUTH_ENABLED !== 'true') {
+      return authError;
+    }
 
     const targetUrlParam = url.searchParams.get('url');
     if (!targetUrlParam) {
@@ -839,13 +876,32 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   // GET /dashboards/:id/browser/* - Proxy browser UI
   if (segments[0] === 'dashboards' && segments[2] === 'browser' && method === 'GET') {
     const authError = requireAuth(auth);
-    if (authError) return authError;
+    const allowDevBypass = env.DEV_AUTH_ENABLED === 'true' && Boolean(authError);
+    if (authError && env.DEV_AUTH_ENABLED === 'true' && env.BROWSER_AUTH_DEBUG === 'true') {
+      const url = new URL(request.url);
+      const suffix = segments.slice(3).join('/');
+      const isAssetRequest = Boolean(suffix) && !suffix.startsWith('websockify');
+      if (!isAssetRequest) {
+        console.log('[desktop][browser-auth] missing auth', {
+          path: url.pathname,
+          hasUserIdHeader: Boolean(request.headers.get('X-User-ID')),
+          hasUserEmailHeader: Boolean(request.headers.get('X-User-Email')),
+          hasUserNameHeader: Boolean(request.headers.get('X-User-Name')),
+          userIdParam: url.searchParams.get('user_id'),
+          userEmailParam: url.searchParams.get('user_email'),
+          userNameParam: url.searchParams.get('user_name'),
+        });
+      }
+    }
+    if (authError && !allowDevBypass) return authError;
 
-    const access = await env.DB.prepare(`
-      SELECT 1 FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
-    `).bind(segments[1], auth.user!.id).first();
-    if (!access) {
-      return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+    if (!allowDevBypass) {
+      const access = await env.DB.prepare(`
+        SELECT 1 FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(segments[1], auth.user!.id).first();
+      if (!access) {
+        return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+      }
     }
 
     const sandbox = await env.DB.prepare(`

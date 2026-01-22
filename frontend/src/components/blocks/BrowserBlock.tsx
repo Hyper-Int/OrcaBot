@@ -9,9 +9,10 @@ import { Globe, RefreshCw, X } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { Button } from "@/components/ui";
-import { API } from "@/config/env";
+import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { ApiError } from "@/lib/api/client";
 import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
+import { useAuthStore } from "@/stores/auth-store";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface BrowserData extends Record<string, unknown> {
@@ -68,6 +69,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const [refreshKey, setRefreshKey] = React.useState(0);
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const lastOpenedRef = React.useRef<string | null>(null);
+  const user = useAuthStore((state) => state.user);
 
   const dashboardId = data.dashboardId;
 
@@ -77,7 +79,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
         <Globe className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
       </span>
       <div className="text-xs text-[var(--foreground-muted)]">
-        {status === "running" ? "Sandbox browser" : status === "starting" ? "Starting browser..." : "Browser stopped"}
+        {status === "running" ? "Browser" : status === "starting" ? "Starting browser..." : "Browser stopped"}
       </div>
       <div className="ml-auto flex items-center gap-1">
         <Button
@@ -175,9 +177,22 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
     openDashboardBrowser(dashboardId, url).catch(() => {});
   }, [dashboardId, status, data.content]);
 
-  const browserUrl = dashboardId
-    ? `${API.cloudflare.dashboards}/${dashboardId}/browser/?autoconnect=1&resize=scale&show_dot=true&path=dashboards/${dashboardId}/browser/websockify`
-    : "";
+  const browserUrl = React.useMemo(() => {
+    if (!dashboardId) return "";
+    const baseUrl = `${API.cloudflare.dashboards}/${dashboardId}/browser/`;
+    const params = new URLSearchParams({
+      autoconnect: "1",
+      resize: "scale",
+      show_dot: "true",
+      path: `dashboards/${dashboardId}/browser/websockify`,
+    });
+    if (DEV_MODE_ENABLED && user) {
+      params.set("user_id", user.id);
+      params.set("user_email", user.email);
+      params.set("user_name", user.name);
+    }
+    return `${baseUrl}?${params.toString()}`;
+  }, [dashboardId, user]);
 
   return (
     <BlockWrapper

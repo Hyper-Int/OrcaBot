@@ -1,0 +1,21 @@
+[package]
+name = "orcabot-desktop"
+version = "0.0.0"
+edition = "2021"
+description = "Orcabot Desktop shell"
+license = "UNLICENSED"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+flate2 = "1"
+filetime = "0.2"
+ctrlc = "3"
+
+# Note: virt-fwk for native Virtualization.framework on macOS is not yet
+# stable enough. The current implementation uses QEMU as a fallback.
+# Uncomment when virt-fwk is ready:
+# [target.'cfg(target_os = "macos")'.dependencies]
+# virt-fwk = "0.1"

@@ -10,8 +10,16 @@ export interface RateLimiter {
 export interface Env {
   DB: D1Database;
   DASHBOARD: DurableObjectNamespace;
-  DRIVE_CACHE: R2Bucket;
+  DRIVE_CACHE?: R2Bucket;
   SANDBOX_URL: string;
+  /** Desktop-only: D1 shim HTTP endpoint (e.g. http://127.0.0.1:9001). */
+  D1_HTTP_URL?: string;
+  /** Desktop-only: D1 shim service binding (workerd external). */
+  D1_SHIM?: Fetcher;
+  /** Desktop-only: enable D1 shim debug logging. */
+  D1_SHIM_DEBUG?: string;
+  /** Desktop-only: enable browser auth debug logging. */
+  BROWSER_AUTH_DEBUG?: string;
   /** Rate limiter for unauthenticated requests (10/min) */
   RATE_LIMITER: RateLimiter;
   /** Rate limiter for authenticated requests (200/min) */
