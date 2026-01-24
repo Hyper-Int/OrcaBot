@@ -585,6 +585,7 @@ export default function DashboardPage() {
       ? JSON.stringify({
           name: tool.label,
           subagentIds: [],
+          skillIds: [],
           agentic: tool.terminalPreset.agentic ?? false,
           bootCommand: tool.terminalPreset.command ?? "",
         })

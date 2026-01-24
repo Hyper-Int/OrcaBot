@@ -44,7 +44,13 @@ function AuthBootstrapper() {
   const hasBootstrapped = React.useRef(false);
 
   React.useEffect(() => {
-    if (isAuthenticated || hasBootstrapped.current) {
+    // If already authenticated (from localStorage hydration), just mark as resolved
+    if (isAuthenticated) {
+      setAuthResolved(true);
+      return;
+    }
+
+    if (hasBootstrapped.current) {
       return;
     }
 

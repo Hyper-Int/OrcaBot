@@ -5,6 +5,7 @@ export * from "./dashboards";
 export * from "./users";
 export * from "./embed";
 export * from "./subagents";
+export * from "./attachments";
 export * from "./files";
 export * from "./secrets";
 export * from "./agent-skills";
