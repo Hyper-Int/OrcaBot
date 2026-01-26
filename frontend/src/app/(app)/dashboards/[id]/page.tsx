@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Upload,
   Link,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -88,6 +89,7 @@ const blockTools: BlockTool[] = [
   { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
   { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
+  { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
@@ -141,6 +143,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
   prompt: { width: 280, height: 160 },
+  schedule: { width: 280, height: 220 },
   link: { width: 260, height: 140 },
   terminal: { width: 360, height: 400 },
   browser: { width: 520, height: 360 },

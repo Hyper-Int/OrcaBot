@@ -11,6 +11,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import { useThemeStore } from "@/stores/theme-store";
 
 interface PromptData extends Record<string, unknown> {
   content: string;
@@ -26,6 +27,8 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   const [content, setContent] = React.useState(data.content || "");
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const connectionFlow = useConnectionDataFlow();
+  const theme = useThemeStore((s) => s.theme);
+  const isDark = theme === "dark";
 
   // Sync content from server
   React.useEffect(() => {
@@ -49,13 +52,26 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
     [debouncedUpdate]
   );
 
+  // Fire prompt to connected blocks (both right and bottom outputs)
+  const handleGo = React.useCallback(() => {
+    if (!content.trim()) return;
+
+    const payload = { text: content, execute: true };
+    connectionFlow?.fireOutput(id, "right-out", payload);
+    connectionFlow?.fireOutput(id, "bottom-out", payload);
+  }, [id, content, connectionFlow]);
+
   // Register input handlers to receive data (both left and top inputs)
   React.useEffect(() => {
     if (!connectionFlow) return;
 
-    const handler = (payload: { text: string }) => {
+    const handler = (payload: { text?: string; execute?: boolean }) => {
       if (payload.text) {
         handleContentChange(payload.text);
+      }
+      // When receiving execute signal, fire current content to outputs
+      if (payload.execute) {
+        handleGo();
       }
     };
 
@@ -66,16 +82,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
       cleanupLeft();
       cleanupTop();
     };
-  }, [id, connectionFlow, handleContentChange]);
-
-  // Fire prompt to connected blocks (both right and bottom outputs)
-  const handleGo = React.useCallback(() => {
-    if (!content.trim()) return;
-
-    const payload = { text: content, execute: true };
-    connectionFlow?.fireOutput(id, "right-out", payload);
-    connectionFlow?.fireOutput(id, "bottom-out", payload);
-  }, [id, content, connectionFlow]);
+  }, [id, connectionFlow, handleContentChange, handleGo]);
 
   // Handle Ctrl/Cmd+Enter to fire
   const handleKeyDown = React.useCallback(
@@ -97,7 +104,10 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
       )}
       includeHandles={false}
     >
-      <div className="flex items-center gap-2 text-xs font-medium text-[var(--foreground-subtle)]">
+      <div
+        className="flex items-center gap-2 text-xs font-medium"
+        style={{ color: isDark ? "var(--foreground-subtle)" : "black" }}
+      >
         <span>Prompt</span>
       </div>
       <textarea
@@ -105,10 +115,16 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
         onChange={(e) => handleContentChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Enter a prompt..."
+        style={{
+          backgroundColor: isDark ? "black" : "white",
+          color: isDark ? "white" : "black"
+        }}
         className={cn(
-          "w-full flex-1 bg-transparent resize-none",
-          "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
-          "focus:outline-none"
+          "w-full flex-1 resize-none rounded-md p-2",
+          "border border-slate-300",
+          "text-sm placeholder:text-slate-400",
+          "focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]",
+          "dark:border-slate-600"
         )}
       />
       <button
