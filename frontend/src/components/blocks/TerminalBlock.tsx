@@ -58,7 +58,7 @@ import {
 import { useTerminal } from "@/hooks/useTerminal";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
+import { attachSessionResources, createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
 import {
   createSubagent,
   deleteSubagent,
@@ -123,6 +123,7 @@ type AgentSkillCatalogItem = {
   description: string;
   command: string;
   args?: string[];
+  sourceUrl?: string;
 };
 
 type AgentSkillCatalogCategory = {
@@ -151,9 +152,28 @@ type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts
 type TerminalContentState = {
   name: string;
   subagentIds: string[];
+  skillIds: string[];
   agentic?: boolean;
   bootCommand?: string;
   terminalTheme?: "system" | "light" | "dark";
+};
+
+type SessionAttachmentSpec = {
+  name: string;
+  sourceUrl?: string;
+  content?: string;
+};
+
+type SessionAttachmentRequest = {
+  terminalType: string;
+  attach?: {
+    agents?: SessionAttachmentSpec[];
+    skills?: SessionAttachmentSpec[];
+  };
+  detach?: {
+    agents?: string[];
+    skills?: string[];
+  };
 };
 
 type CatalogCategory<TItem> = {
@@ -272,25 +292,31 @@ function CatalogPanel<TSaved, TBrowse>({
 function parseTerminalContent(content: string | null | undefined): TerminalContentState {
   if (content) {
     try {
-      const parsed = JSON.parse(content) as Partial<TerminalContentState & { subagents?: string[] }>;
+      const parsed = JSON.parse(content) as Partial<TerminalContentState & { subagents?: string[]; skills?: string[] }>;
       const name = typeof parsed.name === "string" ? parsed.name : content;
       const subagentIds = Array.isArray(parsed.subagentIds)
         ? parsed.subagentIds
         : Array.isArray(parsed.subagents)
           ? parsed.subagents
           : [];
+      const skillIds = Array.isArray(parsed.skillIds)
+        ? parsed.skillIds
+        : Array.isArray(parsed.skills)
+          ? parsed.skills
+          : [];
       return {
         name,
         subagentIds,
+        skillIds,
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
         terminalTheme: parsed.terminalTheme,
       };
     } catch {
-      return { name: content, subagentIds: [] };
+      return { name: content, subagentIds: [], skillIds: [] };
     }
   }
-  return { name: "Terminal", subagentIds: [] };
+  return { name: "Terminal", subagentIds: [], skillIds: [] };
 }
 
 export function TerminalBlock({
@@ -321,6 +347,23 @@ export function TerminalBlock({
     [data.content]
   );
   const terminalName = terminalMeta.name;
+  const terminalType = React.useMemo(() => {
+    const command = (terminalMeta.bootCommand || "").toLowerCase();
+    if (command.includes("claude")) return "claude";
+    if (command.includes("gemini")) return "gemini";
+    if (command.includes("codex")) return "codex";
+    if (command.includes("opencode")) return "opencode";
+    if (command.includes("copilot")) return "copilot";
+    if (command.includes("droid")) return "droid";
+    const name = terminalName.toLowerCase();
+    if (name.includes("claude")) return "claude";
+    if (name.includes("gemini")) return "gemini";
+    if (name.includes("codex")) return "codex";
+    if (name.includes("opencode")) return "opencode";
+    if (name.includes("copilot")) return "copilot";
+    if (name.includes("droid")) return "droid";
+    return "shell";
+  }, [terminalMeta.bootCommand, terminalName]);
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
@@ -352,6 +395,7 @@ export function TerminalBlock({
   const [session, setSession] = React.useState<Session | null>(
     data.session || null
   );
+  const isOwner = !!session && user?.id === session.ownerUserId;
   const upsertDashboardSession = React.useCallback(
     (nextSession: Session) => {
       if (!data.dashboardId) return;
@@ -379,8 +423,38 @@ export function TerminalBlock({
   const createdBrowserUrlsRef = React.useRef<Set<string>>(new Set());
   const outputBufferRef = React.useRef("");
   const oscBufferRef = React.useRef("");
-  const catalog = subagentCatalog as { categories: SubagentCatalogCategory[] };
+  const catalog = subagentCatalog as { categories: SubagentCatalogCategory[]; source?: string };
   const skillsCatalog = agentSkillsCatalog as { categories: AgentSkillCatalogCategory[] };
+  const subagentSourceByName = React.useMemo(() => {
+    const map = new Map<string, string>();
+    catalog.categories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (item.sourcePath) {
+          map.set(item.name, item.sourcePath);
+        }
+      });
+    });
+    return map;
+  }, [catalog.categories]);
+  const skillSourceByName = React.useMemo(() => {
+    const map = new Map<string, string>();
+    skillsCatalog.categories.forEach((category) => {
+      category.items.forEach((item) => {
+        if (item.sourceUrl) {
+          map.set(item.name, item.sourceUrl);
+        }
+      });
+    });
+    return map;
+  }, [skillsCatalog.categories]);
+
+  const buildGithubRawUrl = React.useCallback((repoUrl: string, sourcePath: string) => {
+    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (!match) return null;
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/, "");
+    return `https://raw.githubusercontent.com/${owner}/${repo}/refs/heads/main/${sourcePath}`;
+  }, []);
   const mcpCatalog = mcpToolsCatalog as { categories: McpToolCatalogCategory[] };
 
   React.useEffect(() => {
@@ -510,6 +584,11 @@ export function TerminalBlock({
     savedSkills.forEach((item) => map.set(item.name, item));
     return map;
   }, [savedSkills]);
+  const savedSkillById = React.useMemo(() => {
+    const map = new Map<string, UserAgentSkill>();
+    savedSkills.forEach((item) => map.set(item.id, item));
+    return map;
+  }, [savedSkills]);
 
   // MCP Tools computed values
   const savedMcpTools = mcpToolsQuery.data || [];
@@ -549,6 +628,7 @@ export function TerminalBlock({
         content: JSON.stringify({
           name: terminalMeta.name,
           subagentIds: nextIds,
+          skillIds: terminalMeta.skillIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
@@ -556,30 +636,92 @@ export function TerminalBlock({
       });
     },
     [data, terminalMeta]
+  );
+
+  const buildAgentAttachmentSpec = React.useCallback((item: UserSubagent): SessionAttachmentSpec => {
+    const sourcePath = subagentSourceByName.get(item.name);
+    if (sourcePath && catalog.source) {
+      const sourceUrl = buildGithubRawUrl(catalog.source, sourcePath);
+      if (sourceUrl) {
+        return { name: item.name, sourceUrl };
+      }
+    }
+    const tools = item.tools && item.tools.length > 0 ? `\ntools: ${item.tools.join(", ")}` : "";
+    const description = item.description ? `\ndescription: ${item.description}` : "";
+    const content = `---\nname: ${item.name}${description}${tools}\n---\n\n${item.prompt || ""}\n`;
+    return { name: item.name, content };
+  }, [buildGithubRawUrl, catalog.source, subagentSourceByName]);
+
+  const buildSkillAttachmentSpec = React.useCallback((item: UserAgentSkill): SessionAttachmentSpec => {
+    if (item.source === "catalog") {
+      const sourceUrl = skillSourceByName.get(item.name);
+      if (sourceUrl) {
+        return { name: item.name, sourceUrl };
+      }
+    }
+    const args = item.args && item.args.length > 0 ? ` ${item.args.join(" ")}` : "";
+    const description = item.description ? item.description : "No description provided.";
+    const content = `# ${item.name}\n\n${description}\n\nCommand: ${item.command}${args}\n`;
+    return { name: item.name, content };
+  }, [skillSourceByName]);
+
+  const buildSkillAttachmentFromCatalog = React.useCallback((item: AgentSkillCatalogItem): SessionAttachmentSpec => {
+    if (item.sourceUrl) {
+      return { name: item.name, sourceUrl: item.sourceUrl };
+    }
+    const args = item.args && item.args.length > 0 ? ` ${item.args.join(" ")}` : "";
+    const description = item.description ? item.description : "No description provided.";
+    const content = `# ${item.name}\n\n${description}\n\nCommand: ${item.command}${args}\n`;
+    return { name: item.name, content };
+  }, []);
+
+  const syncSessionAttachments = React.useCallback(
+    async (payload: SessionAttachmentRequest) => {
+      if (!session?.id || !isOwner) return;
+      if (payload.terminalType === "shell") return;
+      try {
+        await attachSessionResources(session.id, payload);
+      } catch (error) {
+        console.error("[TerminalBlock] Failed to sync attachments:", error);
+      }
+    },
+    [isOwner, session?.id]
   );
 
   const handleDetachSubagent = React.useCallback(
     (subagentId: string) => {
       if (!data.onItemChange) return;
       const nextIds = terminalMeta.subagentIds.filter((id) => id !== subagentId);
+      const subagentName = savedById.get(subagentId)?.name;
       data.onItemChange({
         content: JSON.stringify({
           name: terminalMeta.name,
           subagentIds: nextIds,
+          skillIds: terminalMeta.skillIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
         }),
       });
+      if (subagentName) {
+        syncSessionAttachments({
+          terminalType,
+          detach: { agents: [subagentName] },
+        });
+      }
     },
-    [data, terminalMeta]
+    [data, savedById, syncSessionAttachments, terminalMeta, terminalType]
   );
 
   const handleUseSavedSubagent = React.useCallback(
     (item: UserSubagent) => {
       handleAttachSubagent(item.id);
+      syncSessionAttachments({
+        terminalType,
+        attach: { agents: [buildAgentAttachmentSpec(item)] },
+      });
     },
-    [handleAttachSubagent]
+    [buildAgentAttachmentSpec, handleAttachSubagent, syncSessionAttachments, terminalType]
   );
 
   const handleUseBrowseSubagent = React.useCallback(
@@ -587,6 +729,10 @@ export function TerminalBlock({
       const existing = savedByName.get(item.name);
       if (existing) {
         handleAttachSubagent(existing.id);
+        syncSessionAttachments({
+          terminalType,
+          attach: { agents: [buildAgentAttachmentSpec(existing)] },
+        });
         return;
       }
       const created = await createSubagentMutation.mutateAsync({
@@ -597,8 +743,12 @@ export function TerminalBlock({
         source: "catalog",
       });
       handleAttachSubagent(created.id);
+      syncSessionAttachments({
+        terminalType,
+        attach: { agents: [buildAgentAttachmentSpec(created)] },
+      });
     },
-    [createSubagentMutation, handleAttachSubagent, savedByName]
+    [buildAgentAttachmentSpec, createSubagentMutation, handleAttachSubagent, savedByName, syncSessionAttachments, terminalType]
   );
 
   const handleTerminalThemeChange = React.useCallback(
@@ -608,6 +758,7 @@ export function TerminalBlock({
         content: JSON.stringify({
           name: terminalMeta.name,
           subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: nextTheme,
@@ -620,6 +771,68 @@ export function TerminalBlock({
   const attachedNames = React.useMemo(() => {
     return terminalMeta.subagentIds.map((id) => savedById.get(id)?.name || "Unknown");
   }, [terminalMeta.subagentIds, savedById]);
+
+  const attachedSkillNames = React.useMemo(() => {
+    return terminalMeta.skillIds.map((id) => savedSkillById.get(id)?.name || "Unknown");
+  }, [terminalMeta.skillIds, savedSkillById]);
+
+  const syncSignatureRef = React.useRef<string>("");
+  const syncAllAttachments = React.useCallback(() => {
+    if (!session?.id || !isOwner) return;
+    if (subagentsQuery.isLoading || agentSkillsQuery.isLoading) return;
+    if (terminalType === "shell") return;
+
+    const attachedAgents: SessionAttachmentSpec[] = terminalMeta.subagentIds
+      .map((id) => savedById.get(id))
+      .filter(Boolean)
+      .map((item) => buildAgentAttachmentSpec(item as UserSubagent));
+    const attachedSkills: SessionAttachmentSpec[] = terminalMeta.skillIds
+      .map((id) => savedSkillById.get(id))
+      .filter(Boolean)
+      .map((item) => buildSkillAttachmentSpec(item as UserAgentSkill));
+
+    if (attachedAgents.length === 0 && attachedSkills.length === 0) return;
+    syncSessionAttachments({
+      terminalType,
+      attach: {
+        agents: attachedAgents.length > 0 ? attachedAgents : undefined,
+        skills: attachedSkills.length > 0 ? attachedSkills : undefined,
+      },
+    });
+  }, [
+    agentSkillsQuery.isLoading,
+    buildAgentAttachmentSpec,
+    buildSkillAttachmentSpec,
+    isOwner,
+    savedById,
+    savedSkillById,
+    session?.id,
+    subagentsQuery.isLoading,
+    syncSessionAttachments,
+    terminalMeta.skillIds,
+    terminalMeta.subagentIds,
+    terminalType,
+  ]);
+
+  React.useEffect(() => {
+    if (!session?.id || !isOwner) return;
+    const signature = [
+      session.id,
+      terminalType,
+      terminalMeta.subagentIds.join(","),
+      terminalMeta.skillIds.join(","),
+    ].join("|");
+    if (signature === syncSignatureRef.current) return;
+    syncSignatureRef.current = signature;
+    syncAllAttachments();
+  }, [
+    isOwner,
+    session?.id,
+    syncAllAttachments,
+    terminalMeta.skillIds,
+    terminalMeta.subagentIds,
+    terminalType,
+  ]);
 
   // Agent Skills handlers
   const handleSaveAgentSkill = React.useCallback(
@@ -634,6 +847,88 @@ export function TerminalBlock({
       });
     },
     [createAgentSkillMutation, savedSkillNames]
+  );
+
+  const handleAttachSkill = React.useCallback(
+    (skillId: string) => {
+      if (!data.onItemChange) return;
+      if (terminalMeta.skillIds.includes(skillId)) return;
+      const nextIds = [...terminalMeta.skillIds, skillId];
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: nextIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+        }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleDetachSkill = React.useCallback(
+    (skillId: string) => {
+      if (!data.onItemChange) return;
+      const nextIds = terminalMeta.skillIds.filter((id) => id !== skillId);
+      const skillName = savedSkillById.get(skillId)?.name;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: nextIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+        }),
+      });
+      if (skillName) {
+        syncSessionAttachments({
+          terminalType,
+          detach: { skills: [skillName] },
+        });
+      }
+    },
+    [data, savedSkillById, syncSessionAttachments, terminalMeta, terminalType]
+  );
+
+  const handleUseSavedSkill = React.useCallback(
+    (item: UserAgentSkill) => {
+      handleAttachSkill(item.id);
+      syncSessionAttachments({
+        terminalType,
+        attach: { skills: [buildSkillAttachmentSpec(item)] },
+      });
+    },
+    [buildSkillAttachmentSpec, handleAttachSkill, syncSessionAttachments, terminalType]
+  );
+
+  const handleUseBrowseSkill = React.useCallback(
+    async (item: AgentSkillCatalogItem) => {
+      const existing = savedSkillByName.get(item.name);
+      if (existing) {
+        handleAttachSkill(existing.id);
+        syncSessionAttachments({
+          terminalType,
+          attach: { skills: [buildSkillAttachmentSpec(existing)] },
+        });
+        return;
+      }
+      const created = await createAgentSkillMutation.mutateAsync({
+        name: item.name,
+        description: item.description,
+        command: item.command,
+        args: item.args || [],
+        source: "catalog",
+      });
+      handleAttachSkill(created.id);
+      syncSessionAttachments({
+        terminalType,
+        attach: { skills: [buildSkillAttachmentFromCatalog(item)] },
+      });
+    },
+    [buildSkillAttachmentFromCatalog, buildSkillAttachmentSpec, createAgentSkillMutation, handleAttachSkill, savedSkillByName, syncSessionAttachments, terminalType]
   );
 
   // MCP Tools handlers
@@ -745,7 +1040,6 @@ export function TerminalBlock({
   const isFailed = connectionState === "failed";
   const isDisconnected = connectionState === "disconnected" && wasConnectedRef.current;
   const isAgentRunning = agentState === "running";
-  const isOwner = !!session && user?.id === session.ownerUserId;
   const isAgentic = terminalMeta.agentic === true;
   const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
@@ -1189,13 +1483,13 @@ export function TerminalBlock({
           className="absolute top-0 left-full ml-2 flex flex-col gap-2"
           style={{ pointerEvents: "auto" }}
         >
-          {/* Attached Subagents List */}
+          {/* Attached Agents List */}
           {(showAttachedList || activePanel === "subagents") && (isClaudeSession || isAgentic) && (
             <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                   <Bot className="w-3 h-3" />
-                  <span>Attached Subagents</span>
+                  <span>Attached Agents</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
@@ -1225,7 +1519,7 @@ export function TerminalBlock({
               </div>
               <div className="px-2 py-2 text-xs space-y-1">
                 {attachedNames.length === 0 && (
-                  <div className="text-[var(--foreground-muted)]">No subagents attached.</div>
+                  <div className="text-[var(--foreground-muted)]">No agents attached.</div>
                 )}
                 {terminalMeta.subagentIds.map((subId) => (
                   <div
@@ -1293,14 +1587,35 @@ export function TerminalBlock({
                     className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
                   >
                     <span className="text-[var(--foreground)]">{skill.name}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => deleteAgentSkillMutation.mutate(skill.id)}
-                      className="h-5 w-5 text-[var(--status-error)] nodrag"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {terminalMeta.skillIds.includes(skill.id) ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDetachSkill(skill.id)}
+                          className="text-[10px] h-5 px-2 nodrag"
+                        >
+                          Detach
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleUseSavedSkill(skill)}
+                          className="text-[10px] h-5 px-2 nodrag"
+                        >
+                          Attach
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => deleteAgentSkillMutation.mutate(skill.id)}
+                        className="h-5 w-5 text-[var(--status-error)] nodrag"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1461,16 +1776,16 @@ export function TerminalBlock({
             </div>
           )}
 
-          {/* Subagents Panel */}
+          {/* Agents Panel */}
           {activePanel === "subagents" && (
             <CatalogPanel
-              title="Add subagents"
+              title="Add agents"
               activeTab={activeSubagentTab}
               onTabChange={setActiveSubagentTab}
               onClose={() => setActivePanel(null)}
               savedItems={savedSubagents}
               savedLoading={subagentsQuery.isLoading}
-              savedEmptyText="No saved subagents yet."
+              savedEmptyText="No saved agents yet."
               renderSavedItem={(item) => (
                 <>
                   <div className="flex items-center justify-between gap-2">
@@ -1553,14 +1868,35 @@ export function TerminalBlock({
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium text-[var(--foreground)]">{item.name}</div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => deleteAgentSkillMutation.mutate(item.id)}
-                      className="h-5 w-5 text-[var(--status-error)] nodrag"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {terminalMeta.skillIds.includes(item.id) ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDetachSkill(item.id)}
+                          className="text-[10px] h-5 px-2 nodrag"
+                        >
+                          Detach
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleUseSavedSkill(item)}
+                          className="text-[10px] h-5 px-2 nodrag"
+                        >
+                          Attach
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => deleteAgentSkillMutation.mutate(item.id)}
+                        className="h-5 w-5 text-[var(--status-error)] nodrag"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
                   {item.description && (
                     <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
@@ -1580,15 +1916,25 @@ export function TerminalBlock({
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium text-[var(--foreground)]">{item.name}</div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleSaveAgentSkill(item)}
-                      disabled={savedSkillNames.has(item.name)}
-                      className="text-[10px] h-5 px-2 nodrag"
-                    >
-                      {savedSkillNames.has(item.name) ? "Saved" : "Save"}
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleUseBrowseSkill(item)}
+                        className="text-[10px] h-5 px-2 nodrag"
+                      >
+                        Attach
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleSaveAgentSkill(item)}
+                        disabled={savedSkillNames.has(item.name)}
+                        className="text-[10px] h-5 px-2 nodrag"
+                      >
+                        {savedSkillNames.has(item.name) ? "Saved" : "Save"}
+                      </Button>
+                    </div>
                   </div>
                   <div className="text-[10px] text-[var(--foreground-muted)] mt-1">
                     {item.description}
@@ -1748,18 +2094,18 @@ export function TerminalBlock({
             </span>
           )}
 
-          {/* Subagents, Skills, MCP Tools buttons - only shown in agentic mode */}
+          {/* Agents, Skills, MCP Tools buttons - only shown in agentic mode */}
           {(isClaudeSession || isAgentic) && (
             <>
-              {/* Subagents button - hidden for Gemini and Codex */}
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && (
+              {/* Agents button - hidden for Gemini, Codex, and Copilot */}
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && (
                 <button
                   type="button"
                   onClick={() => setShowAttachedList((prev) => !prev)}
                   title={
                     attachedNames.length > 0
-                      ? `Subagents: ${attachedNames.join(", ")}`
-                      : "No subagents attached - click to manage"
+                      ? `Agents: ${attachedNames.join(", ")}`
+                      : "No agents attached - click to manage"
                   }
                   className={cn(
                     "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
@@ -1778,9 +2124,11 @@ export function TerminalBlock({
                 type="button"
                 onClick={() => setShowSavedSkills((prev) => !prev)}
                 title={
-                  savedSkills.length > 0
-                    ? `Skills: ${savedSkills.map(s => s.name).join(", ")}`
-                    : "No skills saved - click to manage"
+                  attachedSkillNames.length > 0
+                    ? `Attached skills: ${attachedSkillNames.join(", ")}`
+                    : savedSkills.length > 0
+                      ? `Saved skills: ${savedSkills.map(s => s.name).join(", ")}`
+                      : "No skills saved - click to manage"
                 }
                 className={cn(
                   "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
@@ -1790,7 +2138,7 @@ export function TerminalBlock({
                 )}
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                <span className="text-[10px] font-medium">{savedSkills.length}</span>
+                <span className="text-[10px] font-medium">{attachedSkillNames.length}</span>
               </button>
 
               {/* MCP Tools button */}
@@ -1871,10 +2219,10 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && (
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && (
                 <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
-                  <span>Subagents</span>
+                  <span>Agents</span>
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>

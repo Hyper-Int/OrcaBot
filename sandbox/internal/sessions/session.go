@@ -130,6 +130,8 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		envVars["HISTCONTROL"] = "ignorespace"
 	}
 	envVars["ORCABOT_SESSION_ID"] = s.ID
+	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
+	envVars["HOME"] = s.workspace.Root()
 	if token := os.Getenv("SANDBOX_INTERNAL_TOKEN"); token != "" {
 		envVars["ORCABOT_INTERNAL_TOKEN"] = token
 	}

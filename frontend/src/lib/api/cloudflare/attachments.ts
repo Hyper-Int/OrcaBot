@@ -1,0 +1,31 @@
+// Copyright 2026 Robert Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+import { API } from "@/config/env";
+import { apiPost } from "../client";
+
+export type SessionAttachmentSpec = {
+  name: string;
+  sourceUrl?: string;
+  content?: string;
+};
+
+export type SessionAttachmentRequest = {
+  terminalType: string;
+  attach?: {
+    agents?: SessionAttachmentSpec[];
+    skills?: SessionAttachmentSpec[];
+  };
+  detach?: {
+    agents?: string[];
+    skills?: string[];
+  };
+};
+
+export async function attachSessionResources(
+  sessionId: string,
+  data: SessionAttachmentRequest
+): Promise<void> {
+  const url = `${API.cloudflare.base}/sessions/${sessionId}/attachments`;
+  await apiPost<void>(url, data);
+}

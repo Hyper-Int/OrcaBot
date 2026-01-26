@@ -26,6 +26,7 @@ import * as subagents from './subagents/handler';
 import * as secrets from './secrets/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
+import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
@@ -982,6 +983,14 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     if (authError) return authError;
     const data = await request.json() as { set?: Record<string, string>; unset?: string[]; applyNow?: boolean };
     return sessions.updateSessiоnEnv(env, segments[1], auth.user!.id, data);
+  }
+
+  // POST /sessions/:id/attachments - Attach skills/agents to a session workspace
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'attachments' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return attachments.attachSessionResources(env, auth.user!.id, segments[1], data);
   }
 
   // GET /sessions/:id/files - List files in sandbox workspace

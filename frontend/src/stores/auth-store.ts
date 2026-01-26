@@ -115,8 +115,16 @@ export const useAuthStore = create<AuthStore>()(
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
-        isAuthResolved: state.isAuthResolved,
+        // Note: isAuthResolved is intentionally NOT persisted - it should be
+        // computed fresh each page load to avoid race conditions with hydration
       }),
+      onRehydrateStorage: () => (state) => {
+        // After hydration completes, if we have a valid user from localStorage,
+        // mark auth as resolved immediately (no need to call /users/me)
+        if (state?.isAuthenticated && state?.user) {
+          state.isAuthResolved = true;
+        }
+      },
     }
   )
 );
