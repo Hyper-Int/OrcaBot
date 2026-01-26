@@ -414,6 +414,15 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
+  // Add encrypted_at column for tracking secret encryption status
+  try {
+    await db.prepare(`
+      ALTER TABLE user_secrets ADD COLUMN encrypted_at TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
   await migrateWorkspaceItemType(db);
 }
 

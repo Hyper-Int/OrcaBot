@@ -46,6 +46,10 @@ export interface Env {
   CF_ACCESS_TEAM_DOMAIN?: string;
   /** Cloudflare Access Application Audience (AUD) tag */
   CF_ACCESS_AUD?: string;
+  /** Base64-encoded 256-bit key for encrypting user secrets at rest.
+   *  Generate with: openssl rand -base64 32
+   *  Set via: wrangler secret put SECRETS_ENCRYPTION_KEY */
+  SECRETS_ENCRYPTION_KEY?: string;
 }
 
 // User types

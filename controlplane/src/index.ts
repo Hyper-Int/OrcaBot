@@ -985,6 +985,13 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return sessions.updateSessiоnEnv(env, segments[1], auth.user!.id, data);
   }
 
+  // POST /sessions/:id/apply-secrets - Apply stored secrets to session
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'apply-secrets' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.applySecretsToSession(env, segments[1], auth.user!.id);
+  }
+
   // POST /sessions/:id/attachments - Attach skills/agents to a session workspace
   if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'attachments' && method === 'POST') {
     const authError = requireAuth(auth);
@@ -1370,6 +1377,13 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return schedules.emitEvent(env, data.event, data.payload);
   }
 
+  // POST /internal/migrate-secrets - Encrypt existing plaintext secrets
+  if (segments[0] === 'internal' && segments[1] === 'migrate-secrets' && segments.length === 2 && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return secrets.migrateUnencryptedSecrets(env);
+  }
+
   // Not found
-  return Response.json({ error: 'E79740: Not found' }, { status: 404 });
+  return Response.json({ error: 'E79999: Not found' }, { status: 404 });
 }
