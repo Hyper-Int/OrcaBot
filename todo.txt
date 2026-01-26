@@ -5,11 +5,10 @@ OrcaBot Value Add
 
 get running locally again
 
-can we make a local executable?
+add prompt box
 
-check env variables are stored encrypted
+check env variables are stored encrypted - maybe add to main menu with note for plans to wait until terminal
 
-add flip mechanic to turn terminals into cute chatbots
 make connections pipe outputs around appropriately
 
 integrate subagents
@@ -24,9 +23,21 @@ integrate mcp tools
 
 add and test onedrive and box
 
+add slack
+add whatsapp
+add txt
+add forms
+add logic gates
+
+add flip mechanic to turn terminals into cute chatbots
+
 point orcabot.ai at it
 
 add model changer
+
+add regular chatgpt/claude etc
+
+add avatars
 
 add talkito
 add sessionito
@@ -54,18 +65,14 @@ datadog/splunk component
 
 DONE
 
+Template ideas
+	* Council of subagents with avatars (think character.ai party)
+	* Design Build Test team
+	* Survey note taker/responder
+	* Photography session booking
+	* Tax example
+
 DREAM GOALS
 * Can someone use OrcaBot to set up Gas Town? Ralph? BMAD?
 * Is this Turing complete? Can someone create OrcaBot in OrcaBot?
 
-Not the best place for this but didnt know where to put it
-Error Codes (E79XXX):                                                                                                          
-  - E79101, E79102: MCP tools errors
-  - E79201-E79204: Session errors
-  - E79301-E79304: Dashboard errors
-  - E79401-E79403: Auth errors
-  - E79501-E79502: Recipe errors
-  - E79601: Rate limit errors
-  - E79701: Sandbox auth unauthorized
-  - E79702-E79704: WebSocket session/PTY/agent not found
-  - E79705: Path parameter required 

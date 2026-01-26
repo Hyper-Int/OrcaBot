@@ -49,8 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     # Process management
     procps \
+    kmod \
     # Networking tools
     openssh-client \
+    socat \
     # Browser stack
     chromium \
     xvfb \
