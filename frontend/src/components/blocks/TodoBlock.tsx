@@ -11,6 +11,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { Badge } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
+import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 
 interface TodoItem {
   id: string;
@@ -87,11 +88,40 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
     persistItems(newItems);
   };
 
-  const removeItem = (id: string) => {
-    const newItems = items.filter((item) => item.id !== id);
+  const removeItem = (itemId: string) => {
+    const newItems = items.filter((item) => item.id !== itemId);
     setItems(newItems);
     persistItems(newItems);
   };
+
+  // Register handlers for incoming data from connections (both left and top inputs)
+  const connectionFlow = useConnectionDataFlow();
+  React.useEffect(() => {
+    if (!connectionFlow) return;
+
+    const handler = (payload: { text: string }) => {
+      if (payload.text) {
+        const newItems = [
+          ...items,
+          {
+            id: crypto.randomUUID(),
+            text: payload.text.trim(),
+            completed: false,
+          },
+        ];
+        setItems(newItems);
+        persistItems(newItems);
+      }
+    };
+
+    const cleanupLeft = connectionFlow.registerInputHandler(id, "left-in", handler);
+    const cleanupTop = connectionFlow.registerInputHandler(id, "top-in", handler);
+
+    return () => {
+      cleanupLeft();
+      cleanupTop();
+    };
+  }, [id, connectionFlow, items, persistItems]);
 
   return (
     <BlockWrapper

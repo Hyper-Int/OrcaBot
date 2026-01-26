@@ -25,8 +25,8 @@ export function ConnectionHandles({
   nodeId,
   visible,
   onConnectorClick,
-  topMode = "both",
-  bottomMode = "both",
+  topMode = "target",
+  bottomMode = "source",
 }: ConnectionHandlesProps) {
   const containerClass = cn(
     "absolute inset-0 pointer-events-none",

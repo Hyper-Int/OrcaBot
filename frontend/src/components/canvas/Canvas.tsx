@@ -30,6 +30,7 @@ import { TerminalBlock } from "@/components/blocks/TerminalBlock";
 import { BrowserBlock } from "@/components/blocks/BrowserBlock";
 import { WorkspaceBlock } from "@/components/blocks/WorkspaceBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
+import { PromptBlock } from "@/components/blocks/PromptBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -44,6 +45,7 @@ const nodeTypes: NodeTypes = {
   browser: BrowserBlock,
   workspace: WorkspaceBlock,
   recipe: RecipeBlock,
+  prompt: PromptBlock,
   cursor: CursorNode,
 };
 

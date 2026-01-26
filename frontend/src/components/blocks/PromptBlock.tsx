@@ -5,37 +5,27 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
+import { Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 
-type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
-
-interface NoteData extends Record<string, unknown> {
+interface PromptData extends Record<string, unknown> {
   content: string;
-  color?: NoteColor;
   size: { width: number; height: number };
   onContentChange?: (content: string) => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
 
-type NoteNode = Node<NoteData, "note">;
+type PromptNode = Node<PromptData, "prompt">;
 
-const colorClasses: Record<NoteColor, string> = {
-  yellow: "bg-amber-100/90 border-amber-200 dark:bg-amber-900/30 dark:border-amber-800/50",
-  blue: "bg-blue-100/90 border-blue-200 dark:bg-blue-900/30 dark:border-blue-800/50",
-  green: "bg-emerald-100/90 border-emerald-200 dark:bg-emerald-900/30 dark:border-emerald-800/50",
-  pink: "bg-pink-100/90 border-pink-200 dark:bg-pink-900/30 dark:border-pink-800/50",
-  purple: "bg-violet-100/90 border-violet-200 dark:bg-violet-900/30 dark:border-violet-800/50",
-};
-
-export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
+export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   const [content, setContent] = React.useState(data.content || "");
-  const color = data.color || "yellow";
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const connectionFlow = useConnectionDataFlow();
 
   // Sync content from server
   React.useEffect(() => {
@@ -59,8 +49,7 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
     [debouncedUpdate]
   );
 
-  // Register handlers for incoming data from connections (both left and top inputs)
-  const connectionFlow = useConnectionDataFlow();
+  // Register input handlers to receive data (both left and top inputs)
   React.useEffect(() => {
     if (!connectionFlow) return;
 
@@ -79,25 +68,63 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
     };
   }, [id, connectionFlow, handleContentChange]);
 
+  // Fire prompt to connected blocks (both right and bottom outputs)
+  const handleGo = React.useCallback(() => {
+    if (!content.trim()) return;
+
+    const payload = { text: content, execute: true };
+    connectionFlow?.fireOutput(id, "right-out", payload);
+    connectionFlow?.fireOutput(id, "bottom-out", payload);
+  }, [id, content, connectionFlow]);
+
+  // Handle Ctrl/Cmd+Enter to fire
+  const handleKeyDown = React.useCallback(
+    (e: React.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleGo();
+      }
+    },
+    [handleGo]
+  );
+
   return (
     <BlockWrapper
       selected={selected}
       className={cn(
-        "p-4 flex flex-col",
-        colorClasses[color]
+        "p-3 flex flex-col gap-2",
+        "bg-slate-100/90 border-slate-200 dark:bg-slate-800/90 dark:border-slate-700"
       )}
       includeHandles={false}
     >
+      <div className="flex items-center gap-2 text-xs font-medium text-[var(--foreground-subtle)]">
+        <span>Prompt</span>
+      </div>
       <textarea
         value={content}
         onChange={(e) => handleContentChange(e.target.value)}
-        placeholder="Write a note..."
+        onKeyDown={handleKeyDown}
+        placeholder="Enter a prompt..."
         className={cn(
           "w-full flex-1 bg-transparent resize-none",
           "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
           "focus:outline-none"
         )}
       />
+      <button
+        onClick={handleGo}
+        disabled={!content.trim()}
+        className={cn(
+          "flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md",
+          "text-sm font-medium transition-colors",
+          "bg-emerald-600 text-white hover:bg-emerald-700",
+          "disabled:opacity-50 disabled:cursor-not-allowed",
+          "dark:bg-emerald-500 dark:hover:bg-emerald-600"
+        )}
+      >
+        <Play className="w-3.5 h-3.5" />
+        Go
+      </button>
       <ConnectionHandles
         nodeId={id}
         visible={connectorsVisible}
@@ -107,4 +134,4 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
   );
 }
 
-export default NoteBlock;
+export default PromptBlock;
