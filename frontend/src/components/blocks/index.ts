@@ -9,3 +9,4 @@ export { TerminalBlock } from "./TerminalBlock";
 export { WorkspaceBlock } from "./WorkspaceBlock";
 export { RecipeBlock } from "./RecipeBlock";
 export { PromptBlock } from "./PromptBlock";
+export { ScheduleBlock } from "./ScheduleBlock";

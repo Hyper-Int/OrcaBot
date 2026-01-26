@@ -21,6 +21,8 @@ interface BlockWrapperProps {
   resizable?: boolean;
   /** Whether to include connection handles (default: true) */
   includeHandles?: boolean;
+  /** Whether height should auto-fit content (default: false) */
+  autoHeight?: boolean;
 }
 
 export function BlockWrapper({
@@ -33,6 +35,7 @@ export function BlockWrapper({
   minHeight = 60,
   resizable = true,
   includeHandles = true,
+  autoHeight = false,
 }: BlockWrapperProps) {
   return (
     <>
@@ -48,7 +51,8 @@ export function BlockWrapper({
       )}
       <div
         className={cn(
-          "relative rounded-[var(--radius-card)] transition-shadow w-full h-full group",
+          "relative rounded-[var(--radius-card)] transition-shadow w-full group",
+          autoHeight ? "h-auto" : "h-full",
           "bg-[var(--background-elevated)] border border-[var(--border)]",
           // Shadow states
           "shadow-sm hover:shadow-md",
