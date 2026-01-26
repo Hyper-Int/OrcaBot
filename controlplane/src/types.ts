@@ -50,6 +50,11 @@ export interface Env {
    *  Generate with: openssl rand -base64 32
    *  Set via: wrangler secret put SECRETS_ENCRYPTION_KEY */
   SECRETS_ENCRYPTION_KEY?: string;
+  /** Resend API key for sending emails.
+   *  Set via: wrangler secret put RESEND_API_KEY */
+  RESEND_API_KEY?: string;
+  /** Email sender address for outbound emails */
+  EMAIL_FROM?: string;
 }
 
 // User types

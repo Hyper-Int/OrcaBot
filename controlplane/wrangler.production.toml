@@ -7,6 +7,7 @@
 #   wrangler secret put INTERNAL_API_TOKEN -c wrangler.production.toml
 #   wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.production.toml
 #   wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.production.toml
+#   wrangler secret put RESEND_API_KEY -c wrangler.production.toml
 
 name = "orcabot-controlplane"
 main = "src/index.ts"
@@ -31,6 +32,9 @@ ALLOWED_ORIGINS = "https://orcabot.com"
 # OAuth (client IDs only - secrets go in wrangler secret)
 FRONTEND_URL = "https://orcabot.com"
 GOOGLE_CLIENT_ID = "800055652303-t2jus6l3rlkle2fd3a0vrtihs974o6ul.apps.googleusercontent.com"
+
+# Email sender for invitation emails
+EMAIL_FROM = "OrcaBot <noreply@orcabot.com>"
 # GITHUB_CLIENT_ID = "your-github-client-id"
 
 # Rate limiting - unauthenticated (strict)

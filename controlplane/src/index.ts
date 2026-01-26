@@ -29,6 +29,7 @@ import * as mcpTools from './mcp-tools/handler';
 import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
 import * as templates from './templates/handler';
+import * as members from './members/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
@@ -669,6 +670,54 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireAuth(auth);
     if (authError) return authError;
     return dashboards.deleteEdge(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // ============================================
+  // Dashboard member routes
+  // ============================================
+
+  // GET /dashboards/:id/members - List members and invitations
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'members' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return members.listMembers(env, segments[1], auth.user!.id);
+  }
+
+  // POST /dashboards/:id/members - Add member or send invitation
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'members' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as { email: string; role: 'editor' | 'viewer' };
+    return members.addMember(env, segments[1], auth.user!.id, data);
+  }
+
+  // PUT /dashboards/:id/members/:memberId - Update member role
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'members' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as { role: 'editor' | 'viewer' };
+    return members.updateMemberRole(env, segments[1], auth.user!.id, segments[3], data);
+  }
+
+  // DELETE /dashboards/:id/members/:memberId - Remove member
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'members' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return members.removeMember(env, segments[1], auth.user!.id, segments[3]);
+  }
+
+  // POST /dashboards/:id/invitations/:invId/resend - Resend invitation
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'invitations' && segments[4] === 'resend' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return members.resendInvitation(env, segments[1], auth.user!.id, segments[3]);
+  }
+
+  // DELETE /dashboards/:id/invitations/:invId - Cancel invitation
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'invitations' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return members.cancelInvitation(env, segments[1], auth.user!.id, segments[3]);
   }
 
   // ============================================

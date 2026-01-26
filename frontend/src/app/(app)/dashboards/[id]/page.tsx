@@ -45,6 +45,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui";
 import { ExportTemplateDialog } from "@/components/dialogs/ExportTemplateDialog";
+import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -164,6 +165,7 @@ export default function DashboardPage() {
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
   const [newLinkUrl, setNewLinkUrl] = React.useState("");
   const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
   const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
   const hasPendingConnection = Boolean(pendingConnection);
@@ -1205,6 +1207,10 @@ export default function DashboardPage() {
                 </Tooltip>
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>Share</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => setIsShareDialogOpen(true)}>
+                    <Users className="w-4 h-4 mr-2" />
+                    Share Dashboard
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsExportDialogOpen(true)}>
                     <Upload className="w-4 h-4 mr-2" />
                     Export as Template
@@ -1396,6 +1402,15 @@ export default function DashboardPage() {
         onOpenChange={setIsExportDialogOpen}
         dashboardId={dashboardId}
         dashboardName={dashboard?.name || ""}
+      />
+
+      {/* Share Dashboard Dialog */}
+      <ShareDashboardDialog
+        open={isShareDialogOpen}
+        onOpenChange={setIsShareDialogOpen}
+        dashboardId={dashboardId}
+        dashboardName={dashboard?.name || ""}
+        currentUserRole={role}
       />
     </div>
   );
