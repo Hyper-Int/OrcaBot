@@ -1724,10 +1724,10 @@ export function TerminalBlock({
               <div className="p-2 space-y-2 text-xs">
                 <div className="flex gap-1">
                   <Input
-                    placeholder="Name"
+                    placeholder="NAME"
                     value={newSecretName}
-                    onChange={(e) => setNewSecretName(e.target.value)}
-                    className="h-6 text-xs flex-1 nodrag"
+                    onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                    className="h-6 text-xs flex-1 nodrag font-mono"
                   />
                   <Input
                     type="password"

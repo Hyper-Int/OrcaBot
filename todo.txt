@@ -1,69 +1,47 @@
 OrcaBot Value Add
 	* instantly run claude code etc in the web no setup required
-	* secure: run agentic coders in an isolated sandbox
+	* sandboxed virtual machine for security
 	* test in an internal chromium browser
 
-get running locally again
+Orcabot 1 live:
+	
 
-add prompt box
+Orcabot 2 live:
+	share links (TEST) waiting on resend to verify DNS records
 
-check env variables are stored encrypted - maybe add to main menu with note for plans to wait until terminal
+Orcabot 3 live:
+	NEXT UP: have env vars automatically configure AI agents
 
-make connections pipe outputs around appropriately
-
-integrate subagents
-integrate skills
-integrate commands
-integrate mcp tools
-
-	according to chatgpt:
-
-		claude code: all
-		codex cli: 
-
+add model changer
+mcp tools
 add and test onedrive and box
-
 add slack
 add whatsapp
 add txt
-add forms
+add form triggers
 add logic gates
-
-add flip mechanic to turn terminals into cute chatbots
-
-point orcabot.ai at it
-
-add model changer
-
-add regular chatgpt/claude etc
-
-add avatars
-
-add talkito
-add sessionito
-add execution sandbox/canvas
-
-add schedule component
 add IFTTT
 add gmail
-
-add vault / secret store?
-
-add AI config?
-  LLM provider keys
-  Voice provider keys
-
-add templates
-
-polish
-test
-add payment options
-
-env vars / secrets component
+add regular chatgpt/claude etc
+add avatars
+add talkito
+add sessionito
+make schedule component work in background
+add flip mechanic to turn terminals into cute chatbots
+add secondaring input/output connector next to default one
 aws/google cloud/azure component
 datadog/splunk component
 
+point orcabot.ai at it
+polish
+automated tests
+add payment options
+
 DONE
+
+spread the word
+	James and Bal on the whatsapp group
+	twitter bookmarks
 
 Template ideas
 	* Council of subagents with avatars (think character.ai party)
@@ -75,4 +53,3 @@ Template ideas
 DREAM GOALS
 * Can someone use OrcaBot to set up Gas Town? Ralph? BMAD?
 * Is this Turing complete? Can someone create OrcaBot in OrcaBot?
-

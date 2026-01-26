@@ -261,6 +261,21 @@ If unsure:
 
 ---
 
+## Known limitations / TODOs
+
+### ScheduleBlock (Preview)
+The `ScheduleBlock` component (`src/components/blocks/ScheduleBlock.tsx`) currently runs timers in the frontend. This is a temporary preview implementation.
+
+**To be improved:** Schedules should be managed by the control plane backend so they:
+- Continue running when the browser is closed
+- Survive page refreshes
+- Work reliably across multiple users
+- Execute based on server time, not client time
+
+The component title shows "(Preview)" to indicate this limitation.
+
+---
+
 ## Success criteria
 
 This repo is correct if:

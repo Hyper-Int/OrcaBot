@@ -12,6 +12,8 @@
  * - browser: Keep URL (assumed public)
  * - workspace: Keep as-is (no sensitive data)
  * - recipe: Clear step configs that may contain env vars/secrets
+ * - prompt: Clear prompt text (may contain user instructions/data)
+ * - schedule: Keep cron pattern, clear name and event trigger
  */
 
 export type DashboardItemType =
@@ -21,7 +23,9 @@ export type DashboardItemType =
   | 'link'
   | 'browser'
   | 'workspace'
-  | 'recipe';
+  | 'recipe'
+  | 'prompt'
+  | 'schedule';
 
 /**
  * Safely parse JSON, returning null on failure
@@ -140,6 +144,33 @@ export function scrubItemContent(
       case 'workspace': {
         // Workspace blocks have no sensitive user data
         return content;
+      }
+
+      case 'prompt': {
+        // Prompts store { prompt: string, ... }
+        // Clear prompt text which may contain user instructions/data
+        const parsed = safeParseJson(content) as Record<string, unknown> | null;
+        if (parsed && typeof parsed === 'object') {
+          return JSON.stringify({
+            prompt: '', // Clear user prompt
+          });
+        }
+        return JSON.stringify({ prompt: '' });
+      }
+
+      case 'schedule': {
+        // Schedules store { name: string, cron?: string, eventTrigger?: string, ... }
+        // Keep structure but clear names and specific trigger details
+        const parsed = safeParseJson(content) as Record<string, unknown> | null;
+        if (parsed && typeof parsed === 'object') {
+          return JSON.stringify({
+            name: '', // Clear name
+            cron: parsed.cron || '', // Keep cron pattern (not sensitive)
+            eventTrigger: '', // Clear event trigger
+            enabled: parsed.enabled ?? true,
+          });
+        }
+        return JSON.stringify({ name: '', cron: '', eventTrigger: '', enabled: true });
       }
 
       default:
