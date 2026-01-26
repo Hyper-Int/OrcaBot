@@ -781,3 +781,54 @@ export async function stоpSessiоn(
 
   return new Response(null, { status: 204 });
 }
+
+// Apply stored secrets to a session as environment variables
+export async function applySecretsToSession(
+  env: EnvWithDriveCache,
+  sessionId: string,
+  userId: string
+): Promise<Response> {
+  // Import dynamically to avoid circular dependency
+  const { getDecryptedSecretsForDashboard } = await import('../secrets/handler');
+
+  const session = await env.DB.prepare(`
+    SELECT s.*, dm.role FROM sessions s
+    JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
+    WHERE s.id = ? AND dm.user_id = ? AND dm.role IN ('owner', 'editor')
+  `).bind(sessionId, userId).first();
+
+  if (!session) {
+    return Response.json({ error: 'E79217: Session not found or no access' }, { status: 404 });
+  }
+
+  if (session.status !== 'active') {
+    return Response.json({ error: 'E79218: Session is not active' }, { status: 400 });
+  }
+
+  try {
+    const secrets = await getDecryptedSecretsForDashboard(
+      env,
+      userId,
+      session.dashboard_id as string
+    );
+
+    if (Object.keys(secrets).length === 0) {
+      return Response.json({ applied: 0, message: 'No secrets to apply' });
+    }
+
+    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    await sandbox.updateEnv(
+      session.sandbox_session_id as string,
+      { set: secrets, applyNow: true },
+      (session.sandbox_machine_id as string) || undefined
+    );
+
+    return Response.json({ applied: Object.keys(secrets).length });
+  } catch (error) {
+    console.error('Failed to apply secrets:', error);
+    return Response.json(
+      { error: 'E79219: Failed to apply secrets' },
+      { status: 500 }
+    );
+  }
+}
