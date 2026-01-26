@@ -377,10 +377,10 @@ export default function DashboardsPage() {
               <div className="flex gap-2 mb-4">
                 <div className="w-1/3 min-w-0">
                   <Input
-                    placeholder="Name"
+                    placeholder="NAME"
                     value={newSecretName}
-                    onChange={(e) => setNewSecretName(e.target.value)}
-                    className="w-full"
+                    onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                    className="w-full font-mono"
                     autoComplete="off"
                     data-1p-ignore
                     data-lpignore="true"

@@ -191,7 +191,7 @@ export function ScheduleBlock({ id, data, selected }: NodeProps<ScheduleNode>) {
       {/* Header with enable toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs font-medium text-[var(--foreground-subtle)]">
-          <span>Schedule</span>
+          <span>Schedule (Preview)</span>
         </div>
         <button
           onClick={() => updateConfig({ enabled: !config.enabled })}

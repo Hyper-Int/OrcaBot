@@ -10,6 +10,7 @@ compatibility_flags = ["nodejs_compat"]
 # API endpoint for control plane
 NEXT_PUBLIC_API_URL = "https://api.orcabot.com"
 NEXT_PUBLIC_SITE_URL = "https://orcabot.com"
+NEXT_PUBLIC_DEV_MODE_ENABLED = "false"
 
 [assets]
 directory = ".open-next/assets"
