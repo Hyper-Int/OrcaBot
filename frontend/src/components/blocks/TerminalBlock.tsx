@@ -1710,7 +1710,7 @@ export function TerminalBlock({
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                   <Key className="w-3 h-3" />
-                  <span>Secrets</span>
+                  <span>Environment Variables</span>
                 </div>
                 <Button
                   variant="ghost"
@@ -1777,7 +1777,7 @@ export function TerminalBlock({
                     <div className="text-[var(--foreground-muted)]">Loading...</div>
                   )}
                   {!secretsQuery.isLoading && savedSecrets.length === 0 && (
-                    <div className="text-[var(--foreground-muted)]">No secrets configured.</div>
+                    <div className="text-[var(--foreground-muted)]">No environment variables configured.</div>
                   )}
                   {savedSecrets.map((secret) => (
                     <div
@@ -2221,7 +2221,7 @@ export function TerminalBlock({
             <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem onClick={() => setActivePanel("secrets")} className="gap-2">
                 <Key className="w-3 h-3" />
-                <span>Secrets</span>
+                <span>Environment Variables</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuSub>

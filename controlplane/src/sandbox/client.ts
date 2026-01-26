@@ -85,10 +85,16 @@ export class SandboxClient {
     if (machineId) {
       headers.set('X-Sandbox-Machine-ID', machineId);
     }
+    // Convert to snake_case for sandbox API
+    const body = {
+      set: payload.set,
+      unset: payload.unset,
+      apply_now: payload.applyNow,
+    };
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       throw new Error(`Failed to update env: ${res.status}`);

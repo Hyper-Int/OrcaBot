@@ -9,12 +9,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   FileText,
-  Terminal,
   Workflow,
   Trash2,
   LogOut,
   Code2,
-  Bot,
   Boxes,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -39,10 +37,17 @@ import {
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
-import { listDashboards, createDashboard, deleteDashboard } from "@/lib/api/cloudflare";
+import {
+  listDashboards,
+  createDashboard,
+  deleteDashboard,
+  listGlobalSecrets,
+  createGlobalSecret,
+  deleteGlobalSecret,
+} from "@/lib/api/cloudflare";
 import { listTemplates } from "@/lib/api/cloudflare/templates";
 import { formatRelativeTime, cn } from "@/lib/utils";
-import type { Dashboard, DashboardTemplate, TemplateCategory } from "@/types/dashboard";
+import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 
 export default function DashboardsPage() {
   const router = useRouter();
@@ -53,6 +58,8 @@ export default function DashboardsPage() {
   const [newDashboardName, setNewDashboardName] = React.useState("");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = React.useState<Dashboard | null>(null);
+  const [newSecretName, setNewSecretName] = React.useState("");
+  const [newSecretValue, setNewSecretValue] = React.useState("");
 
   // Redirect if not authenticated
   React.useEffect(() => {
@@ -79,6 +86,13 @@ export default function DashboardsPage() {
   const { data: templates } = useQuery({
     queryKey: ["templates"],
     queryFn: () => listTemplates(),
+    enabled: isAuthenticated && isAuthResolved,
+  });
+
+  // Fetch global secrets
+  const secretsQuery = useQuery({
+    queryKey: ["secrets", "_global"],
+    queryFn: listGlobalSecrets,
     enabled: isAuthenticated && isAuthResolved,
   });
 
@@ -111,6 +125,41 @@ export default function DashboardsPage() {
       toast.error(`Failed to delete dashboard: ${error.message}`);
     },
   });
+
+  // Create secret mutation
+  const createSecretMutation = useMutation({
+    mutationFn: createGlobalSecret,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
+      setNewSecretName("");
+      setNewSecretValue("");
+      toast.success("Secret saved");
+    },
+    onError: (error) => {
+      toast.error(`Failed to create secret: ${error.message}`);
+    },
+  });
+
+  // Delete secret mutation
+  const deleteSecretMutation = useMutation({
+    mutationFn: deleteGlobalSecret,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
+      toast.success("Secret deleted");
+    },
+    onError: (error) => {
+      toast.error(`Failed to delete secret: ${error.message}`);
+    },
+  });
+
+  const handleAddSecret = () => {
+    if (newSecretName.trim() && newSecretValue.trim()) {
+      createSecretMutation.mutate({
+        name: newSecretName.trim(),
+        value: newSecretValue.trim(),
+      });
+    }
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,8 +235,8 @@ export default function DashboardsPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {/* New Dashboard Section */}
-        <section className="mb-12">
+        {/* New Dashboard Section (Templates) */}
+        <section className="mb-8">
           <h2 className="text-h2 text-[var(--foreground)] mb-4">
             New Dashboard
           </h2>
@@ -258,59 +307,149 @@ export default function DashboardsPage() {
           </div>
         </section>
 
-        {/* Your Dashboards Section */}
-        <section>
-          <h2 className="text-h2 text-[var(--foreground)] mb-4">
-            Your Dashboards
-          </h2>
+        {/* Two-column layout: Dashboards (left) + Environment Variables (right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Your Dashboards Section */}
+          <section>
+            <h2 className="text-h2 text-[var(--foreground)] mb-4">
+              Your Dashboards
+            </h2>
 
-          {isLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-32" />
-              ))}
-            </div>
-          ) : error ? (
-            <div className="text-center py-12">
-              <p className="text-body text-[var(--status-error)]">
-                Failed to load dashboards. Please try again.
+            {isLoading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-24" />
+                ))}
+              </div>
+            ) : error ? (
+              <div className="text-center py-12">
+                <p className="text-body text-[var(--status-error)]">
+                  Failed to load dashboards. Please try again.
+                </p>
+                <Button
+                  variant="secondary"
+                  className="mt-4"
+                  onClick={() =>
+                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+                  }
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : dashboards && dashboards.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {dashboards.map((dashboard) => (
+                  <DashboardCard
+                    key={dashboard.id}
+                    dashboard={dashboard}
+                    onClick={() => router.push(`/dashboards/${dashboard.id}`)}
+                    onDelete={() => setDeleteTarget(dashboard)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
+                <p className="text-body text-[var(--foreground-muted)] mb-4">
+                  No dashboards yet. Create your first one!
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() => setIsCreateOpen(true)}
+                  leftIcon={<Plus className="w-4 h-4" />}
+                >
+                  New Dashboard
+                </Button>
+              </div>
+            )}
+          </section>
+
+          {/* Environment Variables Section */}
+          <section>
+            <h2 className="text-h2 text-[var(--foreground)] mb-4">
+              Environment Variables
+            </h2>
+            <Card className="p-5">
+              <p className="text-caption text-[var(--foreground-muted)] mb-4">
+                API keys and environment variables that will be auto-applied to all new terminals.
               </p>
-              <Button
-                variant="secondary"
-                className="mt-4"
-                onClick={() =>
-                  queryClient.invalidateQueries({ queryKey: ["dashboards"] })
-                }
-              >
-                Retry
-              </Button>
-            </div>
-          ) : dashboards && dashboards.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {dashboards.map((dashboard) => (
-                <DashboardCard
-                  key={dashboard.id}
-                  dashboard={dashboard}
-                  onClick={() => router.push(`/dashboards/${dashboard.id}`)}
-                  onDelete={() => setDeleteTarget(dashboard)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
-              <p className="text-body text-[var(--foreground-muted)] mb-4">
-                No dashboards yet. Create your first one!
-              </p>
-              <Button
-                variant="primary"
-                onClick={() => setIsCreateOpen(true)}
-                leftIcon={<Plus className="w-4 h-4" />}
-              >
-                New Dashboard
-              </Button>
-            </div>
-          )}
-        </section>
+
+              {/* Add new env var form */}
+              <div className="flex gap-2 mb-4">
+                <div className="w-1/3 min-w-0">
+                  <Input
+                    placeholder="Name"
+                    value={newSecretName}
+                    onChange={(e) => setNewSecretName(e.target.value)}
+                    className="w-full"
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <Input
+                    type="text"
+                    placeholder="Value"
+                    value={newSecretValue}
+                    onChange={(e) => setNewSecretValue(e.target.value)}
+                    className="w-full"
+                    autoComplete="off"
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  size="icon-sm"
+                  onClick={handleAddSecret}
+                  disabled={
+                    !newSecretName.trim() ||
+                    !newSecretValue.trim() ||
+                    createSecretMutation.isPending
+                  }
+                  className="shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Env vars list */}
+              <div className="space-y-2 max-h-80 overflow-auto">
+                {secretsQuery.isLoading && (
+                  <div className="text-sm text-[var(--foreground-muted)]">Loading...</div>
+                )}
+                {!secretsQuery.isLoading &&
+                  (!secretsQuery.data || secretsQuery.data.length === 0) && (
+                    <div className="text-sm text-[var(--foreground-muted)] text-center py-6">
+                      No environment variables configured yet.
+                    </div>
+                  )}
+                {secretsQuery.data?.map((secret) => (
+                  <div
+                    key={secret.id}
+                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-mono truncate">{secret.name}</span>
+                      <span className="text-sm text-[var(--foreground-muted)]">=</span>
+                      <span className="text-sm text-[var(--foreground-muted)]">••••••••</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteSecretMutation.mutate(secret.id)}
+                      className="text-[var(--status-error)] hover:text-[var(--status-error)] shrink-0"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </section>
+        </div>
       </main>
 
       {/* Create Dashboard Dialog */}
