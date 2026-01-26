@@ -3,6 +3,7 @@
 
 import type { Env } from '../types';
 import { buildSessionCookie, createUserSession } from './sessions';
+import { processPendingInvitations } from '../members/handler';
 
 const GOOGLE_LOGIN_SCOPE = [
   'openid',
@@ -271,6 +272,10 @@ export async function callbackGoogle(
   }
 
   const userId = await findOrCreateUser(env, userInfo);
+
+  // Process any pending dashboard invitations for this email
+  await processPendingInvitations(env, userId, userInfo.email);
+
   const session = await createUserSession(env, userId);
   const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 

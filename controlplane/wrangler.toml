@@ -20,12 +20,15 @@ compatibility_date = "2024-01-01"
 [vars]
 # DEV ONLY - header-based auth bypass (DISABLE IN PRODUCTION)
 DEV_AUTH_ENABLED = "true"
+# Email sender address for invitation emails
+EMAIL_FROM = "OrcaBot <noreply@orcabot.com>"
 
 # SECRETS - Set via `wrangler secret put` or .dev.vars file (NOT here!)
 # Required secrets:
 #   SANDBOX_URL - URL of the sandbox server
 #   SANDBOX_INTERNAL_TOKEN - Token for control plane -> sandbox auth
 #   INTERNAL_API_TOKEN - Token for internal API calls
+#   RESEND_API_KEY - API key for Resend email service (optional, for sharing invites)
 
 # Rate limiting - unauthenticated (strict)
 [[unsafe.bindings]]

@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS dashboard_members (
   PRIMARY KEY (dashboard_id, user_id)
 );
 
+-- Dashboard invitations (pending access for non-existing users)
+CREATE TABLE IF NOT EXISTS dashboard_invitations (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('editor', 'viewer')),
+  invited_by TEXT NOT NULL REFERENCES users(id),
+  token TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_invitations_dashboard ON dashboard_invitations(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email);
+
 -- Dashboard items (notes, todos, terminal attachments, links, browsers)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,

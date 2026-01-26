@@ -1784,12 +1784,16 @@ export function TerminalBlock({
                       key={secret.id}
                       className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
                     >
-                      <span className="text-[var(--foreground)] font-mono">{secret.name}</span>
+                      <div className="flex items-center gap-1 min-w-0">
+                        <span className="text-[var(--foreground)] font-mono truncate">{secret.name}</span>
+                        <span className="text-[var(--foreground-muted)] font-mono text-xs">=</span>
+                        <span className="text-[var(--foreground-subtle)] font-mono text-xs tracking-tight">{'•'.repeat(8)}</span>
+                      </div>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => handleDeleteSecret(secret)}
-                        className="h-5 w-5 text-[var(--status-error)] nodrag"
+                        className="h-5 w-5 text-[var(--status-error)] nodrag flex-shrink-0"
                       >
                         <Trash2 className="w-3 h-3" />
                       </Button>
