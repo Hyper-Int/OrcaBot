@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS dashboard_members (
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -440,7 +440,7 @@ async function migrateWorkspaceItemType(db: D1Database): Promise<void> {
     CREATE TABLE IF NOT EXISTS dashboard_items_new (
       id TEXT PRIMARY KEY,
       dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-      type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace')),
+      type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt')),
       content TEXT NOT NULL DEFAULT '',
       position_x INTEGER NOT NULL DEFAULT 0,
       position_y INTEGER NOT NULL DEFAULT 0,

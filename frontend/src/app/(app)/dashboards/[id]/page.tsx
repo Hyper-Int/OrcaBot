@@ -18,6 +18,7 @@ import {
   Share2,
   GitMerge,
   Activity,
+  MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +43,7 @@ import { getDashboard, createItem, updateItem, deleteItem, createEdge, getSessio
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
+import { ConnectionDataFlowProvider } from "@/contexts/ConnectionDataFlowContext";
 
 type BlockType = DashboardItem["type"];
 
@@ -76,6 +78,7 @@ const toFlowEdge = (edge: DashboardEdge): Edge => ({
 const blockTools: BlockTool[] = [
   { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
+  { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
@@ -128,6 +131,7 @@ const terminalTools: BlockTool[] = [
 const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
+  prompt: { width: 280, height: 160 },
   link: { width: 260, height: 140 },
   terminal: { width: 360, height: 400 },
   browser: { width: 520, height: 360 },
@@ -1289,27 +1293,29 @@ export default function DashboardPage() {
               </Tooltip>
             </div>
           </div>
-          <Canvas
-            items={items}
-            sessions={sessions}
-            onItemChange={handleItemChange}
-            onItemDelete={handleItemDelete}
-            edges={edgesToRender}
-            onEdgesChange={onEdgesChange}
-            onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
-            onViewportChange={(next) => {
-              viewportRef.current = next;
-            }}
-            onCursorMove={connectorMode ? handleCursorMove : undefined}
-            onCanvasClick={() => {
-              if (connectorMode) setConnectorMode(false);
-            }}
-            onConnectorClick={role === "viewer" ? undefined : handleConnectorClick}
-            connectorMode={connectorMode}
-            fitViewEnabled={false}
-            extraNodes={extraNodes}
-            readOnly={role === "viewer"}
-          />
+          <ConnectionDataFlowProvider edges={edgesToRender}>
+            <Canvas
+              items={items}
+              sessions={sessions}
+              onItemChange={handleItemChange}
+              onItemDelete={handleItemDelete}
+              edges={edgesToRender}
+              onEdgesChange={onEdgesChange}
+              onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+              onViewportChange={(next) => {
+                viewportRef.current = next;
+              }}
+              onCursorMove={connectorMode ? handleCursorMove : undefined}
+              onCanvasClick={() => {
+                if (connectorMode) setConnectorMode(false);
+              }}
+              onConnectorClick={role === "viewer" ? undefined : handleConnectorClick}
+              connectorMode={connectorMode}
+              fitViewEnabled={false}
+              extraNodes={extraNodes}
+              readOnly={role === "viewer"}
+            />
+          </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}
           <CursorOverlay users={presenceUsers} />
         </main>

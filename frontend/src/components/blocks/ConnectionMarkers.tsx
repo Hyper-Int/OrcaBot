@@ -26,8 +26,8 @@ export function ConnectionMarkers({
   nodeId,
   visible,
   onConnectorClick,
-  topMode = "both",
-  bottomMode = "both",
+  topMode = "target",
+  bottomMode = "source",
   bottomVariant = "pair",
 }: ConnectionMarkersProps) {
   const containerClass = cn(

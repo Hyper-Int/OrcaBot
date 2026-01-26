@@ -82,6 +82,7 @@ import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
 import agentSkillsCatalog from "@/data/claude-agent-skills.json";
 import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
+import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -1133,6 +1134,29 @@ export function TerminalBlock({
     },
     [canType, terminalActions]
   );
+
+  // Register handlers for incoming data from connections (both left and top inputs)
+  const connectionFlow = useConnectionDataFlow();
+  React.useEffect(() => {
+    if (!connectionFlow) return;
+
+    const handler = (payload: { text: string; execute?: boolean }) => {
+      if (canType && payload.text) {
+        terminalActions.sendInput(payload.text);
+        if (payload.execute) {
+          terminalActions.sendInput("\r");
+        }
+      }
+    };
+
+    const cleanupLeft = connectionFlow.registerInputHandler(id, "left-in", handler);
+    const cleanupTop = connectionFlow.registerInputHandler(id, "top-in", handler);
+
+    return () => {
+      cleanupLeft();
+      cleanupTop();
+    };
+  }, [id, connectionFlow, canType, terminalActions]);
 
   // Handle terminal resize
   const handleTerminalResize = React.useCallback(
@@ -2370,8 +2394,6 @@ export function TerminalBlock({
           nodeId={id}
           visible={false}
           onConnectorClick={data.onConnectorClick}
-          topMode="none"
-          bottomMode="both"
         />
       </BlockWrapper>
 
@@ -2396,9 +2418,6 @@ export function TerminalBlock({
                 nodeId={id}
                 visible={connectorsVisible}
                 onConnectorClick={data.onConnectorClick}
-                topMode="none"
-                bottomMode="both"
-                bottomVariant="single"
               />
             </div>,
             overlay.root
