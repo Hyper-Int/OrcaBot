@@ -35,18 +35,24 @@ async function ensureDashboardAccess(
   return access ?? null;
 }
 
+// Special dashboard_id value for user-global secrets
+const GLOBAL_SECRETS_ID = '_global';
+
 export async function listSecrets(
   env: Env,
   userId: string,
   dashboardId: string | null
 ): Promise<Response> {
-  if (!dashboardId) {
-    return Response.json({ error: 'E79733: dashboard_id is required' }, { status: 400 });
-  }
+  // Allow listing global secrets with '_global' or empty dashboard_id
+  const isGlobal = !dashboardId || dashboardId === GLOBAL_SECRETS_ID;
+  const effectiveDashboardId = isGlobal ? GLOBAL_SECRETS_ID : dashboardId;
 
-  const access = await ensureDashboardAccess(env, dashboardId, userId);
-  if (!access) {
-    return Response.json({ error: 'E79734: Not found or no access' }, { status: 404 });
+  // For non-global secrets, check dashboard access
+  if (!isGlobal) {
+    const access = await ensureDashboardAccess(env, dashboardId!, userId);
+    if (!access) {
+      return Response.json({ error: 'E79734: Not found or no access' }, { status: 404 });
+    }
   }
 
   const rows = await env.DB.prepare(
@@ -55,7 +61,7 @@ export async function listSecrets(
      WHERE user_id = ? AND dashboard_id = ?
      ORDER BY updated_at DESC`
   )
-    .bind(userId, dashboardId)
+    .bind(userId, effectiveDashboardId)
     .all();
 
   return Response.json({
@@ -68,8 +74,8 @@ export async function createSecret(
   userId: string,
   data: Partial<UserSecret> & { value?: string }
 ): Promise<Response> {
-  if (!data.dashboardId || !data.name || !data.value) {
-    return Response.json({ error: 'E79731: dashboard_id, name, and value are required' }, { status: 400 });
+  if (!data.name || !data.value) {
+    return Response.json({ error: 'E79731: name and value are required' }, { status: 400 });
   }
 
   // Require encryption key - don't store plaintext secrets
@@ -77,9 +83,16 @@ export async function createSecret(
     return Response.json({ error: 'E79738: Secret encryption not configured' }, { status: 500 });
   }
 
-  const access = await ensureDashboardAccess(env, data.dashboardId, userId);
-  if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
-    return Response.json({ error: 'E79735: Not found or no edit access' }, { status: 404 });
+  // Determine if this is a global secret or dashboard-specific
+  const isGlobal = !data.dashboardId || data.dashboardId === GLOBAL_SECRETS_ID;
+  const effectiveDashboardId = isGlobal ? GLOBAL_SECRETS_ID : data.dashboardId;
+
+  // For non-global secrets, check dashboard access
+  if (!isGlobal) {
+    const access = await ensureDashboardAccess(env, data.dashboardId!, userId);
+    if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+      return Response.json({ error: 'E79735: Not found or no edit access' }, { status: 404 });
+    }
   }
 
   const id = crypto.randomUUID();
@@ -99,7 +112,7 @@ export async function createSecret(
     `INSERT INTO user_secrets (id, user_id, dashboard_id, name, value, description, encrypted_at, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
   )
-    .bind(id, userId, data.dashboardId, data.name, encryptedValue, description)
+    .bind(id, userId, effectiveDashboardId, data.name, encryptedValue, description)
     .run();
 
   const row = await env.DB.prepare(
@@ -118,19 +131,22 @@ export async function deleteSecret(
   id: string,
   dashboardId: string | null
 ): Promise<Response> {
-  if (!dashboardId) {
-    return Response.json({ error: 'E79736: dashboard_id is required' }, { status: 400 });
-  }
+  // Allow deleting global secrets with '_global' or empty dashboard_id
+  const isGlobal = !dashboardId || dashboardId === GLOBAL_SECRETS_ID;
+  const effectiveDashboardId = isGlobal ? GLOBAL_SECRETS_ID : dashboardId;
 
-  const access = await ensureDashboardAccess(env, dashboardId, userId);
-  if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
-    return Response.json({ error: 'E79737: Not found or no edit access' }, { status: 404 });
+  // For non-global secrets, check dashboard access
+  if (!isGlobal) {
+    const access = await ensureDashboardAccess(env, dashboardId!, userId);
+    if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+      return Response.json({ error: 'E79737: Not found or no edit access' }, { status: 404 });
+    }
   }
 
   const result = await env.DB.prepare(
     `DELETE FROM user_secrets WHERE id = ? AND user_id = ? AND dashboard_id = ?`
   )
-    .bind(id, userId, dashboardId)
+    .bind(id, userId, effectiveDashboardId)
     .run();
 
   if (result.meta.changes === 0) {
@@ -142,6 +158,7 @@ export async function deleteSecret(
 
 /**
  * Get decrypted secrets for a dashboard.
+ * Includes both dashboard-specific secrets AND user's global secrets.
  * Used internally when applying secrets to a sandbox session.
  */
 export async function getDecryptedSecretsForDashboard(
@@ -158,11 +175,15 @@ export async function getDecryptedSecretsForDashboard(
     throw new Error('Encryption key not configured');
   }
 
+  // Fetch both global secrets and dashboard-specific secrets
+  // Dashboard-specific secrets override global ones with the same name
+  // Order: global secrets first (0), then dashboard-specific (1) so dashboard-specific can override
   const rows = await env.DB.prepare(
-    `SELECT name, value FROM user_secrets
-     WHERE user_id = ? AND dashboard_id = ?`
+    `SELECT name, value, dashboard_id FROM user_secrets
+     WHERE user_id = ? AND (dashboard_id = ? OR dashboard_id = ?)
+     ORDER BY CASE WHEN dashboard_id = ? THEN 0 ELSE 1 END`
   )
-    .bind(userId, dashboardId)
+    .bind(userId, GLOBAL_SECRETS_ID, dashboardId, GLOBAL_SECRETS_ID)
     .all();
 
   const key = await getEncryptionKey(env);
@@ -183,6 +204,46 @@ export async function getDecryptedSecretsForDashboard(
     } catch (error) {
       console.error(`Failed to decrypt secret ${name}:`, error);
       // Skip secrets that fail to decrypt rather than exposing errors
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get decrypted global secrets for a user.
+ * Used for listing in the UI.
+ */
+export async function getDecryptedGlobalSecrets(
+  env: Env,
+  userId: string
+): Promise<Record<string, string>> {
+  if (!hasEncryptionKey(env)) {
+    throw new Error('Encryption key not configured');
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT name, value FROM user_secrets
+     WHERE user_id = ? AND dashboard_id = ?`
+  )
+    .bind(userId, GLOBAL_SECRETS_ID)
+    .all();
+
+  const key = await getEncryptionKey(env);
+  const result: Record<string, string> = {};
+
+  for (const row of rows.results) {
+    const name = row.name as string;
+    const encryptedValue = row.value as string;
+
+    try {
+      if (isEncryptedValue(encryptedValue)) {
+        result[name] = await decryptSecret(encryptedValue, key);
+      } else {
+        result[name] = encryptedValue;
+      }
+    } catch (error) {
+      console.error(`Failed to decrypt secret ${name}:`, error);
     }
   }
 

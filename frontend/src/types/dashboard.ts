@@ -10,6 +10,8 @@ export interface Dashboard {
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+  /** Number of secrets configured for this dashboard */
+  secretsCount?: number;
 }
 
 /**

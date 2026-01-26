@@ -293,6 +293,18 @@ export async function createSessiоn(
       UPDATE sessions SET sandbox_session_id = ?, sandbox_machine_id = ?, pty_id = ?, status = 'active' WHERE id = ?
     `).bind(sandboxSessionId, sandboxMachineId, pty.id, id).run();
 
+    // Auto-apply dashboard secrets to the new session
+    try {
+      const { getDecryptedSecretsForDashboard } = await import('../secrets/handler');
+      const secrets = await getDecryptedSecretsForDashboard(env, userId, dashboardId);
+      if (Object.keys(secrets).length > 0) {
+        await sandbox.updateEnv(sandboxSessionId, { set: secrets, applyNow: true }, sandboxMachineId || undefined);
+      }
+    } catch (err) {
+      console.error('Failed to auto-apply secrets:', err);
+      // Non-fatal - continue with session creation
+    }
+
     const session: Session = {
       id,
       dashboardId,

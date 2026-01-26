@@ -13,13 +13,14 @@ function generateId(): string {
 }
 
 // Format a raw DB dashboard row to camelCase
-function fоrmatDashbоard(row: Record<string, unknown>): Dashboard {
+function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsCount?: number } {
   return {
     id: row.id as string,
     name: row.name as string,
     ownerId: row.owner_id as string,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    secretsCount: row.secrets_count !== undefined ? Number(row.secrets_count) : undefined,
   };
 }
 
@@ -97,11 +98,13 @@ export async function listDashbоards(
   userId: string
 ): Promise<Response> {
   const result = await env.DB.prepare(`
-    SELECT d.* FROM dashboards d
+    SELECT d.*,
+      (SELECT COUNT(*) FROM user_secrets us WHERE us.dashboard_id = d.id AND us.user_id = ?) as secrets_count
+    FROM dashboards d
     JOIN dashboard_members dm ON d.id = dm.dashboard_id
     WHERE dm.user_id = ?
     ORDER BY d.updated_at DESC
-  `).bind(userId).all();
+  `).bind(userId, userId).all();
 
   const dashboards = result.results.map(fоrmatDashbоard);
   return Response.json({ dashboards });
