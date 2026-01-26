@@ -28,6 +28,7 @@ import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
 import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
+import * as templates from './templates/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
@@ -593,7 +594,7 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   if (segments[0] === 'dashboards' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name: string };
+    const data = await request.json() as { name: string; templateId?: string };
     return dashboards.createDashbоard(env, auth.user!.id, data);
   }
 
@@ -668,6 +669,45 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireAuth(auth);
     if (authError) return authError;
     return dashboards.deleteEdge(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // ============================================
+  // Template routes
+  // ============================================
+
+  // GET /templates - List templates
+  if (segments[0] === 'templates' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const category = url.searchParams.get('category') || undefined;
+    return templates.listTemplates(env, category);
+  }
+
+  // GET /templates/:id - Get template with data
+  if (segments[0] === 'templates' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return templates.getTemplate(env, segments[1]);
+  }
+
+  // POST /templates - Create template from dashboard
+  if (segments[0] === 'templates' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as {
+      dashboardId: string;
+      name: string;
+      description?: string;
+      category?: string;
+    };
+    return templates.createTemplate(env, auth.user!.id, data);
+  }
+
+  // DELETE /templates/:id - Delete template
+  if (segments[0] === 'templates' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return templates.deleteTemplate(env, auth.user!.id, segments[1]);
   }
 
   // ============================================

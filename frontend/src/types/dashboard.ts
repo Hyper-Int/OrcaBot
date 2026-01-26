@@ -204,3 +204,55 @@ export interface DashboardMember {
   role: DashboardRole;
   joinedAt: string;
 }
+
+/**
+ * Template category
+ */
+export type TemplateCategory = 'coding' | 'automation' | 'documentation' | 'custom';
+
+/**
+ * Template item (stored in template data)
+ */
+export interface TemplateItem {
+  placeholderId: string;
+  type: DashboardItemType;
+  content: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+}
+
+/**
+ * Template edge (stored in template data)
+ */
+export interface TemplateEdge {
+  sourcePlaceholderId: string;
+  targetPlaceholderId: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
+/**
+ * Dashboard template (summary for listing)
+ */
+export interface DashboardTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: TemplateCategory;
+  previewImageUrl?: string;
+  authorId: string;
+  authorName: string;
+  itemCount: number;
+  isFeatured: boolean;
+  useCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Dashboard template with full data for import
+ */
+export interface DashboardTemplateWithData extends DashboardTemplate {
+  items: TemplateItem[];
+  edges: TemplateEdge[];
+}

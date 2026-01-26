@@ -38,6 +38,7 @@ export const API = {
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     subagents: `${CLOUDFLARE_API_URL}/subagents`,
+    templates: `${CLOUDFLARE_API_URL}/templates`,
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
     agentSkills: `${CLOUDFLARE_API_URL}/agent-skills`,
     mcpTools: `${CLOUDFLARE_API_URL}/mcp-tools`,

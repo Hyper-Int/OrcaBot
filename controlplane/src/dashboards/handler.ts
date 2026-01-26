@@ -6,6 +6,7 @@
  */
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
+import { populateFromTemplate } from '../templates/handler';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -154,7 +155,7 @@ export async function getDashbоard(
 export async function createDashbоard(
   env: Env,
   userId: string,
-  data: { name: string }
+  data: { name: string; templateId?: string }
 ): Promise<Response> {
   const id = generateId();
   const now = new Date().toISOString();
@@ -170,6 +171,11 @@ export async function createDashbоard(
     INSERT INTO dashboard_members (dashboard_id, user_id, role, added_at)
     VALUES (?, ?, 'owner', ?)
   `).bind(id, userId, now).run();
+
+  // If templateId provided, populate dashboard from template
+  if (data.templateId) {
+    await populateFromTemplate(env, id, data.templateId);
+  }
 
   const dashboard: Dashboard = {
     id,

@@ -19,6 +19,8 @@ import {
   GitMerge,
   Activity,
   MessageSquare,
+  Upload,
+  Link,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,7 +36,14 @@ import {
   Input,
   Skeleton,
   ThemeToggle,
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from "@/components/ui";
+import { ExportTemplateDialog } from "@/components/dialogs/ExportTemplateDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -151,6 +160,7 @@ export default function DashboardPage() {
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
   const [newLinkUrl, setNewLinkUrl] = React.useState("");
+  const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
   const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
   const hasPendingConnection = Boolean(pendingConnection);
@@ -1182,11 +1192,27 @@ export default function DashboardPage() {
 
             {/* Actions */}
             <div className="flex items-center gap-1">
-              <Tooltip content="Share">
-                <Button variant="ghost" size="icon-sm">
-                  <Share2 className="w-4 h-4" />
-                </Button>
-              </Tooltip>
+              <DropdownMenu>
+                <Tooltip content="Share">
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm">
+                      <Share2 className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </Tooltip>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Share</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => setIsExportDialogOpen(true)}>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Export as Template
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem disabled>
+                    <Link className="w-4 h-4 mr-2" />
+                    Copy Link (coming soon)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Tooltip content="Toggle theme">
                 <ThemeToggle />
               </Tooltip>
@@ -1360,6 +1386,14 @@ export default function DashboardPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Export Template Dialog */}
+      <ExportTemplateDialog
+        open={isExportDialogOpen}
+        onOpenChange={setIsExportDialogOpen}
+        dashboardId={dashboardId}
+        dashboardName={dashboard?.name || ""}
+      />
     </div>
   );
 }

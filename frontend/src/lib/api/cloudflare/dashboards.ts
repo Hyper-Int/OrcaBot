@@ -27,6 +27,7 @@ interface DashboardResponse {
 
 interface DashboardCreateRequest {
   name: string;
+  templateId?: string;
 }
 
 interface DashboardUpdateRequest {
@@ -100,9 +101,13 @@ export async function getDashboard(id: string): Promise<{
 /**
  * Create a new dashboard
  */
-export async function createDashboard(name: string): Promise<Dashboard> {
+export async function createDashboard(
+  name: string,
+  templateId?: string
+): Promise<Dashboard> {
   const response = await apiPost<DashboardResponse>(API.cloudflare.dashboards, {
     name,
+    templateId,
   } as DashboardCreateRequest);
   return response.dashboard;
 }
