@@ -376,6 +376,28 @@ CREATE TABLE IF NOT EXISTS system_health (
   last_error TEXT,
   consecutive_failures INTEGER NOT NULL DEFAULT 0
 );
+
+-- Dashboard templates (global, shareable)
+CREATE TABLE IF NOT EXISTS dashboard_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT 'custom' CHECK (category IN ('coding', 'automation', 'documentation', 'custom')),
+  preview_image_url TEXT,
+  author_id TEXT NOT NULL REFERENCES users(id),
+  author_name TEXT NOT NULL DEFAULT '',
+  items_json TEXT NOT NULL DEFAULT '[]',
+  edges_json TEXT NOT NULL DEFAULT '[]',
+  item_count INTEGER NOT NULL DEFAULT 0,
+  is_featured INTEGER NOT NULL DEFAULT 0,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_templates_category ON dashboard_templates(category);
+CREATE INDEX IF NOT EXISTS idx_templates_featured ON dashboard_templates(is_featured);
+CREATE INDEX IF NOT EXISTS idx_templates_author ON dashboard_templates(author_id);
 `;
 
 // Initialize the database

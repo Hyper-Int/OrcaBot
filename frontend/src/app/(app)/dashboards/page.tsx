@@ -11,9 +11,11 @@ import {
   FileText,
   Terminal,
   Workflow,
-  MoreVertical,
   Trash2,
   LogOut,
+  Code2,
+  Bot,
+  Boxes,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,8 +40,9 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
 import { listDashboards, createDashboard, deleteDashboard } from "@/lib/api/cloudflare";
+import { listTemplates } from "@/lib/api/cloudflare/templates";
 import { formatRelativeTime, cn } from "@/lib/utils";
-import type { Dashboard } from "@/types/dashboard";
+import type { Dashboard, DashboardTemplate, TemplateCategory } from "@/types/dashboard";
 
 export default function DashboardsPage() {
   const router = useRouter();
@@ -48,6 +51,7 @@ export default function DashboardsPage() {
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = React.useState<Dashboard | null>(null);
 
   // Redirect if not authenticated
@@ -71,14 +75,23 @@ export default function DashboardsPage() {
     enabled: isAuthenticated && isAuthResolved,
   });
 
+  // Fetch templates
+  const { data: templates } = useQuery({
+    queryKey: ["templates"],
+    queryFn: () => listTemplates(),
+    enabled: isAuthenticated && isAuthResolved,
+  });
+
   // Create dashboard mutation
   const createMutation = useMutation({
-    mutationFn: (name: string) => createDashboard(name),
+    mutationFn: ({ name, templateId }: { name: string; templateId?: string }) =>
+      createDashboard(name, templateId),
     onSuccess: (dashboard) => {
       queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       toast.success("Dashboard created");
       setIsCreateOpen(false);
       setNewDashboardName("");
+      setSelectedTemplateId(undefined);
       router.push(`/dashboards/${dashboard.id}`);
     },
     onError: (error) => {
@@ -102,7 +115,24 @@ export default function DashboardsPage() {
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
     if (newDashboardName.trim()) {
-      createMutation.mutate(newDashboardName.trim());
+      createMutation.mutate({
+        name: newDashboardName.trim(),
+        templateId: selectedTemplateId,
+      });
+    }
+  };
+
+  // Helper function to get icon for template category
+  const getCategoryIcon = (category: TemplateCategory) => {
+    switch (category) {
+      case "coding":
+        return <Code2 className="w-6 h-6" />;
+      case "automation":
+        return <Workflow className="w-6 h-6" />;
+      case "documentation":
+        return <FileText className="w-6 h-6" />;
+      default:
+        return <Boxes className="w-6 h-6" />;
     }
   };
 
@@ -162,39 +192,69 @@ export default function DashboardsPage() {
             New Dashboard
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Blank dashboard option */}
             <NewDashboardCard
               icon={<Plus className="w-6 h-6" />}
               title="Blank"
               description="Start from scratch"
-              onClick={() => setIsCreateOpen(true)}
-            />
-            <NewDashboardCard
-              icon={<Terminal className="w-6 h-6" />}
-              title="Agentic Coding"
-              description="AI-assisted dev setup"
               onClick={() => {
-                setNewDashboardName("Agentic Coding");
+                setSelectedTemplateId(undefined);
                 setIsCreateOpen(true);
               }}
             />
-            <NewDashboardCard
-              icon={<Workflow className="w-6 h-6" />}
-              title="Automation"
-              description="Workflow orchestration"
-              onClick={() => {
-                setNewDashboardName("Automation");
-                setIsCreateOpen(true);
-              }}
-            />
-            <NewDashboardCard
-              icon={<FileText className="w-6 h-6" />}
-              title="Documentation"
-              description="Notes and links"
-              onClick={() => {
-                setNewDashboardName("Documentation");
-                setIsCreateOpen(true);
-              }}
-            />
+
+            {/* Templates from API */}
+            {templates?.slice(0, 7).map((template) => (
+              <NewDashboardCard
+                key={template.id}
+                icon={getCategoryIcon(template.category)}
+                title={template.name}
+                description={
+                  template.description || `${template.itemCount} blocks`
+                }
+                onClick={() => {
+                  setSelectedTemplateId(template.id);
+                  setNewDashboardName(template.name);
+                  setIsCreateOpen(true);
+                }}
+              />
+            ))}
+
+            {/* Show placeholder cards when no templates exist */}
+            {(!templates || templates.length === 0) && (
+              <>
+                <NewDashboardCard
+                  icon={<Code2 className="w-6 h-6" />}
+                  title="Agentic Coding"
+                  description="AI-assisted dev setup"
+                  onClick={() => {
+                    setSelectedTemplateId(undefined);
+                    setNewDashboardName("Agentic Coding");
+                    setIsCreateOpen(true);
+                  }}
+                />
+                <NewDashboardCard
+                  icon={<Workflow className="w-6 h-6" />}
+                  title="Automation"
+                  description="Workflow orchestration"
+                  onClick={() => {
+                    setSelectedTemplateId(undefined);
+                    setNewDashboardName("Automation");
+                    setIsCreateOpen(true);
+                  }}
+                />
+                <NewDashboardCard
+                  icon={<FileText className="w-6 h-6" />}
+                  title="Documentation"
+                  description="Notes and links"
+                  onClick={() => {
+                    setSelectedTemplateId(undefined);
+                    setNewDashboardName("Documentation");
+                    setIsCreateOpen(true);
+                  }}
+                />
+              </>
+            )}
           </div>
         </section>
 
@@ -254,22 +314,50 @@ export default function DashboardsPage() {
       </main>
 
       {/* Create Dashboard Dialog */}
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+      <Dialog
+        open={isCreateOpen}
+        onOpenChange={(open) => {
+          setIsCreateOpen(open);
+          if (!open) {
+            setSelectedTemplateId(undefined);
+            setNewDashboardName("");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create Dashboard</DialogTitle>
             <DialogDescription>
-              Give your new dashboard a name to get started.
+              {selectedTemplateId
+                ? "Creating from template. Give your dashboard a name."
+                : "Give your new dashboard a name to get started."}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreate}>
-            <div className="py-4">
+            <div className="py-4 space-y-4">
               <Input
                 placeholder="Dashboard name"
                 value={newDashboardName}
                 onChange={(e) => setNewDashboardName(e.target.value)}
                 autoFocus
               />
+              {selectedTemplateId && (
+                <div className="flex items-center justify-between text-sm text-[var(--foreground-muted)] bg-[var(--background)] rounded-md px-3 py-2 border border-[var(--border)]">
+                  <span>
+                    Using template:{" "}
+                    <span className="font-medium text-[var(--foreground)]">
+                      {templates?.find((t) => t.id === selectedTemplateId)?.name}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTemplateId(undefined)}
+                    className="text-xs text-[var(--foreground-subtle)] hover:text-[var(--foreground)] underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button
