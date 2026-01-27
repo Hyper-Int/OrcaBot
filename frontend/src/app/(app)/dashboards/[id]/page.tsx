@@ -24,6 +24,10 @@ import {
   Clock,
   Mail,
   Calendar,
+  Table,
+  FileText,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -94,10 +98,17 @@ const blockTools: BlockTool[] = [
   { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
-  { type: "gmail", icon: <Mail className="w-4 h-4" />, label: "Gmail" },
-  { type: "calendar", icon: <Calendar className="w-4 h-4" />, label: "Calendar" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
+];
+
+// Google integrations in their own section
+const googleTools: BlockTool[] = [
+  { type: "gmail", icon: <Mail className="w-4 h-4" />, label: "Gmail" },
+  { type: "calendar", icon: <Calendar className="w-4 h-4" />, label: "Calendar" },
+  { type: "contacts", icon: <Users className="w-4 h-4" />, label: "Contacts" },
+  { type: "sheets", icon: <Table className="w-4 h-4" />, label: "Sheets" },
+  { type: "forms", icon: <FileText className="w-4 h-4" />, label: "Forms" },
 ];
 
 const terminalTools: BlockTool[] = [
@@ -154,8 +165,11 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   browser: { width: 520, height: 360 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
-  gmail: { width: 340, height: 400 },
-  calendar: { width: 340, height: 400 },
+  gmail: { width: 280, height: 280 },
+  calendar: { width: 280, height: 280 },
+  contacts: { width: 280, height: 280 },
+  sheets: { width: 300, height: 260 },
+  forms: { width: 280, height: 280 },
 };
 
 export default function DashboardPage() {
@@ -177,6 +191,11 @@ export default function DashboardPage() {
   const hasPendingConnection = Boolean(pendingConnection);
   const [connectionCursor, setConnectionCursor] = React.useState<{ x: number; y: number } | null>(null);
   const cursorRef = React.useRef<{ x: number; y: number } | null>(null);
+
+  // Toolbar section collapse states
+  const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
+  const [toolbarBlocksCollapsed, setToolbarBlocksCollapsed] = React.useState(false);
+  const [toolbarGoogleCollapsed, setToolbarGoogleCollapsed] = React.useState(false);
 
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
@@ -268,7 +287,27 @@ export default function DashboardPage() {
   const sessions = data?.sessions ?? [];
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
-  const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(toFlowEdge), [edgesFromData]);
+  // Build mapping from real IDs to stable keys for nodes that have them
+  const realIdToStableKey = React.useMemo(() => {
+    const map = new Map<string, string>();
+    items.forEach(item => {
+      if (item._stableKey) {
+        map.set(item.id, item._stableKey);
+      }
+    });
+    return map;
+  }, [items]);
+
+  // Convert edges to flow edges, using stable keys for source/target when available
+  const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(edge => {
+    const flowEdge = toFlowEdge(edge);
+    // Use stable keys if the source/target items have them
+    return {
+      ...flowEdge,
+      source: realIdToStableKey.get(flowEdge.source) || flowEdge.source,
+      target: realIdToStableKey.get(flowEdge.target) || flowEdge.target,
+    };
+  }), [edgesFromData, realIdToStableKey]);
   const browserPrewarmRef = React.useRef(false);
 
   const metricsSessionId = React.useMemo(() => {
@@ -362,6 +401,7 @@ export default function DashboardPage() {
         size: item.size,
         createdAt: now,
         updatedAt: now,
+        _stableKey: tempId, // Preserve for React key stability
       };
 
       queryClient.setQueryData(
@@ -430,7 +470,9 @@ export default function DashboardPage() {
             : false;
           const nextItems = hasTemp
             ? oldData.items.map((item) =>
-                item.id === context?.tempId ? createdItem : item
+                item.id === context?.tempId
+                  ? { ...createdItem, _stableKey: context.tempId } // Preserve temp ID for React key stability
+                  : item
               )
             : [...oldData.items, createdItem];
           const existingEdges = oldData.edges ?? [];
@@ -446,29 +488,15 @@ export default function DashboardPage() {
       );
       if (context?.sourceId) {
         const sourceId = context.sourceId;
+        // Create backend edge with real IDs for persistence
         createEdgeMutation.mutate({
           sourceItemId: sourceId,
           targetItemId: createdItem.id,
           sourceHandle: context.sourceHandle,
           targetHandle: context.targetHandle,
         });
-        setEdges((prev) => {
-          const next = prev.filter(
-            (edge) =>
-              !(edge.source === sourceId && edge.target === context.tempId)
-          );
-          next.push({
-            id: `edge-${sourceId}-${createdItem.id}-${context.sourceHandle ?? "auto"}-${context.targetHandle ?? "auto"}`,
-            source: sourceId,
-            target: createdItem.id,
-            sourceHandle: context.sourceHandle,
-            targetHandle: context.targetHandle,
-            type: "smoothstep",
-            animated: true,
-            style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
-          });
-          return next;
-        });
+        // Keep visual edge using tempId (stable key) since node ID = _stableKey = tempId
+        // Don't update edge target to real ID - it would break visual connectivity
       }
       toast.success("Block added");
     },
@@ -1251,60 +1279,118 @@ export default function DashboardPage() {
           onMouseLeave={handleCanvasMouseLeave}
         >
           <div className="absolute left-4 top-2 z-20 pointer-events-none">
-            <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
-              <Tooltip content="Back to dashboards" side="bottom">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => router.push("/dashboards")}
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </Button>
-              </Tooltip>
-              <div className="h-6 w-px bg-[var(--border)] mx-2" />
-              {terminalTools.map((tool) => (
-                <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+            <div className="flex items-center gap-2 pointer-events-auto">
+              {/* Back button */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content="Back to dashboards" side="bottom">
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={() => handleAddBlock(tool)}
-                    disabled={createItemMutation.isPending}
+                    onClick={() => router.push("/dashboards")}
                   >
-                    {tool.icon}
+                    <ArrowLeft className="w-4 h-4" />
                   </Button>
                 </Tooltip>
-              ))}
-              <div className="h-6 w-px bg-[var(--border)] mx-2" />
-              {blockTools.map((tool) => (
-                <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+              </div>
+
+              {/* Agents section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content={toolbarAgentsCollapsed ? "Expand agents" : "Collapse agents"} side="bottom">
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={() => handleAddBlock(tool)}
-                    disabled={createItemMutation.isPending}
+                    onClick={() => setToolbarAgentsCollapsed((prev) => !prev)}
+                    className="mr-1"
                   >
-                    {tool.icon}
+                    {toolbarAgentsCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
                   </Button>
                 </Tooltip>
-              ))}
-              <div className="h-6 w-px bg-[var(--border)] mx-2" />
-              <Tooltip
-                content={connectorMode ? "Exit connect mode" : "Connect blocks"}
-                side="bottom"
-              >
-                <Button
-                  variant={connectorMode ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  onClick={() => setConnectorMode((prev) => !prev)}
-                  disabled={role === "viewer"}
-                  className="relative"
+                {!toolbarAgentsCollapsed && terminalTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
+              {/* Blocks section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content={toolbarBlocksCollapsed ? "Expand blocks" : "Collapse blocks"} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setToolbarBlocksCollapsed((prev) => !prev)}
+                    className="mr-1"
+                  >
+                    {toolbarBlocksCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                  </Button>
+                </Tooltip>
+                {!toolbarBlocksCollapsed && blockTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
+              {/* Google integrations section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content={toolbarGoogleCollapsed ? "Expand Google" : "Collapse Google"} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setToolbarGoogleCollapsed((prev) => !prev)}
+                    className="mr-1"
+                  >
+                    {toolbarGoogleCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                  </Button>
+                </Tooltip>
+                {!toolbarGoogleCollapsed && googleTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
+              {/* Connect mode */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip
+                  content={connectorMode ? "Exit connect mode" : "Connect blocks"}
+                  side="bottom"
                 >
-                  <GitMerge className="w-4 h-4" />
-                  {connectorMode && hasPendingConnection && (
-                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
-                  )}
-                </Button>
-              </Tooltip>
+                  <Button
+                    variant={connectorMode ? "secondary" : "ghost"}
+                    size="icon-sm"
+                    onClick={() => setConnectorMode((prev) => !prev)}
+                    disabled={role === "viewer"}
+                    className="relative"
+                  >
+                    <GitMerge className="w-4 h-4" />
+                    {connectorMode && hasPendingConnection && (
+                      <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[var(--accent-primary)]" />
+                    )}
+                  </Button>
+                </Tooltip>
+              </div>
             </div>
           </div>
           <div className="absolute right-4 top-2 z-20 pointer-events-none">

@@ -23,6 +23,27 @@ const CALENDAR_SCOPE = [
   'email',
 ];
 
+const CONTACTS_SCOPE = [
+  'https://www.googleapis.com/auth/contacts.readonly',
+  'openid',
+  'email',
+];
+
+const SHEETS_SCOPE = [
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'openid',
+  'email',
+];
+
+const FORMS_SCOPE = [
+  'https://www.googleapis.com/auth/forms.body.readonly',
+  'https://www.googleapis.com/auth/forms.responses.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'openid',
+  'email',
+];
+
 const GITHUB_SCOPE = [
   'repo',
   'read:user',
@@ -6434,6 +6455,2350 @@ export async function disconnectCalendar(
 
   // Delete integration
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_calendar'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+// ============================================
+// Google Contacts integration
+// ============================================
+
+interface GoogleContact {
+  resourceName: string;
+  etag?: string;
+  names?: Array<{
+    displayName?: string;
+    givenName?: string;
+    familyName?: string;
+  }>;
+  emailAddresses?: Array<{
+    value?: string;
+    type?: string;
+  }>;
+  phoneNumbers?: Array<{
+    value?: string;
+    type?: string;
+  }>;
+  organizations?: Array<{
+    name?: string;
+    title?: string;
+  }>;
+  photos?: Array<{
+    url?: string;
+  }>;
+  biographies?: Array<{
+    value?: string;
+  }>;
+}
+
+async function refreshContactsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_contacts'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null }>();
+
+  if (!record?.refresh_token) {
+    throw new Error('Contacts must be connected again.');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to refresh Contacts access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?, scope = ?, token_type = ?, expires_at = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'google_contacts'
+  `).bind(
+    tokenData.access_token,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    userId
+  ).run();
+
+  return tokenData.access_token;
+}
+
+async function getContactsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const record = await env.DB.prepare(`
+    SELECT access_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_contacts'
+  `).bind(userId).first<{ access_token: string; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Contacts not connected.');
+  }
+
+  // Refresh if expired or expires within 5 minutes
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    const now = Date.now();
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return refreshContactsAccessToken(env, userId);
+    }
+  }
+
+  return record.access_token;
+}
+
+async function getContactsProfile(accessToken: string): Promise<{ email: string; name?: string }> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch contacts profile.');
+  }
+
+  const data = await res.json() as { email: string; name?: string };
+  return { email: data.email, name: data.name };
+}
+
+async function listGoogleContacts(
+  accessToken: string,
+  pageSize: number = 100,
+  pageToken?: string,
+  syncToken?: string
+): Promise<{
+  connections: GoogleContact[];
+  nextPageToken?: string;
+  nextSyncToken?: string;
+  totalPeople?: number;
+}> {
+  const url = new URL('https://people.googleapis.com/v1/people/me/connections');
+  url.searchParams.set('pageSize', String(pageSize));
+  url.searchParams.set('personFields', 'names,emailAddresses,phoneNumbers,organizations,photos,biographies');
+
+  if (syncToken) {
+    url.searchParams.set('syncToken', syncToken);
+  }
+  if (pageToken) {
+    url.searchParams.set('pageToken', pageToken);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    if (res.status === 410) {
+      throw new Error('SYNC_TOKEN_EXPIRED');
+    }
+    throw new Error('Failed to list contacts.');
+  }
+
+  return res.json() as Promise<{
+    connections: GoogleContact[];
+    nextPageToken?: string;
+    nextSyncToken?: string;
+    totalPeople?: number;
+  }>;
+}
+
+async function getGoogleContact(
+  accessToken: string,
+  resourceName: string
+): Promise<GoogleContact> {
+  const url = new URL(`https://people.googleapis.com/v1/${resourceName}`);
+  url.searchParams.set('personFields', 'names,emailAddresses,phoneNumbers,organizations,photos,biographies');
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch contact.');
+  }
+
+  return res.json() as Promise<GoogleContact>;
+}
+
+async function searchGoogleContacts(
+  accessToken: string,
+  query: string,
+  pageSize: number = 30
+): Promise<{ results: GoogleContact[] }> {
+  const url = new URL('https://people.googleapis.com/v1/people:searchContacts');
+  url.searchParams.set('query', query);
+  url.searchParams.set('pageSize', String(pageSize));
+  url.searchParams.set('readMask', 'names,emailAddresses,phoneNumbers,organizations,photos');
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to search contacts.');
+  }
+
+  const data = await res.json() as { results?: Array<{ person: GoogleContact }> };
+  return { results: (data.results || []).map(r => r.person) };
+}
+
+export async function connectContacts(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const state = buildState();
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  await createState(env, auth.user!.id, 'google_contacts', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/contacts/callback`;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', CONTACTS_SCOPE.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackContacts(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'google_contacts');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/contacts/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('grant_type', 'authorization_code');
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  // Fetch email address
+  let emailAddress = '';
+  try {
+    const profile = await getContactsProfile(tokenData.access_token);
+    emailAddress = profile.email;
+  } catch {
+    // Email will be empty if profile fetch fails
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    email_address: emailAddress,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'google_contacts', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Contacts', 'contacts-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Google Contacts');
+}
+
+export async function getContactsIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'google_contacts'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, linked: false, emailAddress: null });
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(integration.metadata || '{}') as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+
+  if (!dashboardId) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, status, last_synced_at
+    FROM contacts_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    status: string;
+    last_synced_at: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  return Response.json({
+    connected: true,
+    linked: true,
+    emailAddress: mirror.email_address,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+  });
+}
+
+export async function setupContactsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79950: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79951: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getContactsAccessToken(env, auth.user!.id);
+  } catch {
+    return Response.json({ error: 'E79952: Contacts not connected' }, { status: 404 });
+  }
+
+  const profile = await getContactsProfile(accessToken);
+
+  await env.DB.prepare(`
+    INSERT INTO contacts_mirrors (
+      dashboard_id, user_id, email_address, status, updated_at, created_at
+    ) VALUES (?, ?, ?, 'idle', datetime('now'), datetime('now'))
+    ON CONFLICT(dashboard_id) DO UPDATE SET
+      email_address = excluded.email_address,
+      status = 'idle',
+      updated_at = datetime('now')
+  `).bind(
+    data.dashboardId,
+    auth.user!.id,
+    profile.email
+  ).run();
+
+  // Trigger initial sync
+  try {
+    await runContactsSync(env, auth.user!.id, data.dashboardId, accessToken);
+  } catch (error) {
+    console.error('Initial contacts sync failed:', error);
+  }
+
+  return Response.json({ ok: true, emailAddress: profile.email });
+}
+
+export async function unlinkContactsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79953: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79954: Not found or no access' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`DELETE FROM contacts WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM contacts_mirrors WHERE dashboard_id = ?`).bind(dashboardId).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function getContactsStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79955: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79956: Not found or no access' }, { status: 404 });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, status, sync_token, last_synced_at, sync_error
+    FROM contacts_mirrors
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{
+    email_address: string;
+    status: string;
+    sync_token: string | null;
+    last_synced_at: string | null;
+    sync_error: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({ connected: false });
+  }
+
+  const countResult = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM contacts WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  return Response.json({
+    connected: true,
+    emailAddress: mirror.email_address,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+    syncError: mirror.sync_error,
+    contactCount: countResult?.count || 0,
+  });
+}
+
+async function runContactsSync(
+  env: EnvWithDriveCache,
+  userId: string,
+  dashboardId: string,
+  accessToken?: string
+): Promise<void> {
+  if (!accessToken) {
+    accessToken = await getContactsAccessToken(env, userId);
+  }
+
+  await env.DB.prepare(`
+    UPDATE contacts_mirrors SET status = 'syncing', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  try {
+    const mirror = await env.DB.prepare(`
+      SELECT sync_token FROM contacts_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ sync_token: string | null }>();
+
+    let syncToken = mirror?.sync_token;
+
+    let listResult;
+    try {
+      listResult = await listGoogleContacts(accessToken, 100, undefined, syncToken || undefined);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'SYNC_TOKEN_EXPIRED') {
+        // Full resync needed
+        syncToken = null;
+        listResult = await listGoogleContacts(accessToken, 100);
+        // Clear existing contacts for this dashboard
+        await env.DB.prepare(`DELETE FROM contacts WHERE dashboard_id = ?`).bind(dashboardId).run();
+      } else {
+        throw error;
+      }
+    }
+
+    const contacts = listResult.connections || [];
+
+    for (const contact of contacts) {
+      if (!contact.resourceName) continue;
+
+      const displayName = contact.names?.[0]?.displayName || null;
+      const givenName = contact.names?.[0]?.givenName || null;
+      const familyName = contact.names?.[0]?.familyName || null;
+      const photoUrl = contact.photos?.[0]?.url || null;
+      const notes = contact.biographies?.[0]?.value || null;
+
+      await env.DB.prepare(`
+        INSERT INTO contacts (
+          id, user_id, dashboard_id, resource_name,
+          display_name, given_name, family_name,
+          email_addresses, phone_numbers, organizations,
+          photo_url, notes, updated_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(dashboard_id, resource_name) DO UPDATE SET
+          display_name = excluded.display_name,
+          given_name = excluded.given_name,
+          family_name = excluded.family_name,
+          email_addresses = excluded.email_addresses,
+          phone_numbers = excluded.phone_numbers,
+          organizations = excluded.organizations,
+          photo_url = excluded.photo_url,
+          notes = excluded.notes,
+          updated_at = datetime('now')
+      `).bind(
+        crypto.randomUUID(),
+        userId,
+        dashboardId,
+        contact.resourceName,
+        displayName,
+        givenName,
+        familyName,
+        JSON.stringify(contact.emailAddresses || []),
+        JSON.stringify(contact.phoneNumbers || []),
+        JSON.stringify(contact.organizations || []),
+        photoUrl,
+        notes
+      ).run();
+    }
+
+    // Update mirror with new sync token
+    await env.DB.prepare(`
+      UPDATE contacts_mirrors
+      SET sync_token = ?, status = 'ready', last_synced_at = datetime('now'), updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(
+      listResult.nextSyncToken || null,
+      dashboardId
+    ).run();
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    await env.DB.prepare(`
+      UPDATE contacts_mirrors SET status = 'error', sync_error = ?, updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(errorMessage, dashboardId).run();
+    throw error;
+  }
+}
+
+export async function syncContactsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79957: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79958: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    await runContactsSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function getContacts(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
+  const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+  const search = url.searchParams.get('search');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79959: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79960: Not found or no access' }, { status: 404 });
+  }
+
+  let query = `
+    SELECT resource_name, display_name, given_name, family_name,
+           email_addresses, phone_numbers, organizations, photo_url, notes
+    FROM contacts
+    WHERE dashboard_id = ?
+  `;
+  const params: (string | number)[] = [dashboardId];
+
+  if (search) {
+    query += ` AND (display_name LIKE ? OR email_addresses LIKE ?)`;
+    const searchPattern = `%${search}%`;
+    params.push(searchPattern, searchPattern);
+  }
+
+  query += ` ORDER BY display_name ASC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  const contacts = await env.DB.prepare(query).bind(...params).all<{
+    resource_name: string;
+    display_name: string | null;
+    given_name: string | null;
+    family_name: string | null;
+    email_addresses: string;
+    phone_numbers: string;
+    organizations: string;
+    photo_url: string | null;
+    notes: string | null;
+  }>();
+
+  const countResult = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM contacts WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  const formatted = (contacts.results || []).map(c => ({
+    resourceName: c.resource_name,
+    displayName: c.display_name,
+    givenName: c.given_name,
+    familyName: c.family_name,
+    emailAddresses: JSON.parse(c.email_addresses || '[]') as Array<{ value?: string; type?: string }>,
+    phoneNumbers: JSON.parse(c.phone_numbers || '[]') as Array<{ value?: string; type?: string }>,
+    organizations: JSON.parse(c.organizations || '[]') as Array<{ name?: string; title?: string }>,
+    photoUrl: c.photo_url,
+    notes: c.notes,
+  }));
+
+  return Response.json({
+    contacts: formatted,
+    total: countResult?.count || 0,
+    limit,
+    offset,
+  });
+}
+
+export async function getContactDetail(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const resourceName = url.searchParams.get('resource_name');
+
+  if (!dashboardId || !resourceName) {
+    return Response.json({ error: 'E79961: dashboard_id and resource_name are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79962: Not found or no access' }, { status: 404 });
+  }
+
+  // Try to fetch fresh from Contacts API
+  try {
+    const accessToken = await getContactsAccessToken(env, auth.user!.id);
+    const contact = await getGoogleContact(accessToken, resourceName);
+
+    return Response.json({
+      resourceName: contact.resourceName,
+      displayName: contact.names?.[0]?.displayName,
+      givenName: contact.names?.[0]?.givenName,
+      familyName: contact.names?.[0]?.familyName,
+      emailAddresses: contact.emailAddresses || [],
+      phoneNumbers: contact.phoneNumbers || [],
+      organizations: contact.organizations || [],
+      photoUrl: contact.photos?.[0]?.url,
+      notes: contact.biographies?.[0]?.value,
+    });
+  } catch {
+    // Fall back to cached data
+    const cached = await env.DB.prepare(`
+      SELECT resource_name, display_name, given_name, family_name,
+             email_addresses, phone_numbers, organizations, photo_url, notes
+      FROM contacts
+      WHERE dashboard_id = ? AND resource_name = ?
+    `).bind(dashboardId, resourceName).first<{
+      resource_name: string;
+      display_name: string | null;
+      given_name: string | null;
+      family_name: string | null;
+      email_addresses: string;
+      phone_numbers: string;
+      organizations: string;
+      photo_url: string | null;
+      notes: string | null;
+    }>();
+
+    if (!cached) {
+      return Response.json({ error: 'E79963: Contact not found' }, { status: 404 });
+    }
+
+    return Response.json({
+      resourceName: cached.resource_name,
+      displayName: cached.display_name,
+      givenName: cached.given_name,
+      familyName: cached.family_name,
+      emailAddresses: JSON.parse(cached.email_addresses || '[]'),
+      phoneNumbers: JSON.parse(cached.phone_numbers || '[]'),
+      organizations: JSON.parse(cached.organizations || '[]'),
+      photoUrl: cached.photo_url,
+      notes: cached.notes,
+    });
+  }
+}
+
+export async function searchContactsEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const query = url.searchParams.get('q');
+
+  if (!dashboardId || !query) {
+    return Response.json({ error: 'E79964: dashboard_id and q are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79965: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    const accessToken = await getContactsAccessToken(env, auth.user!.id);
+    const result = await searchGoogleContacts(accessToken, query, 30);
+
+    const contacts = result.results.map(c => ({
+      resourceName: c.resourceName,
+      displayName: c.names?.[0]?.displayName,
+      givenName: c.names?.[0]?.givenName,
+      familyName: c.names?.[0]?.familyName,
+      emailAddresses: c.emailAddresses || [],
+      phoneNumbers: c.phoneNumbers || [],
+      organizations: c.organizations || [],
+      photoUrl: c.photos?.[0]?.url,
+    }));
+
+    return Response.json({ contacts });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Search failed';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function disconnectContacts(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's contacts mirrors and contacts
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM contacts_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    await env.DB.prepare(`DELETE FROM contacts WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+  }
+  await env.DB.prepare(`DELETE FROM contacts_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_contacts'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+// ============================================
+// Google Sheets integration
+// ============================================
+
+interface GoogleSpreadsheet {
+  spreadsheetId: string;
+  properties: {
+    title: string;
+  };
+  sheets?: Array<{
+    properties: {
+      sheetId: number;
+      title: string;
+      index: number;
+    };
+  }>;
+}
+
+interface SheetValues {
+  range: string;
+  majorDimension: string;
+  values: string[][];
+}
+
+async function refreshSheetsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_sheets'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null }>();
+
+  if (!record?.refresh_token) {
+    throw new Error('Sheets must be connected again.');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to refresh Sheets access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?, scope = ?, token_type = ?, expires_at = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'google_sheets'
+  `).bind(
+    tokenData.access_token,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    userId
+  ).run();
+
+  return tokenData.access_token;
+}
+
+async function getSheetsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const record = await env.DB.prepare(`
+    SELECT access_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_sheets'
+  `).bind(userId).first<{ access_token: string; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Sheets not connected.');
+  }
+
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    const now = Date.now();
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return refreshSheetsAccessToken(env, userId);
+    }
+  }
+
+  return record.access_token;
+}
+
+async function getSheetsProfile(accessToken: string): Promise<{ email: string; name?: string }> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch sheets profile.');
+  }
+
+  const data = await res.json() as { email: string; name?: string };
+  return { email: data.email, name: data.name };
+}
+
+async function listSpreadsheets(
+  accessToken: string,
+  pageSize: number = 20,
+  pageToken?: string
+): Promise<{
+  files: Array<{ id: string; name: string; modifiedTime?: string }>;
+  nextPageToken?: string;
+}> {
+  const url = new URL('https://www.googleapis.com/drive/v3/files');
+  url.searchParams.set('pageSize', String(pageSize));
+  url.searchParams.set('q', "mimeType='application/vnd.google-apps.spreadsheet'");
+  url.searchParams.set('fields', 'nextPageToken,files(id,name,modifiedTime)');
+  url.searchParams.set('orderBy', 'modifiedTime desc');
+
+  if (pageToken) {
+    url.searchParams.set('pageToken', pageToken);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to list spreadsheets.');
+  }
+
+  return res.json() as Promise<{
+    files: Array<{ id: string; name: string; modifiedTime?: string }>;
+    nextPageToken?: string;
+  }>;
+}
+
+async function getSpreadsheet(
+  accessToken: string,
+  spreadsheetId: string
+): Promise<GoogleSpreadsheet> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=spreadsheetId,properties.title,sheets.properties`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch spreadsheet.');
+  }
+
+  return res.json() as Promise<GoogleSpreadsheet>;
+}
+
+async function getSheetValues(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string
+): Promise<SheetValues> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to read sheet values.');
+  }
+
+  return res.json() as Promise<SheetValues>;
+}
+
+async function updateSheetValues(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string,
+  values: string[][]
+): Promise<{ updatedCells: number; updatedRows: number; updatedColumns: number }> {
+  const url = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`);
+  url.searchParams.set('valueInputOption', 'USER_ENTERED');
+
+  const res = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ range, values }),
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to update sheet values.');
+  }
+
+  return res.json() as Promise<{ updatedCells: number; updatedRows: number; updatedColumns: number }>;
+}
+
+async function appendSheetValues(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string,
+  values: string[][]
+): Promise<{ updates: { updatedCells: number; updatedRows: number } }> {
+  const url = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append`);
+  url.searchParams.set('valueInputOption', 'USER_ENTERED');
+  url.searchParams.set('insertDataOption', 'INSERT_ROWS');
+
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ range, values }),
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to append sheet values.');
+  }
+
+  return res.json() as Promise<{ updates: { updatedCells: number; updatedRows: number } }>;
+}
+
+export async function connectSheets(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const state = buildState();
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  await createState(env, auth.user!.id, 'google_sheets', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/sheets/callback`;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', SHEETS_SCOPE.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackSheets(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'google_sheets');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/sheets/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('grant_type', 'authorization_code');
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  let emailAddress = '';
+  try {
+    const profile = await getSheetsProfile(tokenData.access_token);
+    emailAddress = profile.email;
+  } catch {
+    // Email will be empty if profile fetch fails
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    email_address: emailAddress,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'google_sheets', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Sheets', 'sheets-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Google Sheets');
+}
+
+export async function getSheetsIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'google_sheets'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, linked: false, emailAddress: null });
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(integration.metadata || '{}') as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+
+  if (!dashboardId) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, spreadsheet_id, spreadsheet_name, status, last_accessed_at
+    FROM sheets_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    spreadsheet_id: string | null;
+    spreadsheet_name: string | null;
+    status: string;
+    last_accessed_at: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  return Response.json({
+    connected: true,
+    linked: true,
+    emailAddress: mirror.email_address,
+    spreadsheetId: mirror.spreadsheet_id,
+    spreadsheetName: mirror.spreadsheet_name,
+    status: mirror.status,
+    lastAccessedAt: mirror.last_accessed_at,
+  });
+}
+
+export async function setupSheetsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    spreadsheetId?: string;
+  };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79970: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79971: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getSheetsAccessToken(env, auth.user!.id);
+  } catch {
+    return Response.json({ error: 'E79972: Sheets not connected' }, { status: 404 });
+  }
+
+  const profile = await getSheetsProfile(accessToken);
+
+  let spreadsheetName: string | null = null;
+  if (data.spreadsheetId) {
+    try {
+      const spreadsheet = await getSpreadsheet(accessToken, data.spreadsheetId);
+      spreadsheetName = spreadsheet.properties.title;
+    } catch {
+      // Ignore error, name will be null
+    }
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO sheets_mirrors (
+      dashboard_id, user_id, email_address, spreadsheet_id, spreadsheet_name, status, updated_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'linked', datetime('now'), datetime('now'))
+    ON CONFLICT(dashboard_id) DO UPDATE SET
+      email_address = excluded.email_address,
+      spreadsheet_id = excluded.spreadsheet_id,
+      spreadsheet_name = excluded.spreadsheet_name,
+      status = 'linked',
+      updated_at = datetime('now')
+  `).bind(
+    data.dashboardId,
+    auth.user!.id,
+    profile.email,
+    data.spreadsheetId || null,
+    spreadsheetName
+  ).run();
+
+  return Response.json({ ok: true, emailAddress: profile.email });
+}
+
+export async function unlinkSheetsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79973: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79974: Not found or no access' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`DELETE FROM sheets_mirrors WHERE dashboard_id = ?`).bind(dashboardId).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function listSpreadsheetsEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const pageSize = parseInt(url.searchParams.get('page_size') || '20', 10);
+  const pageToken = url.searchParams.get('page_token') || undefined;
+
+  try {
+    const accessToken = await getSheetsAccessToken(env, auth.user!.id);
+    const result = await listSpreadsheets(accessToken, pageSize, pageToken);
+
+    return Response.json({
+      spreadsheets: result.files.map(f => ({
+        id: f.id,
+        name: f.name,
+        modifiedTime: f.modifiedTime,
+      })),
+      nextPageToken: result.nextPageToken,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to list spreadsheets';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function getSpreadsheetEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const spreadsheetId = url.searchParams.get('spreadsheet_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79975: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79976: Not found or no access' }, { status: 404 });
+  }
+
+  let sheetId = spreadsheetId;
+  if (!sheetId) {
+    const mirror = await env.DB.prepare(`
+      SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ spreadsheet_id: string | null }>();
+    sheetId = mirror?.spreadsheet_id || null;
+  }
+
+  if (!sheetId) {
+    return Response.json({ error: 'E79977: No spreadsheet linked' }, { status: 400 });
+  }
+
+  try {
+    const accessToken = await getSheetsAccessToken(env, auth.user!.id);
+    const spreadsheet = await getSpreadsheet(accessToken, sheetId);
+
+    await env.DB.prepare(`
+      UPDATE sheets_mirrors SET last_accessed_at = datetime('now') WHERE dashboard_id = ?
+    `).bind(dashboardId).run();
+
+    return Response.json({
+      spreadsheetId: spreadsheet.spreadsheetId,
+      title: spreadsheet.properties.title,
+      sheets: (spreadsheet.sheets || []).map(s => ({
+        sheetId: s.properties.sheetId,
+        title: s.properties.title,
+        index: s.properties.index,
+      })),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch spreadsheet';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function readSheetValues(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const spreadsheetId = url.searchParams.get('spreadsheet_id');
+  const range = url.searchParams.get('range');
+
+  if (!dashboardId || !range) {
+    return Response.json({ error: 'E79978: dashboard_id and range are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79979: Not found or no access' }, { status: 404 });
+  }
+
+  let sheetId = spreadsheetId;
+  if (!sheetId) {
+    const mirror = await env.DB.prepare(`
+      SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ spreadsheet_id: string | null }>();
+    sheetId = mirror?.spreadsheet_id || null;
+  }
+
+  if (!sheetId) {
+    return Response.json({ error: 'E79980: No spreadsheet linked' }, { status: 400 });
+  }
+
+  try {
+    const accessToken = await getSheetsAccessToken(env, auth.user!.id);
+    const result = await getSheetValues(accessToken, sheetId, range);
+
+    return Response.json({
+      range: result.range,
+      values: result.values || [],
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to read values';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function writeSheetValues(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    spreadsheetId?: string;
+    range?: string;
+    values?: string[][];
+  };
+
+  if (!data.dashboardId || !data.range || !data.values) {
+    return Response.json({ error: 'E79981: dashboardId, range, and values are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79982: Not found or no access' }, { status: 404 });
+  }
+
+  let sheetId = data.spreadsheetId;
+  if (!sheetId) {
+    const mirror = await env.DB.prepare(`
+      SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
+    `).bind(data.dashboardId).first<{ spreadsheet_id: string | null }>();
+    sheetId = mirror?.spreadsheet_id || null;
+  }
+
+  if (!sheetId) {
+    return Response.json({ error: 'E79983: No spreadsheet linked' }, { status: 400 });
+  }
+
+  try {
+    const accessToken = await getSheetsAccessToken(env, auth.user!.id);
+    const result = await updateSheetValues(accessToken, sheetId, data.range, data.values);
+
+    return Response.json({
+      ok: true,
+      updatedCells: result.updatedCells,
+      updatedRows: result.updatedRows,
+      updatedColumns: result.updatedColumns,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to write values';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function appendSheetValuesEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    spreadsheetId?: string;
+    range?: string;
+    values?: string[][];
+  };
+
+  if (!data.dashboardId || !data.range || !data.values) {
+    return Response.json({ error: 'E79984: dashboardId, range, and values are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79985: Not found or no access' }, { status: 404 });
+  }
+
+  let sheetId = data.spreadsheetId;
+  if (!sheetId) {
+    const mirror = await env.DB.prepare(`
+      SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
+    `).bind(data.dashboardId).first<{ spreadsheet_id: string | null }>();
+    sheetId = mirror?.spreadsheet_id || null;
+  }
+
+  if (!sheetId) {
+    return Response.json({ error: 'E79986: No spreadsheet linked' }, { status: 400 });
+  }
+
+  try {
+    const accessToken = await getSheetsAccessToken(env, auth.user!.id);
+    const result = await appendSheetValues(accessToken, sheetId, data.range, data.values);
+
+    return Response.json({
+      ok: true,
+      updatedCells: result.updates.updatedCells,
+      updatedRows: result.updates.updatedRows,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to append values';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function setLinkedSpreadsheet(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    spreadsheetId?: string;
+  };
+
+  if (!data.dashboardId || !data.spreadsheetId) {
+    return Response.json({ error: 'E79987: dashboardId and spreadsheetId are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79988: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getSheetsAccessToken(env, auth.user!.id);
+  } catch {
+    return Response.json({ error: 'E79989: Sheets not connected' }, { status: 404 });
+  }
+
+  let spreadsheetName: string;
+  try {
+    const spreadsheet = await getSpreadsheet(accessToken, data.spreadsheetId);
+    spreadsheetName = spreadsheet.properties.title;
+  } catch {
+    return Response.json({ error: 'E79990: Spreadsheet not found or not accessible' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`
+    UPDATE sheets_mirrors
+    SET spreadsheet_id = ?, spreadsheet_name = ?, status = 'linked', updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(data.spreadsheetId, spreadsheetName, data.dashboardId).run();
+
+  return Response.json({ ok: true, spreadsheetName });
+}
+
+export async function disconnectSheets(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await env.DB.prepare(`DELETE FROM sheets_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_sheets'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+// ===========================================
+// Google Forms Integration
+// ===========================================
+
+async function refreshFormsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_forms'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null }>();
+
+  if (!record?.refresh_token) {
+    throw new Error('Forms must be connected again.');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to refresh Forms access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?, expires_at = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'google_forms'
+  `).bind(tokenData.access_token, expiresAt, userId).run();
+
+  return tokenData.access_token;
+}
+
+async function getFormsAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const record = await env.DB.prepare(`
+    SELECT access_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_forms'
+  `).bind(userId).first<{ access_token: string; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Forms not connected.');
+  }
+
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    const now = Date.now();
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return refreshFormsAccessToken(env, userId);
+    }
+  }
+
+  return record.access_token;
+}
+
+export async function connectForms(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const state = buildState();
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  await createState(env, auth.user!.id, 'google_forms', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/forms/callback`;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', FORMS_SCOPE.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackForms(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'google_forms');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/forms/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('grant_type', 'authorization_code');
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  let emailAddress = '';
+  try {
+    const userInfoRes = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      { headers: { Authorization: `Bearer ${tokenData.access_token}` } }
+    );
+    if (userInfoRes.ok) {
+      const userInfo = await userInfoRes.json() as { email?: string };
+      emailAddress = userInfo.email || '';
+    }
+  } catch {
+    // Email will be empty if profile fetch fails
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    email_address: emailAddress,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'google_forms', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Forms', 'forms-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Google Forms');
+}
+
+export async function getFormsIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  const integration = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+  ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, linked: false, emailAddress: null });
+  }
+
+  let emailAddress: string | null = null;
+  try {
+    const accessToken = await getFormsAccessToken(env, auth.user!.id);
+    const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (userInfoRes.ok) {
+      const userInfo = await userInfoRes.json() as { email?: string };
+      emailAddress = userInfo.email || null;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!dashboardId) {
+    return Response.json({ connected: true, linked: false, emailAddress });
+  }
+
+  const mirror = await env.DB.prepare(
+    `SELECT form_id, form_title, status FROM forms_mirrors WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, auth.user!.id).first<{ form_id: string | null; form_title: string | null; status: string }>();
+
+  if (!mirror) {
+    return Response.json({ connected: true, linked: false, emailAddress });
+  }
+
+  return Response.json({
+    connected: true,
+    linked: true,
+    emailAddress,
+    formId: mirror.form_id,
+    formTitle: mirror.form_title,
+    status: mirror.status,
+  });
+}
+
+export async function setupFormsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const body = await request.json() as { dashboardId: string };
+  const { dashboardId } = body;
+
+  if (!dashboardId) {
+    return Response.json({ error: 'dashboardId is required' }, { status: 400 });
+  }
+
+  const integration = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+  ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!integration) {
+    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+  }
+
+  let emailAddress = '';
+  try {
+    const accessToken = await getFormsAccessToken(env, auth.user!.id);
+    const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (userInfoRes.ok) {
+      const userInfo = await userInfoRes.json() as { email?: string };
+      emailAddress = userInfo.email || '';
+    }
+  } catch {
+    // ignore
+  }
+
+  const existing = await env.DB.prepare(
+    `SELECT dashboard_id FROM forms_mirrors WHERE dashboard_id = ?`
+  ).bind(dashboardId).first();
+
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE forms_mirrors SET user_id = ?, email_address = ?, status = 'idle', updated_at = datetime('now') WHERE dashboard_id = ?`
+    ).bind(auth.user!.id, emailAddress, dashboardId).run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO forms_mirrors (dashboard_id, user_id, email_address, status) VALUES (?, ?, ?, 'idle')`
+    ).bind(dashboardId, auth.user!.id, emailAddress).run();
+  }
+
+  return Response.json({ ok: true, emailAddress });
+}
+
+export async function unlinkFormsMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+  }
+
+  await env.DB.prepare(
+    `DELETE FROM form_responses WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, auth.user!.id).run();
+
+  await env.DB.prepare(
+    `DELETE FROM forms_mirrors WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function listFormsEndpoint(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const integration = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+  ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, forms: [] });
+  }
+
+  const accessToken = await getFormsAccessToken(env, auth.user!.id);
+
+  // List forms from Google Drive (forms are stored as drive files)
+  const driveRes = await fetch(
+    "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.form'&fields=files(id,name)",
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!driveRes.ok) {
+    const errorText = await driveRes.text();
+    return Response.json({ error: `Failed to list forms: ${errorText}` }, { status: 500 });
+  }
+
+  const driveData = await driveRes.json() as { files: Array<{ id: string; name: string }> };
+
+  return Response.json({
+    connected: true,
+    forms: driveData.files.map(f => ({ id: f.id, name: f.name })),
+  });
+}
+
+export async function getFormEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const formId = url.searchParams.get('form_id');
+
+  if (!formId) {
+    return Response.json({ error: 'form_id is required' }, { status: 400 });
+  }
+
+  const integration = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+  ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!integration) {
+    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+  }
+
+  const accessToken = await getFormsAccessToken(env, auth.user!.id);
+
+  const formRes = await fetch(
+    `https://forms.googleapis.com/v1/forms/${formId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!formRes.ok) {
+    const errorText = await formRes.text();
+    return Response.json({ error: `Failed to get form: ${errorText}` }, { status: 500 });
+  }
+
+  const formData = await formRes.json() as {
+    formId: string;
+    info: { title: string; description?: string; documentTitle?: string };
+    items?: Array<{
+      itemId: string;
+      title?: string;
+      description?: string;
+      questionItem?: {
+        question: {
+          questionId: string;
+          required?: boolean;
+          choiceQuestion?: { type: string; options: Array<{ value: string }> };
+          textQuestion?: { paragraph: boolean };
+          scaleQuestion?: { low: number; high: number };
+          dateQuestion?: { includeTime: boolean; includeYear: boolean };
+          timeQuestion?: { duration: boolean };
+        };
+      };
+    }>;
+    responderUri?: string;
+  };
+
+  return Response.json({
+    formId: formData.formId,
+    title: formData.info.title,
+    description: formData.info.description,
+    documentTitle: formData.info.documentTitle,
+    responderUri: formData.responderUri,
+    items: formData.items?.map(item => ({
+      itemId: item.itemId,
+      title: item.title,
+      description: item.description,
+      question: item.questionItem?.question,
+    })) || [],
+  });
+}
+
+export async function getFormResponsesEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const formId = url.searchParams.get('form_id');
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!formId || !dashboardId) {
+    return Response.json({ error: 'form_id and dashboard_id are required' }, { status: 400 });
+  }
+
+  const integration = await env.DB.prepare(
+    `SELECT access_token, refresh_token, expires_at FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+  ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!integration) {
+    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+  }
+
+  const accessToken = await getFormsAccessToken(env, auth.user!.id);
+
+  const responsesRes = await fetch(
+    `https://forms.googleapis.com/v1/forms/${formId}/responses`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!responsesRes.ok) {
+    const errorText = await responsesRes.text();
+    return Response.json({ error: `Failed to get responses: ${errorText}` }, { status: 500 });
+  }
+
+  const responsesData = await responsesRes.json() as {
+    responses?: Array<{
+      responseId: string;
+      createTime: string;
+      lastSubmittedTime: string;
+      respondentEmail?: string;
+      answers?: Record<string, { questionId: string; textAnswers?: { answers: Array<{ value: string }> } }>;
+    }>;
+  };
+
+  const responses = responsesData.responses || [];
+
+  // Cache responses in database
+  for (const response of responses) {
+    const existing = await env.DB.prepare(
+      `SELECT id FROM form_responses WHERE dashboard_id = ? AND response_id = ?`
+    ).bind(dashboardId, response.responseId).first();
+
+    if (existing) {
+      await env.DB.prepare(
+        `UPDATE form_responses SET respondent_email = ?, submitted_at = ?, answers = ?, updated_at = datetime('now') WHERE dashboard_id = ? AND response_id = ?`
+      ).bind(response.respondentEmail || null, response.lastSubmittedTime, JSON.stringify(response.answers || {}), dashboardId, response.responseId).run();
+    } else {
+      const id = crypto.randomUUID();
+      await env.DB.prepare(
+        `INSERT INTO form_responses (id, user_id, dashboard_id, form_id, response_id, respondent_email, submitted_at, answers) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, auth.user!.id, dashboardId, formId, response.responseId, response.respondentEmail || null, response.lastSubmittedTime, JSON.stringify(response.answers || {})).run();
+    }
+  }
+
+  return Response.json({
+    total: responses.length,
+    responses: responses.map(r => ({
+      responseId: r.responseId,
+      respondentEmail: r.respondentEmail,
+      submittedAt: r.lastSubmittedTime,
+      answers: r.answers,
+    })),
+  });
+}
+
+export async function setLinkedForm(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const body = await request.json() as { dashboardId: string; formId: string; formTitle: string };
+  const { dashboardId, formId, formTitle } = body;
+
+  if (!dashboardId || !formId || !formTitle) {
+    return Response.json({ error: 'dashboardId, formId, and formTitle are required' }, { status: 400 });
+  }
+
+  const existing = await env.DB.prepare(
+    `SELECT dashboard_id FROM forms_mirrors WHERE dashboard_id = ?`
+  ).bind(dashboardId).first();
+
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE forms_mirrors SET form_id = ?, form_title = ?, status = 'linked', last_accessed_at = datetime('now'), updated_at = datetime('now') WHERE dashboard_id = ?`
+    ).bind(formId, formTitle, dashboardId).run();
+  } else {
+    return Response.json({ error: 'Forms mirror not set up for this dashboard' }, { status: 400 });
+  }
+
+  return Response.json({ ok: true });
+}
+
+export async function disconnectForms(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await env.DB.prepare(`DELETE FROM form_responses WHERE user_id = ?`).bind(auth.user!.id).run();
+  await env.DB.prepare(`DELETE FROM forms_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });
 }

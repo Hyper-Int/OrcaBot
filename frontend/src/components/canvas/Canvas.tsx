@@ -34,6 +34,9 @@ import { PromptBlock } from "@/components/blocks/PromptBlock";
 import { ScheduleBlock } from "@/components/blocks/ScheduleBlock";
 import { GmailBlock } from "@/components/blocks/GmailBlock";
 import { CalendarBlock } from "@/components/blocks/CalendarBlock";
+import { ContactsBlock } from "@/components/blocks/ContactsBlock";
+import { SheetsBlock } from "@/components/blocks/SheetsBlock";
+import { FormsBlock } from "@/components/blocks/FormsBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -52,6 +55,9 @@ const nodeTypes: NodeTypes = {
   schedule: ScheduleBlock,
   gmail: GmailBlock,
   calendar: CalendarBlock,
+  contacts: ContactsBlock,
+  sheets: SheetsBlock,
+  forms: FormsBlock,
   cursor: CursorNode,
 };
 
@@ -79,8 +85,11 @@ function itemsToNodes(
       ? sessions.find((s) => s.itemId === item.id && s.status === "active")
       : undefined;
 
+    // Use _stableKey for React reconciliation to prevent remounting when temp ID transitions to real ID
+    const nodeId = item._stableKey || item.id;
+
     return {
-      id: item.id,
+      id: nodeId,
       type: item.type,
       position: item.position,
       // React Flow v12 requires width/height on node for drag before measurement
@@ -90,6 +99,7 @@ function itemsToNodes(
         content: item.content,
         size: item.size,
         dashboardId: item.dashboardId,
+        itemId: item.id, // Pass actual item ID for API calls
         session, // Pass session to terminal blocks
         sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
         onRegisterTerminal,
@@ -241,9 +251,11 @@ export function Canvas({
           // Resize ended - sync to server
           const node = nodes.find((n) => n.id === change.id);
           if (node && change.dimensions) {
+            // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+            const itemId = (node.data as { itemId?: string })?.itemId || node.id;
             // When resizing from top/left edges, position also changes
             // Include both size and position to keep the correct corner anchored
-            onItemChange(change.id, {
+            onItemChange(itemId, {
               position: node.position,
               size: {
                 width: Math.round(change.dimensions.width),
@@ -272,7 +284,9 @@ export function Canvas({
   const handleNodeDragStop: OnNodeDrag = React.useCallback(
     (_event, node) => {
       if (onItemChange && node.position) {
-        onItemChange(node.id, { position: node.position });
+        // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+        const itemId = (node.data as { itemId?: string })?.itemId || node.id;
+        onItemChange(itemId, { position: node.position });
       }
 
       if (node.type === "terminal") {
@@ -286,7 +300,11 @@ export function Canvas({
   const handleNodesDelete = React.useCallback(
     (deletedNodes: Node[]) => {
       if (onItemDelete) {
-        deletedNodes.forEach((node) => onItemDelete(node.id));
+        // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+        deletedNodes.forEach((node) => {
+          const itemId = (node.data as { itemId?: string })?.itemId || node.id;
+          onItemDelete(itemId);
+        });
       }
     },
     [onItemDelete]

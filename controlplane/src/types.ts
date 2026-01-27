@@ -80,7 +80,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -156,7 +156,7 @@ export interface UserSecret {
 export interface UserIntegration {
   id: string;
   userId: string;
-  provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'box' | 'onedrive';
+  provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'google_contacts' | 'google_sheets' | 'google_forms' | 'box' | 'onedrive';
   accessToken: string;
   refreshToken: string | null;
   scope: string | null;

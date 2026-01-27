@@ -721,3 +721,380 @@ export async function disconnectCalendar(): Promise<{ ok: boolean }> {
     method: "DELETE",
   });
 }
+
+// ============================================
+// Google Contacts Integration
+// ============================================
+
+export interface Contact {
+  resourceName: string;
+  displayName: string | null;
+  givenName: string | null;
+  familyName: string | null;
+  emailAddresses: Array<{ value?: string; type?: string }>;
+  phoneNumbers: Array<{ value?: string; type?: string }>;
+  organizations: Array<{ name?: string; title?: string }>;
+  photoUrl: string | null;
+  notes: string | null;
+}
+
+export interface ContactsIntegration {
+  connected: boolean;
+  linked: boolean;
+  emailAddress: string | null;
+  status?: string;
+  lastSyncedAt?: string | null;
+}
+
+export interface ContactsStatus {
+  connected: boolean;
+  emailAddress?: string;
+  status?: string;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  contactCount?: number;
+}
+
+export interface ContactsResponse {
+  contacts: Contact[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function getContactsIntegration(
+  dashboardId?: string
+): Promise<ContactsIntegration> {
+  const url = new URL(API.cloudflare.contactsIntegration);
+  if (dashboardId) {
+    url.searchParams.set("dashboard_id", dashboardId);
+  }
+  return apiGet<ContactsIntegration>(url.toString());
+}
+
+export async function setupContactsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean; emailAddress: string }> {
+  return apiPost<{ ok: boolean; emailAddress: string }>(
+    API.cloudflare.contactsSetup,
+    { dashboardId }
+  );
+}
+
+export async function unlinkContactsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.contactsIntegration);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function getContactsStatus(dashboardId: string): Promise<ContactsStatus> {
+  const url = new URL(API.cloudflare.contactsStatus);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<ContactsStatus>(url.toString());
+}
+
+export async function syncContacts(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.contactsSync, { dashboardId });
+}
+
+export async function getContacts(
+  dashboardId: string,
+  options?: { limit?: number; offset?: number; search?: string }
+): Promise<ContactsResponse> {
+  const url = new URL(API.cloudflare.contactsList);
+  url.searchParams.set("dashboard_id", dashboardId);
+  if (options?.limit) {
+    url.searchParams.set("limit", String(options.limit));
+  }
+  if (options?.offset) {
+    url.searchParams.set("offset", String(options.offset));
+  }
+  if (options?.search) {
+    url.searchParams.set("search", options.search);
+  }
+  return apiGet<ContactsResponse>(url.toString());
+}
+
+export async function getContactDetail(
+  dashboardId: string,
+  resourceName: string
+): Promise<Contact> {
+  const url = new URL(API.cloudflare.contactsDetail);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("resource_name", resourceName);
+  return apiGet<Contact>(url.toString());
+}
+
+export async function searchContacts(
+  dashboardId: string,
+  query: string
+): Promise<{ contacts: Contact[] }> {
+  const url = new URL(API.cloudflare.contactsSearch);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("q", query);
+  return apiGet<{ contacts: Contact[] }>(url.toString());
+}
+
+export async function disconnectContacts(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.contactsDisconnect, {
+    method: "DELETE",
+  });
+}
+
+// ============================================
+// Google Sheets Integration
+// ============================================
+
+export interface Spreadsheet {
+  spreadsheetId: string;
+  name: string;
+  url: string;
+  sheets: Array<{
+    sheetId: number;
+    title: string;
+    index: number;
+    rowCount?: number;
+    columnCount?: number;
+  }>;
+}
+
+export interface SheetsIntegration {
+  connected: boolean;
+  linked: boolean;
+  emailAddress: string | null;
+  spreadsheetId?: string;
+  spreadsheetName?: string;
+  status?: string;
+}
+
+export interface SpreadsheetListResponse {
+  connected: boolean;
+  spreadsheets: Array<{
+    id: string;
+    name: string;
+  }>;
+}
+
+export interface SheetValues {
+  range: string;
+  values: unknown[][];
+  majorDimension?: "ROWS" | "COLUMNS";
+}
+
+export async function getSheetsIntegration(
+  dashboardId?: string
+): Promise<SheetsIntegration> {
+  const url = new URL(API.cloudflare.sheetsIntegration);
+  if (dashboardId) {
+    url.searchParams.set("dashboard_id", dashboardId);
+  }
+  return apiGet<SheetsIntegration>(url.toString());
+}
+
+export async function setupSheetsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean; emailAddress: string }> {
+  return apiPost<{ ok: boolean; emailAddress: string }>(
+    API.cloudflare.sheetsSetup,
+    { dashboardId }
+  );
+}
+
+export async function unlinkSheetsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.sheetsIntegration);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function listSpreadsheets(): Promise<SpreadsheetListResponse> {
+  return apiGet<SpreadsheetListResponse>(API.cloudflare.sheetsList);
+}
+
+export async function getSpreadsheet(dashboardId: string, spreadsheetId: string): Promise<Spreadsheet> {
+  const url = new URL(API.cloudflare.sheetsSpreadsheet);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("spreadsheet_id", spreadsheetId);
+  return apiGet<Spreadsheet>(url.toString());
+}
+
+export async function readSheetValues(
+  dashboardId: string,
+  spreadsheetId: string,
+  range: string
+): Promise<SheetValues> {
+  const url = new URL(API.cloudflare.sheetsValues);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("spreadsheet_id", spreadsheetId);
+  url.searchParams.set("range", range);
+  return apiGet<SheetValues>(url.toString());
+}
+
+export async function writeSheetValues(
+  spreadsheetId: string,
+  range: string,
+  values: unknown[][]
+): Promise<{ ok: boolean; updatedCells: number }> {
+  return apiPost<{ ok: boolean; updatedCells: number }>(
+    API.cloudflare.sheetsValues,
+    { spreadsheetId, range, values }
+  );
+}
+
+export async function appendSheetValues(
+  spreadsheetId: string,
+  range: string,
+  values: unknown[][]
+): Promise<{ ok: boolean; updatedRange: string; updatedRows: number }> {
+  return apiPost<{ ok: boolean; updatedRange: string; updatedRows: number }>(
+    API.cloudflare.sheetsAppend,
+    { spreadsheetId, range, values }
+  );
+}
+
+export async function setLinkedSpreadsheet(
+  dashboardId: string,
+  spreadsheetId: string,
+  spreadsheetName: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.sheetsLink, {
+    dashboardId,
+    spreadsheetId,
+    spreadsheetName,
+  });
+}
+
+export async function disconnectSheets(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.sheetsDisconnect, {
+    method: "DELETE",
+  });
+}
+
+// ============================================
+// Google Forms Integration
+// ============================================
+
+export interface FormQuestion {
+  questionId: string;
+  required?: boolean;
+  choiceQuestion?: { type: string; options: Array<{ value: string }> };
+  textQuestion?: { paragraph: boolean };
+  scaleQuestion?: { low: number; high: number };
+  dateQuestion?: { includeTime: boolean; includeYear: boolean };
+  timeQuestion?: { duration: boolean };
+}
+
+export interface FormItem {
+  itemId: string;
+  title?: string;
+  description?: string;
+  question?: FormQuestion;
+}
+
+export interface Form {
+  formId: string;
+  title: string;
+  description?: string;
+  documentTitle?: string;
+  responderUri?: string;
+  items: FormItem[];
+}
+
+export interface FormResponse {
+  responseId: string;
+  respondentEmail?: string;
+  submittedAt: string;
+  answers?: Record<string, {
+    questionId: string;
+    textAnswers?: { answers: Array<{ value: string }> };
+  }>;
+}
+
+export interface FormsIntegration {
+  connected: boolean;
+  linked: boolean;
+  emailAddress: string | null;
+  formId?: string;
+  formTitle?: string;
+  status?: string;
+}
+
+export interface FormsListResponse {
+  connected: boolean;
+  forms: Array<{ id: string; name: string }>;
+}
+
+export interface FormResponsesResponse {
+  total: number;
+  responses: FormResponse[];
+}
+
+export async function getFormsIntegration(
+  dashboardId?: string
+): Promise<FormsIntegration> {
+  const url = new URL(API.cloudflare.formsIntegration);
+  if (dashboardId) {
+    url.searchParams.set("dashboard_id", dashboardId);
+  }
+  return apiGet<FormsIntegration>(url.toString());
+}
+
+export async function setupFormsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean; emailAddress: string }> {
+  return apiPost<{ ok: boolean; emailAddress: string }>(
+    API.cloudflare.formsSetup,
+    { dashboardId }
+  );
+}
+
+export async function unlinkFormsMirror(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.formsIntegration);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function listForms(): Promise<FormsListResponse> {
+  return apiGet<FormsListResponse>(API.cloudflare.formsList);
+}
+
+export async function getForm(formId: string): Promise<Form> {
+  const url = new URL(API.cloudflare.formsForm);
+  url.searchParams.set("form_id", formId);
+  return apiGet<Form>(url.toString());
+}
+
+export async function getFormResponses(
+  dashboardId: string,
+  formId: string
+): Promise<FormResponsesResponse> {
+  const url = new URL(API.cloudflare.formsResponses);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("form_id", formId);
+  return apiGet<FormResponsesResponse>(url.toString());
+}
+
+export async function setLinkedForm(
+  dashboardId: string,
+  formId: string,
+  formTitle: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.formsLink, {
+    dashboardId,
+    formId,
+    formTitle,
+  });
+}
+
+export async function disconnectForms(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.formsDisconnect, {
+    method: "DELETE",
+  });
+}

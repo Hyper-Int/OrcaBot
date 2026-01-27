@@ -17,7 +17,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "gmail" | "calendar";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "gmail" | "calendar" | "contacts" | "sheets" | "forms";
 
 /**
  * Position on the canvas
@@ -47,6 +47,8 @@ export interface DashboardItem {
   size: Size;
   createdAt: string;
   updatedAt: string;
+  /** Client-only: stable key for React reconciliation during temp->real ID transitions */
+  _stableKey?: string;
 }
 
 /**
