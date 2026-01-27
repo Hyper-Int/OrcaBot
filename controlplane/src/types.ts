@@ -55,6 +55,9 @@ export interface Env {
   RESEND_API_KEY?: string;
   /** Email sender address for outbound emails */
   EMAIL_FROM?: string;
+  /** GCP Pub/Sub topic for Gmail push notifications.
+   *  Format: projects/{project-id}/topics/{topic-name} */
+  GMAIL_PUBSUB_TOPIC?: string;
 }
 
 // User types
@@ -153,7 +156,7 @@ export interface UserSecret {
 export interface UserIntegration {
   id: string;
   userId: string;
-  provider: 'google_drive' | 'github';
+  provider: 'google_drive' | 'github' | 'gmail' | 'box' | 'onedrive';
   accessToken: string;
   refreshToken: string | null;
   scope: string | null;

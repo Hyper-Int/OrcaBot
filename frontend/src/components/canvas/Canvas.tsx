@@ -32,6 +32,7 @@ import { WorkspaceBlock } from "@/components/blocks/WorkspaceBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import { PromptBlock } from "@/components/blocks/PromptBlock";
 import { ScheduleBlock } from "@/components/blocks/ScheduleBlock";
+import { GmailBlock } from "@/components/blocks/GmailBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -48,6 +49,7 @@ const nodeTypes: NodeTypes = {
   recipe: RecipeBlock,
   prompt: PromptBlock,
   schedule: ScheduleBlock,
+  gmail: GmailBlock,
   cursor: CursorNode,
 };
 

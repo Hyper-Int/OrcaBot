@@ -413,3 +413,182 @@ export async function syncGoogleDriveLargeFiles(
     fileIds,
   });
 }
+
+// ============================================
+// Gmail Integration
+// ============================================
+
+export interface GmailMessage {
+  messageId: string;
+  threadId: string;
+  internalDate: string;
+  from: string | null;
+  to: string | null;
+  subject: string | null;
+  snippet: string | null;
+  labels: string[];
+  sizeEstimate: number;
+  bodyState: "none" | "snippet" | "full";
+}
+
+export interface GmailIntegration {
+  connected: boolean;
+  linked: boolean;
+  emailAddress: string | null;
+  labelIds?: string[];
+  status?: string;
+  lastSyncedAt?: string | null;
+  watchExpiration?: string | null;
+}
+
+export interface GmailStatus {
+  connected: boolean;
+  emailAddress?: string;
+  labelIds?: string[];
+  historyId?: string | null;
+  watchExpiration?: string | null;
+  watchActive?: boolean;
+  status?: string;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  messageCount?: number;
+}
+
+export interface GmailMessagesResponse {
+  messages: GmailMessage[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface GmailMessageDetail {
+  messageId: string;
+  threadId: string;
+  labels: string[];
+  snippet?: string;
+  payload?: {
+    headers?: Array<{ name: string; value: string }>;
+    body?: { data?: string };
+    parts?: Array<{
+      mimeType: string;
+      body?: { data?: string };
+    }>;
+  };
+  internalDate?: string;
+  sizeEstimate?: number;
+}
+
+export type GmailActionType =
+  | "archive"
+  | "trash"
+  | "mark_read"
+  | "mark_unread"
+  | "label_add"
+  | "label_remove";
+
+export async function getGmailIntegration(
+  dashboardId?: string
+): Promise<GmailIntegration> {
+  const url = new URL(API.cloudflare.gmailIntegration);
+  if (dashboardId) {
+    url.searchParams.set("dashboard_id", dashboardId);
+  }
+  return apiGet<GmailIntegration>(url.toString());
+}
+
+export async function setupGmailMirror(
+  dashboardId: string,
+  labelIds?: string[]
+): Promise<{ ok: boolean; emailAddress: string }> {
+  return apiPost<{ ok: boolean; emailAddress: string }>(
+    API.cloudflare.gmailSetup,
+    {
+      dashboardId,
+      labelIds,
+    }
+  );
+}
+
+export async function unlinkGmailMirror(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.gmailIntegration);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function getGmailStatus(dashboardId: string): Promise<GmailStatus> {
+  const url = new URL(API.cloudflare.gmailStatus);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<GmailStatus>(url.toString());
+}
+
+export async function syncGmail(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.gmailSync, { dashboardId });
+}
+
+export async function getGmailMessages(
+  dashboardId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<GmailMessagesResponse> {
+  const url = new URL(API.cloudflare.gmailMessages);
+  url.searchParams.set("dashboard_id", dashboardId);
+  if (options?.limit) {
+    url.searchParams.set("limit", String(options.limit));
+  }
+  if (options?.offset) {
+    url.searchParams.set("offset", String(options.offset));
+  }
+  return apiGet<GmailMessagesResponse>(url.toString());
+}
+
+export async function getGmailMessageDetail(
+  dashboardId: string,
+  messageId: string,
+  format?: "metadata" | "full"
+): Promise<GmailMessageDetail> {
+  const url = new URL(API.cloudflare.gmailMessage);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("message_id", messageId);
+  if (format) {
+    url.searchParams.set("format", format);
+  }
+  return apiGet<GmailMessageDetail>(url.toString());
+}
+
+export async function performGmailAction(
+  dashboardId: string,
+  messageId: string,
+  action: GmailActionType,
+  labelIds?: string[]
+): Promise<{ ok: boolean; labels: string[] }> {
+  return apiPost<{ ok: boolean; labels: string[] }>(API.cloudflare.gmailAction, {
+    dashboardId,
+    messageId,
+    action,
+    labelIds,
+  });
+}
+
+export async function startGmailWatch(
+  dashboardId: string
+): Promise<{ ok: boolean; historyId: string; expiration: string }> {
+  return apiPost<{ ok: boolean; historyId: string; expiration: string }>(
+    API.cloudflare.gmailWatch,
+    { dashboardId }
+  );
+}
+
+export async function stopGmailWatch(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.gmailStop, { dashboardId });
+}
+
+export async function disconnectGmail(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.gmailDisconnect, {
+    method: "DELETE",
+  });
+}

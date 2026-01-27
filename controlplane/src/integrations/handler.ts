@@ -9,6 +9,13 @@ const GOOGLE_SCOPE = [
   'https://www.googleapis.com/auth/drive',
 ];
 
+const GMAIL_SCOPE = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'openid',
+  'email',
+];
+
 const GITHUB_SCOPE = [
   'repo',
   'read:user',
@@ -4252,4 +4259,1273 @@ export async function callbackОnedrive(
   }
 
   return renderSuccessPage('OneDrive');
+}
+
+// ============================================
+// Gmail integration
+// ============================================
+
+interface GmailMessage {
+  id: string;
+  threadId: string;
+  labelIds?: string[];
+  snippet?: string;
+  payload?: {
+    headers?: Array<{ name: string; value: string }>;
+  };
+  internalDate?: string;
+  sizeEstimate?: number;
+}
+
+interface GmailHistoryRecord {
+  id: string;
+  messagesAdded?: Array<{ message: GmailMessage }>;
+  messagesDeleted?: Array<{ message: { id: string; threadId: string } }>;
+  labelsAdded?: Array<{ message: { id: string }; labelIds: string[] }>;
+  labelsRemoved?: Array<{ message: { id: string }; labelIds: string[] }>;
+}
+
+async function refreshGmailAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token FROM user_integrations
+    WHERE user_id = ? AND provider = 'gmail'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null }>();
+
+  if (!record?.refresh_token) {
+    throw new Error('Gmail must be connected again.');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to refresh Gmail access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?, scope = ?, token_type = ?, expires_at = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'gmail'
+  `).bind(
+    tokenData.access_token,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    userId
+  ).run();
+
+  return tokenData.access_token;
+}
+
+async function getGmailAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const record = await env.DB.prepare(`
+    SELECT access_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'gmail'
+  `).bind(userId).first<{ access_token: string; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Gmail not connected.');
+  }
+
+  // Refresh if expired or expires within 5 minutes
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    const now = Date.now();
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return refreshGmailAccessToken(env, userId);
+    }
+  }
+
+  return record.access_token;
+}
+
+async function getGmailProfile(accessToken: string): Promise<{ emailAddress: string }> {
+  const res = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch Gmail profile.');
+  }
+
+  return res.json() as Promise<{ emailAddress: string }>;
+}
+
+async function listGmailMessages(
+  accessToken: string,
+  labelIds: string[] = ['INBOX'],
+  maxResults: number = 50,
+  pageToken?: string
+): Promise<{
+  messages: Array<{ id: string; threadId: string }>;
+  nextPageToken?: string;
+  resultSizeEstimate?: number;
+}> {
+  const url = new URL('https://www.googleapis.com/gmail/v1/users/me/messages');
+  url.searchParams.set('maxResults', String(maxResults));
+  if (labelIds.length > 0) {
+    url.searchParams.set('labelIds', labelIds.join(','));
+  }
+  if (pageToken) {
+    url.searchParams.set('pageToken', pageToken);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to list Gmail messages.');
+  }
+
+  return res.json() as Promise<{
+    messages: Array<{ id: string; threadId: string }>;
+    nextPageToken?: string;
+    resultSizeEstimate?: number;
+  }>;
+}
+
+async function getGmailMessage(
+  accessToken: string,
+  messageId: string,
+  format: 'metadata' | 'minimal' | 'full' = 'metadata'
+): Promise<GmailMessage> {
+  const url = new URL(`https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}`);
+  url.searchParams.set('format', format);
+  if (format === 'metadata') {
+    // Gmail API requires repeated metadataHeaders parameters, not comma-separated
+    url.searchParams.append('metadataHeaders', 'From');
+    url.searchParams.append('metadataHeaders', 'To');
+    url.searchParams.append('metadataHeaders', 'Subject');
+    url.searchParams.append('metadataHeaders', 'Date');
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch Gmail message.');
+  }
+
+  return res.json() as Promise<GmailMessage>;
+}
+
+async function modifyGmailMessage(
+  accessToken: string,
+  messageId: string,
+  addLabelIds: string[] = [],
+  removeLabelIds: string[] = []
+): Promise<GmailMessage> {
+  const res = await fetch(
+    `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/modify`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ addLabelIds, removeLabelIds }),
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error('Failed to modify Gmail message.');
+  }
+
+  return res.json() as Promise<GmailMessage>;
+}
+
+async function setupGmailWatch(
+  accessToken: string,
+  topicName: string,
+  labelIds: string[] = ['INBOX']
+): Promise<{ historyId: string; expiration: string }> {
+  const res = await fetch('https://www.googleapis.com/gmail/v1/users/me/watch', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      topicName,
+      labelIds,
+      labelFilterAction: 'include',
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to setup Gmail watch: ${errorText}`);
+  }
+
+  return res.json() as Promise<{ historyId: string; expiration: string }>;
+}
+
+async function stopGmailWatch(accessToken: string): Promise<void> {
+  const res = await fetch('https://www.googleapis.com/gmail/v1/users/me/stop', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok && res.status !== 404) {
+    throw new Error('Failed to stop Gmail watch.');
+  }
+}
+
+async function getGmailHistory(
+  accessToken: string,
+  startHistoryId: string,
+  labelId?: string,
+  maxResults: number = 100
+): Promise<{
+  history?: GmailHistoryRecord[];
+  historyId: string;
+  nextPageToken?: string;
+}> {
+  const url = new URL('https://www.googleapis.com/gmail/v1/users/me/history');
+  url.searchParams.set('startHistoryId', startHistoryId);
+  url.searchParams.set('maxResults', String(maxResults));
+  if (labelId) {
+    url.searchParams.set('labelId', labelId);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      // History ID is too old, need full resync
+      throw new Error('HISTORY_EXPIRED');
+    }
+    throw new Error('Failed to fetch Gmail history.');
+  }
+
+  return res.json() as Promise<{
+    history?: GmailHistoryRecord[];
+    historyId: string;
+    nextPageToken?: string;
+  }>;
+}
+
+function extractHeader(message: GmailMessage, headerName: string): string | null {
+  const headers = message.payload?.headers;
+  if (!headers) return null;
+  const header = headers.find(h => h.name.toLowerCase() === headerName.toLowerCase());
+  return header?.value || null;
+}
+
+export async function connectGmail(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const state = buildState();
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  await createState(env, auth.user!.id, 'gmail', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/gmail/callback`;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', GMAIL_SCOPE.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackGmail(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'gmail');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/gmail/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('grant_type', 'authorization_code');
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  // Fetch email address
+  let emailAddress = '';
+  try {
+    const profile = await getGmailProfile(tokenData.access_token);
+    emailAddress = profile.emailAddress;
+  } catch {
+    // Email will be empty if profile fetch fails
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    email_address: emailAddress,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'gmail', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Gmail', 'gmail-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Gmail');
+}
+
+export async function getGmailIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'gmail'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, linked: false, emailAddress: null });
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(integration.metadata || '{}') as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+
+  if (!dashboardId) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, label_ids, status, last_synced_at, watch_expiration
+    FROM gmail_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    label_ids: string;
+    status: string;
+    last_synced_at: string | null;
+    watch_expiration: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  let labelIds: string[] = [];
+  try {
+    labelIds = JSON.parse(mirror.label_ids) as string[];
+  } catch {
+    labelIds = ['INBOX'];
+  }
+
+  return Response.json({
+    connected: true,
+    linked: true,
+    emailAddress: mirror.email_address,
+    labelIds,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+    watchExpiration: mirror.watch_expiration,
+  });
+}
+
+export async function setupGmailMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    labelIds?: string[];
+  };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79901: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79902: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getGmailAccessToken(env, auth.user!.id);
+  } catch {
+    return Response.json({ error: 'E79903: Gmail not connected' }, { status: 404 });
+  }
+
+  const profile = await getGmailProfile(accessToken);
+  const labelIds = data.labelIds || ['INBOX'];
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO gmail_mirrors (
+      dashboard_id, user_id, email_address, label_ids, status, updated_at, created_at
+    ) VALUES (?, ?, ?, ?, 'idle', ?, ?)
+    ON CONFLICT(dashboard_id) DO UPDATE SET
+      user_id = excluded.user_id,
+      email_address = excluded.email_address,
+      label_ids = excluded.label_ids,
+      status = 'idle',
+      history_id = null,
+      watch_expiration = null,
+      last_synced_at = null,
+      sync_error = null,
+      updated_at = excluded.updated_at
+  `).bind(
+    data.dashboardId,
+    auth.user!.id,
+    profile.emailAddress,
+    JSON.stringify(labelIds),
+    now,
+    now
+  ).run();
+
+  // Perform initial sync (best-effort, don't fail setup if sync fails)
+  try {
+    await runGmailSync(env, auth.user!.id, data.dashboardId, accessToken);
+  } catch {
+    // Sync can be retried manually
+  }
+
+  return Response.json({ ok: true, emailAddress: profile.emailAddress });
+}
+
+export async function unlinkGmailMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79904: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79905: Not found or no access' }, { status: 404 });
+  }
+
+  // Stop watch if active
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+    await stopGmailWatch(accessToken);
+  } catch {
+    // Ignore errors stopping watch
+  }
+
+  // Delete mirror and all associated messages
+  await env.DB.prepare(`DELETE FROM gmail_messages WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM gmail_actions WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM gmail_mirrors WHERE dashboard_id = ?`).bind(dashboardId).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function getGmailStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79906: dashboard_id is required' }, { status: 400 });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, label_ids, history_id, watch_expiration, status, last_synced_at, sync_error
+    FROM gmail_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    label_ids: string;
+    history_id: string | null;
+    watch_expiration: string | null;
+    status: string;
+    last_synced_at: string | null;
+    sync_error: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({ connected: false });
+  }
+
+  const messageCount = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM gmail_messages WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  let labelIds: string[] = [];
+  try {
+    labelIds = JSON.parse(mirror.label_ids) as string[];
+  } catch {
+    labelIds = ['INBOX'];
+  }
+
+  return Response.json({
+    connected: true,
+    emailAddress: mirror.email_address,
+    labelIds,
+    historyId: mirror.history_id,
+    watchExpiration: mirror.watch_expiration,
+    watchActive: mirror.watch_expiration ? new Date(mirror.watch_expiration).getTime() > Date.now() : false,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+    syncError: mirror.sync_error,
+    messageCount: messageCount?.count || 0,
+  });
+}
+
+async function runGmailSync(
+  env: EnvWithDriveCache,
+  userId: string,
+  dashboardId: string,
+  accessToken?: string
+): Promise<void> {
+  if (!accessToken) {
+    accessToken = await getGmailAccessToken(env, userId);
+  }
+
+  await env.DB.prepare(`
+    UPDATE gmail_mirrors SET status = 'syncing', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  try {
+    const mirror = await env.DB.prepare(`
+      SELECT label_ids FROM gmail_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ label_ids: string }>();
+
+    let labelIds: string[] = ['INBOX'];
+    try {
+      labelIds = JSON.parse(mirror?.label_ids || '["INBOX"]') as string[];
+    } catch {
+      labelIds = ['INBOX'];
+    }
+
+    // List recent messages - limit to 20 to stay under Cloudflare's 50 subrequest limit
+    // (each message requires 1 API call for metadata)
+    const listResult = await listGmailMessages(accessToken, labelIds, 20);
+    const messages = listResult.messages || [];
+
+    // Fetch metadata for each message
+    for (const msg of messages) {
+      const fullMsg = await getGmailMessage(accessToken, msg.id, 'metadata');
+
+      const fromHeader = extractHeader(fullMsg, 'From');
+      const toHeader = extractHeader(fullMsg, 'To');
+      const subject = extractHeader(fullMsg, 'Subject');
+
+      await env.DB.prepare(`
+        INSERT INTO gmail_messages (
+          id, user_id, dashboard_id, message_id, thread_id, internal_date,
+          from_header, to_header, subject, snippet, labels, size_estimate, body_state,
+          updated_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'snippet', datetime('now'), datetime('now'))
+        ON CONFLICT(dashboard_id, message_id) DO UPDATE SET
+          thread_id = excluded.thread_id,
+          from_header = excluded.from_header,
+          to_header = excluded.to_header,
+          subject = excluded.subject,
+          snippet = excluded.snippet,
+          labels = excluded.labels,
+          size_estimate = excluded.size_estimate,
+          updated_at = datetime('now')
+      `).bind(
+        crypto.randomUUID(),
+        userId,
+        dashboardId,
+        fullMsg.id,
+        fullMsg.threadId,
+        fullMsg.internalDate || new Date().toISOString(),
+        fromHeader,
+        toHeader,
+        subject,
+        fullMsg.snippet || null,
+        JSON.stringify(fullMsg.labelIds || []),
+        fullMsg.sizeEstimate || 0
+      ).run();
+    }
+
+    // Get latest history ID from the most recent message
+    let historyId: string | null = null;
+    if (messages.length > 0) {
+      const latestMsg = await getGmailMessage(accessToken, messages[0].id, 'minimal');
+      // The history ID comes from the profile, not messages
+      const profile = await getGmailProfile(accessToken);
+      // We'll store the current state - history sync happens via watch
+      historyId = profile.emailAddress ? null : null; // placeholder
+    }
+
+    await env.DB.prepare(`
+      UPDATE gmail_mirrors
+      SET status = 'ready', last_synced_at = datetime('now'), updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(dashboardId).run();
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown sync error';
+    await env.DB.prepare(`
+      UPDATE gmail_mirrors SET status = 'error', sync_error = ?, updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(errorMessage, dashboardId).run();
+    throw error;
+  }
+}
+
+export async function syncGmailMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79907: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79908: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    await runGmailSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function getGmailMessages(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79909: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79910: Not found or no access' }, { status: 404 });
+  }
+
+  const messages = await env.DB.prepare(`
+    SELECT message_id, thread_id, internal_date, from_header, to_header, subject, snippet, labels, size_estimate, body_state
+    FROM gmail_messages
+    WHERE dashboard_id = ?
+    ORDER BY internal_date DESC
+    LIMIT ? OFFSET ?
+  `).bind(dashboardId, limit, offset).all<{
+    message_id: string;
+    thread_id: string;
+    internal_date: string;
+    from_header: string | null;
+    to_header: string | null;
+    subject: string | null;
+    snippet: string | null;
+    labels: string;
+    size_estimate: number;
+    body_state: string;
+  }>();
+
+  const totalCount = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM gmail_messages WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  return Response.json({
+    messages: (messages.results || []).map(m => ({
+      messageId: m.message_id,
+      threadId: m.thread_id,
+      internalDate: m.internal_date,
+      from: m.from_header,
+      to: m.to_header,
+      subject: m.subject,
+      snippet: m.snippet,
+      labels: JSON.parse(m.labels || '[]'),
+      sizeEstimate: m.size_estimate,
+      bodyState: m.body_state,
+    })),
+    total: totalCount?.count || 0,
+    limit,
+    offset,
+  });
+}
+
+export async function getGmailMessageDetail(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const messageId = url.searchParams.get('message_id');
+  const format = url.searchParams.get('format') || 'metadata';
+
+  if (!dashboardId || !messageId) {
+    return Response.json({ error: 'E79911: dashboard_id and message_id are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79912: Not found or no access' }, { status: 404 });
+  }
+
+  // Fetch fresh from Gmail API
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+    const gmailFormat = format === 'full' ? 'full' : 'metadata';
+    const message = await getGmailMessage(accessToken, messageId, gmailFormat);
+
+    return Response.json({
+      messageId: message.id,
+      threadId: message.threadId,
+      labels: message.labelIds || [],
+      snippet: message.snippet,
+      payload: message.payload,
+      internalDate: message.internalDate,
+      sizeEstimate: message.sizeEstimate,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch message';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function performGmailAction(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    messageId?: string;
+    action?: string;
+    labelIds?: string[];
+  };
+
+  if (!data.dashboardId || !data.messageId || !data.action) {
+    return Response.json({ error: 'E79913: dashboardId, messageId, and action are required' }, { status: 400 });
+  }
+
+  const validActions = ['archive', 'trash', 'mark_read', 'mark_unread', 'label_add', 'label_remove'];
+  if (!validActions.includes(data.action)) {
+    return Response.json({ error: 'E79914: Invalid action' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79915: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+
+    let addLabelIds: string[] = [];
+    let removeLabelIds: string[] = [];
+
+    switch (data.action) {
+      case 'archive':
+        removeLabelIds = ['INBOX'];
+        break;
+      case 'trash':
+        addLabelIds = ['TRASH'];
+        break;
+      case 'mark_read':
+        removeLabelIds = ['UNREAD'];
+        break;
+      case 'mark_unread':
+        addLabelIds = ['UNREAD'];
+        break;
+      case 'label_add':
+        addLabelIds = data.labelIds || [];
+        break;
+      case 'label_remove':
+        removeLabelIds = data.labelIds || [];
+        break;
+    }
+
+    const result = await modifyGmailMessage(accessToken, data.messageId, addLabelIds, removeLabelIds);
+
+    // Log the action
+    await env.DB.prepare(`
+      INSERT INTO gmail_actions (id, user_id, dashboard_id, message_id, action, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `).bind(
+      crypto.randomUUID(),
+      auth.user!.id,
+      data.dashboardId,
+      data.messageId,
+      data.action,
+      JSON.stringify({ addLabelIds, removeLabelIds })
+    ).run();
+
+    // Update cached message labels
+    await env.DB.prepare(`
+      UPDATE gmail_messages SET labels = ?, updated_at = datetime('now')
+      WHERE dashboard_id = ? AND message_id = ?
+    `).bind(
+      JSON.stringify(result.labelIds || []),
+      data.dashboardId,
+      data.messageId
+    ).run();
+
+    return Response.json({ ok: true, labels: result.labelIds });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Action failed';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function startGmailWatch(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79916: dashboardId is required' }, { status: 400 });
+  }
+
+  // Gmail watch requires GMAIL_PUBSUB_TOPIC env var
+  if (!env.GMAIL_PUBSUB_TOPIC) {
+    return Response.json({ error: 'E79917: Gmail Pub/Sub is not configured' }, { status: 500 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79918: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+
+    const mirror = await env.DB.prepare(`
+      SELECT label_ids FROM gmail_mirrors WHERE dashboard_id = ?
+    `).bind(data.dashboardId).first<{ label_ids: string }>();
+
+    let labelIds: string[] = ['INBOX'];
+    try {
+      labelIds = JSON.parse(mirror?.label_ids || '["INBOX"]') as string[];
+    } catch {
+      labelIds = ['INBOX'];
+    }
+
+    const watchResult = await setupGmailWatch(accessToken, env.GMAIL_PUBSUB_TOPIC, labelIds);
+
+    await env.DB.prepare(`
+      UPDATE gmail_mirrors
+      SET history_id = ?, watch_expiration = ?, status = 'watching', updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(
+      watchResult.historyId,
+      watchResult.expiration,
+      data.dashboardId
+    ).run();
+
+    return Response.json({
+      ok: true,
+      historyId: watchResult.historyId,
+      expiration: watchResult.expiration,
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to start watch';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function stopGmailWatchEndpoint(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79919: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79920: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+    await stopGmailWatch(accessToken);
+
+    await env.DB.prepare(`
+      UPDATE gmail_mirrors
+      SET watch_expiration = null, status = 'ready', updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(data.dashboardId).run();
+
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to stop watch';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function handleGmailPush(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  // This endpoint receives Pub/Sub push notifications from Gmail
+  // It should be called without auth (Pub/Sub service account)
+
+  try {
+    const body = await request.json() as {
+      message?: {
+        data?: string;
+        messageId?: string;
+        publishTime?: string;
+      };
+      subscription?: string;
+    };
+
+    if (!body.message?.data) {
+      return Response.json({ error: 'Missing message data' }, { status: 400 });
+    }
+
+    // Decode base64 message data
+    const decoded = atob(body.message.data);
+    const notification = JSON.parse(decoded) as {
+      emailAddress: string;
+      historyId: string;
+    };
+
+    // Find mirrors for this email address
+    const mirrors = await env.DB.prepare(`
+      SELECT dashboard_id, user_id, history_id, label_ids
+      FROM gmail_mirrors
+      WHERE email_address = ? AND status IN ('watching', 'ready')
+    `).bind(notification.emailAddress).all<{
+      dashboard_id: string;
+      user_id: string;
+      history_id: string | null;
+      label_ids: string;
+    }>();
+
+    // Process each mirror
+    for (const mirror of mirrors.results || []) {
+      if (!mirror.history_id) {
+        // No history ID yet, skip incremental sync
+        continue;
+      }
+
+      try {
+        const accessToken = await getGmailAccessToken(env, mirror.user_id);
+
+        // Fetch history since last known ID
+        const history = await getGmailHistory(
+          accessToken,
+          mirror.history_id,
+          undefined,
+          100
+        );
+
+        // Process new messages
+        if (history.history) {
+          for (const record of history.history) {
+            if (record.messagesAdded) {
+              for (const added of record.messagesAdded) {
+                const msg = added.message;
+                const fullMsg = await getGmailMessage(accessToken, msg.id, 'metadata');
+
+                const fromHeader = extractHeader(fullMsg, 'From');
+                const toHeader = extractHeader(fullMsg, 'To');
+                const subject = extractHeader(fullMsg, 'Subject');
+
+                await env.DB.prepare(`
+                  INSERT INTO gmail_messages (
+                    id, user_id, dashboard_id, message_id, thread_id, internal_date,
+                    from_header, to_header, subject, snippet, labels, size_estimate, body_state,
+                    updated_at, created_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'snippet', datetime('now'), datetime('now'))
+                  ON CONFLICT(dashboard_id, message_id) DO UPDATE SET
+                    labels = excluded.labels,
+                    updated_at = datetime('now')
+                `).bind(
+                  crypto.randomUUID(),
+                  mirror.user_id,
+                  mirror.dashboard_id,
+                  fullMsg.id,
+                  fullMsg.threadId,
+                  fullMsg.internalDate || new Date().toISOString(),
+                  fromHeader,
+                  toHeader,
+                  subject,
+                  fullMsg.snippet || null,
+                  JSON.stringify(fullMsg.labelIds || []),
+                  fullMsg.sizeEstimate || 0
+                ).run();
+              }
+            }
+
+            // Handle deleted messages
+            if (record.messagesDeleted) {
+              for (const deleted of record.messagesDeleted) {
+                await env.DB.prepare(`
+                  DELETE FROM gmail_messages WHERE dashboard_id = ? AND message_id = ?
+                `).bind(mirror.dashboard_id, deleted.message.id).run();
+              }
+            }
+          }
+        }
+
+        // Update history ID
+        await env.DB.prepare(`
+          UPDATE gmail_mirrors SET history_id = ?, last_synced_at = datetime('now'), updated_at = datetime('now')
+          WHERE dashboard_id = ?
+        `).bind(history.historyId, mirror.dashboard_id).run();
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Sync error';
+        // Log error but continue processing other mirrors
+        console.error(`Gmail push sync failed for ${mirror.dashboard_id}: ${errorMessage}`);
+
+        if (errorMessage === 'HISTORY_EXPIRED') {
+          // Need full resync
+          await env.DB.prepare(`
+            UPDATE gmail_mirrors SET history_id = null, status = 'ready', sync_error = 'History expired, full resync needed'
+            WHERE dashboard_id = ?
+          `).bind(mirror.dashboard_id).run();
+        }
+      }
+    }
+
+    return Response.json({ ok: true });
+  } catch (error) {
+    console.error('Gmail push handler error:', error);
+    return Response.json({ error: 'Push processing failed' }, { status: 500 });
+  }
+}
+
+export async function disconnectGmail(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Stop all watches
+  try {
+    const accessToken = await getGmailAccessToken(env, auth.user!.id);
+    await stopGmailWatch(accessToken);
+  } catch {
+    // Ignore errors stopping watch
+  }
+
+  // Delete all user's Gmail mirrors and messages
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM gmail_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    await env.DB.prepare(`DELETE FROM gmail_messages WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+    await env.DB.prepare(`DELETE FROM gmail_actions WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+  }
+  await env.DB.prepare(`DELETE FROM gmail_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'gmail'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
 }

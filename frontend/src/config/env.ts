@@ -69,6 +69,17 @@ export const API = {
     onedriveManifest: `${CLOUDFLARE_API_URL}/integrations/onedrive/manifest`,
     onedriveSync: `${CLOUDFLARE_API_URL}/integrations/onedrive/sync`,
     onedriveSyncLarge: `${CLOUDFLARE_API_URL}/integrations/onedrive/sync/large`,
+    // Gmail
+    gmailIntegration: `${CLOUDFLARE_API_URL}/integrations/google/gmail`,
+    gmailSetup: `${CLOUDFLARE_API_URL}/integrations/google/gmail/setup`,
+    gmailStatus: `${CLOUDFLARE_API_URL}/integrations/google/gmail/status`,
+    gmailSync: `${CLOUDFLARE_API_URL}/integrations/google/gmail/sync`,
+    gmailMessages: `${CLOUDFLARE_API_URL}/integrations/google/gmail/messages`,
+    gmailMessage: `${CLOUDFLARE_API_URL}/integrations/google/gmail/message`,
+    gmailAction: `${CLOUDFLARE_API_URL}/integrations/google/gmail/action`,
+    gmailWatch: `${CLOUDFLARE_API_URL}/integrations/google/gmail/watch`,
+    gmailStop: `${CLOUDFLARE_API_URL}/integrations/google/gmail/stop`,
+    gmailDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/gmail/disconnect`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

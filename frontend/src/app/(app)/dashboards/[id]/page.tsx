@@ -22,6 +22,7 @@ import {
   Upload,
   Link,
   Clock,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -92,6 +93,7 @@ const blockTools: BlockTool[] = [
   { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
+  { type: "gmail", icon: <Mail className="w-4 h-4" />, label: "Gmail" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -150,6 +152,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   browser: { width: 520, height: 360 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
+  gmail: { width: 340, height: 400 },
 };
 
 export default function DashboardPage() {

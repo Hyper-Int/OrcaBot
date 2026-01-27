@@ -9,7 +9,7 @@
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, requireInternalAuth } from './auth/middleware';
+import { authenticate, requireAuth, requireInternalAuth, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -830,6 +830,21 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
       'POST onedrive/sync': integrations.syncОnedriveMirrоr,
       'POST onedrive/sync/large': integrations.syncОnedriveLargeFiles,
       'GET onedrive/manifest': integrations.getОnedriveManifest,
+      // Gmail
+      'GET google/gmail/connect': integrations.connectGmail,
+      'GET google/gmail/callback': (request, env) => integrations.callbackGmail(request, env),
+      'GET google/gmail': integrations.getGmailIntegration,
+      'POST google/gmail/setup': integrations.setupGmailMirror,
+      'DELETE google/gmail': integrations.unlinkGmailMirror,
+      'GET google/gmail/status': integrations.getGmailStatus,
+      'POST google/gmail/sync': integrations.syncGmailMirror,
+      'GET google/gmail/messages': integrations.getGmailMessages,
+      'GET google/gmail/message': integrations.getGmailMessageDetail,
+      'POST google/gmail/action': integrations.performGmailAction,
+      'POST google/gmail/watch': integrations.startGmailWatch,
+      'POST google/gmail/stop': integrations.stopGmailWatchEndpoint,
+      'POST google/gmail/push': (request, env) => integrations.handleGmailPush(request, env),
+      'DELETE google/gmail/disconnect': integrations.disconnectGmail,
     };
 
     const handler = integrationRoutes[routeKey];

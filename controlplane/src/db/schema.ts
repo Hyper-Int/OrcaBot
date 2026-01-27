@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -201,7 +201,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_user ON oauth_states(user_id);
 CREATE TABLE IF NOT EXISTS user_integrations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github')),
+  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'box', 'onedrive')),
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   scope TEXT,
@@ -308,6 +308,62 @@ CREATE TABLE IF NOT EXISTS onedrive_mirrors (
 );
 
 CREATE INDEX IF NOT EXISTS idx_onedrive_mirrors_user ON onedrive_mirrors(user_id);
+
+-- Gmail mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS gmail_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  label_ids TEXT NOT NULL DEFAULT '["INBOX"]',
+  history_id TEXT,
+  watch_expiration TEXT,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing', 'watching', 'ready', 'error')),
+  last_synced_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_mirrors_user ON gmail_mirrors(user_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_mirrors_email ON gmail_mirrors(email_address);
+
+-- Gmail messages (metadata cache)
+CREATE TABLE IF NOT EXISTS gmail_messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  internal_date TEXT NOT NULL,
+  from_header TEXT,
+  to_header TEXT,
+  subject TEXT,
+  snippet TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  size_estimate INTEGER,
+  body_state TEXT NOT NULL DEFAULT 'none' CHECK (body_state IN ('none', 'snippet', 'full')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_user ON gmail_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_dashboard ON gmail_messages(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_messages_thread ON gmail_messages(thread_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gmail_messages_message ON gmail_messages(dashboard_id, message_id);
+
+-- Gmail action audit log
+CREATE TABLE IF NOT EXISTS gmail_actions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('label_add', 'label_remove', 'archive', 'trash', 'mark_read', 'mark_unread')),
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_actions_user ON gmail_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_actions_dashboard ON gmail_actions(dashboard_id);
 
 -- Auth sessions (first-party login)
 CREATE TABLE IF NOT EXISTS user_sessions (
@@ -461,24 +517,92 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
-  await migrateWorkspaceItemType(db);
+  await migrateDashboardItemTypes(db);
+  await migrateUserIntegrationProviders(db);
 }
 
-async function migrateWorkspaceItemType(db: D1Database): Promise<void> {
+// All valid integration providers - add new providers here
+const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'box', 'onedrive'] as const;
+
+async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
+  const tableInfo = await db.prepare(`
+    SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'user_integrations'
+  `).first<{ sql: string }>();
+
+  if (!tableInfo?.sql) {
+    return;
+  }
+
+  // Check if all required providers are present in the CHECK constraint
+  const allProvidersPresent = INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
+  // Also check if required columns exist (scope column was missing in some migrations)
+  const hasRequiredColumns = tableInfo.sql.includes('scope TEXT');
+
+  if (allProvidersPresent && hasRequiredColumns) {
+    return;
+  }
+
+  // Recreate table with updated CHECK constraint
+  const providerList = INTEGRATION_PROVIDERS.map(p => `'${p}'`).join(', ');
+
+  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
+  // Clean up any leftover table from a failed migration
+  await db.prepare(`DROP TABLE IF EXISTS user_integrations_new`).run();
+  await db.prepare(`
+    CREATE TABLE user_integrations_new (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN (${providerList})),
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      scope TEXT,
+      token_type TEXT,
+      expires_at TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+  // Only copy columns that exist in the old table - new columns will use defaults
+  await db.prepare(`
+    INSERT INTO user_integrations_new
+      (id, user_id, provider, access_token, refresh_token, created_at, updated_at)
+    SELECT id, user_id, provider, access_token, refresh_token, created_at, updated_at
+    FROM user_integrations
+  `).run();
+  await db.prepare(`DROP TABLE user_integrations`).run();
+  await db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`).run();
+  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider ON user_integrations(user_id, provider)`).run();
+  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+}
+
+// All valid dashboard item types - add new types here
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail'] as const;
+
+async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
     SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_items'
   `).first<{ sql: string }>();
 
-  if (!tableInfo?.sql || tableInfo.sql.includes("'workspace'")) {
+  if (!tableInfo?.sql) {
     return;
   }
+
+  // Check if all required types are present in the CHECK constraint
+  const allTypesPresent = DASHBOARD_ITEM_TYPES.every(type => tableInfo.sql.includes(`'${type}'`));
+  if (allTypesPresent) {
+    return;
+  }
+
+  // Recreate table with updated CHECK constraint
+  const typeList = DASHBOARD_ITEM_TYPES.map(t => `'${t}'`).join(', ');
 
   await db.prepare(`PRAGMA foreign_keys=OFF`).run();
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS dashboard_items_new (
       id TEXT PRIMARY KEY,
       dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-      type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule')),
+      type TEXT NOT NULL CHECK (type IN (${typeList})),
       content TEXT NOT NULL DEFAULT '',
       position_x INTEGER NOT NULL DEFAULT 0,
       position_y INTEGER NOT NULL DEFAULT 0,
