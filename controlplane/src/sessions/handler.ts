@@ -11,6 +11,7 @@
 import type { Session, DashboardItem } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
+import { createDashboardToken } from '../auth/dashboard-token';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -84,7 +85,10 @@ async function ensureDashbоardSandbоx(
 
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
-  const sandboxSession = await sandbox.createSessiоn();
+  // Mint a dashboard-scoped token for MCP proxy calls
+  const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+  // Pass dashboard_id and mcp_token so sandbox can proxy MCP UI calls
+  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
     VALUES (?, ?, ?, ?)
@@ -261,7 +265,10 @@ export async function createSessiоn(
     let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
 
     if (!sandboxSessionId) {
-      const sandboxSession = await sandbox.createSessiоn();
+      // Mint a dashboard-scoped token for MCP proxy calls
+      const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+      // Pass dashboard_id and mcp_token so sandbox can proxy MCP UI calls
+      const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
       const insertResult = await env.DB.prepare(`
         INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
         VALUES (?, ?, ?, ?)

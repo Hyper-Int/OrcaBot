@@ -198,3 +198,77 @@ export function requireInternalAuth(
 
   return null;
 }
+
+import { verifyDashboardToken, type DashboardTokenClaims } from './dashboard-token';
+
+export interface McpAuthResult {
+  isValid: boolean;
+  isFullAccess: boolean; // true if X-Internal-Token (full trust), false if X-Dashboard-Token (scoped)
+  dashboardId?: string;  // Only present if scoped token
+  sessionId?: string;    // Only present if scoped token
+  error?: Response;
+}
+
+/**
+ * Validate MCP proxy authentication
+ * Accepts either:
+ * - X-Internal-Token: Full trust (schedules, internal services)
+ * - X-Dashboard-Token: Scoped to specific dashboard (sandbox MCP proxy)
+ */
+export async function validateMcpAuth(
+  request: Request,
+  env: Env
+): Promise<McpAuthResult> {
+  // First, check for full internal token
+  const internalToken = request.headers.get('X-Internal-Token');
+  if (internalToken) {
+    if (!env.INTERNAL_API_TOKEN) {
+      return {
+        isValid: false,
+        isFullAccess: false,
+        error: Response.json(
+          { error: 'E79402: Internal API not configured' },
+          { status: 503 }
+        ),
+      };
+    }
+    if (internalToken === env.INTERNAL_API_TOKEN) {
+      return { isValid: true, isFullAccess: true };
+    }
+  }
+
+  // Check for dashboard-scoped token
+  const dashboardToken = request.headers.get('X-Dashboard-Token');
+  if (dashboardToken) {
+    // Require INTERNAL_API_TOKEN to be configured - prevents forging with empty secret
+    if (!env.INTERNAL_API_TOKEN) {
+      return {
+        isValid: false,
+        isFullAccess: false,
+        error: Response.json(
+          { error: 'E79402: Internal API not configured' },
+          { status: 503 }
+        ),
+      };
+    }
+    const claims = await verifyDashboardToken(dashboardToken, env.INTERNAL_API_TOKEN);
+    if (claims) {
+      return {
+        isValid: true,
+        isFullAccess: false,
+        dashboardId: claims.dashboard_id,
+        sessionId: claims.session_id,
+      };
+    }
+  }
+
+  // No valid token
+  return {
+    isValid: false,
+    isFullAccess: false,
+    error: Response.json(
+      { error: 'E79403: Invalid or missing MCP token' },
+      { status: 401 }
+    ),
+  };
+}

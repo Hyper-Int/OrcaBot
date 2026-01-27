@@ -10,6 +10,8 @@ import type {
   PresenceInfo,
   CursorPosition,
   IncomingCollabMessage,
+  UICommand,
+  UICommandResultMessage,
 } from "@/types/collaboration";
 import type { DashboardItem, DashboardEdge, Session } from "@/types/dashboard";
 import { getCurrentUser } from "@/lib/api/cloudflare";
@@ -20,6 +22,8 @@ export interface UseCollaborationOptions {
   userName: string;
   enabled?: boolean;
   onMessage?: (message: IncomingCollabMessage) => void;
+  onUICommand?: (command: UICommand) => void;
+  onUICommandResult?: (result: UICommandResultMessage) => void;
 }
 
 export interface UseCollaborationState {
@@ -55,10 +59,12 @@ export interface UseCollaborationActions {
 export function useCollaboration(
   options: UseCollaborationOptions
 ): [UseCollaborationState, UseCollaborationActions] {
-  const { dashboardId, userId, userName, enabled = true, onMessage } = options;
+  const { dashboardId, userId, userName, enabled = true, onMessage, onUICommand, onUICommandResult } = options;
 
   const managerRef = React.useRef<DashboardWSManager | null>(null);
   const onMessageRef = React.useRef<UseCollaborationOptions["onMessage"]>(onMessage);
+  const onUICommandRef = React.useRef<UseCollaborationOptions["onUICommand"]>(onUICommand);
+  const onUICommandResultRef = React.useRef<UseCollaborationOptions["onUICommandResult"]>(onUICommandResult);
   const [isBootstrapped, setIsBootstrapped] = React.useState(false);
   const [connectionState, setConnectionState] =
     React.useState<ConnectionState>("disconnected");
@@ -99,6 +105,14 @@ export function useCollaboration(
     onMessageRef.current = onMessage;
   }, [onMessage]);
 
+  React.useEffect(() => {
+    onUICommandRef.current = onUICommand;
+  }, [onUICommand]);
+
+  React.useEffect(() => {
+    onUICommandResultRef.current = onUICommandResult;
+  }, [onUICommandResult]);
+
   // Initialize and manage WebSocket connection
   React.useEffect(() => {
     if (!enabled || !dashboardId || !userId || !isBootstrapped) {
@@ -130,6 +144,18 @@ export function useCollaboration(
       onMessageRef.current?.(message);
     });
 
+    // Subscribe to UI commands
+    const unsubUICommand = manager.onUICommand((command) => {
+      console.log(`[Collab] UI command received:`, command.type);
+      onUICommandRef.current?.(command);
+    });
+
+    // Subscribe to UI command results
+    const unsubUICommandResult = manager.onUICommandResult((result) => {
+      console.log(`[Collab] UI command result:`, result.command_id, result.success);
+      onUICommandResultRef.current?.(result);
+    });
+
     // Connect
     manager.connect();
 
@@ -138,6 +164,8 @@ export function useCollaboration(
       unsubState();
       unsubError();
       unsubMessage();
+      unsubUICommand();
+      unsubUICommandResult();
       manager.disconnect();
       managerRef.current = null;
     };

@@ -49,7 +49,9 @@ type PTYInfo struct {
 // Session represents a sandbox instance with PTYs and an optional agent.
 // Each session maps 1:1 to a Fly Machine and owns all resources within it.
 type Session struct {
-	ID string
+	ID          string
+	DashboardID string // The dashboard this session belongs to (for MCP proxy)
+	MCPToken    string // Dashboard-scoped token for MCP proxy calls (replaces INTERNAL_API_TOKEN)
 
 	mu        sync.RWMutex
 	ptys      map[string]*PTYInfo
@@ -59,11 +61,13 @@ type Session struct {
 }
 
 // NewSession creates a new session with workspace at the given root
-func NewSessiоn(id string, workspaceRoot string) *Session {
+func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string) *Session {
 	return &Session{
-		ID:        id,
-		ptys:      make(map[string]*PTYInfo),
-		workspace: fs.NewWоrkspace(workspaceRoot),
+		ID:          id,
+		DashboardID: dashboardID,
+		MCPToken:    mcpToken,
+		ptys:        make(map[string]*PTYInfo),
+		workspace:   fs.NewWоrkspace(workspaceRoot),
 	}
 }
 
@@ -132,9 +136,13 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	envVars["ORCABOT_SESSION_ID"] = s.ID
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
-	if token := os.Getenv("SANDBOX_INTERNAL_TOKEN"); token != "" {
-		envVars["ORCABOT_INTERNAL_TOKEN"] = token
+	// Point agents to the localhost-only MCP server (no auth required)
+	mcpPort := os.Getenv("MCP_LOCAL_PORT")
+	if mcpPort == "" {
+		mcpPort = "8081"
 	}
+	envVars["MCP_LOCAL_PORT"] = mcpPort
+	envVars["ORCABOT_MCP_URL"] = "http://localhost:" + mcpPort + "/sessions/" + s.ID + "/mcp"
 	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"

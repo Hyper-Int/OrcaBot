@@ -8,25 +8,21 @@ if [ -z "$url" ]; then
 fi
 
 session_id="${ORCABOT_SESSION_ID:-}"
-token="${ORCABOT_INTERNAL_TOKEN:-${SANDBOX_INTERNAL_TOKEN:-}}"
+mcp_local_port="${MCP_LOCAL_PORT:-8081}"
 controlplane_url="${CONTROLPLANE_URL:-}"
 controlplane_token="${INTERNAL_API_TOKEN:-}"
-token_status="present"
-if [ -z "$token" ]; then
-  token_status="missing"
-fi
 
-echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing} token=${token_status}" >> /tmp/orcabot-open.log
-echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing} token=${token_status}" 1>&2
+echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing}" >> /tmp/orcabot-open.log
+echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing}" 1>&2
 
-if [ -z "$session_id" ] || [ -z "$token" ]; then
+if [ -z "$session_id" ]; then
   exit 0
 fi
 
 escaped_url=$(printf '%s' "$url" | sed 's/\\/\\\\/g; s/"/\\"/g')
 payload=$(printf '{"url":"%s"}' "$escaped_url")
-curl -sS -X POST "http://127.0.0.1:8080/sessions/${session_id}/browser/open" \
-  -H "Authorization: Bearer ${token}" \
+# Use localhost-only MCP server (no auth required)
+curl -sS -X POST "http://127.0.0.1:${mcp_local_port}/sessions/${session_id}/browser/open" \
   -H "Content-Type: application/json" \
   --data "$payload" >/dev/null 2>&1 || true
 

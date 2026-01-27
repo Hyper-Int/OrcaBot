@@ -55,8 +55,8 @@ import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog"
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
-import { useCollaboration, useDebouncedCallback } from "@/hooks";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge, getSessionMetrics, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare";
+import { useCollaboration, useDebouncedCallback, useUICommands } from "@/hooks";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getSessionMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -202,6 +202,8 @@ export default function DashboardPage() {
   const viewportRef = React.useRef({ x: 0, y: 0, zoom: 1 });
   const browserOpenHandlerRef = React.useRef<(url: string) => void>(() => {});
   const pendingBrowserUrlRef = React.useRef<string | null>(null);
+  // Ref for UI command execution (updated after useUICommands hook)
+  const executeUICommandRef = React.useRef<((command: import("@/types/collaboration").UICommand) => void) | null>(null);
 
   // Collaboration hook - real-time presence and updates
   const [collabState, collabActions] = useCollaboration({
@@ -212,6 +214,14 @@ export default function DashboardPage() {
     onMessage: (message) => {
       if (message.type === "browser_open") {
         browserOpenHandlerRef.current(message.url);
+      }
+    },
+    onUICommand: (command) => {
+      // Execute the UI command from agent
+      if (executeUICommandRef.current) {
+        executeUICommandRef.current(command);
+      } else {
+        console.warn("UI command received but executor not ready:", command.type);
       }
     },
   });
@@ -624,6 +634,77 @@ export default function DashboardPage() {
     });
     pendingUpdatesRef.current.clear();
   }, 500);
+
+  // Create edge function for useUICommands
+  const createEdgeFn = React.useCallback(
+    async (edge: {
+      sourceItemId: string;
+      targetItemId: string;
+      sourceHandle?: string;
+      targetHandle?: string;
+    }) => {
+      return new Promise<void>((resolve, reject) => {
+        createEdgeMutation.mutate(edge, {
+          onSuccess: () => resolve(),
+          onError: (error) => reject(error),
+        });
+      });
+    },
+    [createEdgeMutation]
+  );
+
+  // Delete edge function for useUICommands
+  const deleteEdgeFn = React.useCallback(
+    async (edgeId: string) => {
+      await deleteEdge(dashboardId, edgeId);
+      // Update local state
+      setEdges((prev) => prev.filter((e) => e.id !== edgeId));
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            edges: oldData.edges.filter((e) => e.id !== edgeId),
+          };
+        }
+      );
+    },
+    [dashboardId, queryClient]
+  );
+
+  // Callback to send UI command results back to DashboardDO for broadcast
+  const handleCommandExecuted = React.useCallback(
+    (result: import("@/types/collaboration").UICommandResultMessage) => {
+      sendUICommandResult(dashboardId, {
+        command_id: result.command_id,
+        success: result.success,
+        error: result.error,
+        created_item_id: result.created_item_id,
+      }).catch((err) => {
+        console.error("[UI Commands] Failed to send result:", err);
+      });
+    },
+    [dashboardId]
+  );
+
+  // UI Commands hook - allows agents to control dashboard UI
+  const { executeCommand } = useUICommands({
+    dashboardId,
+    items,
+    edges: edgesFromData,
+    createItemMutation: createItemMutation as Parameters<typeof useUICommands>[0]["createItemMutation"],
+    updateItemMutation: updateItemMutation as Parameters<typeof useUICommands>[0]["updateItemMutation"],
+    deleteItemMutation: deleteItemMutation as Parameters<typeof useUICommands>[0]["deleteItemMutation"],
+    createEdgeFn,
+    deleteEdgeFn,
+    onCommandExecuted: handleCommandExecuted,
+  });
+
+  // Connect UI command execution to collaboration WebSocket
+  React.useEffect(() => {
+    executeUICommandRef.current = executeCommand;
+  }, [executeCommand]);
 
   // Add block handler
   const handleAddBlock = (tool: BlockTool) => {

@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS dashboard_items (
   position_y INTEGER NOT NULL DEFAULT 0,
   width INTEGER NOT NULL DEFAULT 200,
   height INTEGER NOT NULL DEFAULT 150,
+  metadata TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -650,6 +651,15 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   await migrateDashboardItemTypes(db);
   await migrateUserIntegrationProviders(db);
+
+  // Add metadata column to dashboard_items
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_items ADD COLUMN metadata TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
 }
 
 // All valid integration providers - add new providers here
@@ -739,14 +749,15 @@ async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
       position_y INTEGER NOT NULL DEFAULT 0,
       width INTEGER NOT NULL DEFAULT 200,
       height INTEGER NOT NULL DEFAULT 150,
+      metadata TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `).run();
   await db.prepare(`
     INSERT INTO dashboard_items_new
-      (id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at)
-    SELECT id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at
+      (id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at)
+    SELECT id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at
     FROM dashboard_items
   `).run();
   await db.prepare(`DROP TABLE dashboard_items`).run();

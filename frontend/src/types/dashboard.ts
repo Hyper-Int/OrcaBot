@@ -45,6 +45,8 @@ export interface DashboardItem {
   content: string;
   position: Position;
   size: Size;
+  /** Type-specific metadata (e.g., note color, terminal settings) */
+  metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
   /** Client-only: stable key for React reconciliation during temp->real ID transitions */

@@ -17,6 +17,8 @@ import type {
   OutgoingCollabMessage,
   PresenceInfo,
   CursorPosition,
+  UICommand,
+  UICommandResultMessage,
 } from "@/types/collaboration";
 import { getCollaborationWsUrl } from "@/lib/api/cloudflare";
 import { getUserColor } from "@/lib/utils";
@@ -38,6 +40,10 @@ export class DashboardWSManager extends BaseWebSocketManager {
 
   // Message handlers
   private onMessageHandlers: Set<(message: IncomingCollabMessage) => void> = new Set();
+
+  // UI Command handlers
+  private onUICommandHandlers: Set<(command: UICommand) => void> = new Set();
+  private onUICommandResultHandlers: Set<(result: UICommandResultMessage) => void> = new Set();
 
   constructor(
     dashboardId: string,
@@ -163,6 +169,22 @@ export class DashboardWSManager extends BaseWebSocketManager {
     return new Map(this.selections);
   }
 
+  /**
+   * Subscribe to UI commands from agents
+   */
+  onUICommand(handler: (command: UICommand) => void): () => void {
+    this.onUICommandHandlers.add(handler);
+    return () => this.onUICommandHandlers.delete(handler);
+  }
+
+  /**
+   * Subscribe to UI command results
+   */
+  onUICommandResult(handler: (result: UICommandResultMessage) => void): () => void {
+    this.onUICommandResultHandlers.add(handler);
+    return () => this.onUICommandResultHandlers.delete(handler);
+  }
+
   // ===== Protected overrides =====
 
   protected handleTextMessage(data: string): void {
@@ -246,6 +268,16 @@ export class DashboardWSManager extends BaseWebSocketManager {
       case "item_delete":
       case "session_update":
         // These are handled by subscribers via onMessage
+        break;
+
+      case "ui_command":
+        // Notify UI command handlers
+        this.onUICommandHandlers.forEach((handler) => handler(message.command));
+        break;
+
+      case "ui_command_result":
+        // Notify UI command result handlers
+        this.onUICommandResultHandlers.forEach((handler) => handler(message));
         break;
     }
   }

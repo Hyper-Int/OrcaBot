@@ -30,33 +30,48 @@ interface TodoData extends Record<string, unknown> {
 
 type TodoNode = Node<TodoData, "todo">;
 
-export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
-  const [title, setTitle] = React.useState(data.title || "Todo List");
-  const [items, setItems] = React.useState<TodoItem[]>(() => {
-    try {
-      return JSON.parse(data.content || "[]");
-    } catch {
-      return [];
+// Parse content which can be either:
+// - Old format: JSON array of items
+// - New format: JSON object with { title, items }
+function parseContent(content: string): { title: string; items: TodoItem[] } {
+  try {
+    const parsed = JSON.parse(content || "[]");
+    if (Array.isArray(parsed)) {
+      // Old format: just an array of items
+      return { title: "Todo List", items: parsed };
+    } else if (parsed && typeof parsed === "object" && Array.isArray(parsed.items)) {
+      // New format: object with title and items
+      return { title: parsed.title || "Todo List", items: parsed.items };
     }
-  });
+    return { title: "Todo List", items: [] };
+  } catch {
+    return { title: "Todo List", items: [] };
+  }
+}
+
+export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
+  const initialParsed = React.useMemo(() => parseContent(data.content), []);
+  const [title, setTitle] = React.useState(data.title || initialParsed.title);
+  const [items, setItems] = React.useState<TodoItem[]>(initialParsed.items);
   const [newItemText, setNewItemText] = React.useState("");
   const [isAdding, setIsAdding] = React.useState(false);
   const connectorsVisible = selected || Boolean(data.connectorMode);
 
   // Sync content from server
   React.useEffect(() => {
-    try {
-      const serverItems = JSON.parse(data.content || "[]");
-      setItems(serverItems);
-    } catch {
-      // Ignore parse errors
+    const parsed = parseContent(data.content);
+    setItems(parsed.items);
+    // Only update title if it comes from new format (not default)
+    if (parsed.title !== "Todo List" || !title) {
+      setTitle(parsed.title);
     }
   }, [data.content]);
 
   // Persist items to server (debounced)
+  // Save in new format with title to preserve it
   const persistItems = useDebouncedCallback(
-    (newItems: TodoItem[]) => {
-      data.onContentChange?.(JSON.stringify(newItems));
+    (newItems: TodoItem[], currentTitle: string) => {
+      data.onContentChange?.(JSON.stringify({ title: currentTitle, items: newItems }));
     },
     500
   );
@@ -74,7 +89,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
         },
       ];
       setItems(newItems);
-      persistItems(newItems);
+      persistItems(newItems, title);
       setNewItemText("");
       setIsAdding(false);
     }
@@ -85,13 +100,13 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
       item.id === id ? { ...item, completed: !item.completed } : item
     );
     setItems(newItems);
-    persistItems(newItems);
+    persistItems(newItems, title);
   };
 
   const removeItem = (itemId: string) => {
     const newItems = items.filter((item) => item.id !== itemId);
     setItems(newItems);
-    persistItems(newItems);
+    persistItems(newItems, title);
   };
 
   // Register handlers for incoming data from connections (both left and top inputs)
@@ -110,7 +125,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
           },
         ];
         setItems(newItems);
-        persistItems(newItems);
+        persistItems(newItems, title);
       }
     };
 

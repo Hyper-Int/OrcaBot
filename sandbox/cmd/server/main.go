@@ -30,6 +30,11 @@ func main() {
 		port = "8080"
 	}
 
+	mcpLocalPort := os.Getenv("MCP_LOCAL_PORT")
+	if mcpLocalPort == "" {
+		mcpLocalPort = "8081"
+	}
+
 	// Start memory monitor for leak detection
 	memMonitor := debug.NewMemoryMonitor(debug.DefaultConfig())
 	memMonitor.Start()
@@ -40,6 +45,13 @@ func main() {
 	httpServer := &http.Server{
 		Addr:    ":" + port,
 		Handler: server.Handler(),
+	}
+
+	// Localhost-only MCP server for agents - no auth required
+	// Agents running inside the sandbox can connect to localhost:8081 without tokens
+	mcpLocalServer := &http.Server{
+		Addr:    "127.0.0.1:" + mcpLocalPort,
+		Handler: server.MCPLocalHandler(),
 	}
 
 	// Channel to listen for shutdown signals
@@ -55,11 +67,19 @@ func main() {
 		}
 	}()
 
-	// Start server in goroutine
+	// Start main server in goroutine
 	go func() {
 		log.Printf("Starting server on :%s", port)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Start localhost-only MCP server for agents
+	go func() {
+		log.Printf("Starting MCP local server on 127.0.0.1:%s (no auth required)", mcpLocalPort)
+		if err := mcpLocalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("MCP local server error: %v", err)
 		}
 	}()
 
@@ -74,9 +94,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Shutdown HTTP server (stops accepting new connections)
+	// Shutdown HTTP servers (stops accepting new connections)
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
+	}
+	if err := mcpLocalServer.Shutdown(ctx); err != nil {
+		log.Printf("MCP local server shutdown error: %v", err)
 	}
 
 	// Close all sessions (kills PTYs, agents, cleans up workspaces)
@@ -116,6 +139,30 @@ func NewServer(sm *sessions.Manager) *Server {
 		driveSyncActive:  make(map[string]bool),
 		mirrorSyncActive: make(map[string]bool),
 	}
+}
+
+// MCPLocalHandler returns a handler for the localhost-only MCP server.
+// This server runs on 127.0.0.1 only and requires no authentication.
+// Agents running inside the sandbox can connect to this without tokens.
+func (s *Server) MCPLocalHandler() http.Handler {
+	mux := http.NewServeMux()
+
+	// Health check
+	mux.HandleFunc("GET /health", s.handleHеalth)
+
+	// MCP endpoints - no auth required (localhost only)
+	// Agents can set base URL to http://localhost:8081/sessions/{sessionId}/mcp
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.handleMCPListTооls)
+	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.handleMCPCallTооl)
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.handleMCPListItems)
+
+	// Browser control - used by xdg-open script for opening URLs
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.handleBrowserOpen)
+
+	// Helper endpoint: list sessions (so agents can discover their session)
+	mux.HandleFunc("GET /sessions", s.handleListSessions)
+
+	return mux
 }
 
 func (s *Server) Handler() http.Handler {
@@ -172,6 +219,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.requireMachine(s.handleStatFile)))
 	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleDriveSync)))
 
+	// MCP proxy - allows agents to call MCP UI tools via the control plane
+	// These routes proxy requests to the control plane's internal MCP endpoints
+	// The sandbox automatically injects the dashboard_id from the session
+	// All MCP routes are under /sessions/{sessionId}/mcp/* for consistency
+	// An MCP client should set base URL to http://localhost:PORT/sessions/{sessionId}/mcp
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListTооls)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPCallTооl)))
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListItems)))
+
 	return mux
 }
 
@@ -180,8 +236,42 @@ func (s *Server) handleHеalth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
+// handleListSessions returns all active sessions (for agent discovery on localhost)
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions := s.sessions.List()
+
+	type sessionInfo struct {
+		ID          string `json:"id"`
+		DashboardID string `json:"dashboard_id,omitempty"`
+	}
+
+	result := make([]sessionInfo, len(sessions))
+	for i, sess := range sessions {
+		result[i] = sessionInfo{
+			ID:          sess.ID,
+			DashboardID: sess.DashboardID,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"sessions": result})
+}
+
 func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
-	session, err := s.sessions.Create()
+	// Parse optional dashboard_id and mcp_token from request body
+	var req struct {
+		DashboardID string `json:"dashboard_id"`
+		MCPToken    string `json:"mcp_token"` // Dashboard-scoped token for MCP proxy
+	}
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			// Ignore decode errors - fields are optional
+			req.DashboardID = ""
+			req.MCPToken = ""
+		}
+	}
+
+	session, err := s.sessions.Create(req.DashboardID, req.MCPToken)
 	if err != nil {
 		http.Error(w, "E79706: "+err.Error(), http.StatusInternalServerError)
 		return

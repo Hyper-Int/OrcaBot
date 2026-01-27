@@ -54,12 +54,14 @@ interface ItemCreateRequest {
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
+  metadata?: Record<string, unknown>;
 }
 
 interface ItemUpdateRequest {
   content?: string;
   position?: { x: number; y: number };
   size?: { width: number; height: number };
+  metadata?: Record<string, unknown>;
 }
 
 interface SessionResponse {
@@ -355,4 +357,22 @@ export function getCollaborationWsUrl(
   const baseWsUrl = API.cloudflare.ws(dashboardId);
   let url = `${baseWsUrl}?user_id=${encodeURIComponent(userId)}&user_name=${encodeURIComponent(userName)}`;
   return url;
+}
+
+/**
+ * Send UI command result back to the DashboardDO for broadcast
+ */
+export async function sendUICommandResult(
+  dashboardId: string,
+  result: {
+    command_id: string;
+    success: boolean;
+    error?: string;
+    created_item_id?: string;
+  }
+): Promise<void> {
+  await apiPost<void>(
+    `${API.cloudflare.dashboards}/${dashboardId}/ui-command-result`,
+    result
+  );
 }
