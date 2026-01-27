@@ -592,3 +592,132 @@ export async function disconnectGmail(): Promise<{ ok: boolean }> {
     method: "DELETE",
   });
 }
+
+// ============================================
+// Google Calendar Integration
+// ============================================
+
+export interface CalendarEvent {
+  eventId: string;
+  calendarId: string;
+  summary: string | null;
+  description: string | null;
+  location: string | null;
+  startTime: string;
+  endTime: string;
+  allDay: boolean;
+  status: string | null;
+  htmlLink: string | null;
+  organizerEmail: string | null;
+  attendees: Array<{
+    email?: string;
+    displayName?: string;
+    responseStatus?: string;
+  }>;
+}
+
+export interface CalendarIntegration {
+  connected: boolean;
+  linked: boolean;
+  emailAddress: string | null;
+  calendarId?: string;
+  status?: string;
+  lastSyncedAt?: string | null;
+}
+
+export interface CalendarStatus {
+  connected: boolean;
+  emailAddress?: string;
+  calendarId?: string;
+  status?: string;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  eventCount?: number;
+}
+
+export interface CalendarEventsResponse {
+  events: CalendarEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function getCalendarIntegration(
+  dashboardId?: string
+): Promise<CalendarIntegration> {
+  const url = new URL(API.cloudflare.calendarIntegration);
+  if (dashboardId) {
+    url.searchParams.set("dashboard_id", dashboardId);
+  }
+  return apiGet<CalendarIntegration>(url.toString());
+}
+
+export async function setupCalendarMirror(
+  dashboardId: string,
+  calendarId?: string
+): Promise<{ ok: boolean; emailAddress: string }> {
+  return apiPost<{ ok: boolean; emailAddress: string }>(
+    API.cloudflare.calendarSetup,
+    {
+      dashboardId,
+      calendarId,
+    }
+  );
+}
+
+export async function unlinkCalendarMirror(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.calendarIntegration);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function getCalendarStatus(dashboardId: string): Promise<CalendarStatus> {
+  const url = new URL(API.cloudflare.calendarStatus);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<CalendarStatus>(url.toString());
+}
+
+export async function syncCalendar(
+  dashboardId: string
+): Promise<{ ok: boolean }> {
+  return apiPost<{ ok: boolean }>(API.cloudflare.calendarSync, { dashboardId });
+}
+
+export async function getCalendarEvents(
+  dashboardId: string,
+  options?: { limit?: number; offset?: number; timeMin?: string; timeMax?: string }
+): Promise<CalendarEventsResponse> {
+  const url = new URL(API.cloudflare.calendarEvents);
+  url.searchParams.set("dashboard_id", dashboardId);
+  if (options?.limit) {
+    url.searchParams.set("limit", String(options.limit));
+  }
+  if (options?.offset) {
+    url.searchParams.set("offset", String(options.offset));
+  }
+  if (options?.timeMin) {
+    url.searchParams.set("time_min", options.timeMin);
+  }
+  if (options?.timeMax) {
+    url.searchParams.set("time_max", options.timeMax);
+  }
+  return apiGet<CalendarEventsResponse>(url.toString());
+}
+
+export async function getCalendarEventDetail(
+  dashboardId: string,
+  eventId: string
+): Promise<CalendarEvent> {
+  const url = new URL(API.cloudflare.calendarEvent);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("event_id", eventId);
+  return apiGet<CalendarEvent>(url.toString());
+}
+
+export async function disconnectCalendar(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.calendarDisconnect, {
+    method: "DELETE",
+  });
+}

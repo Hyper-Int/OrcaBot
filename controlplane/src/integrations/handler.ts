@@ -16,6 +16,13 @@ const GMAIL_SCOPE = [
   'email',
 ];
 
+const CALENDAR_SCOPE = [
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
+  'openid',
+  'email',
+];
+
 const GITHUB_SCOPE = [
   'repo',
   'read:user',
@@ -5526,6 +5533,907 @@ export async function disconnectGmail(
 
   // Delete integration
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'gmail'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+// ============================================
+// Google Calendar integration
+// ============================================
+
+interface CalendarEvent {
+  id: string;
+  status?: string;
+  htmlLink?: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  end?: {
+    dateTime?: string;
+    date?: string;
+    timeZone?: string;
+  };
+  organizer?: {
+    email?: string;
+    displayName?: string;
+    self?: boolean;
+  };
+  attendees?: Array<{
+    email?: string;
+    displayName?: string;
+    responseStatus?: string;
+    self?: boolean;
+  }>;
+  updated?: string;
+  created?: string;
+}
+
+async function refreshCalendarAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Google OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_calendar'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null }>();
+
+  if (!record?.refresh_token) {
+    throw new Error('Calendar must be connected again.');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    throw new Error('Failed to refresh Calendar access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?, scope = ?, token_type = ?, expires_at = ?, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'google_calendar'
+  `).bind(
+    tokenData.access_token,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    userId
+  ).run();
+
+  return tokenData.access_token;
+}
+
+async function getCalendarAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const record = await env.DB.prepare(`
+    SELECT access_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'google_calendar'
+  `).bind(userId).first<{ access_token: string; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Calendar not connected.');
+  }
+
+  // Refresh if expired or expires within 5 minutes
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    const now = Date.now();
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return refreshCalendarAccessToken(env, userId);
+    }
+  }
+
+  return record.access_token;
+}
+
+async function getCalendarProfile(accessToken: string): Promise<{ email: string; name?: string }> {
+  const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch calendar profile.');
+  }
+
+  const data = await res.json() as { email: string; name?: string };
+  return { email: data.email, name: data.name };
+}
+
+async function listCalendarEvents(
+  accessToken: string,
+  calendarId: string = 'primary',
+  timeMin?: string,
+  timeMax?: string,
+  maxResults: number = 50,
+  pageToken?: string,
+  syncToken?: string
+): Promise<{
+  items: CalendarEvent[];
+  nextPageToken?: string;
+  nextSyncToken?: string;
+}> {
+  const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
+  url.searchParams.set('maxResults', String(maxResults));
+  url.searchParams.set('singleEvents', 'true');
+  url.searchParams.set('orderBy', 'startTime');
+
+  if (syncToken) {
+    url.searchParams.set('syncToken', syncToken);
+  } else {
+    if (timeMin) {
+      url.searchParams.set('timeMin', timeMin);
+    }
+    if (timeMax) {
+      url.searchParams.set('timeMax', timeMax);
+    }
+  }
+
+  if (pageToken) {
+    url.searchParams.set('pageToken', pageToken);
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    if (res.status === 410) {
+      // Sync token expired, need full sync
+      throw new Error('SYNC_TOKEN_EXPIRED');
+    }
+    throw new Error('Failed to list calendar events.');
+  }
+
+  return res.json() as Promise<{
+    items: CalendarEvent[];
+    nextPageToken?: string;
+    nextSyncToken?: string;
+  }>;
+}
+
+async function getCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  eventId: string
+): Promise<CalendarEvent> {
+  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to fetch calendar event.');
+  }
+
+  return res.json() as Promise<CalendarEvent>;
+}
+
+export async function connectCalendar(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const state = buildState();
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  await createState(env, auth.user!.id, 'google_calendar', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/calendar/callback`;
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', CALENDAR_SCOPE.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackCalendar(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'google_calendar');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/google/calendar/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.GOOGLE_CLIENT_ID);
+  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('grant_type', 'authorization_code');
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    scope?: string;
+    token_type?: string;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  // Fetch email address
+  let emailAddress = '';
+  try {
+    const profile = await getCalendarProfile(tokenData.access_token);
+    emailAddress = profile.email;
+  } catch {
+    // Email will be empty if profile fetch fails
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    email_address: emailAddress,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'google_calendar', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = excluded.refresh_token,
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Calendar', 'calendar-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Google Calendar');
+}
+
+export async function getCalendarIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'google_calendar'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, linked: false, emailAddress: null });
+  }
+
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(integration.metadata || '{}') as Record<string, unknown>;
+  } catch {
+    metadata = {};
+  }
+
+  if (!dashboardId) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, calendar_id, status, last_synced_at
+    FROM calendar_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    calendar_id: string;
+    status: string;
+    last_synced_at: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({
+      connected: true,
+      linked: false,
+      emailAddress: metadata.email_address || null,
+    });
+  }
+
+  return Response.json({
+    connected: true,
+    linked: true,
+    emailAddress: mirror.email_address,
+    calendarId: mirror.calendar_id,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+  });
+}
+
+export async function setupCalendarMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    calendarId?: string;
+  };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79930: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79931: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getCalendarAccessToken(env, auth.user!.id);
+  } catch {
+    return Response.json({ error: 'E79932: Calendar not connected' }, { status: 404 });
+  }
+
+  const profile = await getCalendarProfile(accessToken);
+  const calendarId = data.calendarId || 'primary';
+
+  await env.DB.prepare(`
+    INSERT INTO calendar_mirrors (
+      dashboard_id, user_id, email_address, calendar_id, status, updated_at, created_at
+    ) VALUES (?, ?, ?, ?, 'idle', datetime('now'), datetime('now'))
+    ON CONFLICT(dashboard_id) DO UPDATE SET
+      email_address = excluded.email_address,
+      calendar_id = excluded.calendar_id,
+      status = 'idle',
+      updated_at = datetime('now')
+  `).bind(
+    data.dashboardId,
+    auth.user!.id,
+    profile.email,
+    calendarId
+  ).run();
+
+  // Trigger initial sync
+  try {
+    await runCalendarSync(env, auth.user!.id, data.dashboardId, accessToken);
+  } catch (error) {
+    console.error('Initial calendar sync failed:', error);
+  }
+
+  return Response.json({ ok: true, emailAddress: profile.email });
+}
+
+export async function unlinkCalendarMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79933: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79934: Not found or no access' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`DELETE FROM calendar_events WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM calendar_mirrors WHERE dashboard_id = ?`).bind(dashboardId).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function getCalendarStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79935: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79936: Not found or no access' }, { status: 404 });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, calendar_id, status, sync_token, last_synced_at, sync_error
+    FROM calendar_mirrors
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{
+    email_address: string;
+    calendar_id: string;
+    status: string;
+    sync_token: string | null;
+    last_synced_at: string | null;
+    sync_error: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({ connected: false });
+  }
+
+  const countResult = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM calendar_events WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  return Response.json({
+    connected: true,
+    emailAddress: mirror.email_address,
+    calendarId: mirror.calendar_id,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+    syncError: mirror.sync_error,
+    eventCount: countResult?.count || 0,
+  });
+}
+
+async function runCalendarSync(
+  env: EnvWithDriveCache,
+  userId: string,
+  dashboardId: string,
+  accessToken?: string
+): Promise<void> {
+  if (!accessToken) {
+    accessToken = await getCalendarAccessToken(env, userId);
+  }
+
+  await env.DB.prepare(`
+    UPDATE calendar_mirrors SET status = 'syncing', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  try {
+    const mirror = await env.DB.prepare(`
+      SELECT calendar_id, sync_token FROM calendar_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ calendar_id: string; sync_token: string | null }>();
+
+    const calendarId = mirror?.calendar_id || 'primary';
+    let syncToken = mirror?.sync_token;
+
+    // For initial sync or if sync token expired, fetch events from now to 30 days ahead
+    const now = new Date();
+    const timeMin = syncToken ? undefined : now.toISOString();
+    const timeMax = syncToken ? undefined : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    let listResult;
+    try {
+      listResult = await listCalendarEvents(accessToken, calendarId, timeMin, timeMax, 50, undefined, syncToken || undefined);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'SYNC_TOKEN_EXPIRED') {
+        // Full resync needed
+        syncToken = null;
+        listResult = await listCalendarEvents(accessToken, calendarId, now.toISOString(), new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), 50);
+        // Clear existing events for this dashboard
+        await env.DB.prepare(`DELETE FROM calendar_events WHERE dashboard_id = ?`).bind(dashboardId).run();
+      } else {
+        throw error;
+      }
+    }
+
+    const events = listResult.items || [];
+
+    for (const event of events) {
+      if (!event.id) continue;
+
+      const startTime = event.start?.dateTime || event.start?.date || '';
+      const endTime = event.end?.dateTime || event.end?.date || '';
+      const allDay = !event.start?.dateTime && !!event.start?.date ? 1 : 0;
+
+      await env.DB.prepare(`
+        INSERT INTO calendar_events (
+          id, user_id, dashboard_id, event_id, calendar_id,
+          summary, description, location, start_time, end_time, all_day,
+          status, html_link, organizer_email, attendees,
+          updated_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(dashboard_id, event_id) DO UPDATE SET
+          summary = excluded.summary,
+          description = excluded.description,
+          location = excluded.location,
+          start_time = excluded.start_time,
+          end_time = excluded.end_time,
+          all_day = excluded.all_day,
+          status = excluded.status,
+          html_link = excluded.html_link,
+          organizer_email = excluded.organizer_email,
+          attendees = excluded.attendees,
+          updated_at = datetime('now')
+      `).bind(
+        crypto.randomUUID(),
+        userId,
+        dashboardId,
+        event.id,
+        calendarId,
+        event.summary || null,
+        event.description || null,
+        event.location || null,
+        startTime,
+        endTime,
+        allDay,
+        event.status || null,
+        event.htmlLink || null,
+        event.organizer?.email || null,
+        JSON.stringify(event.attendees || [])
+      ).run();
+    }
+
+    // Update mirror with new sync token
+    await env.DB.prepare(`
+      UPDATE calendar_mirrors
+      SET sync_token = ?, status = 'ready', last_synced_at = datetime('now'), updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(
+      listResult.nextSyncToken || null,
+      dashboardId
+    ).run();
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    await env.DB.prepare(`
+      UPDATE calendar_mirrors SET status = 'error', sync_error = ?, updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(errorMessage, dashboardId).run();
+    throw error;
+  }
+}
+
+export async function syncCalendarMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79937: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79938: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    await runCalendarSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    return Response.json({ error: errorMessage }, { status: 500 });
+  }
+}
+
+export async function getCalendarEvents(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 100);
+  const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+  const timeMin = url.searchParams.get('time_min');
+  const timeMax = url.searchParams.get('time_max');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79939: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79940: Not found or no access' }, { status: 404 });
+  }
+
+  let query = `
+    SELECT event_id, calendar_id, summary, description, location,
+           start_time, end_time, all_day, status, html_link, organizer_email, attendees
+    FROM calendar_events
+    WHERE dashboard_id = ?
+  `;
+  const params: (string | number)[] = [dashboardId];
+
+  if (timeMin) {
+    query += ` AND start_time >= ?`;
+    params.push(timeMin);
+  }
+  if (timeMax) {
+    query += ` AND start_time <= ?`;
+    params.push(timeMax);
+  }
+
+  query += ` ORDER BY start_time ASC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  const events = await env.DB.prepare(query).bind(...params).all<{
+    event_id: string;
+    calendar_id: string;
+    summary: string | null;
+    description: string | null;
+    location: string | null;
+    start_time: string;
+    end_time: string;
+    all_day: number;
+    status: string | null;
+    html_link: string | null;
+    organizer_email: string | null;
+    attendees: string;
+  }>();
+
+  const countResult = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM calendar_events WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  const formatted = (events.results || []).map(e => ({
+    eventId: e.event_id,
+    calendarId: e.calendar_id,
+    summary: e.summary,
+    description: e.description,
+    location: e.location,
+    startTime: e.start_time,
+    endTime: e.end_time,
+    allDay: e.all_day === 1,
+    status: e.status,
+    htmlLink: e.html_link,
+    organizerEmail: e.organizer_email,
+    attendees: JSON.parse(e.attendees || '[]') as Array<{
+      email?: string;
+      displayName?: string;
+      responseStatus?: string;
+    }>,
+  }));
+
+  return Response.json({
+    events: formatted,
+    total: countResult?.count || 0,
+    limit,
+    offset,
+  });
+}
+
+export async function getCalendarEventDetail(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const eventId = url.searchParams.get('event_id');
+
+  if (!dashboardId || !eventId) {
+    return Response.json({ error: 'E79941: dashboard_id and event_id are required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79942: Not found or no access' }, { status: 404 });
+  }
+
+  // Try to fetch fresh from Calendar API
+  try {
+    const accessToken = await getCalendarAccessToken(env, auth.user!.id);
+    const mirror = await env.DB.prepare(`
+      SELECT calendar_id FROM calendar_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ calendar_id: string }>();
+
+    const calendarId = mirror?.calendar_id || 'primary';
+    const event = await getCalendarEvent(accessToken, calendarId, eventId);
+
+    return Response.json({
+      eventId: event.id,
+      calendarId,
+      summary: event.summary,
+      description: event.description,
+      location: event.location,
+      startTime: event.start?.dateTime || event.start?.date,
+      endTime: event.end?.dateTime || event.end?.date,
+      allDay: !event.start?.dateTime && !!event.start?.date,
+      status: event.status,
+      htmlLink: event.htmlLink,
+      organizerEmail: event.organizer?.email,
+      attendees: event.attendees || [],
+    });
+  } catch {
+    // Fall back to cached data
+    const cached = await env.DB.prepare(`
+      SELECT event_id, calendar_id, summary, description, location,
+             start_time, end_time, all_day, status, html_link, organizer_email, attendees
+      FROM calendar_events
+      WHERE dashboard_id = ? AND event_id = ?
+    `).bind(dashboardId, eventId).first<{
+      event_id: string;
+      calendar_id: string;
+      summary: string | null;
+      description: string | null;
+      location: string | null;
+      start_time: string;
+      end_time: string;
+      all_day: number;
+      status: string | null;
+      html_link: string | null;
+      organizer_email: string | null;
+      attendees: string;
+    }>();
+
+    if (!cached) {
+      return Response.json({ error: 'E79943: Event not found' }, { status: 404 });
+    }
+
+    return Response.json({
+      eventId: cached.event_id,
+      calendarId: cached.calendar_id,
+      summary: cached.summary,
+      description: cached.description,
+      location: cached.location,
+      startTime: cached.start_time,
+      endTime: cached.end_time,
+      allDay: cached.all_day === 1,
+      status: cached.status,
+      htmlLink: cached.html_link,
+      organizerEmail: cached.organizer_email,
+      attendees: JSON.parse(cached.attendees || '[]'),
+    });
+  }
+}
+
+export async function disconnectCalendar(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's calendar mirrors and events
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM calendar_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    await env.DB.prepare(`DELETE FROM calendar_events WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+  }
+  await env.DB.prepare(`DELETE FROM calendar_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_calendar'`).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });
 }
