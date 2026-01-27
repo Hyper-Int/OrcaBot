@@ -80,6 +80,14 @@ export const API = {
     gmailWatch: `${CLOUDFLARE_API_URL}/integrations/google/gmail/watch`,
     gmailStop: `${CLOUDFLARE_API_URL}/integrations/google/gmail/stop`,
     gmailDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/gmail/disconnect`,
+    // Google Calendar
+    calendarIntegration: `${CLOUDFLARE_API_URL}/integrations/google/calendar`,
+    calendarSetup: `${CLOUDFLARE_API_URL}/integrations/google/calendar/setup`,
+    calendarStatus: `${CLOUDFLARE_API_URL}/integrations/google/calendar/status`,
+    calendarSync: `${CLOUDFLARE_API_URL}/integrations/google/calendar/sync`,
+    calendarEvents: `${CLOUDFLARE_API_URL}/integrations/google/calendar/events`,
+    calendarEvent: `${CLOUDFLARE_API_URL}/integrations/google/calendar/event`,
+    calendarDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/calendar/disconnect`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

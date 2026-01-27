@@ -11,3 +11,4 @@ export { RecipeBlock } from "./RecipeBlock";
 export { PromptBlock } from "./PromptBlock";
 export { ScheduleBlock } from "./ScheduleBlock";
 export { GmailBlock } from "./GmailBlock";
+export { CalendarBlock } from "./CalendarBlock";

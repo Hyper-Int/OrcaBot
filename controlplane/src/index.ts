@@ -845,6 +845,17 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
       'POST google/gmail/stop': integrations.stopGmailWatchEndpoint,
       'POST google/gmail/push': (request, env) => integrations.handleGmailPush(request, env),
       'DELETE google/gmail/disconnect': integrations.disconnectGmail,
+      // Google Calendar
+      'GET google/calendar/connect': integrations.connectCalendar,
+      'GET google/calendar/callback': (request, env) => integrations.callbackCalendar(request, env),
+      'GET google/calendar': integrations.getCalendarIntegration,
+      'POST google/calendar/setup': integrations.setupCalendarMirror,
+      'DELETE google/calendar': integrations.unlinkCalendarMirror,
+      'GET google/calendar/status': integrations.getCalendarStatus,
+      'POST google/calendar/sync': integrations.syncCalendarMirror,
+      'GET google/calendar/events': integrations.getCalendarEvents,
+      'GET google/calendar/event': integrations.getCalendarEventDetail,
+      'DELETE google/calendar/disconnect': integrations.disconnectCalendar,
     };
 
     const handler = integrationRoutes[routeKey];
