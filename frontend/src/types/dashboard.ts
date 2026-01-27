@@ -17,7 +17,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "gmail";
 
 /**
  * Position on the canvas
