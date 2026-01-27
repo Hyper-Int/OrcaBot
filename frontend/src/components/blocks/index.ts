@@ -12,3 +12,6 @@ export { PromptBlock } from "./PromptBlock";
 export { ScheduleBlock } from "./ScheduleBlock";
 export { GmailBlock } from "./GmailBlock";
 export { CalendarBlock } from "./CalendarBlock";
+export { ContactsBlock } from "./ContactsBlock";
+export { SheetsBlock } from "./SheetsBlock";
+export { FormsBlock } from "./FormsBlock";

@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -201,7 +201,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_user ON oauth_states(user_id);
 CREATE TABLE IF NOT EXISTS user_integrations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'google_calendar', 'box', 'onedrive')),
+  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'box', 'onedrive')),
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   scope TEXT,
@@ -407,6 +407,95 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_dashboard ON calendar_events(dash
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_time);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_events_event ON calendar_events(dashboard_id, event_id);
 
+-- Contacts mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS contacts_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  sync_token TEXT,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing', 'ready', 'error')),
+  last_synced_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_mirrors_user ON contacts_mirrors(user_id);
+
+-- Contacts cache
+CREATE TABLE IF NOT EXISTS contacts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  resource_name TEXT NOT NULL,
+  display_name TEXT,
+  given_name TEXT,
+  family_name TEXT,
+  email_addresses TEXT NOT NULL DEFAULT '[]',
+  phone_numbers TEXT NOT NULL DEFAULT '[]',
+  organizations TEXT NOT NULL DEFAULT '[]',
+  photo_url TEXT,
+  notes TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_dashboard ON contacts(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(display_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_resource ON contacts(dashboard_id, resource_name);
+
+-- Sheets mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS sheets_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  spreadsheet_id TEXT,
+  spreadsheet_name TEXT,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'linked', 'error')),
+  last_accessed_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sheets_mirrors_user ON sheets_mirrors(user_id);
+
+-- Forms mirrors (per dashboard)
+CREATE TABLE IF NOT EXISTS forms_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  form_id TEXT,
+  form_title TEXT,
+  status TEXT NOT NULL CHECK (status IN ('idle', 'linked', 'error')),
+  last_accessed_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_forms_mirrors_user ON forms_mirrors(user_id);
+
+-- Form responses cache
+CREATE TABLE IF NOT EXISTS form_responses (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  form_id TEXT NOT NULL,
+  response_id TEXT NOT NULL,
+  respondent_email TEXT,
+  submitted_at TEXT NOT NULL,
+  answers TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_form_responses_user ON form_responses(user_id);
+CREATE INDEX IF NOT EXISTS idx_form_responses_dashboard ON form_responses(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_form_responses_form ON form_responses(form_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_form_responses_response ON form_responses(dashboard_id, response_id);
+
 -- Auth sessions (first-party login)
 CREATE TABLE IF NOT EXISTS user_sessions (
   id TEXT PRIMARY KEY,
@@ -564,7 +653,7 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 }
 
 // All valid integration providers - add new providers here
-const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'box', 'onedrive'] as const;
+const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive'] as const;
 
 async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
@@ -619,7 +708,7 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
 }
 
 // All valid dashboard item types - add new types here
-const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar'] as const;
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms'] as const;
 
 async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`

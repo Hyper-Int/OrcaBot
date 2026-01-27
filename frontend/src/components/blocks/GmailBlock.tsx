@@ -77,11 +77,17 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const [selectedMessage, setSelectedMessage] = React.useState<GmailMessage | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
 
+  // Track if initial load is done
+  const initialLoadDone = React.useRef(false);
+
   // Load integration status
   const loadIntegration = React.useCallback(async () => {
     if (!dashboardId) return;
     try {
-      setLoading(true);
+      // Only show loading spinner on initial load, not refreshes
+      if (!initialLoadDone.current) {
+        setLoading(true);
+      }
       setError(null);
       const [integrationData, statusData] = await Promise.all([
         getGmailIntegration(dashboardId),
@@ -89,6 +95,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
       ]);
       setIntegration(integrationData);
       setStatus(statusData);
+      initialLoadDone.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Gmail");
     } finally {
@@ -98,30 +105,31 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
 
   // Load messages
   const loadMessages = React.useCallback(async () => {
-    if (!dashboardId || !integration?.connected || !integration?.linked) return;
+    if (!dashboardId) return;
     try {
       setMessagesLoading(true);
       const response = await getGmailMessages(dashboardId, { limit: 20 });
       setMessages(response.messages);
       setMessagesTotal(response.total);
-    } catch (err) {
-      console.error("Failed to load messages:", err);
+    } catch {
+      // Silently fail - user can retry via sync button
     } finally {
       setMessagesLoading(false);
     }
-  }, [dashboardId, integration]);
+  }, [dashboardId]);
 
   // Initial load
   React.useEffect(() => {
     loadIntegration();
   }, [loadIntegration]);
 
-  // Load messages when integration is ready
+  // Load messages when integration is ready (use booleans to avoid flicker from object reference changes)
+  const gmailReady = Boolean(integration?.connected && integration?.linked);
   React.useEffect(() => {
-    if (integration?.connected && integration?.linked) {
+    if (gmailReady) {
       loadMessages();
     }
-  }, [integration, loadMessages]);
+  }, [gmailReady, loadMessages]);
 
   // Sync handler
   const handleSync = async () => {

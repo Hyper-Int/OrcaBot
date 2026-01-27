@@ -88,6 +88,32 @@ export const API = {
     calendarEvents: `${CLOUDFLARE_API_URL}/integrations/google/calendar/events`,
     calendarEvent: `${CLOUDFLARE_API_URL}/integrations/google/calendar/event`,
     calendarDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/calendar/disconnect`,
+    // Google Contacts
+    contactsIntegration: `${CLOUDFLARE_API_URL}/integrations/google/contacts`,
+    contactsSetup: `${CLOUDFLARE_API_URL}/integrations/google/contacts/setup`,
+    contactsStatus: `${CLOUDFLARE_API_URL}/integrations/google/contacts/status`,
+    contactsSync: `${CLOUDFLARE_API_URL}/integrations/google/contacts/sync`,
+    contactsList: `${CLOUDFLARE_API_URL}/integrations/google/contacts/list`,
+    contactsDetail: `${CLOUDFLARE_API_URL}/integrations/google/contacts/detail`,
+    contactsSearch: `${CLOUDFLARE_API_URL}/integrations/google/contacts/search`,
+    contactsDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/contacts/disconnect`,
+    // Google Sheets
+    sheetsIntegration: `${CLOUDFLARE_API_URL}/integrations/google/sheets`,
+    sheetsSetup: `${CLOUDFLARE_API_URL}/integrations/google/sheets/setup`,
+    sheetsList: `${CLOUDFLARE_API_URL}/integrations/google/sheets/list`,
+    sheetsSpreadsheet: `${CLOUDFLARE_API_URL}/integrations/google/sheets/spreadsheet`,
+    sheetsValues: `${CLOUDFLARE_API_URL}/integrations/google/sheets/values`,
+    sheetsAppend: `${CLOUDFLARE_API_URL}/integrations/google/sheets/append`,
+    sheetsLink: `${CLOUDFLARE_API_URL}/integrations/google/sheets/link`,
+    sheetsDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/sheets/disconnect`,
+    // Google Forms
+    formsIntegration: `${CLOUDFLARE_API_URL}/integrations/google/forms`,
+    formsSetup: `${CLOUDFLARE_API_URL}/integrations/google/forms/setup`,
+    formsList: `${CLOUDFLARE_API_URL}/integrations/google/forms/list`,
+    formsForm: `${CLOUDFLARE_API_URL}/integrations/google/forms/form`,
+    formsResponses: `${CLOUDFLARE_API_URL}/integrations/google/forms/responses`,
+    formsLink: `${CLOUDFLARE_API_URL}/integrations/google/forms/link`,
+    formsDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/forms/disconnect`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

@@ -71,11 +71,17 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
   // Selected event state
   const [selectedEvent, setSelectedEvent] = React.useState<CalendarEvent | null>(null);
 
+  // Track if initial load is done
+  const initialLoadDone = React.useRef(false);
+
   // Load integration status
   const loadIntegration = React.useCallback(async () => {
     if (!dashboardId) return;
     try {
-      setLoading(true);
+      // Only show loading spinner on initial load, not refreshes
+      if (!initialLoadDone.current) {
+        setLoading(true);
+      }
       setError(null);
       const [integrationData, statusData] = await Promise.all([
         getCalendarIntegration(dashboardId),
@@ -83,6 +89,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
       ]);
       setIntegration(integrationData);
       setStatus(statusData);
+      initialLoadDone.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Calendar");
     } finally {
@@ -92,7 +99,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
 
   // Load events
   const loadEvents = React.useCallback(async () => {
-    if (!dashboardId || !integration?.connected || !integration?.linked) return;
+    if (!dashboardId) return;
     try {
       setEventsLoading(true);
       // Fetch events for next 30 days
@@ -110,19 +117,20 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
     } finally {
       setEventsLoading(false);
     }
-  }, [dashboardId, integration]);
+  }, [dashboardId]);
 
   // Initial load
   React.useEffect(() => {
     loadIntegration();
   }, [loadIntegration]);
 
-  // Load events when integration is ready
+  // Load events when integration is ready (use booleans to avoid flicker from object reference changes)
+  const calendarReady = Boolean(integration?.connected && integration?.linked);
   React.useEffect(() => {
-    if (integration?.connected && integration?.linked) {
+    if (calendarReady) {
       loadEvents();
     }
-  }, [integration, loadEvents]);
+  }, [calendarReady, loadEvents]);
 
   // Sync handler
   const handleSync = async () => {
