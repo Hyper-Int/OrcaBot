@@ -16,54 +16,59 @@ import (
 // This allows agents in terminals to access MCP UI tools without
 // needing to know about authentication tokens.
 
-// handleMCPListTools proxies GET /sessions/{sessionId}/mcp/tools to control plane
+// handleMCPListTools returns both UI tools (from control plane) and browser tools (local)
 func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
-	// Validate session exists (though listing tools doesn't require dashboard_id)
+	// Validate session exists
 	sessionID := r.PathValue("sessionId")
 	session := s.getSessiоnOrErrоr(w, sessionID)
 	if session == nil {
 		return
 	}
 
+	// Collect all tools
+	var allTools []interface{}
+
+	// Add browser tools (local - always available)
+	for _, tool := range s.handleBrowserMCPTools() {
+		allTools = append(allTools, tool)
+	}
+
+	// Try to get UI tools from control plane
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
+	if controlplaneURL != "" {
+		targetURL := fmt.Sprintf("%s/internal/mcp/ui/tools", controlplaneURL)
+		req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
+		if err == nil {
+			// Use dashboard-scoped token if available, otherwise fall back to internal token
+			if session.MCPToken != "" {
+				req.Header.Set("X-Dashboard-Token", session.MCPToken)
+			} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
+				req.Header.Set("X-Internal-Token", internalToken)
+			}
 
-	if controlplaneURL == "" {
-		http.Error(w, "E79810: CONTROLPLANE_URL not configured", http.StatusServiceUnavailable)
-		return
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				if resp.StatusCode == 200 {
+					var uiToolsResp struct {
+						Tools []interface{} `json:"tools"`
+					}
+					if json.NewDecoder(resp.Body).Decode(&uiToolsResp) == nil {
+						allTools = append(allTools, uiToolsResp.Tools...)
+					}
+				}
+			}
+		}
 	}
 
-	// Forward to control plane internal endpoint
-	targetURL := fmt.Sprintf("%s/internal/mcp/ui/tools", controlplaneURL)
-
-	req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
-	if err != nil {
-		http.Error(w, "E79812: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	// Use dashboard-scoped token if available, otherwise fall back to internal token
-	if session.MCPToken != "" {
-		req.Header.Set("X-Dashboard-Token", session.MCPToken)
-	} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
-		req.Header.Set("X-Internal-Token", internalToken)
-	} else {
-		http.Error(w, "E79811: No MCP token configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		http.Error(w, "E79813: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Copy response
+	// Return combined tools list
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tools": allTools,
+	})
 }
 
-// handleMCPCallTool proxies POST /mcp/tools/call to control plane
+// handleMCPCallTool handles tool calls - browser tools locally, UI tools via control plane
 func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionId")
 	session := s.getSessiоnOrErrоr(w, sessionID)
@@ -71,6 +76,29 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse incoming request to check tool name
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "E79815: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var incomingReq struct {
+		Name      string                 `json:"name"`
+		Arguments map[string]interface{} `json:"arguments"`
+	}
+	if err := json.Unmarshal(bodyBytes, &incomingReq); err != nil {
+		http.Error(w, "E79815: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Check if this is a browser tool - handle locally
+	if isBrowserTool(incomingReq.Name) {
+		s.handleBrowserMCPCall(w, r, incomingReq.Name, incomingReq.Arguments)
+		return
+	}
+
+	// Not a browser tool - proxy to control plane for UI tools
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
 
 	if controlplaneURL == "" {
@@ -84,17 +112,7 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse incoming request
-	var incomingReq struct {
-		Name      string                 `json:"name"`
-		Arguments map[string]interface{} `json:"arguments"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&incomingReq); err != nil {
-		http.Error(w, "E79815: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Validate or inject dashboard_id
+	// Validate or inject dashboard_id (using already-parsed incomingReq)
 	if incomingReq.Arguments == nil {
 		incomingReq.Arguments = make(map[string]interface{})
 	}

@@ -1039,6 +1039,30 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return sessions.openDashbоardBrowser(env, segments[1], auth.user!.id, url);
   }
 
+  // POST /dashboards/:id/browser/* - Proxy browser control (screenshot, click, type, etc.)
+  if (segments[0] === 'dashboards' && segments[2] === 'browser' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const access = await env.DB.prepare(`
+      SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+    `).bind(segments[1], auth.user!.id).first();
+    if (!access) {
+      return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+    }
+
+    const sandbox = await env.DB.prepare(`
+      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+    if (!sandbox?.sandbox_session_id) {
+      return Response.json({ error: 'E79816: Browser session not found' }, { status: 404 });
+    }
+
+    const suffix = segments.slice(3).join('/');
+    const path = `/sessions/${sandbox.sandbox_session_id}/browser/${suffix}`;
+    return prоxySandbоxRequest(request, env, path, sandbox.sandbox_machine_id);
+  }
+
   // GET /dashboards/:id/browser/* - Proxy browser UI
   if (segments[0] === 'dashboards' && segments[2] === 'browser' && method === 'GET') {
     const authError = requireAuth(auth);
@@ -1606,6 +1630,13 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     }
 
     return mcpUi.getItems(env, requestedDashboardId);
+  }
+
+  // GET /internal/dashboards/:id/mcp-tools - Get user's MCP tools for a dashboard (used by sandbox)
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 4 && segments[3] === 'mcp-tools' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return mcpTools.getMcpToolsForDashboard(env, segments[2]);
   }
 
   // ============================================

@@ -346,6 +346,105 @@ export async function openDashboardBrowser(dashboardId: string, url: string): Pr
   await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/open`, { url });
 }
 
+// ===== Browser Automation API =====
+
+/**
+ * Capture a screenshot of the browser
+ * @returns The path to the saved screenshot file
+ */
+export async function browserScreenshot(
+  dashboardId: string,
+  filename?: string
+): Promise<{ path: string }> {
+  return apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/screenshot`, {
+    path: filename,
+  });
+}
+
+/**
+ * Click an element by CSS selector
+ */
+export async function browserClick(dashboardId: string, selector: string): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/click`, { selector });
+}
+
+/**
+ * Type text into an element by CSS selector
+ */
+export async function browserType(
+  dashboardId: string,
+  selector: string,
+  text: string
+): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/type`, { selector, text });
+}
+
+/**
+ * Execute JavaScript in the browser and return result
+ */
+export async function browserEvaluate(
+  dashboardId: string,
+  script: string
+): Promise<{ result: string }> {
+  return apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/evaluate`, { script });
+}
+
+/**
+ * Get visible text content from the page
+ */
+export async function browserGetContent(dashboardId: string): Promise<{ content: string }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/content`);
+}
+
+/**
+ * Get full HTML of the page
+ */
+export async function browserGetHTML(dashboardId: string): Promise<{ html: string }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/html`);
+}
+
+/**
+ * Get current URL
+ */
+export async function browserGetURL(dashboardId: string): Promise<{ url: string }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/url`);
+}
+
+/**
+ * Get page title
+ */
+export async function browserGetTitle(dashboardId: string): Promise<{ title: string }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/title`);
+}
+
+/**
+ * Wait for an element to appear
+ */
+export async function browserWait(
+  dashboardId: string,
+  selector: string,
+  timeout?: number
+): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/wait`, {
+    selector,
+    timeout: timeout ?? 30,
+  });
+}
+
+/**
+ * Navigate to a URL
+ */
+export async function browserNavigate(dashboardId: string, url: string): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/navigate`, { url });
+}
+
+/**
+ * Scroll the page
+ */
+export async function browserScroll(dashboardId: string, x: number, y: number): Promise<void> {
+  await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/scroll`, { x, y });
+}
+
 /**
  * Get the WebSocket URL for dashboard collaboration
  */

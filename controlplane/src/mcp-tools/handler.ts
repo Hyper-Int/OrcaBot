@@ -89,3 +89,28 @@ export async function deleteMcpTооl(env: Env, userId: string, id: string): Pro
 
   return new Response(null, { status: 204 });
 }
+
+// Get MCP tools for a dashboard (used by sandbox to configure agent MCP servers)
+export async function getMcpToolsForDashboard(env: Env, dashboardId: string): Promise<Response> {
+  // Get dashboard owner
+  const dashboard = await env.DB.prepare(
+    `SELECT dm.user_id FROM dashboard_members dm WHERE dm.dashboard_id = ? AND dm.role = 'owner'`
+  )
+    .bind(dashboardId)
+    .first<{ user_id: string }>();
+
+  if (!dashboard) {
+    return Response.json({ error: 'E79103: Dashboard not found' }, { status: 404 });
+  }
+
+  // Get owner's MCP tools
+  const rows = await env.DB.prepare(
+    `SELECT * FROM user_mcp_tools WHERE user_id = ? ORDER BY updated_at DESC`
+  )
+    .bind(dashboard.user_id)
+    .all();
+
+  return Response.json({
+    tools: rows.results.map((row) => fоrmatMcpTооl(row as Record<string, unknown>)),
+  });
+}
