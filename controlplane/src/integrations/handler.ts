@@ -172,6 +172,8 @@ function driveManifestKey(dashboardId: string): string {
   return `drive/${dashboardId}/manifest.json`;
 }
 
+type IntegrationProvider = 'google_drive' | 'github' | 'box' | 'onedrive';
+
 function driveFileKey(dashboardId: string, fileId: string): string {
   return `drive/${dashboardId}/files/${fileId}`;
 }
@@ -182,6 +184,46 @@ function mirrorManifestKey(provider: string, dashboardId: string): string {
 
 function mirrorFileKey(provider: string, dashboardId: string, fileId: string): string {
   return `mirror/${provider}/${dashboardId}/files/${fileId}`;
+}
+
+async function cleanupIntegration(
+  env: EnvWithDriveCache,
+  provider: IntegrationProvider,
+  userId: string
+): Promise<void> {
+  const mirrorTable = provider === 'google_drive' ? 'drive_mirrors' : `${provider}_mirrors`;
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM ${mirrorTable} WHERE user_id = ?
+  `).bind(userId).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    try {
+      if (provider === 'google_drive') {
+        const manifestObject = await env.DRIVE_CACHE.get(driveManifestKey(mirror.dashboard_id));
+        if (manifestObject) {
+          const manifest = await manifestObject.json<DriveManifest>();
+          await env.DRIVE_CACHE.delete(driveManifestKey(mirror.dashboard_id));
+          for (const entry of manifest.entries) {
+            await env.DRIVE_CACHE.delete(driveFileKey(mirror.dashboard_id, entry.id));
+          }
+        }
+      } else {
+        const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey(provider, mirror.dashboard_id));
+        if (manifestObject) {
+          const manifest = await manifestObject.json<DriveManifest>();
+          await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, mirror.dashboard_id));
+          for (const entry of manifest.entries) {
+            await env.DRIVE_CACHE.delete(mirrorFileKey(provider, mirror.dashboard_id, entry.id));
+          }
+        }
+      }
+    } catch (cacheErr) {
+      console.error(`Failed to clean up ${provider} cache for dashboard:`, mirror.dashboard_id, cacheErr);
+    }
+  }
+
+  await env.DB.prepare(`DELETE FROM ${mirrorTable} WHERE user_id = ?`).bind(userId).run();
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = ?`).bind(userId, provider).run();
 }
 
 /**
@@ -263,6 +305,26 @@ async function refreshGoogleAccessToken(env: EnvWithDriveCache, userId: string):
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Google Drive token refresh failed:', tokenResponse.status, errBody);
+
+    // Check for invalid_grant - handle both JSON and plaintext responses
+    let isInvalidGrant = errBody.includes('invalid_grant');
+    if (!isInvalidGrant) {
+      try {
+        const errJson = JSON.parse(errBody) as { error?: string };
+        isInvalidGrant = errJson.error === 'invalid_grant';
+      } catch {}
+    }
+
+    // Only auto-disconnect on invalid_grant (revoked/expired refresh token)
+    // Other errors (transient, misconfiguration) should not wipe user data
+    if (isInvalidGrant) {
+      console.log('Auto-disconnecting Google Drive due to invalid_grant for user:', userId);
+      await cleanupIntegration(env, 'google_drive', userId);
+      throw new Error('Google Drive session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh Google access token.');
   }
 
@@ -320,6 +382,25 @@ async function refreshBoxAccessToken(env: EnvWithDriveCache, userId: string): Pr
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Box token refresh failed:', tokenResponse.status, errBody);
+
+    // Check for invalid_grant - handle both JSON and plaintext responses
+    let isInvalidGrant = errBody.includes('invalid_grant');
+    if (!isInvalidGrant) {
+      try {
+        const errJson = JSON.parse(errBody) as { error?: string };
+        isInvalidGrant = errJson.error === 'invalid_grant';
+      } catch {}
+    }
+
+    // Only auto-disconnect on invalid_grant (revoked/expired refresh token)
+    if (isInvalidGrant) {
+      console.log('Auto-disconnecting Box due to invalid_grant for user:', userId);
+      await cleanupIntegration(env, 'box', userId);
+      throw new Error('Box session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh Box access token.');
   }
 
@@ -378,6 +459,25 @@ async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('OneDrive token refresh failed:', tokenResponse.status, errBody);
+
+    // Check for invalid_grant - handle both JSON and plaintext responses
+    let isInvalidGrant = errBody.includes('invalid_grant');
+    if (!isInvalidGrant) {
+      try {
+        const errJson = JSON.parse(errBody) as { error?: string };
+        isInvalidGrant = errJson.error === 'invalid_grant';
+      } catch {}
+    }
+
+    // Only auto-disconnect on invalid_grant (revoked/expired refresh token)
+    if (isInvalidGrant) {
+      console.log('Auto-disconnecting OneDrive due to invalid_grant for user:', userId);
+      await cleanupIntegration(env, 'onedrive', userId);
+      throw new Error('OneDrive session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh OneDrive access token.');
   }
 
@@ -741,6 +841,57 @@ function renderErrorPage(message: string): Response {
   );
 }
 
+function renderAuthExpiredPage(
+  frontendUrl: string,
+  payloadType: string,
+  dashboardId: string | null,
+  message: string
+): Response {
+  const frontendOrigin = new URL(frontendUrl).origin;
+  const payload = JSON.stringify({ type: payloadType, dashboardId });
+  const safeMessage = escapeHtml(message);
+  return new Response(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Connection failed</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 32px; }
+      .card { max-width: 520px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 0 0 16px; color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Connection failed</h1>
+      <p>${safeMessage}</p>
+    </div>
+    <script>
+      try {
+        const targetWindow = window.opener || (window.parent !== window ? window.parent : null);
+        if (targetWindow) {
+          targetWindow.postMessage(${payload}, ${JSON.stringify(frontendOrigin)});
+        }
+      } catch {}
+      try {
+        var bc = new BroadcastChannel('orcabot-oauth');
+        bc.postMessage(${payload});
+        bc.close();
+      } catch {}
+      if (window.opener) {
+        setTimeout(() => window.close(), 300);
+      }
+    </script>
+  </body>
+</html>`,
+    {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    }
+  );
+}
+
 function renderDriveAuthCompletePage(frontendUrl: string, dashboardId: string | null): Response {
   const frontendOrigin = new URL(frontendUrl).origin;
   const payload = JSON.stringify({ type: 'drive-auth-complete', dashboardId });
@@ -767,6 +918,11 @@ function renderDriveAuthCompletePage(frontendUrl: string, dashboardId: string | 
         if (window.opener) {
           window.opener.postMessage(${payload}, ${JSON.stringify(frontendOrigin)});
         }
+      } catch {}
+      try {
+        var bc = new BroadcastChannel('orcabot-oauth');
+        bc.postMessage(${payload});
+        bc.close();
       } catch {}
       setTimeout(() => window.close(), 200);
     </script>
@@ -814,6 +970,11 @@ function renderProviderAuthCompletePage(
         if (window.opener) {
           window.opener.postMessage(${payload}, ${JSON.stringify(frontendOrigin)});
         }
+      } catch {}
+      try {
+        var bc = new BroadcastChannel('orcabot-oauth');
+        bc.postMessage(${payload});
+        bc.close();
       } catch {}
       setTimeout(() => window.close(), 200);
     </script>
@@ -900,6 +1061,7 @@ export async function callbackGооgleDrive(
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
 
+  console.log('Google Drive token exchange redirect_uri:', redirectUri);
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -907,7 +1069,9 @@ export async function callbackGооgleDrive(
   });
 
   if (!tokenResponse.ok) {
-    return renderErrorPage('Failed to exchange token.');
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Google Drive token exchange failed:', tokenResponse.status, errBody);
+    return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
   const tokenData = await tokenResponse.json() as {
@@ -1138,7 +1302,16 @@ export async function getGithubRepоs(
         private: repo.private,
       })),
     });
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'github_auth_invalid') {
+      try {
+        await cleanupIntegration(env, 'github', auth.user!.id);
+      } catch (cleanupErr) {
+        console.error('Failed to auto-disconnect GitHub after auth failure:', cleanupErr);
+      }
+      return Response.json({ connected: false, repos: [], error: 'GitHub session expired. Please reconnect.' });
+    }
     return Response.json({ connected: false, repos: [] });
   }
 }
@@ -1254,6 +1427,19 @@ export async function unlinkGithubRepо(
   await env.DB.prepare(`
     DELETE FROM github_mirrors WHERE dashboard_id = ? AND user_id = ?
   `).bind(dashboardId, auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function disconnectGithub(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await cleanupIntegration(env, 'github', auth.user!.id);
 
   return Response.json({ ok: true });
 }
@@ -1853,6 +2039,19 @@ export async function unlinkBоxFоlder(
   return Response.json({ ok: true });
 }
 
+export async function disconnectBox(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await cleanupIntegration(env, 'box', auth.user!.id);
+
+  return Response.json({ ok: true });
+}
+
 async function updateBoxMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -2428,6 +2627,19 @@ export async function unlinkОnedriveFоlder(
   return Response.json({ ok: true });
 }
 
+export async function disconnectOnedrive(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await cleanupIntegration(env, 'onedrive', auth.user!.id);
+
+  return Response.json({ ok: true });
+}
+
 async function updateOnedriveMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -2913,6 +3125,19 @@ export async function unlinkGооgleDriveFоlder(
   await env.DB.prepare(`
     DELETE FROM drive_mirrors WHERE dashboard_id = ? AND user_id = ?
   `).bind(dashboardId, auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function disconnectGoogleDrive(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await cleanupIntegration(env, 'google_drive', auth.user!.id);
 
   return Response.json({ ok: true });
 }
@@ -3465,6 +3690,8 @@ async function listGithubRepos(accessToken: string) {
     url.searchParams.set('per_page', '100');
     url.searchParams.set('sort', 'updated');
     url.searchParams.set('page', page.toString());
+    url.searchParams.set('visibility', 'all');
+    url.searchParams.set('affiliation', 'owner,collaborator,organization_member');
     const res = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -3473,6 +3700,11 @@ async function listGithubRepos(accessToken: string) {
       },
     });
     if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      console.error('GitHub repo listing failed:', res.status, errBody);
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('github_auth_invalid');
+      }
       throw new Error('Failed to list GitHub repos.');
     }
     const data = await res.json() as typeof repos;
@@ -3872,59 +4104,34 @@ export async function renderGооgleDrivePicker(
     return renderErrorPage('Google OAuth is not configured.');
   }
 
-  const record = await env.DB.prepare(`
-    SELECT access_token, refresh_token FROM user_integrations
-    WHERE user_id = ? AND provider = 'google_drive'
-  `).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null }>();
-
-  if (!record?.refresh_token) {
-    return renderErrorPage('Google Drive must be connected again to select a folder.');
+  let accessToken: string;
+  try {
+    accessToken = await refreshGoogleAccessToken(env, auth.user!.id);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to refresh Google access token.';
+    if (message.includes('must be connected again') || message.includes('session expired')) {
+      try {
+        await cleanupIntegration(env, 'google_drive', auth.user!.id);
+      } catch (cleanupErr) {
+        console.error('Failed to auto-disconnect Google Drive after refresh failure:', cleanupErr);
+      }
+      const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+      const url = new URL(request.url);
+      const dashboardId = url.searchParams.get('dashboard_id');
+      return renderAuthExpiredPage(
+        frontendUrl,
+        'drive-auth-expired',
+        dashboardId,
+        'Google Drive session expired. Please reconnect.'
+      );
+    }
+    return renderErrorPage(message);
   }
-
-  const body = new URLSearchParams();
-  body.set('client_id', env.GOOGLE_CLIENT_ID);
-  body.set('client_secret', env.GOOGLE_CLIENT_SECRET);
-  body.set('grant_type', 'refresh_token');
-  body.set('refresh_token', record.refresh_token);
-
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
-  if (!tokenResponse.ok) {
-    return renderErrorPage('Failed to refresh Google access token.');
-  }
-
-  const tokenData = await tokenResponse.json() as {
-    access_token: string;
-    expires_in?: number;
-    scope?: string;
-    token_type?: string;
-  };
-
-  const now = new Date();
-  const expiresAt = tokenData.expires_in
-    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
-    : null;
-
-  await env.DB.prepare(`
-    UPDATE user_integrations
-    SET access_token = ?, scope = ?, token_type = ?, expires_at = ?, updated_at = datetime('now')
-    WHERE user_id = ? AND provider = 'google_drive'
-  `).bind(
-    tokenData.access_token,
-    tokenData.scope || null,
-    tokenData.token_type || null,
-    expiresAt,
-    auth.user!.id
-  ).run();
 
   const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
   const url = new URL(request.url);
   const dashboardId = url.searchParams.get('dashboard_id');
-  return renderDrivePickerPage(tokenData.access_token, env.GOOGLE_API_KEY, frontendUrl, dashboardId);
+  return renderDrivePickerPage(accessToken, env.GOOGLE_API_KEY, frontendUrl, dashboardId);
 }
 
 export async function cоnnectGithub(
@@ -4111,6 +4318,7 @@ export async function callbackBоx(
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
 
+  console.log('Box token exchange redirect_uri:', redirectUri);
   const tokenResponse = await fetch('https://api.box.com/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -4118,7 +4326,9 @@ export async function callbackBоx(
   });
 
   if (!tokenResponse.ok) {
-    return renderErrorPage('Failed to exchange token.');
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Box token exchange failed:', tokenResponse.status, errBody);
+    return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
   const tokenData = await tokenResponse.json() as {
@@ -4233,6 +4443,7 @@ export async function callbackОnedrive(
   body.set('redirect_uri', redirectUri);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
 
+  console.log('OneDrive token exchange redirect_uri:', redirectUri);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -4240,7 +4451,9 @@ export async function callbackОnedrive(
   });
 
   if (!tokenResponse.ok) {
-    return renderErrorPage('Failed to exchange token.');
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('OneDrive token exchange failed:', tokenResponse.status, errBody);
+    return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
   const tokenData = await tokenResponse.json() as {

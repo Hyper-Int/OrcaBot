@@ -181,6 +181,12 @@ export async function unlinkGoogleDriveFolder(
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
 }
 
+export async function disconnectGoogleDrive(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.googleDriveDisconnect, {
+    method: "DELETE",
+  });
+}
+
 export async function getGoogleDriveSyncStatus(
   dashboardId: string
 ): Promise<GoogleDriveSyncStatus> {
@@ -207,8 +213,8 @@ export async function getGithubIntegration(
   return apiGet<GithubIntegration>(url.toString());
 }
 
-export async function listGithubRepos(): Promise<{ connected: boolean; repos: GithubRepo[] }> {
-  return apiGet<{ connected: boolean; repos: GithubRepo[] }>(API.cloudflare.githubRepos);
+export async function listGithubRepos(): Promise<{ connected: boolean; repos: GithubRepo[]; error?: string }> {
+  return apiGet<{ connected: boolean; repos: GithubRepo[]; error?: string }>(API.cloudflare.githubRepos);
 }
 
 export async function setGithubRepo(
@@ -230,6 +236,12 @@ export async function unlinkGithubRepo(
   const url = new URL(API.cloudflare.githubRepo);
   url.searchParams.set("dashboard_id", dashboardId);
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function disconnectGithub(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.githubDisconnect, {
+    method: "DELETE",
+  });
 }
 
 export async function getGithubSyncStatus(
@@ -301,6 +313,12 @@ export async function unlinkBoxFolder(
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
 }
 
+export async function disconnectBox(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.boxDisconnect, {
+    method: "DELETE",
+  });
+}
+
 export async function getBoxSyncStatus(
   dashboardId: string
 ): Promise<BoxSyncStatus> {
@@ -368,6 +386,12 @@ export async function unlinkOnedriveFolder(
   const url = new URL(API.cloudflare.onedriveFolder);
   url.searchParams.set("dashboard_id", dashboardId);
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function disconnectOnedrive(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.onedriveDisconnect, {
+    method: "DELETE",
+  });
 }
 
 export async function getOnedriveSyncStatus(
