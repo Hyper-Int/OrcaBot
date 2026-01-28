@@ -22,8 +22,8 @@ import {
   Upload,
   Link,
   Clock,
-  ChevronRight,
-  ChevronLeft,
+  Minimize2,
+  Maximize2,
 } from "lucide-react";
 import {
   GmailIcon,
@@ -1386,7 +1386,7 @@ export default function DashboardPage() {
                     onClick={() => setToolbarAgentsCollapsed((prev) => !prev)}
                     className="mr-1"
                   >
-                    {toolbarAgentsCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                    {toolbarAgentsCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                   </Button>
                 </Tooltip>
                 {!toolbarAgentsCollapsed && terminalTools.map((tool) => (
@@ -1412,7 +1412,7 @@ export default function DashboardPage() {
                     onClick={() => setToolbarBlocksCollapsed((prev) => !prev)}
                     className="mr-1"
                   >
-                    {toolbarBlocksCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                    {toolbarBlocksCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                   </Button>
                 </Tooltip>
                 {!toolbarBlocksCollapsed && blockTools.map((tool) => (
@@ -1438,7 +1438,7 @@ export default function DashboardPage() {
                     onClick={() => setToolbarGoogleCollapsed((prev) => !prev)}
                     className="mr-1"
                   >
-                    {toolbarGoogleCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                    {toolbarGoogleCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                   </Button>
                 </Tooltip>
                 {!toolbarGoogleCollapsed && googleTools.map((tool) => (

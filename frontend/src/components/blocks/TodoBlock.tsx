@@ -5,13 +5,15 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Plus, Check, X } from "lucide-react";
+import { Plus, Check, X, CheckSquare, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
-import { Badge } from "@/components/ui";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
+import { Badge, Button } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import type { DashboardItem } from "@/types/dashboard";
 
 interface TodoItem {
   id: string;
@@ -23,7 +25,9 @@ interface TodoData extends Record<string, unknown> {
   content: string; // JSON stringified array of TodoItem
   title?: string;
   size: { width: number; height: number };
+  metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
+  onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -56,6 +60,41 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
   const [newItemText, setNewItemText] = React.useState("");
   const [isAdding, setIsAdding] = React.useState(false);
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 250, height: 300 },
+    });
+  };
 
   // Sync content from server
   React.useEffect(() => {
@@ -138,27 +177,55 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
     };
   }, [id, connectionFlow, items, persistItems]);
 
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={<CheckSquare className="w-14 h-14 text-[var(--accent-primary)]" />}
+        label={`${title} (${completedCount}/${items.length})`}
+        onExpand={handleExpand}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
+
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 flex flex-col overflow-visible"
+      className={cn("p-0 flex flex-col overflow-visible", expandAnimation)}
       includeHandles={false}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="text-sm font-medium text-[var(--foreground)] bg-transparent focus:outline-none flex-1"
-          title="Edit todo list title"
-        />
-        <Badge variant="secondary" size="sm" title={`${completedCount} of ${items.length} items completed`}>
-          {completedCount}/{items.length}
-        </Badge>
-      </div>
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col flex-1 overflow-hidden", isAnimatingMinimize && "animate-content-fade-out")}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="text-sm font-medium text-[var(--foreground)] bg-transparent focus:outline-none flex-1"
+            title="Edit todo list title"
+          />
+          <div className="flex items-center gap-1">
+            <Badge variant="secondary" size="sm" title={`${completedCount} of ${items.length} items completed`}>
+              {completedCount}/{items.length}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleMinimize}
+              title="Minimize"
+              className="nodrag h-5 w-5"
+            >
+              <Minimize2 className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
 
-      {/* Items */}
-      <div className="p-2 space-y-1 flex-1 overflow-y-auto">
+        {/* Items */}
+        <div className="p-2 space-y-1 flex-1 overflow-y-auto">
         {items.map((item) => (
           <div
             key={item.id}
@@ -228,6 +295,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
             Add item
           </button>
         )}
+        </div>
       </div>
       <ConnectionHandles
         nodeId={id}

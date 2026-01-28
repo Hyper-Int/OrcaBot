@@ -15,10 +15,12 @@ import {
   FileSpreadsheet,
   ChevronRight,
   ExternalLink,
+  Minimize2,
 } from "lucide-react";
 import { GoogleSheetsIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -46,6 +48,7 @@ interface SheetsData extends Record<string, unknown> {
   content: string;
   size: { width: number; height: number };
   dashboardId?: string;
+  metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
@@ -57,6 +60,41 @@ type SheetsNode = Node<SheetsData, "sheets">;
 export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
   const dashboardId = data.dashboardId;
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 320, height: 240 },
+    });
+  };
 
   // Integration state
   const [integration, setIntegration] = React.useState<SheetsIntegration | null>(null);
@@ -281,6 +319,15 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
             <RefreshCw className={cn("w-3.5 h-3.5", dataLoading && "animate-spin")} />
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleMinimize}
+          title="Minimize"
+          className="nodrag"
+        >
+          <Minimize2 className="w-3.5 h-3.5" />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -317,18 +364,72 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
     </div>
   );
 
+  // Settings menu for minimized view
+  const settingsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Settings"
+          className="nodrag h-5 w-5"
+        >
+          <Settings className="w-3 h-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {integration?.connected && integration?.linked && (
+          <DropdownMenuItem onClick={handleShowPicker}>
+            <FileSpreadsheet className="w-3.5 h-3.5 mr-2" />
+            Change Spreadsheet
+          </DropdownMenuItem>
+        )}
+        {integration?.connected && (
+          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+            <LogOut className="w-3.5 h-3.5 mr-2" />
+            Disconnect Sheets
+          </DropdownMenuItem>
+        )}
+        {!integration?.connected && (
+          <DropdownMenuItem onClick={handleConnect}>
+            <Table className="w-3.5 h-3.5 mr-2" />
+            Connect Sheets
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={<GoogleSheetsIcon className="w-14 h-14" />}
+        label={integration?.spreadsheetName || "Sheets"}
+        onExpand={handleExpand}
+        settingsMenu={settingsMenu}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
+
   // Loading state
   if (loading) {
     return (
-      <BlockWrapper selected={selected} minWidth={320} minHeight={240}>
+      <BlockWrapper selected={selected} minWidth={320} minHeight={240} className={expandAnimation || undefined}>
         <ConnectionHandles
           nodeId={id}
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        {header}
-        <div className="flex items-center justify-center h-full p-4">
-          <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex items-center justify-center h-full p-4">
+            <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+          </div>
         </div>
       </BlockWrapper>
     );
@@ -343,15 +444,17 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        {header}
-        <div className="flex flex-col items-center justify-center h-full p-4">
-          <Table className="w-8 h-8 text-[var(--text-muted)] mb-2" />
-          <p className="text-xs text-[var(--text-muted)] text-center mb-3">
-            Connect Google Sheets to view and edit spreadsheets
-          </p>
-          <Button size="sm" onClick={handleConnect} className="nodrag">
-            Connect Sheets
-          </Button>
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <Table className="w-8 h-8 text-[var(--text-muted)] mb-2" />
+            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
+              Connect Google Sheets to view and edit spreadsheets
+            </p>
+            <Button size="sm" onClick={handleConnect} className="nodrag">
+              Connect Sheets
+            </Button>
+          </div>
         </div>
       </BlockWrapper>
     );
@@ -366,7 +469,7 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className="flex flex-col h-full">
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
             <span className="text-[10px] font-medium text-[var(--text-primary)]">Select Spreadsheet</span>
@@ -435,18 +538,21 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
 
   // Detail view - show spreadsheet data
   return (
-    <BlockWrapper selected={selected} minWidth={320} minHeight={240}>
+    <BlockWrapper selected={selected} minWidth={320} minHeight={240} className={cn(expandAnimation)}>
       <ConnectionHandles
         nodeId={id}
         visible={connectorsVisible}
         onConnectorClick={data.onConnectorClick}
       />
-      <div className="flex flex-col h-full">
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
-        {/* Sheet tabs */}
-        {currentSpreadsheet && currentSpreadsheet.sheets.length > 1 && (
-          <div className="flex items-center gap-0.5 px-1 py-1 border-b border-[var(--border)] bg-[var(--background)] overflow-x-auto">
+        {/* Content */}
+        <div className="flex flex-col flex-1 min-h-0">
+          {/* Sheet tabs */}
+          {currentSpreadsheet && currentSpreadsheet.sheets.length > 1 && (
+            <div className="flex items-center gap-0.5 px-1 py-1 border-b border-[var(--border)] bg-[var(--background)] overflow-x-auto">
             {currentSpreadsheet.sheets.map(sheet => (
               <button
                 key={sheet.sheetId}
@@ -523,6 +629,7 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
               Open in Sheets <ExternalLink className="w-2.5 h-2.5" />
             </a>
           )}
+        </div>
         </div>
       </div>
     </BlockWrapper>

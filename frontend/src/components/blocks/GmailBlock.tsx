@@ -18,10 +18,12 @@ import {
   ChevronLeft,
   Settings,
   LogOut,
+  Minimize2,
 } from "lucide-react";
 import { GmailIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -50,6 +52,7 @@ interface GmailData extends Record<string, unknown> {
   content: string;
   size: { width: number; height: number };
   dashboardId?: string;
+  metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
@@ -61,6 +64,41 @@ type GmailNode = Node<GmailData, "gmail">;
 export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const dashboardId = data.dashboardId;
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 320, height: 400 },
+    });
+  };
 
   // Integration state
   const [integration, setIntegration] = React.useState<GmailIntegration | null>(null);
@@ -280,6 +318,15 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
             <RefreshCw className={cn("w-3.5 h-3.5", syncing && "animate-spin")} />
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleMinimize}
+          title="Minimize"
+          className="nodrag"
+        >
+          <Minimize2 className="w-3.5 h-3.5" />
+        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -310,18 +357,66 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
     </div>
   );
 
+  // Settings menu for minimized view
+  const settingsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Settings"
+          className="nodrag h-5 w-5"
+        >
+          <Settings className="w-3 h-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        {integration?.connected && (
+          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+            <LogOut className="w-3.5 h-3.5 mr-2" />
+            Disconnect Gmail
+          </DropdownMenuItem>
+        )}
+        {!integration?.connected && (
+          <DropdownMenuItem onClick={handleConnect}>
+            <Mail className="w-3.5 h-3.5 mr-2" />
+            Connect Gmail
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={<GmailIcon className="w-14 h-14" />}
+        label={integration?.emailAddress || "Gmail"}
+        onExpand={handleExpand}
+        settingsMenu={settingsMenu}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
+
   // Loading state
   if (loading) {
     return (
-      <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={expandAnimation || undefined}>
         <ConnectionHandles
           nodeId={id}
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        {header}
-        <div className="flex items-center justify-center h-full p-4">
-          <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex items-center justify-center h-full p-4">
+            <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+          </div>
         </div>
       </BlockWrapper>
     );
@@ -336,15 +431,17 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        {header}
-        <div className="flex flex-col items-center justify-center h-full p-4">
-          <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
-          <p className="text-xs text-[var(--text-muted)] text-center mb-3">
-            Connect Gmail to view emails
-          </p>
-          <Button size="sm" onClick={handleConnect} className="nodrag">
-            Connect Gmail
-          </Button>
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
+            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
+              Connect Gmail to view emails
+            </p>
+            <Button size="sm" onClick={handleConnect} className="nodrag">
+              Connect Gmail
+            </Button>
+          </div>
         </div>
       </BlockWrapper>
     );
@@ -359,19 +456,21 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        {header}
-        <div className="flex flex-col items-center justify-center h-full p-4">
-          <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
-          <p className="text-xs text-[var(--text-muted)] text-center mb-3">
-            Enable Gmail sync for this dashboard
-          </p>
-          <Button
-            size="sm"
-            onClick={() => dashboardId && setupGmailMirror(dashboardId).then(() => loadIntegration())}
-            className="nodrag"
-          >
-            Enable Sync
-          </Button>
+        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
+            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
+              Enable Gmail sync for this dashboard
+            </p>
+            <Button
+              size="sm"
+              onClick={() => dashboardId && setupGmailMirror(dashboardId).then(() => loadIntegration())}
+              className="nodrag"
+            >
+              Enable Sync
+            </Button>
+          </div>
         </div>
       </BlockWrapper>
     );
@@ -379,13 +478,14 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
 
   // Main view with messages
   return (
-    <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+    <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
       <ConnectionHandles
         nodeId={id}
         visible={connectorsVisible}
         onConnectorClick={data.onConnectorClick}
       />
-      <div className="flex flex-col h-full">
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
         {/* Two pane layout */}
