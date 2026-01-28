@@ -104,6 +104,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [onedriveParentId, setOnedriveParentId] = React.useState("root");
   const [onedriveLoading, setOnedriveLoading] = React.useState(false);
   const previewFetchRef = React.useRef(0);
+  const integrationLoadedRef = React.useRef<string | null>(null);
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const apiOrigin = React.useMemo(() => new URL(API.cloudflare.base).origin, []);
   const allowDelete = Boolean(sessionId);
@@ -503,16 +504,30 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     }
   }, []);
 
+  // Load all integrations once per dashboard - use ref to prevent duplicate loads
+  // in Strict Mode and Fast Refresh scenarios
   React.useEffect(() => {
-    void loadDriveIntegration();
-    void loadDriveStatus();
-    void loadGithubIntegration();
-    void loadGithubStatus();
-    void loadBoxIntegration();
-    void loadBoxStatus();
-    void loadOnedriveIntegration();
-    void loadOnedriveStatus();
+    const dashboardId = data.dashboardId;
+    if (!dashboardId || !user) return;
+
+    // Skip if we've already loaded for this dashboard
+    if (integrationLoadedRef.current === dashboardId) return;
+    integrationLoadedRef.current = dashboardId;
+
+    // Load all integrations in parallel
+    void Promise.all([
+      loadDriveIntegration(),
+      loadDriveStatus(),
+      loadGithubIntegration(),
+      loadGithubStatus(),
+      loadBoxIntegration(),
+      loadBoxStatus(),
+      loadOnedriveIntegration(),
+      loadOnedriveStatus(),
+    ]);
   }, [
+    data.dashboardId,
+    user,
     loadDriveIntegration,
     loadDriveStatus,
     loadGithubIntegration,

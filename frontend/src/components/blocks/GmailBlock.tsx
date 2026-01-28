@@ -19,6 +19,7 @@ import {
   Settings,
   LogOut,
 } from "lucide-react";
+import { GmailIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { Button } from "@/components/ui/button";
@@ -77,8 +78,9 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const [selectedMessage, setSelectedMessage] = React.useState<GmailMessage | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
 
-  // Track if initial load is done
+  // Track if initial load is done (per dashboard to handle Fast Refresh/Strict Mode)
   const initialLoadDone = React.useRef(false);
+  const loadedDashboardRef = React.useRef<string | null>(null);
 
   // Load integration status
   const loadIntegration = React.useCallback(async () => {
@@ -118,10 +120,13 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
     }
   }, [dashboardId]);
 
-  // Initial load
+  // Initial load - skip duplicate loads in Strict Mode/Fast Refresh
   React.useEffect(() => {
+    if (!dashboardId) return;
+    if (loadedDashboardRef.current === dashboardId) return;
+    loadedDashboardRef.current = dashboardId;
     loadIntegration();
-  }, [loadIntegration]);
+  }, [dashboardId, loadIntegration]);
 
   // Load messages when integration is ready (use booleans to avoid flicker from object reference changes)
   const gmailReady = Boolean(integration?.connected && integration?.linked);
@@ -258,7 +263,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-      <Mail className="w-3.5 h-3.5 text-red-500" />
+      <GmailIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
         {integration?.emailAddress || status?.emailAddress || "Gmail"}
       </div>

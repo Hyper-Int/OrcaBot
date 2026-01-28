@@ -17,6 +17,7 @@ import {
   User,
   Clock,
 } from "lucide-react";
+import { GoogleFormsIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { Button } from "@/components/ui/button";
@@ -76,8 +77,9 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
   // View mode: "picker" | "detail" - always start on picker
   const [viewMode, setViewMode] = React.useState<"picker" | "detail">("picker");
 
-  // Track if initial load is done
+  // Track if initial load is done (per dashboard to handle Fast Refresh/Strict Mode)
   const initialLoadDone = React.useRef(false);
+  const loadedDashboardRef = React.useRef<string | null>(null);
 
   // Load integration status
   const loadIntegration = React.useCallback(async () => {
@@ -132,10 +134,13 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
     }
   }, [integration, dashboardId]);
 
-  // Initial load
+  // Initial load - skip duplicate loads in Strict Mode/Fast Refresh
   React.useEffect(() => {
+    if (!dashboardId) return;
+    if (loadedDashboardRef.current === dashboardId) return;
+    loadedDashboardRef.current = dashboardId;
     loadIntegration();
-  }, [loadIntegration]);
+  }, [dashboardId, loadIntegration]);
 
   // Load forms list when connected (for picker view)
   React.useEffect(() => {
@@ -259,7 +264,7 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-      <FileText className="w-3.5 h-3.5 text-purple-500" />
+      <GoogleFormsIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
         {integration?.formTitle || integration?.emailAddress || "Forms"}
       </div>
