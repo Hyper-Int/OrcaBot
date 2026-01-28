@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,7 +48,8 @@ func (c *CDPClient) Connect() error {
 	}
 
 	// Get list of targets to find a page target
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
 	if err != nil {
 		return fmt.Errorf("failed to list targets: %w", err)
 	}
@@ -276,7 +278,7 @@ func (c *CDPClient) Click(selector string) error {
 		return fmt.Errorf("failed to parse box model: %w", err)
 	}
 
-	if len(box.Model.Content) < 4 {
+	if len(box.Model.Content) < 6 {
 		return fmt.Errorf("invalid box model for element")
 	}
 
@@ -515,11 +517,27 @@ func (c *Controller) Screenshot(outputPath string) (string, error) {
 		return "", err
 	}
 
-	// Determine output path
+	// Determine output path - always resolve within workspace
 	if outputPath == "" {
 		outputPath = filepath.Join(c.workspace, fmt.Sprintf("screenshot-%d.png", time.Now().Unix()))
-	} else if !filepath.IsAbs(outputPath) {
+	} else if filepath.IsAbs(outputPath) {
+		// Reject absolute paths to prevent writes outside workspace
+		return "", fmt.Errorf("absolute paths are not allowed; use a relative path")
+	} else {
 		outputPath = filepath.Join(c.workspace, outputPath)
+	}
+
+	// Verify resolved path is within workspace (prevent ../ traversal)
+	resolved, err := filepath.Abs(outputPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path: %w", err)
+	}
+	workspaceAbs, err := filepath.Abs(c.workspace)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve workspace: %w", err)
+	}
+	if !strings.HasPrefix(resolved, workspaceAbs+string(filepath.Separator)) && resolved != workspaceAbs {
+		return "", fmt.Errorf("path escapes workspace directory")
 	}
 
 	// Ensure directory exists

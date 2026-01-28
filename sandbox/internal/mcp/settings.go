@@ -344,7 +344,7 @@ func ReadSettings(workspaceRoot string) (*Settings, error) {
 	return &settings, nil
 }
 
-// UpdateSettings merges new MCP servers into existing settings (all formats)
+// UpdateSettings merges new MCP servers into existing settings and regenerates all config files
 func UpdateSettings(workspaceRoot string, newServers map[string]MCPServerConfig) error {
 	settings, err := ReadSettings(workspaceRoot)
 	if err != nil {
@@ -355,5 +355,27 @@ func UpdateSettings(workspaceRoot string, newServers map[string]MCPServerConfig)
 		settings.MCPServers[name] = config
 	}
 
-	return GenerateSettings(workspaceRoot, "", nil)
+	// Write all formats using the merged server configs
+	var errs []error
+
+	if err := generateClaudeSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("claude: %w", err))
+	}
+	if err := generateOpenCodeSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("opencode: %w", err))
+	}
+	if err := generateGeminiSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("gemini: %w", err))
+	}
+	if err := generateCodexSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("codex: %w", err))
+	}
+	if err := generateDroidSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("droid: %w", err))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("settings update errors: %v", errs)
+	}
+	return nil
 }
