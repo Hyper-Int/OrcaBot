@@ -10,6 +10,10 @@
  * - Session state notifications
  *
  * NOT a database - can be rebuilt from D1 at any time.
+ *
+ * Supports Durable Object hibernation - WebSocket connections survive
+ * hibernation, but in-memory state (sessions, presence, userConnectionCount)
+ * must be rehydrated from getWebSockets() on wake.
  */
 
 import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session, DashboardEdge, UICommand } from '../types';
@@ -17,6 +21,12 @@ import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session, Da
 interface WebSocketAttachment {
   userId: string;
   userName: string;
+}
+
+// Type for WebSocket with hibernation API methods
+interface HibernatingWebSocket extends WebSocket {
+  serializeAttachment?: (data: WebSocketAttachment) => void;
+  deserializeAttachment?: () => WebSocketAttachment | null;
 }
 
 // Rate limiter for error logging to prevent log spam
@@ -82,9 +92,102 @@ export class DashboardDO implements DurableObject {
     });
   }
 
+  /**
+   * Safely serialize attachment to a WebSocket (hibernation support).
+   * No-op if hibernation APIs aren't available.
+   */
+  private safeSerializeAttachment(ws: WebSocket, attachment: WebSocketAttachment): void {
+    const hws = ws as HibernatingWebSocket;
+    if (typeof hws.serializeAttachment === 'function') {
+      try {
+        hws.serializeAttachment(attachment);
+      } catch {
+        // Serialization not supported in this environment
+      }
+    }
+  }
+
+  /**
+   * Safely deserialize attachment from a WebSocket (hibernation support).
+   * Returns null if hibernation APIs aren't available or deserialization fails.
+   */
+  private safeDeserializeAttachment(ws: WebSocket): WebSocketAttachment | null {
+    const hws = ws as HibernatingWebSocket;
+    if (typeof hws.deserializeAttachment === 'function') {
+      try {
+        return hws.deserializeAttachment();
+      } catch {
+        // Deserialization not supported or failed
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Rehydrate sessions, presence, and userConnectionCount from getWebSockets().
+   * Called after hibernation when in-memory state is empty but WebSocket connections exist.
+   */
+  private rehydrateFromWebSockets(): void {
+    const allWebSockets = this.state.getWebSockets();
+
+    // Skip if sessions are already populated
+    if (this.sessions.size > 0) {
+      return;
+    }
+
+    // Skip if no WebSockets to rehydrate from
+    if (allWebSockets.length === 0) {
+      return;
+    }
+
+    console.log(`[DashboardDO] Rehydrating state from ${allWebSockets.length} WebSocket(s)`);
+
+    // Clear and rebuild all connection state
+    this.sessions.clear();
+    this.presence.clear();
+    this.userConnectionCount.clear();
+
+    for (const ws of allWebSockets) {
+      const attachment = this.safeDeserializeAttachment(ws);
+      if (attachment) {
+        // Rebuild sessions map
+        this.sessions.set(ws, attachment);
+
+        // Rebuild connection count
+        const currentCount = this.userConnectionCount.get(attachment.userId) || 0;
+        this.userConnectionCount.set(attachment.userId, currentCount + 1);
+
+        // Rebuild presence (only if not already present for this user)
+        if (!this.presence.has(attachment.userId)) {
+          this.presence.set(attachment.userId, {
+            userId: attachment.userId,
+            userName: attachment.userName,
+            cursor: null,
+            selectedItemId: null,
+            connectedAt: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    console.log(`[DashboardDO] Rehydrated: ${this.sessions.size} sessions, ${this.presence.size} users`);
+  }
+
+  /**
+   * Get the count of connected WebSockets, accounting for hibernation.
+   * Uses getWebSockets() which returns accurate count even after hibernation.
+   */
+  private getConnectedClientCount(): number {
+    return this.state.getWebSockets().length;
+  }
+
   async fetch(request: Request): Promise<Response> {
     // Ensure initialization is complete (defense-in-depth)
     await this.initPromise;
+
+    // Rehydrate WebSocket state if needed (after hibernation)
+    this.rehydrateFromWebSockets();
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -191,7 +294,8 @@ export class DashboardDO implements DurableObject {
       const data = await request.json() as { url?: string };
       const url = typeof data.url === 'string' ? data.url : '';
       if (url) {
-        if (this.sessions.size === 0) {
+        // Use getConnectedClientCount() for accurate count after hibernation
+        if (this.getConnectedClientCount() === 0) {
           this.pendingBrowserOpenUrl = url;
           await this.persistState();
         } else {
@@ -205,8 +309,9 @@ export class DashboardDO implements DurableObject {
     // POST /ui-command - Execute a UI command from an agent
     if (path === '/ui-command' && request.method === 'POST') {
       const command = await request.json() as UICommand;
+      const connectedClients = this.getConnectedClientCount();
 
-      console.log(`[DashboardDO] Received ui-command: ${command.type}, command_id: ${command.command_id}, connected clients: ${this.sessions.size}`);
+      console.log(`[DashboardDO] Received ui-command: ${command.type}, command_id: ${command.command_id}, connected clients: ${connectedClients}`);
 
       // Broadcast the UI command to all connected clients
       this.broadcast({ type: 'ui_command', command });
@@ -247,11 +352,16 @@ export class DashboardDO implements DurableObject {
   }
 
   private handleWebSocket(ws: WebSocket, userId: string, userName: string): void {
+    const attachment: WebSocketAttachment = { userId, userName };
+
+    // Serialize attachment so it survives hibernation
+    this.safeSerializeAttachment(ws, attachment);
+
     // Accept the WebSocket
     this.state.acceptWebSocket(ws);
 
-    // Store attachment
-    this.sessions.set(ws, { userId, userName });
+    // Store attachment in memory for quick access
+    this.sessions.set(ws, attachment);
 
     // Track connection count for multi-tab support
     const currentCount = this.userConnectionCount.get(userId) || 0;
@@ -297,8 +407,23 @@ export class DashboardDO implements DurableObject {
   webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     if (typeof message !== 'string') return;
 
+    // Rehydrate state if needed (after hibernation)
+    this.rehydrateFromWebSockets();
+
+    // Get attachment from sessions Map
     const attachment = this.sessions.get(ws);
     if (!attachment) return;
+
+    // Ensure user has presence entry (might be missing after rehydration with cursor/select message)
+    if (!this.presence.has(attachment.userId)) {
+      this.presence.set(attachment.userId, {
+        userId: attachment.userId,
+        userName: attachment.userName,
+        cursor: null,
+        selectedItemId: null,
+        connectedAt: new Date().toISOString(),
+      });
+    }
 
     try {
       const msg = JSON.parse(message) as CollabMessage;
@@ -336,24 +461,27 @@ export class DashboardDO implements DurableObject {
   }
 
   webSocketClose(ws: WebSocket): void {
+    // Rehydrate state if needed (after hibernation) - ensures accurate connection counts
+    this.rehydrateFromWebSockets();
+
     const attachment = this.sessions.get(ws);
-    if (attachment) {
-      this.sessions.delete(ws);
+    if (!attachment) return;
 
-      // Decrement connection count
-      const currentCount = this.userConnectionCount.get(attachment.userId) || 1;
-      const newCount = currentCount - 1;
+    this.sessions.delete(ws);
 
-      if (newCount <= 0) {
-        // Last connection closed - remove presence and notify
-        this.userConnectionCount.delete(attachment.userId);
-        this.presence.delete(attachment.userId);
-        // Use snake_case for frontend
-        this.broadcast({ type: 'leave', user_id: attachment.userId });
-      } else {
-        // User still has other connections open
-        this.userConnectionCount.set(attachment.userId, newCount);
-      }
+    // Decrement connection count using actual count from userConnectionCount
+    const currentCount = this.userConnectionCount.get(attachment.userId) || 0;
+    const newCount = currentCount - 1;
+
+    if (newCount <= 0) {
+      // Last connection closed - remove presence and notify
+      this.userConnectionCount.delete(attachment.userId);
+      this.presence.delete(attachment.userId);
+      // Use snake_case for frontend
+      this.broadcast({ type: 'leave', user_id: attachment.userId });
+    } else {
+      // User still has other connections open
+      this.userConnectionCount.set(attachment.userId, newCount);
     }
   }
 
@@ -364,7 +492,10 @@ export class DashboardDO implements DurableObject {
   private broadcast(message: CollabMessage, exclude?: WebSocket): void {
     const msgStr = JSON.stringify(message);
     let sentCount = 0;
-    for (const [ws] of this.sessions) {
+    // Use getWebSockets() to get all connected WebSockets, including those
+    // that survived hibernation but aren't in our sessions Map yet
+    const allWebSockets = this.state.getWebSockets();
+    for (const ws of allWebSockets) {
       if (ws !== exclude) {
         try {
           ws.send(msgStr);
