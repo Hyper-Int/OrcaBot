@@ -361,6 +361,9 @@ body {
 /* ===== React Flow Overrides ===== */
 .react-flow__node {
   cursor: grab;
+  /* Animate size changes for smooth minimize/expand with edge following */
+  transition: width 350ms cubic-bezier(0.34, 1.56, 0.64, 1),
+              height 350ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .react-flow__node:active {
@@ -392,4 +395,49 @@ body {
 
 .react-flow__background pattern {
   stroke: var(--border) !important;
+}
+
+/* ===== Minimize/Expand Animations ===== */
+@keyframes minimize-bounce {
+  0% { transform: scale(0.2); opacity: 0; }
+  50% { transform: scale(1.15); opacity: 1; }
+  75% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+@keyframes expand-bounce {
+  0% { transform: scale(0.2); opacity: 0; }
+  50% { transform: scale(1.15); opacity: 1; }
+  75% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+/* Shrink and fade out the full block during minimize */
+@keyframes shrink-fade-out {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-minimize-bounce {
+  animation: minimize-bounce 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  transform-origin: center center;
+}
+
+.animate-expand-bounce {
+  animation: expand-bounce 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  transform-origin: center center;
+}
+
+.animate-shrink-fade-out {
+  animation: shrink-fade-out 350ms ease-out forwards;
+}
+
+/* Quick fade for content during minimize */
+@keyframes content-fade-out {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-content-fade-out {
+  animation: content-fade-out 100ms ease-out forwards;
 }

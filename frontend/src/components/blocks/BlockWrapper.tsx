@@ -51,7 +51,7 @@ export function BlockWrapper({
       )}
       <div
         className={cn(
-          "relative rounded-[var(--radius-card)] transition-shadow w-full group",
+          "relative rounded-[var(--radius-card)] transition-shadow w-full group overflow-hidden",
           autoHeight ? "h-auto" : "h-full",
           "bg-[var(--background-elevated)] border border-[var(--border)]",
           // Shadow states

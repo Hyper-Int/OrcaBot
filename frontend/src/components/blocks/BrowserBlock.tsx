@@ -5,9 +5,11 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Globe, RefreshCw, X } from "lucide-react";
+import { Globe, RefreshCw, X, Minimize2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { ApiError } from "@/lib/api/client";
@@ -19,6 +21,7 @@ interface BrowserData extends Record<string, unknown> {
   content: string;
   size: { width: number; height: number };
   dashboardId?: string;
+  metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
@@ -70,6 +73,42 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const lastOpenedRef = React.useRef<string | null>(null);
   const user = useAuthStore((state) => state.user);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size; // Capture before resize
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 800, height: 600 },
+    });
+  };
 
   const dashboardId = data.dashboardId;
 
@@ -95,6 +134,15 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
         <Button
           variant="ghost"
           size="icon-sm"
+          onClick={handleMinimize}
+          title="Minimize"
+          className="nodrag"
+        >
+          <Minimize2 className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={() => {
             if (!dashboardId) return;
             stopDashboardBrowser(dashboardId).finally(() => {
@@ -110,6 +158,21 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       </div>
     </div>
   );
+
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={<Globe className="w-14 h-14 text-[var(--foreground-subtle)]" />}
+        label={status === "running" ? "Browser" : status === "starting" ? "Starting..." : "Stopped"}
+        onExpand={handleExpand}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
 
   React.useEffect(() => {
     if (!dashboardId) {
@@ -197,28 +260,31 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 flex flex-col overflow-visible"
+      className={cn("p-0 flex flex-col overflow-visible", expandAnimation)}
       minWidth={200}
       minHeight={30}
       includeHandles={false}
     >
-      {header}
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col flex-1 min-h-0", isAnimatingMinimize && "animate-content-fade-out")}>
+        {header}
 
-      <div className="relative flex-1 min-h-0 bg-white flex flex-col">
-        {status === "running" && browserUrl ? (
-          <div className="flex-1 min-h-0">
-            <iframe
-              key={refreshKey}
-              title="Browser"
-              src={browserUrl}
-              className="w-full h-full"
-            />
-          </div>
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--foreground-muted)]">
-            {errorMessage || "Starting browser..."}
-          </div>
-        )}
+        <div className="relative flex-1 min-h-0 bg-white flex flex-col">
+          {status === "running" && browserUrl ? (
+            <div className="flex-1 min-h-0">
+              <iframe
+                key={refreshKey}
+                title="Browser"
+                src={browserUrl}
+                className="w-full h-full"
+              />
+            </div>
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--foreground-muted)]">
+              {errorMessage || "Starting browser..."}
+            </div>
+          )}
+        </div>
       </div>
       <ConnectionHandles
         nodeId={id}

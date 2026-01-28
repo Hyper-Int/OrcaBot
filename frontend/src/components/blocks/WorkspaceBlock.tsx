@@ -5,9 +5,12 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Folder, Cloud, Github, Box, HardDrive, Loader2 } from "lucide-react";
+import { Folder, Cloud, Github, Box, HardDrive, Loader2, Minimize2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
+import type { DashboardItem } from "@/types/dashboard";
 import {
   Button,
   DropdownMenu,
@@ -63,6 +66,8 @@ interface WorkspaceData extends Record<string, unknown> {
   size: { width: number; height: number };
   sessionId?: string;
   dashboardId?: string;
+  metadata?: { minimized?: boolean; [key: string]: unknown };
+  onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -74,6 +79,42 @@ type IntegrationProvider = "google-drive" | "github" | "box" | "onedrive";
 export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>) {
   const { user } = useAuthStore();
   const sessionId = data.sessionId;
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 460, height: 300 },
+    });
+  };
+
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set(["/"]));
   const [fileEntries, setFileEntries] = React.useState<Record<string, SessionFileEntry[]>>({});
   const [fileError, setFileError] = React.useState<string | null>(null);
@@ -860,24 +901,51 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     return url.toString();
   }, [data.dashboardId, user]);
 
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    const integrationCount = [isDriveLinked, isGithubLinked, isBoxLinked, isOnedriveLinked].filter(Boolean).length;
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={<Folder className="w-14 h-14 text-[var(--foreground-subtle)]" />}
+        label={integrationCount > 0 ? `Workspace (${integrationCount})` : "Workspace"}
+        onExpand={handleExpand}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
+
   return (
     <BlockWrapper
       selected={selected}
-      className="p-0 flex flex-col overflow-visible"
+      className={cn("p-0 flex flex-col overflow-visible", expandAnimation)}
       minWidth={460}
       minHeight={110}
       includeHandles={false}
     >
-      <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-        <span title="Workspace icon">
-          <Folder className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
-        </span>
-        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)]" title="Workspace files and integrations">
-          Workspace
-        </span>
-      </div>
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col flex-1 min-h-0", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
+          <span title="Workspace icon">
+            <Folder className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)] flex-1" title="Workspace files and integrations">
+            Workspace
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleMinimize}
+            title="Minimize"
+            className="nodrag h-5 w-5"
+          >
+            <Minimize2 className="w-3 h-3" />
+          </Button>
+        </div>
 
-      <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-h-0 border-r border-[var(--border)] bg-white text-[var(--foreground)] dark:bg-[var(--background)]">
           {(driveIntegration?.connected || sessionId) ? (
             <div className="h-full overflow-auto">
@@ -1082,6 +1150,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
               </Button>
             )}
           </div>
+        </div>
         </div>
       </div>
       <ConnectionHandles

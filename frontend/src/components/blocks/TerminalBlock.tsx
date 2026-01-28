@@ -29,10 +29,12 @@ import {
   RefreshCw,
   Pencil,
   Eye,
+  Minimize2,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import {
   Button,
   Badge,
@@ -88,10 +90,11 @@ interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
   size: { width: number; height: number };
   dashboardId: string;
+  metadata?: { minimized?: boolean; [key: string]: unknown };
   // Session info (can be injected from parent or fetched)
   session?: Session;
   onRegisterTerminal?: (itemId: string, handle: TerminalHandle | null) => void;
-  onItemChange?: (changes: Partial<{ content: string }>) => void;
+  onItemChange?: (changes: Partial<{ content: string; metadata?: Record<string, unknown>; size?: { width: number; height: number } }>) => void;
   onCreateBrowserBlock?: (
     url: string,
     anchor?: { x: number; y: number },
@@ -384,6 +387,42 @@ export function TerminalBlock({
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = React.useCallback(() => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  }, [data]);
+
+  const handleExpand = React.useCallback(() => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 600, height: 400 },
+    });
+  }, [data]);
+
   const setTerminalRef = React.useCallback(
     (handle: TerminalHandle | null) => {
       terminalRef.current = handle;
@@ -2062,8 +2101,10 @@ export function TerminalBlock({
         </div>
       )}
 
-      {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
-      <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
+      {/* All content fades during minimize */}
+      <div className={cn("flex flex-col flex-1 min-h-0", isAnimatingMinimize && "animate-content-fade-out")}>
+        {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
+        <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         <div className="flex items-center gap-1.5" style={{ pointerEvents: "auto" }}>
           {terminalName === "Claude Code" ? (
             <img src="/icons/claude.ico" alt="Claude Code icon" title="Claude Code icon" className="w-4 h-4" />
@@ -2208,6 +2249,18 @@ export function TerminalBlock({
               {agentState === "running" ? "Agent" : agentState}
             </Badge>
           )}
+
+          {/* Minimize button */}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleMinimize}
+            className="h-7 w-7 nodrag"
+            style={{ pointerEvents: "auto" }}
+            title="Minimize"
+          >
+            <Minimize2 className="w-5 h-5" />
+          </Button>
 
           {/* Settings menu */}
           <DropdownMenu>
@@ -2375,15 +2428,72 @@ export function TerminalBlock({
           </div>
         )}
       </div>
+      </div>
     </div>
   );
+
+  // Minimized view - use settings menu from dropdown if available
+  // Only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    // Determine icon based on terminal name
+    const minimizedIcon = terminalName === "Claude Code" ? (
+      <img src="/icons/claude.ico" alt="Claude Code" className="w-14 h-14" />
+    ) : terminalName === "Gemini CLI" ? (
+      <img src="/icons/gemini.ico" alt="Gemini CLI" className="w-14 h-14" />
+    ) : terminalName === "Codex" ? (
+      <img src="/icons/codex.png" alt="Codex" className="w-14 h-14" />
+    ) : terminalName === "OpenCode" ? (
+      <img src="/icons/opencode.ico" alt="OpenCode" className="w-14 h-14" />
+    ) : terminalName === "GitHub Copilot CLI" ? (
+      <img src="/icons/github.png" alt="GitHub Copilot" className="w-14 h-14" />
+    ) : terminalName === "Droid" ? (
+      <img src="/icons/droid.png" alt="Droid" className="w-14 h-14" />
+    ) : (
+      <Terminal className="w-14 h-14 text-[var(--foreground-subtle)]" />
+    );
+
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={minimizedIcon}
+        label={terminalName}
+        onExpand={handleExpand}
+        settingsMenu={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Settings"
+                className="nodrag h-5 w-5"
+              >
+                <Settings className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-36">
+              <DropdownMenuItem
+                onSelect={() => deleteElements({ nodes: [{ id }] })}
+                className="text-red-500"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
 
   return (
     <>
       {/* Invisible placeholder node in ReactFlow for drag/resize handling */}
       <BlockWrapper
         selected={selected}
-        className="p-0 overflow-hidden"
+        className={cn("p-0 overflow-hidden", expandAnimation, isAnimatingMinimize && "animate-shrink-fade-out")}
         minWidth={300}
         minHeight={200}
         includeHandles={false}
