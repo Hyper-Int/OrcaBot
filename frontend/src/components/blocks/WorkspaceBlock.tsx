@@ -27,24 +27,28 @@ import {
   getGoogleDriveManifest,
   syncGoogleDrive,
   unlinkGoogleDriveFolder,
+  disconnectGoogleDrive,
   getGithubIntegration,
   getGithubManifest,
   getGithubSyncStatus,
   listGithubRepos,
   setGithubRepo,
   unlinkGithubRepo,
+  disconnectGithub,
   getBoxIntegration,
   getBoxManifest,
   getBoxSyncStatus,
   listBoxFolders,
   setBoxFolder,
   unlinkBoxFolder,
+  disconnectBox,
   getOnedriveIntegration,
   getOnedriveManifest,
   getOnedriveSyncStatus,
   listOnedriveFolders,
   setOnedriveFolder,
   unlinkOnedriveFolder,
+  disconnectOnedrive,
   type GoogleDriveIntegration,
   type GoogleDriveSyncStatus,
   type GoogleDriveManifest,
@@ -773,6 +777,54 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     }
   }, [data.dashboardId, loadOnedriveIntegration]);
 
+  const handleDisconnectDrive = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of Google Drive? This will unlink all Drive folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectGoogleDrive();
+      setDriveIntegration(null);
+      setDriveStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect Drive");
+    }
+  }, []);
+
+  const handleDisconnectGithub = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of GitHub? This will unlink all repos from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectGithub();
+      setGithubIntegration(null);
+      setGithubStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect GitHub");
+    }
+  }, []);
+
+  const handleDisconnectBox = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of Box? This will unlink all Box folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectBox();
+      setBoxIntegration(null);
+      setBoxStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect Box");
+    }
+  }, []);
+
+  const handleDisconnectOnedrive = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of OneDrive? This will unlink all OneDrive folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectOnedrive();
+      setOnedriveIntegration(null);
+      setOnedriveStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect OneDrive");
+    }
+  }, []);
+
   const handleSelectOnedriveFolder = React.useCallback(async (folder: OnedriveFolder) => {
     if (!data.dashboardId) return;
     try {
@@ -1008,6 +1060,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   >
                     Unlink
                   </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleDisconnectDrive}
+                    className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                  >
+                    Sign out
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
@@ -1049,6 +1107,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
                     Unlink
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleDisconnectGithub}
+                    className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                  >
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1092,6 +1156,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   >
                     Unlink
                   </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleDisconnectBox}
+                    className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                  >
+                    Sign out
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
@@ -1133,6 +1203,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
                     Unlink
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={handleDisconnectOnedrive}
+                    className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                  >
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

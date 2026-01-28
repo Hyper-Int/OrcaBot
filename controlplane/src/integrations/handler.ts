@@ -263,6 +263,18 @@ async function refreshGoogleAccessToken(env: EnvWithDriveCache, userId: string):
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Google Drive token refresh failed:', tokenResponse.status, errBody);
+
+    // Check for invalid_grant which means the refresh token is revoked/expired
+    // Auto-disconnect the user so they can re-authenticate
+    if (errBody.includes('invalid_grant') || tokenResponse.status === 400 || tokenResponse.status === 401) {
+      console.log('Auto-disconnecting Google Drive due to invalid refresh token for user:', userId);
+      await env.DB.prepare(`DELETE FROM drive_mirrors WHERE user_id = ?`).bind(userId).run();
+      await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_drive'`).bind(userId).run();
+      throw new Error('Google Drive session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh Google access token.');
   }
 
@@ -320,6 +332,17 @@ async function refreshBoxAccessToken(env: EnvWithDriveCache, userId: string): Pr
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Box token refresh failed:', tokenResponse.status, errBody);
+
+    // Auto-disconnect on invalid/expired refresh token
+    if (errBody.includes('invalid_grant') || tokenResponse.status === 400 || tokenResponse.status === 401) {
+      console.log('Auto-disconnecting Box due to invalid refresh token for user:', userId);
+      await env.DB.prepare(`DELETE FROM box_mirrors WHERE user_id = ?`).bind(userId).run();
+      await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'box'`).bind(userId).run();
+      throw new Error('Box session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh Box access token.');
   }
 
@@ -378,6 +401,17 @@ async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string
   });
 
   if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('OneDrive token refresh failed:', tokenResponse.status, errBody);
+
+    // Auto-disconnect on invalid/expired refresh token
+    if (errBody.includes('invalid_grant') || tokenResponse.status === 400 || tokenResponse.status === 401) {
+      console.log('Auto-disconnecting OneDrive due to invalid refresh token for user:', userId);
+      await env.DB.prepare(`DELETE FROM onedrive_mirrors WHERE user_id = ?`).bind(userId).run();
+      await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'onedrive'`).bind(userId).run();
+      throw new Error('OneDrive session expired. Please reconnect.');
+    }
+
     throw new Error('Failed to refresh OneDrive access token.');
   }
 
@@ -1258,6 +1292,37 @@ export async function unlinkGithubRepо(
   return Response.json({ ok: true });
 }
 
+export async function disconnectGithub(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's GitHub mirrors and cached files
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM github_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('github', mirror.dashboard_id));
+    if (manifestObject) {
+      const manifest = await manifestObject.json<DriveManifest>();
+      await env.DRIVE_CACHE.delete(mirrorManifestKey('github', mirror.dashboard_id));
+      for (const entry of manifest.entries) {
+        await env.DRIVE_CACHE.delete(mirrorFileKey('github', mirror.dashboard_id, entry.id));
+      }
+    }
+  }
+  await env.DB.prepare(`DELETE FROM github_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'github'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
 async function updateGithubMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -1853,6 +1918,37 @@ export async function unlinkBоxFоlder(
   return Response.json({ ok: true });
 }
 
+export async function disconnectBox(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's Box mirrors and cached files
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM box_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('box', mirror.dashboard_id));
+    if (manifestObject) {
+      const manifest = await manifestObject.json<DriveManifest>();
+      await env.DRIVE_CACHE.delete(mirrorManifestKey('box', mirror.dashboard_id));
+      for (const entry of manifest.entries) {
+        await env.DRIVE_CACHE.delete(mirrorFileKey('box', mirror.dashboard_id, entry.id));
+      }
+    }
+  }
+  await env.DB.prepare(`DELETE FROM box_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'box'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
 async function updateBoxMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -2428,6 +2524,37 @@ export async function unlinkОnedriveFоlder(
   return Response.json({ ok: true });
 }
 
+export async function disconnectOnedrive(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's OneDrive mirrors and cached files
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM onedrive_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('onedrive', mirror.dashboard_id));
+    if (manifestObject) {
+      const manifest = await manifestObject.json<DriveManifest>();
+      await env.DRIVE_CACHE.delete(mirrorManifestKey('onedrive', mirror.dashboard_id));
+      for (const entry of manifest.entries) {
+        await env.DRIVE_CACHE.delete(mirrorFileKey('onedrive', mirror.dashboard_id, entry.id));
+      }
+    }
+  }
+  await env.DB.prepare(`DELETE FROM onedrive_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'onedrive'`).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
 async function updateOnedriveMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -2913,6 +3040,37 @@ export async function unlinkGооgleDriveFоlder(
   await env.DB.prepare(`
     DELETE FROM drive_mirrors WHERE dashboard_id = ? AND user_id = ?
   `).bind(dashboardId, auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function disconnectGoogleDrive(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete all user's Drive mirrors and cached files
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM drive_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    const manifestObject = await env.DRIVE_CACHE.get(driveManifestKey(mirror.dashboard_id));
+    if (manifestObject) {
+      const manifest = await manifestObject.json<DriveManifest>();
+      await env.DRIVE_CACHE.delete(driveManifestKey(mirror.dashboard_id));
+      for (const entry of manifest.entries) {
+        await env.DRIVE_CACHE.delete(driveFileKey(mirror.dashboard_id, entry.id));
+      }
+    }
+  }
+  await env.DB.prepare(`DELETE FROM drive_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
+
+  // Delete integration
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_drive'`).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });
 }
