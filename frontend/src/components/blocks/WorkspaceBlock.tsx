@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Folder, Cloud, Github, Box, HardDrive, Loader2, Minimize2 } from "lucide-react";
+import { Folder, Cloud, Github, Box, HardDrive, Loader2, Minimize2, Settings, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
@@ -122,6 +122,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [expandedPaths, setExpandedPaths] = React.useState<Set<string>>(new Set(["/"]));
   const [fileEntries, setFileEntries] = React.useState<Record<string, SessionFileEntry[]>>({});
   const [fileError, setFileError] = React.useState<string | null>(null);
+  const [showHiddenFiles, setShowHiddenFiles] = React.useState(false);
   const [driveIntegration, setDriveIntegration] = React.useState<GoogleDriveIntegration | null>(null);
   const [driveStatus, setDriveStatus] = React.useState<GoogleDriveSyncStatus | null>(null);
   const [driveSyncing, setDriveSyncing] = React.useState(false);
@@ -947,7 +948,10 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const renderFileTree = React.useCallback(
     (path: string, depth = 0) => {
       const entries = fileEntries[path] || [];
-      return entries.map((entry) => {
+      const filteredEntries = showHiddenFiles
+        ? entries
+        : entries.filter((entry) => !entry.name.startsWith("."));
+      return filteredEntries.map((entry) => {
         const isExpanded = expandedPaths.has(entry.path);
         const isDir = entry.is_dir;
         return (
@@ -988,7 +992,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
         );
       });
     },
-    [allowDelete, expandedPaths, fileEntries, handleDeletePath, togglePath]
+    [allowDelete, expandedPaths, fileEntries, handleDeletePath, showHiddenFiles, togglePath]
   );
 
   React.useEffect(() => {
@@ -1057,6 +1061,31 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
           <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)] flex-1" title="Workspace files and integrations">
             Workspace
           </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title="Workspace settings"
+                className="nodrag h-5 w-5"
+              >
+                <Settings className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem
+                onSelect={() => setShowHiddenFiles((prev) => !prev)}
+                className="flex items-center gap-2"
+              >
+                {showHiddenFiles ? (
+                  <EyeOff className="w-3 h-3" />
+                ) : (
+                  <Eye className="w-3 h-3" />
+                )}
+                <span>{showHiddenFiles ? "Hide hidden files" : "Show hidden files"}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon-sm"

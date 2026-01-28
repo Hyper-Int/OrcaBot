@@ -344,12 +344,14 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
 
-	// Generate Claude Code settings file with MCP server configurations
+	// Generate MCP settings file only for the specific agent being launched
 	// This allows agents to discover the orcabot MCP server and user's MCP tools
-	userTools := s.fetchUserMCPTools()
-	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools); err != nil {
-		// Log but don't fail - settings generation is not critical for PTY creation
-		fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings: %v\n", err)
+	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
+		userTools := s.fetchUserMCPTools()
+		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
+			// Log but don't fail - settings generation is not critical for PTY creation
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
+		}
 	}
 
 	p, err := pty.NewWithCommandEnv(command, 80, 24, s.workspace.Root(), envVars)

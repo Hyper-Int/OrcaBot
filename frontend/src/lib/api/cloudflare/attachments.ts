@@ -10,6 +10,13 @@ export type SessionAttachmentSpec = {
   content?: string;
 };
 
+export type McpToolAttachmentSpec = {
+  name: string;
+  serverUrl: string;
+  transport: string;
+  config?: Record<string, unknown>;
+};
+
 export type SessionAttachmentRequest = {
   terminalType: string;
   attach?: {
@@ -20,6 +27,7 @@ export type SessionAttachmentRequest = {
     agents?: string[];
     skills?: string[];
   };
+  mcpTools?: McpToolAttachmentSpec[];
 };
 
 export async function attachSessionResources(
