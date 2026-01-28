@@ -22,13 +22,16 @@ import {
   Upload,
   Link,
   Clock,
-  Mail,
-  Calendar,
-  Table,
-  FileText,
   ChevronRight,
   ChevronLeft,
 } from "lucide-react";
+import {
+  GmailIcon,
+  GoogleCalendarIcon,
+  GoogleContactsIcon,
+  GoogleSheetsIcon,
+  GoogleFormsIcon,
+} from "@/components/icons";
 import { toast } from "sonner";
 
 import {
@@ -104,11 +107,11 @@ const blockTools: BlockTool[] = [
 
 // Google integrations in their own section
 const googleTools: BlockTool[] = [
-  { type: "gmail", icon: <Mail className="w-4 h-4" />, label: "Gmail" },
-  { type: "calendar", icon: <Calendar className="w-4 h-4" />, label: "Calendar" },
-  { type: "contacts", icon: <Users className="w-4 h-4" />, label: "Contacts" },
-  { type: "sheets", icon: <Table className="w-4 h-4" />, label: "Sheets" },
-  { type: "forms", icon: <FileText className="w-4 h-4" />, label: "Forms" },
+  { type: "gmail", icon: <GmailIcon className="w-4 h-4" />, label: "Gmail" },
+  { type: "calendar", icon: <GoogleCalendarIcon className="w-4 h-4" />, label: "Calendar" },
+  { type: "contacts", icon: <GoogleContactsIcon className="w-4 h-4" />, label: "Contacts" },
+  { type: "sheets", icon: <GoogleSheetsIcon className="w-4 h-4" />, label: "Sheets" },
+  { type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
 ];
 
 const terminalTools: BlockTool[] = [

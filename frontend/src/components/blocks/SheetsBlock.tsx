@@ -16,6 +16,7 @@ import {
   ChevronRight,
   ExternalLink,
 } from "lucide-react";
+import { GoogleSheetsIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { Button } from "@/components/ui/button";
@@ -75,8 +76,9 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
   // View mode: "picker" | "detail" - always start on picker
   const [viewMode, setViewMode] = React.useState<"picker" | "detail">("picker");
 
-  // Track if initial load is done
+  // Track if initial load is done (per dashboard to handle Fast Refresh/Strict Mode)
   const initialLoadDone = React.useRef(false);
+  const loadedDashboardRef = React.useRef<string | null>(null);
 
   // Load integration status
   const loadIntegration = React.useCallback(async () => {
@@ -144,10 +146,13 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
     }
   }, [dashboardId, currentSpreadsheet, selectedSheetTitle]);
 
-  // Initial load
+  // Initial load - skip duplicate loads in Strict Mode/Fast Refresh
   React.useEffect(() => {
+    if (!dashboardId) return;
+    if (loadedDashboardRef.current === dashboardId) return;
+    loadedDashboardRef.current = dashboardId;
     loadIntegration();
-  }, [loadIntegration]);
+  }, [dashboardId, loadIntegration]);
 
   // Load spreadsheets list when connected (for picker view)
   React.useEffect(() => {
@@ -259,7 +264,7 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
-      <Table className="w-3.5 h-3.5 text-green-600" />
+      <GoogleSheetsIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
         {integration?.spreadsheetName || integration?.emailAddress || "Sheets"}
       </div>
