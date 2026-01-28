@@ -27,24 +27,28 @@ import {
   getGoogleDriveManifest,
   syncGoogleDrive,
   unlinkGoogleDriveFolder,
+  disconnectGoogleDrive,
   getGithubIntegration,
   getGithubManifest,
   getGithubSyncStatus,
   listGithubRepos,
   setGithubRepo,
   unlinkGithubRepo,
+  disconnectGithub,
   getBoxIntegration,
   getBoxManifest,
   getBoxSyncStatus,
   listBoxFolders,
   setBoxFolder,
   unlinkBoxFolder,
+  disconnectBox,
   getOnedriveIntegration,
   getOnedriveManifest,
   getOnedriveSyncStatus,
   listOnedriveFolders,
   setOnedriveFolder,
   unlinkOnedriveFolder,
+  disconnectOnedrive,
   type GoogleDriveIntegration,
   type GoogleDriveSyncStatus,
   type GoogleDriveManifest,
@@ -471,13 +475,17 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     setGithubLoading(true);
     try {
       const response = await listGithubRepos();
+      if (!response.connected && response.error) {
+        setFileError(response.error);
+        void loadGithubIntegration();
+      }
       setGithubRepos(response.repos || []);
     } catch {
       setGithubRepos([]);
     } finally {
       setGithubLoading(false);
     }
-  }, []);
+  }, [loadGithubIntegration]);
 
   const loadBoxIntegration = React.useCallback(async () => {
     if (!user) return;
@@ -605,12 +613,19 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       const payload = event.data as { type?: string; folder?: { dashboardId?: string } };
       if (payload?.type === "drive-auth-complete") {
         void loadDriveIntegration();
+        setDrivePickerOpen(true);
         return;
       }
-      if (payload?.type === "drive-linked") {
-        setDrivePickerOpen(false);
-        void loadDriveIntegration();
-        void loadDriveStatus();
+        if (payload?.type === "drive-auth-expired") {
+          setDrivePickerOpen(false);
+          void loadDriveIntegration();
+          setFileError("Google Drive session expired. Please reconnect.");
+          return;
+        }
+        if (payload?.type === "drive-linked") {
+          setDrivePickerOpen(false);
+          void loadDriveIntegration();
+          void loadDriveStatus();
         const dashboardId = payload.folder?.dashboardId || data.dashboardId;
         if (dashboardId) {
           void syncGoogleDrive(dashboardId).catch(() => undefined);
@@ -645,6 +660,62 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     data.dashboardId,
     loadDriveIntegration,
     loadDriveStatus,
+    loadGithubIntegration,
+    loadGithubRepos,
+    loadBoxIntegration,
+    loadBoxFolders,
+    loadOnedriveIntegration,
+    loadOnedriveFolders,
+  ]);
+
+  React.useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel("orcabot-oauth");
+      bc.onmessage = (event: MessageEvent) => {
+        const payload = event.data as { type?: string; dashboardId?: string };
+        // Only react if dashboardId matches or wasn't specified
+        if (payload?.dashboardId && payload.dashboardId !== data.dashboardId) {
+          return;
+        }
+        if (payload?.type === "drive-auth-complete") {
+          void loadDriveIntegration();
+          setDrivePickerOpen(true);
+          return;
+        }
+        if (payload?.type === "drive-auth-expired") {
+          setDrivePickerOpen(false);
+          void loadDriveIntegration();
+          setFileError("Google Drive session expired. Please reconnect.");
+          return;
+        }
+        if (payload?.type === "github-auth-complete") {
+          void loadGithubIntegration();
+          setGithubPickerOpen(true);
+          void loadGithubRepos();
+          return;
+        }
+        if (payload?.type === "box-auth-complete") {
+          void loadBoxIntegration();
+          setBoxPickerOpen(true);
+          setBoxPath([]);
+          void loadBoxFolders("0");
+          return;
+        }
+        if (payload?.type === "onedrive-auth-complete") {
+          void loadOnedriveIntegration();
+          setOnedrivePickerOpen(true);
+          setOnedrivePath([]);
+          void loadOnedriveFolders("root");
+        }
+      };
+    } catch {}
+    return () => {
+      try { bc?.close(); } catch {}
+    };
+  }, [
+    data.dashboardId,
+    loadDriveIntegration,
     loadGithubIntegration,
     loadGithubRepos,
     loadBoxIntegration,
@@ -773,6 +844,54 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     }
   }, [data.dashboardId, loadOnedriveIntegration]);
 
+  const handleDisconnectDrive = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of Google Drive? This will unlink all Drive folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectGoogleDrive();
+      setDriveIntegration(null);
+      setDriveStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect Drive");
+    }
+  }, []);
+
+  const handleDisconnectGithub = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of GitHub? This will unlink all repos from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectGithub();
+      setGithubIntegration(null);
+      setGithubStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect GitHub");
+    }
+  }, []);
+
+  const handleDisconnectBox = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of Box? This will unlink all Box folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectBox();
+      setBoxIntegration(null);
+      setBoxStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect Box");
+    }
+  }, []);
+
+  const handleDisconnectOnedrive = React.useCallback(async () => {
+    const ok = window.confirm("Sign out of OneDrive? This will unlink all OneDrive folders from your dashboards.");
+    if (!ok) return;
+    try {
+      await disconnectOnedrive();
+      setOnedriveIntegration(null);
+      setOnedriveStatus(null);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to disconnect OneDrive");
+    }
+  }, []);
+
   const handleSelectOnedriveFolder = React.useCallback(async (folder: OnedriveFolder) => {
     if (!data.dashboardId) return;
     try {
@@ -884,9 +1003,13 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const rootEntries = fileEntries["/"] || [];
   const showFiles = rootEntries.length > 0;
+  const isDriveConnected = Boolean(driveIntegration?.connected);
   const isDriveLinked = Boolean(driveIntegration?.connected && driveIntegration?.folder);
+  const isGithubConnected = Boolean(githubIntegration?.connected);
   const isGithubLinked = Boolean(githubIntegration?.connected && githubIntegration?.repo);
+  const isBoxConnected = Boolean(boxIntegration?.connected);
   const isBoxLinked = Boolean(boxIntegration?.connected && boxIntegration?.folder);
+  const isOnedriveConnected = Boolean(onedriveIntegration?.connected);
   const isOnedriveLinked = Boolean(onedriveIntegration?.connected && onedriveIntegration?.folder);
   const drivePickerUrl = React.useMemo(() => {
     const url = new URL(`${API.cloudflare.base}/integrations/google/drive/picker`);
@@ -981,11 +1104,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
         </div>
         <div className="w-36 bg-[var(--background)] px-2 py-2">
           <div className="grid grid-cols-2 gap-2">
-            {isDriveLinked ? (
+            {isDriveConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="primary"
+                    variant={isDriveLinked ? "primary" : "secondary"}
                     size="sm"
                     disabled={!user}
                     className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
@@ -996,17 +1119,31 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-44">
-                  <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-                    Drive: {driveIntegration?.folder?.name ?? "Linked"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => openIntegration("google-drive")}>
-                    Change folder
-                  </DropdownMenuItem>
+                  {isDriveLinked ? (
+                    <>
+                      <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+                        Drive: {driveIntegration?.folder?.name ?? "Linked"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => openIntegration("google-drive")}>
+                        Change folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={handleUnlinkDrive}
+                        className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                      >
+                        Unlink
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => openIntegration("google-drive")}>
+                      Link folder
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
-                    onSelect={handleUnlinkDrive}
+                    onSelect={handleDisconnectDrive}
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
-                    Unlink
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1014,7 +1151,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => openIntegration("google-drive")}
+                onClick={handleDriveConnect}
                 disabled={!user}
                 className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
                 title="Connect Google Drive"
@@ -1023,11 +1160,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <span>Drive</span>
               </Button>
             )}
-            {isGithubLinked ? (
+            {isGithubConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="primary"
+                    variant={isGithubLinked ? "primary" : "secondary"}
                     size="sm"
                     disabled={!user}
                     className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
@@ -1038,17 +1175,31 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-44">
-                  <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-                    Repo: {githubIntegration?.repo?.owner}/{githubIntegration?.repo?.name}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => openIntegration("github")}>
-                    Change repo
-                  </DropdownMenuItem>
+                  {isGithubLinked ? (
+                    <>
+                      <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+                        Repo: {githubIntegration?.repo?.owner}/{githubIntegration?.repo?.name}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => openIntegration("github")}>
+                        Change repo
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={handleUnlinkGithub}
+                        className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                      >
+                        Unlink
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => openIntegration("github")}>
+                      Link repo
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
-                    onSelect={handleUnlinkGithub}
+                    onSelect={handleDisconnectGithub}
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
-                    Unlink
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1056,7 +1207,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => openIntegration("github")}
+                onClick={handleGithubConnect}
                 disabled={!user}
                 className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
                 title="Connect GitHub"
@@ -1065,11 +1216,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <span>GitHub</span>
               </Button>
             )}
-            {isBoxLinked ? (
+            {isBoxConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="primary"
+                    variant={isBoxLinked ? "primary" : "secondary"}
                     size="sm"
                     disabled={!user}
                     className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
@@ -1080,17 +1231,31 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-44">
-                  <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-                    Folder: {boxIntegration?.folder?.name ?? "Linked"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => openIntegration("box")}>
-                    Change folder
-                  </DropdownMenuItem>
+                  {isBoxLinked ? (
+                    <>
+                      <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+                        Folder: {boxIntegration?.folder?.name ?? "Linked"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => openIntegration("box")}>
+                        Change folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={handleUnlinkBox}
+                        className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                      >
+                        Unlink
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => openIntegration("box")}>
+                      Link folder
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
-                    onSelect={handleUnlinkBox}
+                    onSelect={handleDisconnectBox}
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
-                    Unlink
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1098,7 +1263,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => openIntegration("box")}
+                onClick={handleBoxConnect}
                 disabled={!user}
                 className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
                 title="Connect Box"
@@ -1107,11 +1272,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <span>Box</span>
               </Button>
             )}
-            {isOnedriveLinked ? (
+            {isOnedriveConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="primary"
+                    variant={isOnedriveLinked ? "primary" : "secondary"}
                     size="sm"
                     disabled={!user}
                     className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
@@ -1122,17 +1287,31 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-44">
-                  <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-                    Folder: {onedriveIntegration?.folder?.name ?? "Linked"}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => openIntegration("onedrive")}>
-                    Change folder
-                  </DropdownMenuItem>
+                  {isOnedriveLinked ? (
+                    <>
+                      <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+                        Folder: {onedriveIntegration?.folder?.name ?? "Linked"}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => openIntegration("onedrive")}>
+                        Change folder
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={handleUnlinkOnedrive}
+                        className="text-[var(--status-error)] focus:text-[var(--status-error)]"
+                      >
+                        Unlink
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem onSelect={() => openIntegration("onedrive")}>
+                      Link folder
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
-                    onSelect={handleUnlinkOnedrive}
+                    onSelect={handleDisconnectOnedrive}
                     className="text-[var(--status-error)] focus:text-[var(--status-error)]"
                   >
-                    Unlink
+                    Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1140,7 +1319,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => openIntegration("onedrive")}
+                onClick={handleOnedriveConnect}
                 disabled={!user}
                 className="h-10 w-full flex flex-col items-center justify-center gap-1 text-[10px] nodrag"
                 title="Connect OneDrive"
