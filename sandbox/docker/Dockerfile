@@ -15,8 +15,10 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build static binary
+# Build static binaries
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/orcabot-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/browser-ctl ./cmd/browser-ctl
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/mcp-bridge ./cmd/mcp-bridge
 
 # =============================================================================
 # Stage 2: Sandbox runtime image
@@ -80,7 +82,7 @@ RUN npm install -g @google/gemini-cli
 RUN curl -fsSL https://opencode.ai/install | bash \
     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
-# Install GitHub Copilot CLI
+# Install GitHub Copilot CLI (no MCP configuration available)
 RUN curl -fsSL https://gh.io/copilot-install | bash \
     && if [ -x /root/.local/bin/copilot ]; then mv /root/.local/bin/copilot /usr/local/bin/copilot; fi
 
@@ -121,8 +123,10 @@ ENV HOME=/home/sandbox
 ENV TERM=xterm-256color
 ENV PATH="/home/sandbox/.local/bin:${PATH}"
 
-# Copy Go server binary from builder
+# Copy Go binaries from builder
 COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
+COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
+COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
 
 # Working directory
 WORKDIR /workspace

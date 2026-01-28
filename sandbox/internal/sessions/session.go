@@ -14,15 +14,20 @@
 package sessions
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
@@ -125,6 +130,198 @@ func (s *Session) OpenBrowserURL(target string) error {
 	return browserCtrl.OpenURL(target)
 }
 
+// BrowserScreenshot captures a screenshot and saves it to the given path
+func (s *Session) BrowserScreenshot(outputPath string) (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Screenshot(outputPath)
+}
+
+// BrowserClick clicks an element by CSS selector
+func (s *Session) BrowserClick(selector string) error {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Click(selector)
+}
+
+// BrowserType types text into an element by CSS selector
+func (s *Session) BrowserType(selector string, text string) error {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Type(selector, text)
+}
+
+// BrowserEvaluate executes JavaScript and returns the result
+func (s *Session) BrowserEvaluate(script string) (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Evaluate(script)
+}
+
+// BrowserGetContent returns the visible text content of the page
+func (s *Session) BrowserGetContent() (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.GetContent()
+}
+
+// BrowserGetHTML returns the full HTML of the page
+func (s *Session) BrowserGetHTML() (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.GetHTML()
+}
+
+// BrowserGetURL returns the current page URL
+func (s *Session) BrowserGetURL() (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.GetCurrentURL()
+}
+
+// BrowserGetTitle returns the page title
+func (s *Session) BrowserGetTitle() (string, error) {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return "", fmt.Errorf("browser not started")
+	}
+	return browserCtrl.GetTitle()
+}
+
+// BrowserWaitForSelector waits for an element to appear
+func (s *Session) BrowserWaitForSelector(selector string, timeoutSec int) error {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return fmt.Errorf("browser not started")
+	}
+	timeout := time.Duration(timeoutSec) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return browserCtrl.WaitForSelector(selector, timeout)
+}
+
+// BrowserNavigate navigates to a URL using CDP
+func (s *Session) BrowserNavigate(url string) error {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Navigate(url)
+}
+
+// BrowserScroll scrolls the page
+func (s *Session) BrowserScroll(x, y int) error {
+	s.mu.Lock()
+	browserCtrl := s.browser
+	s.mu.Unlock()
+
+	if browserCtrl == nil {
+		return fmt.Errorf("browser not started")
+	}
+	return browserCtrl.Scroll(x, y)
+}
+
+// fetchUserMCPTools fetches the user's MCP tools from the control plane
+func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
+	if s.DashboardID == "" {
+		return nil
+	}
+
+	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
+	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+	if controlplaneURL == "" || internalToken == "" {
+		return nil
+	}
+
+	url := fmt.Sprintf("%s/internal/dashboards/%s/mcp-tools", controlplaneURL, s.DashboardID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil
+	}
+
+	var result struct {
+		Tools []struct {
+			Name        string                 `json:"name"`
+			Description string                 `json:"description"`
+			ServerURL   string                 `json:"serverUrl"`
+			Transport   string                 `json:"transport"`
+			Config      map[string]interface{} `json:"config"`
+		} `json:"tools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil
+	}
+
+	tools := make([]mcp.MCPTool, len(result.Tools))
+	for i, t := range result.Tools {
+		tools[i] = mcp.MCPTool{
+			Name:        t.Name,
+			Description: t.Description,
+			ServerURL:   t.ServerURL,
+			Transport:   t.Transport,
+			Config:      t.Config,
+		}
+	}
+	return tools
+}
+
 // CreatePTY creates a new PTY in this session.
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
@@ -146,6 +343,15 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
+
+	// Generate Claude Code settings file with MCP server configurations
+	// This allows agents to discover the orcabot MCP server and user's MCP tools
+	userTools := s.fetchUserMCPTools()
+	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools); err != nil {
+		// Log but don't fail - settings generation is not critical for PTY creation
+		fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings: %v\n", err)
+	}
+
 	p, err := pty.NewWithCommandEnv(command, 80, 24, s.workspace.Root(), envVars)
 	if err != nil {
 		return nil, err

@@ -141,3 +141,278 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }
+
+// Browser automation handlers
+
+type browserScreenshotRequest struct {
+	Path string `json:"path"`
+}
+
+func (s *Server) handleBrowserScreenshot(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserScreenshotRequest
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	path, err := session.BrowserScreenshot(req.Path)
+	if err != nil {
+		log.Printf("browser screenshot error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"path": path})
+}
+
+type browserClickRequest struct {
+	Selector string `json:"selector"`
+}
+
+func (s *Server) handleBrowserClick(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserClickRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79830: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Selector == "" {
+		http.Error(w, "E79831: selector required", http.StatusBadRequest)
+		return
+	}
+
+	if err := session.BrowserClick(req.Selector); err != nil {
+		log.Printf("browser click error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type browserTypeRequest struct {
+	Selector string `json:"selector"`
+	Text     string `json:"text"`
+}
+
+func (s *Server) handleBrowserType(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserTypeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79832: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Selector == "" {
+		http.Error(w, "E79833: selector required", http.StatusBadRequest)
+		return
+	}
+
+	if err := session.BrowserType(req.Selector, req.Text); err != nil {
+		log.Printf("browser type error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type browserEvaluateRequest struct {
+	Script string `json:"script"`
+}
+
+func (s *Server) handleBrowserEvaluate(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserEvaluateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79834: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Script == "" {
+		http.Error(w, "E79835: script required", http.StatusBadRequest)
+		return
+	}
+
+	result, err := session.BrowserEvaluate(req.Script)
+	if err != nil {
+		log.Printf("browser evaluate error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"result": result})
+}
+
+func (s *Server) handleBrowserContent(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	content, err := session.BrowserGetContent()
+	if err != nil {
+		log.Printf("browser content error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"content": content})
+}
+
+func (s *Server) handleBrowserHTML(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	html, err := session.BrowserGetHTML()
+	if err != nil {
+		log.Printf("browser html error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"html": html})
+}
+
+func (s *Server) handleBrowserURL(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	url, err := session.BrowserGetURL()
+	if err != nil {
+		log.Printf("browser url error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
+}
+
+func (s *Server) handleBrowserTitle(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	title, err := session.BrowserGetTitle()
+	if err != nil {
+		log.Printf("browser title error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"title": title})
+}
+
+type browserWaitRequest struct {
+	Selector string `json:"selector"`
+	Timeout  int    `json:"timeout"`
+}
+
+func (s *Server) handleBrowserWait(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserWaitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79836: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.Selector == "" {
+		http.Error(w, "E79837: selector required", http.StatusBadRequest)
+		return
+	}
+
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+
+	if err := session.BrowserWaitForSelector(req.Selector, timeout); err != nil {
+		log.Printf("browser wait error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type browserNavigateRequest struct {
+	URL string `json:"url"`
+}
+
+func (s *Server) handleBrowserNavigate(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserNavigateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79838: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" {
+		http.Error(w, "E79839: url required", http.StatusBadRequest)
+		return
+	}
+
+	if err := session.BrowserNavigate(req.URL); err != nil {
+		log.Printf("browser navigate error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type browserScrollRequest struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
+func (s *Server) handleBrowserScroll(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req browserScrollRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79840: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if err := session.BrowserScroll(req.X, req.Y); err != nil {
+		log.Printf("browser scroll error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

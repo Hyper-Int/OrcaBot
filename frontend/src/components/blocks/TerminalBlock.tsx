@@ -1081,6 +1081,7 @@ export function TerminalBlock({
   const isDisconnected = connectionState === "disconnected" && wasConnectedRef.current;
   const isAgentRunning = agentState === "running";
   const isAgentic = terminalMeta.agentic === true;
+  const supportsMcp = (isClaudeSession || isAgentic) && terminalType !== "copilot";
   const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
   const terminalThemeSetting = terminalMeta.terminalTheme ?? "system";
@@ -1686,7 +1687,7 @@ export function TerminalBlock({
           )}
 
           {/* Saved MCP Tools List */}
-          {(showSavedMcp || activePanel === "mcp-tools") && (isClaudeSession || isAgentic) && (
+          {(showSavedMcp || activePanel === "mcp-tools") && supportsMcp && (
             <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md min-w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
@@ -2210,25 +2211,27 @@ export function TerminalBlock({
                 <span className="text-[10px] font-medium">{attachedSkillNames.length}</span>
               </button>
 
-              {/* MCP Tools button */}
-              <button
-                type="button"
-                onClick={() => setShowSavedMcp((prev) => !prev)}
-                title={
-                  savedMcpTools.length > 0
-                    ? `MCP Tools: ${savedMcpTools.map(t => t.name).join(", ")}`
-                    : "No MCP tools saved - click to manage"
-                }
-                className={cn(
-                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-                  showSavedMcp || activePanel === "mcp-tools"
-                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                )}
-              >
-                <Wrench className="w-3.5 h-3.5" />
-                <span className="text-[10px] font-medium">{savedMcpTools.length}</span>
-              </button>
+              {/* MCP Tools button - hidden for Copilot (no MCP config available) */}
+              {supportsMcp && (
+                <button
+                  type="button"
+                  onClick={() => setShowSavedMcp((prev) => !prev)}
+                  title={
+                    savedMcpTools.length > 0
+                      ? `MCP Tools: ${savedMcpTools.map(t => t.name).join(", ")}`
+                      : "No MCP tools saved - click to manage"
+                  }
+                  className={cn(
+                    "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                    showSavedMcp || activePanel === "mcp-tools"
+                      ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                      : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                  )}
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-medium">{savedMcpTools.length}</span>
+                </button>
+              )}
             </>
           )}
 
@@ -2310,10 +2313,12 @@ export function TerminalBlock({
                 <Wand2 className="w-3 h-3" />
                 <span>Skills</span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
-                <Wrench className="w-3 h-3" />
-                <span>MCP Tools</span>
-              </DropdownMenuItem>
+              {supportsMcp && (
+                <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2">
+                  <Wrench className="w-3 h-3" />
+                  <span>MCP Tools</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
                 <Volume2 className="w-3 h-3" />
