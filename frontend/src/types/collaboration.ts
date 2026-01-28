@@ -172,7 +172,9 @@ export type IncomingCollabMessage =
   | EdgeDeleteMessage
   | PresenceMessage
   | SessionUpdateMessage
-  | BrowserOpenMessage;
+  | BrowserOpenMessage
+  | UICommandMessage
+  | UICommandResultMessage;
 
 /**
  * All outgoing collaboration messages
@@ -183,3 +185,178 @@ export type OutgoingCollabMessage =
   | ItemUpdateOutgoing
   | ItemCreateOutgoing
   | ItemDeleteMessage;
+
+// ============================================
+// UI Command Types (from MCP UI Server)
+// ============================================
+
+/**
+ * UI Command types that can be sent from agents to control the dashboard
+ */
+export type UICommandType =
+  | 'create_browser'
+  | 'create_todo'
+  | 'create_note'
+  | 'create_terminal'
+  | 'update_item'
+  | 'delete_item'
+  | 'connect_nodes'
+  | 'disconnect_nodes'
+  | 'navigate_browser'
+  | 'add_todo_item'
+  | 'toggle_todo_item';
+
+/**
+ * Base UI command structure
+ */
+export interface UICommandBase {
+  type: UICommandType;
+  command_id: string;
+  source_terminal_id?: string;
+}
+
+/**
+ * Create browser command
+ */
+export interface CreateBrowserCommand extends UICommandBase {
+  type: 'create_browser';
+  url: string;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Create todo command
+ */
+export interface CreateTodoCommand extends UICommandBase {
+  type: 'create_todo';
+  title: string;
+  items?: Array<{ text: string; completed?: boolean }>;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Create note command
+ */
+export interface CreateNoteCommand extends UICommandBase {
+  type: 'create_note';
+  text: string;
+  color?: 'yellow' | 'blue' | 'green' | 'pink' | 'purple';
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Create terminal command
+ */
+export interface CreateTerminalCommand extends UICommandBase {
+  type: 'create_terminal';
+  name?: string;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Update item command
+ */
+export interface UpdateItemCommand extends UICommandBase {
+  type: 'update_item';
+  item_id: string;
+  content?: string;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Delete item command
+ */
+export interface DeleteItemCommand extends UICommandBase {
+  type: 'delete_item';
+  item_id: string;
+}
+
+/**
+ * Connect nodes command
+ */
+export interface ConnectNodesCommand extends UICommandBase {
+  type: 'connect_nodes';
+  source_item_id: string;
+  target_item_id: string;
+  source_handle?: string;
+  target_handle?: string;
+}
+
+/**
+ * Disconnect nodes command
+ */
+export interface DisconnectNodesCommand extends UICommandBase {
+  type: 'disconnect_nodes';
+  source_item_id: string;
+  target_item_id: string;
+  source_handle?: string;
+  target_handle?: string;
+}
+
+/**
+ * Navigate browser command
+ */
+export interface NavigateBrowserCommand extends UICommandBase {
+  type: 'navigate_browser';
+  item_id: string;
+  url: string;
+}
+
+/**
+ * Add todo item command
+ */
+export interface AddTodoItemCommand extends UICommandBase {
+  type: 'add_todo_item';
+  item_id: string;
+  text: string;
+  completed?: boolean;
+}
+
+/**
+ * Toggle todo item command
+ */
+export interface ToggleTodoItemCommand extends UICommandBase {
+  type: 'toggle_todo_item';
+  item_id: string;
+  todo_item_id: string;
+}
+
+/**
+ * Union of all UI commands
+ */
+export type UICommand =
+  | CreateBrowserCommand
+  | CreateTodoCommand
+  | CreateNoteCommand
+  | CreateTerminalCommand
+  | UpdateItemCommand
+  | DeleteItemCommand
+  | ConnectNodesCommand
+  | DisconnectNodesCommand
+  | NavigateBrowserCommand
+  | AddTodoItemCommand
+  | ToggleTodoItemCommand;
+
+/**
+ * UI command message (server -> client)
+ */
+export interface UICommandMessage {
+  type: 'ui_command';
+  command: UICommand;
+}
+
+/**
+ * UI command result message (bidirectional)
+ */
+export interface UICommandResultMessage {
+  type: 'ui_command_result';
+  command_id: string;
+  success: boolean;
+  error?: string;
+  created_item_id?: string;
+}

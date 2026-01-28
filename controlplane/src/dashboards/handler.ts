@@ -26,6 +26,16 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
 
 // Format a raw DB item row to camelCase
 function formatItem(row: Record<string, unknown>): DashboardItem {
+  // Parse metadata from JSON string if present
+  let metadata: Record<string, unknown> | undefined;
+  if (row.metadata && typeof row.metadata === 'string') {
+    try {
+      metadata = JSON.parse(row.metadata);
+    } catch {
+      metadata = undefined;
+    }
+  }
+
   return {
     id: row.id as string,
     dashboardId: row.dashboard_id as string,
@@ -39,6 +49,7 @@ function formatItem(row: Record<string, unknown>): DashboardItem {
       width: row.width as number,
       height: row.height as number,
     },
+    metadata,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -260,6 +271,9 @@ export async function upsertItem(
     SELECT id FROM dashboard_items WHERE id = ? AND dashboard_id = ?
   `).bind(id, dashboardId).first();
 
+  // Serialize metadata to JSON string if provided
+  const metadataJson = item.metadata !== undefined ? JSON.stringify(item.metadata) : null;
+
   if (existing) {
     // Update - use undefined check to allow clearing to empty string
     await env.DB.prepare(`
@@ -269,6 +283,7 @@ export async function upsertItem(
         position_y = COALESCE(?, position_y),
         width = COALESCE(?, width),
         height = COALESCE(?, height),
+        metadata = COALESCE(?, metadata),
         updated_at = ?
       WHERE id = ?
     `).bind(
@@ -277,14 +292,15 @@ export async function upsertItem(
       item.position?.y ?? null,
       item.size?.width ?? null,
       item.size?.height ?? null,
+      metadataJson,
       now,
       id
     ).run();
   } else {
     // Insert
     await env.DB.prepare(`
-      INSERT INTO dashboard_items (id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO dashboard_items (id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       id,
       dashboardId,
@@ -294,6 +310,7 @@ export async function upsertItem(
       item.position?.y ?? 0,
       item.size?.width ?? 200,
       item.size?.height ?? 150,
+      metadataJson,
       now,
       now
     ).run();
@@ -482,4 +499,42 @@ export async function cоnnectWebSоcket(
   // Pass original request to preserve WebSocket upgrade semantics
   // The second argument copies method, headers, body, and upgrade intent from the original
   return stub.fetch(new Request(wsUrl.toString(), request));
+}
+
+// Send UI command result back to the DashboardDO for broadcast
+export async function sendUICommandResult(
+  env: Env,
+  dashboardId: string,
+  userId: string,
+  result: {
+    command_id: string;
+    success: boolean;
+    error?: string;
+    created_item_id?: string;
+  }
+): Promise<Response> {
+  // Check dashboard membership
+  const membership = await env.DB.prepare(`
+    SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, userId).first();
+
+  const isOwner = await env.DB.prepare(`
+    SELECT 1 FROM dashboards WHERE id = ? AND owner_id = ?
+  `).bind(dashboardId, userId).first();
+
+  if (!membership && !isOwner) {
+    return Response.json({ error: 'E79806: Not a member of this dashboard' }, { status: 403 });
+  }
+
+  // Forward to Durable Object
+  const doId = env.DASHBOARD.idFromName(dashboardId);
+  const stub = env.DASHBOARD.get(doId);
+
+  await stub.fetch(new Request('http://do/ui-command-result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
+  }));
+
+  return Response.json({ success: true });
 }

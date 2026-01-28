@@ -9,7 +9,7 @@
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, requireInternalAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -30,6 +30,7 @@ import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
 import * as templates from './templates/handler';
 import * as members from './members/handler';
+import * as mcpUi from './mcp-ui/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
@@ -670,6 +671,19 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireAuth(auth);
     if (authError) return authError;
     return dashboards.deleteEdge(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // POST /dashboards/:id/ui-command-result - Send UI command result back
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'ui-command-result' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as {
+      command_id: string;
+      success: boolean;
+      error?: string;
+      created_item_id?: string;
+    };
+    return dashboards.sendUICommandResult(env, segments[1], auth.user!.id, data);
   }
 
   // ============================================
@@ -1533,6 +1547,100 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
     return secrets.migrateUnencryptedSecrets(env);
+  }
+
+  // ============================================
+  // Internal MCP UI Server routes (for schedules, workflows, server-side automation)
+  // ============================================
+  // These accept either:
+  // - X-Internal-Token: Full trust (schedules, internal services)
+  // - X-Dashboard-Token: Scoped to specific dashboard (sandbox MCP proxy)
+
+  // GET /internal/mcp/ui/tools - List available UI tools (internal)
+  if (segments[0] === 'internal' && segments[1] === 'mcp' && segments[2] === 'ui' && segments[3] === 'tools' && segments.length === 4 && method === 'GET') {
+    const mcpAuth = await validateMcpAuth(request, env);
+    if (!mcpAuth.isValid) return mcpAuth.error!;
+    return mcpUi.listTools();
+  }
+
+  // POST /internal/mcp/ui/tools/call - Execute a UI tool (internal)
+  if (segments[0] === 'internal' && segments[1] === 'mcp' && segments[2] === 'ui' && segments[3] === 'tools' && segments[4] === 'call' && segments.length === 5 && method === 'POST') {
+    const mcpAuth = await validateMcpAuth(request, env);
+    if (!mcpAuth.isValid) return mcpAuth.error!;
+
+    const data = await request.json() as {
+      name: string;
+      arguments: Record<string, unknown>;
+      source_terminal_id?: string;
+    };
+
+    // dashboard_id must be in arguments for internal calls
+    if (!data.arguments.dashboard_id) {
+      return Response.json({ error: 'E79801: dashboard_id is required in arguments' }, { status: 400 });
+    }
+
+    // If using scoped token, verify dashboard_id matches the token's claim
+    if (!mcpAuth.isFullAccess && mcpAuth.dashboardId !== data.arguments.dashboard_id) {
+      return Response.json(
+        { error: 'E79804: Dashboard token does not match dashboard_id in request' },
+        { status: 403 }
+      );
+    }
+
+    return mcpUi.callTool(env, data.name, data.arguments, data.source_terminal_id);
+  }
+
+  // GET /internal/mcp/ui/dashboards/:id/items - List items in a dashboard (internal)
+  if (segments[0] === 'internal' && segments[1] === 'mcp' && segments[2] === 'ui' && segments[3] === 'dashboards' && segments.length === 6 && segments[5] === 'items' && method === 'GET') {
+    const mcpAuth = await validateMcpAuth(request, env);
+    if (!mcpAuth.isValid) return mcpAuth.error!;
+
+    const requestedDashboardId = segments[4];
+
+    // If using scoped token, verify dashboard_id matches the token's claim
+    if (!mcpAuth.isFullAccess && mcpAuth.dashboardId !== requestedDashboardId) {
+      return Response.json(
+        { error: 'E79804: Dashboard token does not match requested dashboard' },
+        { status: 403 }
+      );
+    }
+
+    return mcpUi.getItems(env, requestedDashboardId);
+  }
+
+  // ============================================
+  // MCP UI Server routes (user-facing, requires user auth)
+  // ============================================
+  // These endpoints implement the MCP protocol for UI control tools
+  // They allow authenticated users to control dashboard UI elements
+
+  // GET /mcp/ui/tools - List available UI tools
+  if (segments[0] === 'mcp' && segments[1] === 'ui' && segments[2] === 'tools' && segments.length === 3 && method === 'GET') {
+    // This endpoint can be called without auth for tool discovery
+    return mcpUi.listTools();
+  }
+
+  // POST /mcp/ui/tools/call - Execute a UI tool
+  if (segments[0] === 'mcp' && segments[1] === 'ui' && segments[2] === 'tools' && segments[3] === 'call' && segments.length === 4 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const data = await request.json() as {
+      name: string;
+      arguments: Record<string, unknown>;
+      source_terminal_id?: string;
+    };
+
+    // Pass userId for access control check
+    return mcpUi.callTool(env, data.name, data.arguments, data.source_terminal_id, auth.user!.id);
+  }
+
+  // GET /mcp/ui/dashboards/:id/items - List items in a dashboard
+  if (segments[0] === 'mcp' && segments[1] === 'ui' && segments[2] === 'dashboards' && segments.length === 5 && segments[4] === 'items' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // Pass userId for access control check
+    return mcpUi.getItems(env, segments[3], auth.user!.id);
   }
 
   // Not found

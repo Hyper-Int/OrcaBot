@@ -42,7 +42,9 @@ func NewManagerWithWоrkspace(workspaceBase string) *Manager {
 }
 
 // Create creates a new session with a workspace directory
-func (m *Manager) Create() (*Session, error) {
+// dashboardID is optional but required for MCP proxy functionality
+// mcpToken is a dashboard-scoped token for MCP proxy calls
+func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) {
 	sessionID, err := id.New()
 	if err != nil {
 		return nil, err
@@ -54,7 +56,7 @@ func (m *Manager) Create() (*Session, error) {
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, workspacePath)
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspacePath)
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session
@@ -98,16 +100,16 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
-// List returns all session IDs
-func (m *Manager) List() []string {
+// List returns all active sessions
+func (m *Manager) List() []*Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	ids := make([]string, 0, len(m.sessions))
-	for id := range m.sessions {
-		ids = append(ids, id)
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
 	}
-	return ids
+	return sessions
 }
 
 // Shutdown closes all sessions gracefully

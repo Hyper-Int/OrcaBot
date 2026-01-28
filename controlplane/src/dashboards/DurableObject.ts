@@ -12,7 +12,7 @@
  * NOT a database - can be rebuilt from D1 at any time.
  */
 
-import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session, DashboardEdge } from '../types';
+import type { DashboardItem, PresenceInfo, CollabMessage, Dashboard, Session, DashboardEdge, UICommand } from '../types';
 
 interface WebSocketAttachment {
   userId: string;
@@ -202,6 +202,47 @@ export class DashboardDO implements DurableObject {
       return Response.json({ success: true });
     }
 
+    // POST /ui-command - Execute a UI command from an agent
+    if (path === '/ui-command' && request.method === 'POST') {
+      const command = await request.json() as UICommand;
+
+      console.log(`[DashboardDO] Received ui-command: ${command.type}, command_id: ${command.command_id}, connected clients: ${this.sessions.size}`);
+
+      // Broadcast the UI command to all connected clients
+      this.broadcast({ type: 'ui_command', command });
+
+      return Response.json({ success: true, command_id: command.command_id });
+    }
+
+    // POST /ui-command-result - Send a command result back (from frontend)
+    if (path === '/ui-command-result' && request.method === 'POST') {
+      const data = await request.json() as {
+        command_id: string;
+        success: boolean;
+        error?: string;
+        created_item_id?: string;
+      };
+
+      // Broadcast the result to all connected clients (including the originating terminal)
+      this.broadcast({
+        type: 'ui_command_result',
+        command_id: data.command_id,
+        success: data.success,
+        error: data.error,
+        created_item_id: data.created_item_id,
+      });
+
+      return Response.json({ success: true });
+    }
+
+    // GET /items - List all items (for MCP tools to query current state)
+    if (path === '/items' && request.method === 'GET') {
+      return Response.json({
+        items: Array.from(this.items.values()),
+        edges: Array.from(this.edges.values()),
+      });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 
@@ -322,14 +363,19 @@ export class DashboardDO implements DurableObject {
 
   private broadcast(message: CollabMessage, exclude?: WebSocket): void {
     const msgStr = JSON.stringify(message);
+    let sentCount = 0;
     for (const [ws] of this.sessions) {
       if (ws !== exclude) {
         try {
           ws.send(msgStr);
+          sentCount++;
         } catch {
           // Client disconnected
         }
       }
+    }
+    if (message.type === 'ui_command') {
+      console.log(`[DashboardDO] Broadcast ui_command to ${sentCount} clients`);
     }
   }
 

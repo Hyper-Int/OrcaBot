@@ -45,10 +45,23 @@ export class SandboxClient {
   }
 
   // Session management
-  async createSessiоn(): Promise<SandboxSession> {
+  async createSessiоn(dashboardId?: string, mcpToken?: string): Promise<SandboxSession> {
+    const headers = new Headers(this.authHeaders());
+    let body: string | undefined;
+
+    // Pass dashboard_id and mcp_token to sandbox so it can proxy MCP calls
+    if (dashboardId || mcpToken) {
+      headers.set('Content-Type', 'application/json');
+      body = JSON.stringify({
+        dashboard_id: dashboardId,
+        mcp_token: mcpToken, // Scoped token for MCP proxy calls
+      });
+    }
+
     const res = await fetch(`${this.baseUrl}/sessions`, {
       method: 'POST',
-      headers: this.authHeaders(),
+      headers,
+      body,
     });
     if (!res.ok) {
       throw new Error(`Failed to create session: ${res.status}`);

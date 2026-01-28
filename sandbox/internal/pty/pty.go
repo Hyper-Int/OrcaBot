@@ -55,15 +55,46 @@ func NewWithCommand(command string, cols, rows uint16, dir string) (*PTY, error)
 	return NewWithCommandEnv(command, cols, rows, dir, nil)
 }
 
+// sensitiveEnvVars are environment variables that should NOT be passed to PTYs
+// These are internal tokens that agents should not have access to
+var sensitiveEnvVars = map[string]bool{
+	"INTERNAL_API_TOKEN":      true,
+	"SANDBOX_INTERNAL_TOKEN":  true,
+	"ORCABOT_INTERNAL_TOKEN":  true, // Legacy, but filter just in case
+	"SECRETS_ENCRYPTION_KEY":  true,
+	"GOOGLE_CLIENT_SECRET":    true,
+	"GITHUB_CLIENT_SECRET":    true,
+	"BOX_CLIENT_SECRET":       true,
+	"ONEDRIVE_CLIENT_SECRET":  true,
+	"RESEND_API_KEY":          true,
+}
+
+// filterSensitiveEnv filters out sensitive environment variables
+func filterSensitiveEnv(environ []string) []string {
+	filtered := make([]string, 0, len(environ))
+	for _, env := range environ {
+		key := env
+		if idx := strings.Index(env, "="); idx != -1 {
+			key = env[:idx]
+		}
+		if !sensitiveEnvVars[key] {
+			filtered = append(filtered, env)
+		}
+	}
+	return filtered
+}
+
 // NewWithCommandEnv creates a new PTY with extra environment variables.
 // If command is empty, DefaultShell() is used.
+// SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
 func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		parts = []string{DefaultShell()}
 	}
 	cmd := exec.Command(parts[0], parts[1:]...)
-	env := append(os.Environ(), "TERM=xterm-256color")
+	// Filter out sensitive environment variables before passing to PTY
+	env := append(filterSensitiveEnv(os.Environ()), "TERM=xterm-256color")
 	for key, value := range extraEnv {
 		env = append(env, key+"="+value)
 	}

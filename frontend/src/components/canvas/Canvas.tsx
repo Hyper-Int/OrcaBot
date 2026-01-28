@@ -88,6 +88,11 @@ function itemsToNodes(
     // Use _stableKey for React reconciliation to prevent remounting when temp ID transitions to real ID
     const nodeId = item._stableKey || item.id;
 
+    // Extract color from metadata for notes
+    const color = item.type === "note" && item.metadata?.color
+      ? item.metadata.color as string
+      : undefined;
+
     return {
       id: nodeId,
       type: item.type,
@@ -102,6 +107,8 @@ function itemsToNodes(
         itemId: item.id, // Pass actual item ID for API calls
         session, // Pass session to terminal blocks
         sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
+        color, // Note color from metadata
+        metadata: item.metadata, // Pass full metadata for type-specific use
         onRegisterTerminal,
         onCreateBrowserBlock,
         onConnectorClick,
