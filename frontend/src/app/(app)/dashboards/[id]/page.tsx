@@ -291,8 +291,11 @@ export default function DashboardPage() {
     queryFn: () => getDashboard(dashboardId),
     enabled: isAuthenticated && isAuthResolved && !!dashboardId,
     staleTime: 30000, // Consider data fresh for 30 seconds
+    gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes (survives disconnects)
     refetchOnWindowFocus: false, // Don't refetch on window focus
     refetchInterval: false, // Don't auto-refetch
+    retry: 3, // Retry failed requests
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
   });
 
   const dashboard = data?.dashboard;
@@ -993,7 +996,9 @@ export default function DashboardPage() {
     }
 
     // Only invalidate if changed items are from remote users (not in our pending set)
-    if (changedItemIds.size > 0) {
+    // AND only when connected - don't trigger refetches during reconnection
+    const isConnected = collabState.connectionState === "connected";
+    if (changedItemIds.size > 0 && isConnected) {
       const hasRemoteChanges = Array.from(changedItemIds).some(
         (id) => !pendingItemIdsRef.current.has(id)
       );
@@ -1003,10 +1008,11 @@ export default function DashboardPage() {
     }
 
     // Session updates are always from the server, so always invalidate
-    if (collabState.sessions.length > 0) {
+    // But only when connected - don't trigger failing refetches during reconnection
+    if (collabState.sessions.length > 0 && isConnected) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
     }
-  }, [collabState.items, collabState.sessions, collabState.edges, queryClient, dashboardId, setEdges]);
+  }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
 
   // Item delete handler
   const handleItemDelete = (itemId: string) => {
@@ -1230,7 +1236,13 @@ export default function DashboardPage() {
     );
   }
 
-  if (error || !data) {
+  // Only show error state if we have no data at all
+  // If we have cached data, continue showing it even during errors/reconnection
+  if (!data) {
+    // Check if we're just reconnecting (have an error but might recover)
+    const isReconnecting = collabState.connectionState === "reconnecting" ||
+                           collabState.connectionState === "disconnected";
+
     return (
       <div className="h-screen flex flex-col bg-[var(--background)]">
         <div className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
@@ -1243,13 +1255,17 @@ export default function DashboardPage() {
           </Button>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
-          <p className="text-[var(--status-error)]">Failed to load dashboard</p>
-          <Button
-            variant="secondary"
-            onClick={() => queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] })}
-          >
-            Retry
-          </Button>
+          <p className="text-[var(--status-error)]">
+            {isReconnecting ? "Connection lost. Reconnecting..." : "Failed to load dashboard"}
+          </p>
+          {!isReconnecting && (
+            <Button
+              variant="secondary"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] })}
+            >
+              Retry
+            </Button>
+          )}
         </div>
       </div>
     );
@@ -1257,9 +1273,18 @@ export default function DashboardPage() {
 
   // Connection status indicator
   const isCollaborationConnected = collabState.connectionState === "connected";
+  const isReconnecting = collabState.connectionState === "reconnecting" ||
+                         collabState.connectionState === "disconnected";
 
   return (
     <div className="h-screen flex flex-col bg-[var(--background)]">
+      {/* Reconnection banner - shows when disconnected but we have cached data */}
+      {isReconnecting && (
+        <div className="bg-[var(--status-warning)] text-[var(--background)] px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
+          Connection lost. Reconnecting...
+        </div>
+      )}
       {/* Header */}
       <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
         <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full pointer-events-auto">
