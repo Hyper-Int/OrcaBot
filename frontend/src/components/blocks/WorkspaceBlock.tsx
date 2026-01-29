@@ -66,6 +66,48 @@ import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
 
+// Module-level cache to prevent integration reload storms across component remounts
+// Tracks dashboardId -> timestamp of last load
+const integrationLoadCache = new Map<string, number>();
+const INTEGRATION_LOAD_COOLDOWN_MS = 30000; // 30 seconds between loads for same dashboard
+const INTEGRATION_CACHE_KEY = 'orcabot:integration-load-cache';
+
+// Restore cache from sessionStorage (survives HMR in dev)
+function getLastLoadTime(dashboardId: string): number | null {
+  // Check memory cache first
+  const memCached = integrationLoadCache.get(dashboardId);
+  if (memCached) return memCached;
+
+  // Fall back to sessionStorage
+  try {
+    const stored = sessionStorage.getItem(INTEGRATION_CACHE_KEY);
+    if (stored) {
+      const cache = JSON.parse(stored) as Record<string, number>;
+      return cache[dashboardId] ?? null;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return null;
+}
+
+function setLastLoadTime(dashboardId: string, timestamp: number): void {
+  // Update memory cache
+  integrationLoadCache.set(dashboardId, timestamp);
+
+  // Persist to sessionStorage
+  try {
+    const stored = sessionStorage.getItem(INTEGRATION_CACHE_KEY);
+    const cache = stored ? (JSON.parse(stored) as Record<string, number>) : {};
+    cache[dashboardId] = timestamp;
+    // Clean old entries (keep last 10)
+    const entries = Object.entries(cache).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    sessionStorage.setItem(INTEGRATION_CACHE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 interface WorkspaceData extends Record<string, unknown> {
   size: { width: number; height: number };
   sessionId?: string;
@@ -137,6 +179,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [githubImporting, setGithubImporting] = React.useState(false);
   const [boxIntegration, setBoxIntegration] = React.useState<BoxIntegration | null>(null);
   const [boxStatus, setBoxStatus] = React.useState<BoxSyncStatus | null>(null);
+  const [boxSyncing, setBoxSyncing] = React.useState(false);
   const [boxPickerOpen, setBoxPickerOpen] = React.useState(false);
   const [boxFolders, setBoxFolders] = React.useState<BoxFolder[]>([]);
   const [boxPath, setBoxPath] = React.useState<BoxFolder[]>([]);
@@ -144,6 +187,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [boxLoading, setBoxLoading] = React.useState(false);
   const [onedriveIntegration, setOnedriveIntegration] = React.useState<OnedriveIntegration | null>(null);
   const [onedriveStatus, setOnedriveStatus] = React.useState<OnedriveSyncStatus | null>(null);
+  const [onedriveSyncing, setOnedriveSyncing] = React.useState(false);
   const [onedrivePickerOpen, setOnedrivePickerOpen] = React.useState(false);
   const [onedriveFolders, setOnedriveFolders] = React.useState<OnedriveFolder[]>([]);
   const [onedrivePath, setOnedrivePath] = React.useState<OnedriveFolder[]>([]);
@@ -151,6 +195,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [onedriveLoading, setOnedriveLoading] = React.useState(false);
   const previewFetchRef = React.useRef(0);
   const integrationLoadedRef = React.useRef<string | null>(null);
+  const integrationLoadingRef = React.useRef(false);
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const apiOrigin = React.useMemo(() => new URL(API.cloudflare.base).origin, []);
   const allowDelete = Boolean(sessionId);
@@ -417,14 +462,17 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     data.dashboardId,
     driveIntegration?.connected,
     driveStatus?.status,
+    driveSyncing,
     githubIntegration?.connected,
     githubStatus?.status,
+    githubSyncing,
     boxIntegration?.connected,
     boxStatus?.status,
+    boxSyncing,
     onedriveIntegration?.connected,
     onedriveStatus?.status,
+    onedriveSyncing,
     mergePreviewEntries,
-    githubSyncing,
     sessionId,
   ]);
 
@@ -503,8 +551,10 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     try {
       const status = await getBoxSyncStatus(data.dashboardId);
       setBoxStatus(status);
+      setBoxSyncing(status.status === "syncing_cache" || status.status === "syncing_workspace");
     } catch {
       setBoxStatus(null);
+      setBoxSyncing(false);
     }
   }, [data.dashboardId, user]);
 
@@ -536,8 +586,10 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     try {
       const status = await getOnedriveSyncStatus(data.dashboardId);
       setOnedriveStatus(status);
+      setOnedriveSyncing(status.status === "syncing_cache" || status.status === "syncing_workspace");
     } catch {
       setOnedriveStatus(null);
+      setOnedriveSyncing(false);
     }
   }, [data.dashboardId, user]);
 
@@ -554,17 +606,29 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     }
   }, []);
 
-  // Load all integrations once per dashboard - use ref to prevent duplicate loads
-  // in Strict Mode and Fast Refresh scenarios
+  // Load all integrations once per dashboard - use module-level + sessionStorage cache
+  // to prevent reload storms even across component remounts and HMR
   React.useEffect(() => {
     const dashboardId = data.dashboardId;
     if (!dashboardId || !user) return;
 
-    // Skip if we've already loaded for this dashboard
-    if (integrationLoadedRef.current === dashboardId) return;
-    integrationLoadedRef.current = dashboardId;
+    // Check cache first (memory + sessionStorage, survives remounts and HMR)
+    const lastLoad = getLastLoadTime(dashboardId);
+    const now = Date.now();
+    if (lastLoad && now - lastLoad < INTEGRATION_LOAD_COOLDOWN_MS) {
+      // Recently loaded, skip
+      return;
+    }
 
-    // Load all integrations in parallel
+    // Also check instance-level refs for same-instance duplicate prevention
+    if (integrationLoadedRef.current === dashboardId) return;
+    if (integrationLoadingRef.current) return;
+
+    integrationLoadingRef.current = true;
+    integrationLoadedRef.current = dashboardId;
+    setLastLoadTime(dashboardId, now);
+
+    // Load all integrations in parallel - each has its own try-catch
     void Promise.all([
       loadDriveIntegration(),
       loadDriveStatus(),
@@ -574,19 +638,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       loadBoxStatus(),
       loadOnedriveIntegration(),
       loadOnedriveStatus(),
-    ]);
-  }, [
-    data.dashboardId,
-    user,
-    loadDriveIntegration,
-    loadDriveStatus,
-    loadGithubIntegration,
-    loadGithubStatus,
-    loadBoxIntegration,
-    loadBoxStatus,
-    loadOnedriveIntegration,
-    loadOnedriveStatus,
-  ]);
+    ]).finally(() => {
+      integrationLoadingRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Load functions are stable and don't need to trigger re-execution
+  }, [data.dashboardId, user]);
 
   const togglePath = React.useCallback(
     (path: string) => {
@@ -740,6 +796,22 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     }, 2500);
     return () => clearInterval(interval);
   }, [githubSyncing, loadGithubStatus]);
+
+  React.useEffect(() => {
+    if (!boxSyncing) return;
+    const interval = setInterval(() => {
+      void loadBoxStatus();
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [boxSyncing, loadBoxStatus]);
+
+  React.useEffect(() => {
+    if (!onedriveSyncing) return;
+    const interval = setInterval(() => {
+      void loadOnedriveStatus();
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [onedriveSyncing, loadOnedriveStatus]);
 
   React.useEffect(() => {
     if (!githubPickerOpen || !githubIntegration?.connected) return;
