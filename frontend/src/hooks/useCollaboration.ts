@@ -195,12 +195,22 @@ export function useCollaboration(
         break;
 
       case "item_create":
-        setItems((prev) => [...prev, message.item]);
+        setItems((prev) => {
+          // Don't add if item already exists (from optimistic update)
+          if (prev.some((item) => item.id === message.item.id)) {
+            return prev;
+          }
+          return [...prev, message.item];
+        });
         break;
 
       case "item_delete":
         setItems((prev) =>
           prev.filter((item) => item.id !== message.item_id)
+        );
+        // Also remove any sessions associated with this item (session is cascade-deleted on backend)
+        setSessions((prev) =>
+          prev.filter((session) => session.itemId !== message.item_id)
         );
         break;
 

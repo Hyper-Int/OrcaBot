@@ -64,8 +64,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 20 LTS
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Install Node.js 22 (required by moltbot)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -89,6 +89,9 @@ RUN curl -fsSL https://gh.io/copilot-install | bash \
 # Install Droid CLI (Factory)
 RUN curl -fsSL https://app.factory.ai/cli | sh \
     && if [ -x /root/.local/bin/droid ]; then mv /root/.local/bin/droid /usr/local/bin/droid; fi
+
+# Install Moltbot CLI (published as clawdbot on npm)
+RUN npm install -g clawdbot@latest
 
 # Install Playwright (browser automation) without bundled browsers
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright

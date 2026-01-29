@@ -59,11 +59,14 @@ import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration, useDebouncedCallback, useUICommands } from "@/hooks";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getSessionMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
 import { ConnectionDataFlowProvider } from "@/contexts/ConnectionDataFlowContext";
+
+// Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
+const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
 
 type BlockType = DashboardItem["type"];
 
@@ -150,6 +153,12 @@ const terminalTools: BlockTool[] = [
     label: "Droid",
     icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "droid", agentic: true },
+  },
+  {
+    type: "terminal",
+    label: "Moltbot",
+    icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "clawdbot tui", agentic: true },
   },
   {
     type: "terminal",
@@ -276,6 +285,10 @@ export default function DashboardPage() {
   const pendingUpdatesRef = React.useRef<Map<string, Partial<DashboardItem>>>(new Map());
   // Track item IDs with pending local updates (to avoid cache invalidation for self-updates)
   const pendingItemIdsRef = React.useRef<Set<string>>(new Set());
+  // Track recently created item IDs (to avoid cache invalidation when WebSocket echoes our create)
+  const recentlyCreatedItemsRef = React.useRef<Set<string>>(new Set());
+  // Track number of mutations in flight (to prevent WebSocket-triggered invalidations during mutations)
+  const mutationsInFlightRef = React.useRef(0);
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
@@ -335,20 +348,18 @@ export default function DashboardPage() {
   }), [edgesFromData, realIdToStableKey]);
   const browserPrewarmRef = React.useRef(false);
 
-  const metricsSessionId = React.useMemo(() => {
-    if (sessions.length === 0) {
-      return null;
-    }
-    const active = sessions.find((item) => item.status === "active");
-    return (active || sessions[0]).id;
+  // Check if dashboard has any active sessions (indicates sandbox is ready for metrics)
+  const hasActiveSandbox = React.useMemo(() => {
+    return sessions.some((s) => s.status === "active");
   }, [sessions]);
 
   const metricsQuery = useQuery({
-    queryKey: ["sandbox-metrics", metricsSessionId],
-    queryFn: () => getSessionMetrics(metricsSessionId as string),
-    enabled: Boolean(metricsSessionId),
+    queryKey: ["sandbox-metrics", dashboardId],
+    queryFn: () => getDashboardMetrics(dashboardId as string),
+    enabled: Boolean(dashboardId) && hasActiveSandbox && process.env.NODE_ENV === "development",
     refetchInterval: 5000,
     staleTime: 4000,
+    retry: false, // Don't retry on 404 - expected when no sandbox exists
   });
 
   const [cpuPercent, setCpuPercent] = React.useState<number | null>(null);
@@ -406,6 +417,23 @@ export default function DashboardPage() {
     }) =>
       createItem(dashboardId, item),
     onMutate: async (item) => {
+      // Increment mutations in-flight counter to prevent WebSocket-triggered invalidations
+      mutationsInFlightRef.current++;
+
+      // Always cancel in-flight queries to prevent stale data overwriting our updates
+      await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
+
+      // Skip optimistic update if disabled
+      if (!OPTIMISTIC_UPDATE_ENABLED) {
+        return {
+          previous: undefined,
+          tempId: undefined,
+          sourceId: item.sourceId,
+          sourceHandle: item.sourceHandle,
+          targetHandle: item.targetHandle,
+        };
+      }
+
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
       const previous = queryClient.getQueryData<{
         dashboard: Dashboard;
@@ -486,6 +514,48 @@ export default function DashboardPage() {
       };
     },
     onSuccess: (createdItem, _variables, context) => {
+      // Decrement mutations in-flight counter
+      mutationsInFlightRef.current--;
+
+      if (!OPTIMISTIC_UPDATE_ENABLED) {
+        // Track this item ID so WebSocket echo doesn't trigger invalidation
+        recentlyCreatedItemsRef.current.add(createdItem.id);
+        // Clean up after a short delay (enough time for WebSocket to echo)
+        setTimeout(() => {
+          recentlyCreatedItemsRef.current.delete(createdItem.id);
+        }, 2000);
+
+        // When optimistic updates are disabled, directly add the item to query data
+        queryClient.setQueryData(
+          ["dashboard", dashboardId],
+          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+            // If no data yet, force a refetch instead
+            if (!oldData) {
+              void queryClient.refetchQueries({ queryKey: ["dashboard", dashboardId] });
+              return oldData;
+            }
+            // Don't add if already exists (from WebSocket)
+            if (oldData.items.some((item) => item.id === createdItem.id)) {
+              return oldData;
+            }
+            return {
+              ...oldData,
+              items: [...oldData.items, createdItem],
+            };
+          }
+        );
+        if (context?.sourceId) {
+          createEdgeMutation.mutate({
+            sourceItemId: context.sourceId,
+            targetItemId: createdItem.id,
+            sourceHandle: context.sourceHandle,
+            targetHandle: context.targetHandle,
+          });
+        }
+        toast.success("Block added");
+        return;
+      }
+
       queryClient.setQueryData(
         ["dashboard", dashboardId],
         (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
@@ -526,6 +596,9 @@ export default function DashboardPage() {
       toast.success("Block added");
     },
     onError: (error, _variables, context) => {
+      // Decrement mutations in-flight counter
+      mutationsInFlightRef.current--;
+
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
       }
@@ -590,7 +663,16 @@ export default function DashboardPage() {
   const deleteItemMutation = useMutation({
     mutationFn: (itemId: string) => deleteItem(dashboardId, itemId),
     onMutate: async (itemId) => {
+      // Increment mutations in-flight counter to prevent WebSocket-triggered invalidations
+      mutationsInFlightRef.current++;
+
+      // Always cancel in-flight queries to prevent stale data overwriting our updates
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
+
+      // Skip optimistic update if disabled
+      if (!OPTIMISTIC_UPDATE_ENABLED) {
+        return { previous: undefined, previousEdges: undefined };
+      }
       const previous = queryClient.getQueryData<{
         dashboard: Dashboard;
         items: DashboardItem[];
@@ -620,10 +702,35 @@ export default function DashboardPage() {
 
       return { previous, previousEdges };
     },
-    onSuccess: () => {
+    onSuccess: (_data, itemId) => {
+      // Decrement mutations in-flight counter
+      mutationsInFlightRef.current--;
+
+      if (!OPTIMISTIC_UPDATE_ENABLED) {
+        // When optimistic updates are disabled, directly remove the item from query data
+        queryClient.setQueryData(
+          ["dashboard", dashboardId],
+          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+            if (!oldData) return oldData;
+            return {
+              ...oldData,
+              items: oldData.items.filter((item) => item.id !== itemId),
+              edges: oldData.edges.filter(
+                (edge) => edge.sourceItemId !== itemId && edge.targetItemId !== itemId
+              ),
+            };
+          }
+        );
+        setEdges((prev) =>
+          prev.filter((edge) => edge.source !== itemId && edge.target !== itemId)
+        );
+      }
       toast.success("Block deleted");
     },
     onError: (error, _itemId, context) => {
+      // Decrement mutations in-flight counter
+      mutationsInFlightRef.current--;
+
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
       }
@@ -1014,12 +1121,15 @@ export default function DashboardPage() {
       });
     prevCollabSessionsRef.current = currentSessions;
 
-    // Only invalidate if changed items are from remote users (not in our pending set)
+    // Only invalidate if changed items are from remote users (not in our pending set or recently created)
     // AND only when connected - don't trigger refetches during reconnection
+    // AND only when no mutations are in flight (WebSocket broadcast can arrive before mutation completes)
     const isConnected = collabState.connectionState === "connected";
-    if (changedItemIds.size > 0 && isConnected) {
+    const canInvalidate = isConnected && mutationsInFlightRef.current === 0;
+
+    if (changedItemIds.size > 0 && canInvalidate) {
       const hasRemoteChanges = Array.from(changedItemIds).some(
-        (id) => !pendingItemIdsRef.current.has(id)
+        (id) => !pendingItemIdsRef.current.has(id) && !recentlyCreatedItemsRef.current.has(id)
       );
       if (hasRemoteChanges) {
         queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
@@ -1027,8 +1137,9 @@ export default function DashboardPage() {
     }
 
     // Session updates - only invalidate when sessions actually change
-    // AND only when connected - don't trigger failing refetches during reconnection
-    if (sessionsChanged && isConnected) {
+    // AND only when no mutations are in flight
+    // Skip if we have recently created items (session creation follows item creation)
+    if (sessionsChanged && canInvalidate && recentlyCreatedItemsRef.current.size === 0) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
     }
   }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
