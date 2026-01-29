@@ -1141,6 +1141,33 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return framedResponse;
   }
 
+  // GET /dashboards/:id/metrics - Dashboard-scoped sandbox metrics
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'metrics' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const access = await env.DB.prepare(`
+      SELECT 1 FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+    `).bind(segments[1], auth.user!.id).first();
+    if (!access) {
+      return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+    }
+
+    const sandbox = await env.DB.prepare(`
+      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+    if (!sandbox?.sandbox_session_id) {
+      return Response.json({ error: 'E79817: No active sandbox for this dashboard' }, { status: 404 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${sandbox.sandbox_session_id}/metrics`,
+      sandbox.sandbox_machine_id
+    );
+  }
+
   // GET /sessions/:id - Get session
   if (segments[0] === 'sessions' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);

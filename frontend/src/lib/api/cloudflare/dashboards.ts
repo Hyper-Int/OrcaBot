@@ -328,6 +328,25 @@ export async function getSessionMetrics(sessionId: string): Promise<SandboxMetri
   };
 }
 
+export async function getDashboardMetrics(dashboardId: string): Promise<SandboxMetrics> {
+  const raw = await apiGet<Record<string, number>>(
+    `${API.cloudflare.dashboards}/${dashboardId}/metrics`
+  );
+  return {
+    heapBytes: raw.heap_bytes ?? raw.heapBytes ?? 0,
+    sysBytes: raw.sys_bytes ?? raw.sysBytes ?? 0,
+    heapObjects: raw.heap_objects ?? raw.heapObjects ?? 0,
+    goroutines: raw.goroutines ?? 0,
+    gcRuns: raw.gc_runs ?? raw.gcRuns ?? 0,
+    cpuUserMs: raw.cpu_user_ms ?? raw.cpuUserMs ?? 0,
+    cpuSystemMs: raw.cpu_system_ms ?? raw.cpuSystemMs ?? 0,
+    uptimeMs: raw.uptime_ms ?? raw.uptimeMs ?? 0,
+    sessionCount: raw.session_count ?? raw.sessionCount ?? 0,
+    heapMB: raw.heap_mb ?? raw.heapMB ?? 0,
+    sysMB: raw.sys_mb ?? raw.sysMB ?? 0,
+  };
+}
+
 export async function startDashboardBrowser(dashboardId: string): Promise<void> {
   await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/start`);
 }

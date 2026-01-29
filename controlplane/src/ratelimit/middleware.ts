@@ -67,6 +67,11 @@ export async function checkRateLimitIp(
   request: Request,
   env: Env
 ): Promise<RateLimitResult> {
+  // Skip rate limiting in dev mode
+  if (env.DEV_AUTH_ENABLED === 'true') {
+    return { allowed: true };
+  }
+
   if (!env.RATE_LIMITER) {
     return { allowed: true };
   }
@@ -83,6 +88,11 @@ export async function checkRateLimitUser(
   userId: string,
   env: Env
 ): Promise<RateLimitResult> {
+  // Skip rate limiting in dev mode
+  if (env.DEV_AUTH_ENABLED === 'true') {
+    return { allowed: true };
+  }
+
   const limiter = env.RATE_LIMITER_AUTH || env.RATE_LIMITER;
   if (!limiter) {
     return { allowed: true };
@@ -102,6 +112,11 @@ export async function checkRatеLimitByKey(
   key: string,
   env: Env
 ): Promise<RateLimitResult> {
+  // Skip rate limiting in dev mode
+  if (env.DEV_AUTH_ENABLED === 'true') {
+    return { allowed: true };
+  }
+
   if (!env.RATE_LIMITER) {
     return { allowed: true };
   }

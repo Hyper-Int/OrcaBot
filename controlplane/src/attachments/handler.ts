@@ -46,6 +46,7 @@ const TERMINAL_PATHS: Record<string, { skills: string | null; agents: string | n
   opencode: { skills: "/.config/opencode/skills", agents: "/.config/opencode/agents" },
   copilot: { skills: "/.copilot/skills", agents: null },
   droid: { skills: "/.factory/skills", agents: "/.factory/droids" },
+  moltbot: { skills: "/.clawdbot/skills", agents: null },
 };
 
 export async function attachSessionResources(
