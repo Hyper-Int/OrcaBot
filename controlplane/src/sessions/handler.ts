@@ -17,6 +17,12 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
+interface TerminalContent {
+  bootCommand?: string;
+  ttsProvider?: string;
+  ttsVoice?: string;
+}
+
 function parseBооtCоmmand(content: unknown): string {
   if (typeof content !== 'string') {
     return '';
@@ -26,8 +32,28 @@ function parseBооtCоmmand(content: unknown): string {
     return '';
   }
   try {
-    const parsed = JSON.parse(trimmed) as { bootCommand?: string };
-    return typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+    const parsed = JSON.parse(trimmed) as TerminalContent;
+    const bootCommand = typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+
+    // If TTS is enabled, wrap the command with talkito
+    if (parsed.ttsProvider && parsed.ttsProvider !== 'none' && bootCommand) {
+      const provider = parsed.ttsProvider;
+      const voice = parsed.ttsVoice || '';
+      // talkito --disable-mcp --tts-provider {provider} --tts-voice {voice} --orcabot --asr-provider off --log-file .talkito.log {command}
+      const talkitoArgs = [
+        'talkito',
+        '--disable-mcp',
+        '--tts-provider', provider,
+        ...(voice ? ['--tts-voice', voice] : []),
+        '--orcabot',
+        '--asr-provider', 'off',
+        '--log-file', '.talkito.log',
+        bootCommand,
+      ];
+      return talkitoArgs.join(' ');
+    }
+
+    return bootCommand;
   } catch {
     return '';
   }
