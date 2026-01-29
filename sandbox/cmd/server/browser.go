@@ -4,11 +4,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -74,7 +77,8 @@ type browserOpenRequest struct {
 }
 
 func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
-	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	sessionID := r.PathValue("sessionId")
+	session := s.getSessiоnOrErrоr(w, sessionID)
 	if session == nil {
 		return
 	}
@@ -91,7 +95,52 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Notify control plane to create browser item in frontend (async, best-effort)
+	go s.notifyControlPlaneBrowserOpen(sessionID, req.URL)
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyControlPlaneBrowserOpen notifies the control plane to create/show the browser
+// component in the frontend. This runs async and is best-effort since the xdg-open
+// script inside the PTY cannot access INTERNAL_API_TOKEN (filtered for security).
+func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url string) {
+	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
+	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+	if controlplaneURL == "" || internalToken == "" {
+		log.Printf("[browser] skipping control plane notification: missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+		return
+	}
+
+	payload := map[string]string{
+		"sandbox_session_id": sandboxSessionID,
+		"url":                url,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[browser] failed to marshal payload: %v", err)
+		return
+	}
+
+	targetURL := fmt.Sprintf("%s/internal/browser/open", controlplaneURL)
+	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[browser] failed to create request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[browser] failed to notify control plane: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		log.Printf("[browser] control plane returned status %d", resp.StatusCode)
+	}
 }
 
 func (s *Server) handleBrowserProxy(w http.ResponseWriter, r *http.Request) {
