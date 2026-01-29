@@ -162,6 +162,43 @@ type TerminalContentState = {
   agentic?: boolean;
   bootCommand?: string;
   terminalTheme?: "system" | "light" | "dark";
+  ttsProvider?: string;
+  ttsVoice?: string;
+};
+
+// TTS provider configurations
+const TTS_PROVIDERS: Record<string, { label: string; envKey: string | null; voices: string[] }> = {
+  none: { label: "None", envKey: null, voices: [] },
+  openai: {
+    label: "OpenAI",
+    envKey: "OPENAI_API_KEY",
+    voices: ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
+  },
+  elevenlabs: {
+    label: "ElevenLabs",
+    envKey: "ELEVENLABS_API_KEY",
+    voices: ["Rachel", "Domi", "Bella", "Antoni", "Elli", "Josh", "Arnold", "Adam", "Sam"],
+  },
+  deepgram: {
+    label: "Deepgram",
+    envKey: "DEEPGRAM_API_KEY",
+    voices: ["asteria", "luna", "stella", "athena", "hera", "orion", "arcas", "perseus", "angus", "orpheus"],
+  },
+  azure: {
+    label: "Azure",
+    envKey: "AZURE_SPEECH_KEY",
+    voices: ["en-US-AriaNeural", "en-US-GuyNeural", "en-US-JennyNeural", "en-GB-LibbyNeural", "en-GB-RyanNeural"],
+  },
+  gcloud: {
+    label: "Google Cloud",
+    envKey: "GOOGLE_APPLICATION_CREDENTIALS",
+    voices: ["en-US-Standard-A", "en-US-Standard-B", "en-US-Standard-C", "en-US-Standard-D", "en-US-Wavenet-A", "en-US-Wavenet-B"],
+  },
+  aws: {
+    label: "AWS Polly",
+    envKey: "AWS_ACCESS_KEY_ID",
+    voices: ["Joanna", "Matthew", "Ivy", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Amy", "Brian", "Emma"],
+  },
 };
 
 type SessionAttachmentSpec = {
@@ -351,6 +388,8 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
         terminalTheme: parsed.terminalTheme,
+        ttsProvider: parsed.ttsProvider,
+        ttsVoice: parsed.ttsVoice,
       };
     } catch {
       return { name: content, subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
@@ -723,6 +762,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -797,6 +838,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       if (subagentName) {
@@ -863,6 +906,39 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: nextTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+        }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleTtsChange = React.useCallback(
+    (provider: string, voice: string) => {
+      if (!data.onItemChange) return;
+      const newProvider = provider === "none" ? undefined : provider;
+      const newVoice = provider === "none" ? undefined : voice;
+
+      // Only trigger restart bar if TTS settings actually changed
+      const providerChanged = terminalMeta.ttsProvider !== newProvider;
+      const voiceChanged = terminalMeta.ttsVoice !== newVoice;
+
+      if (providerChanged || voiceChanged) {
+        setPendingConfigRestart(true);
+      }
+
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: newProvider,
+          ttsVoice: newVoice,
         }),
       });
     },
@@ -988,6 +1064,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1012,6 +1090,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       if (skillName) {
@@ -1096,6 +1176,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1119,6 +1201,8 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       syncSessionAttachments({
@@ -2321,9 +2405,9 @@ export function TerminalBlock({
             />
           )}
 
-          {/* TTS Voice Panel (Placeholder) */}
+          {/* TTS Voice Panel */}
           {activePanel === "tts-voice" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-64">
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-72">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                   <Volume2 className="w-3 h-3" />
@@ -2338,8 +2422,67 @@ export function TerminalBlock({
                   <X className="w-3 h-3" />
                 </Button>
               </div>
-              <div className="p-3 text-xs text-[var(--foreground-muted)] text-center">
-                Text-to-speech coming soon...
+              <div className="p-3 space-y-3">
+                {/* Provider selection */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Provider
+                  </label>
+                  <select
+                    value={terminalMeta.ttsProvider || "none"}
+                    onChange={(e) => {
+                      const newProvider = e.target.value;
+                      const voices = TTS_PROVIDERS[newProvider]?.voices || [];
+                      const newVoice = voices[0] || "";
+                      handleTtsChange(newProvider, newVoice);
+                    }}
+                    className="w-full h-7 px-2 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
+                  >
+                    {Object.entries(TTS_PROVIDERS).map(([key, { label }]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Voice selection - only show if provider is not "none" */}
+                {terminalMeta.ttsProvider && terminalMeta.ttsProvider !== "none" && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                      Voice
+                    </label>
+                    <select
+                      value={terminalMeta.ttsVoice || ""}
+                      onChange={(e) => handleTtsChange(terminalMeta.ttsProvider || "none", e.target.value)}
+                      className="w-full h-7 px-2 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
+                    >
+                      {(TTS_PROVIDERS[terminalMeta.ttsProvider]?.voices || []).map((voice) => (
+                        <option key={voice} value={voice}>
+                          {voice}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* API Key hint - show if provider requires one */}
+                {terminalMeta.ttsProvider && TTS_PROVIDERS[terminalMeta.ttsProvider]?.envKey && (
+                  <div className="pt-2 border-t border-[var(--border)]">
+                    <div className="text-[10px] text-[var(--foreground-muted)]">
+                      Requires <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">{TTS_PROVIDERS[terminalMeta.ttsProvider].envKey}</code> in Environment Variables
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActivePanel("secrets")}
+                      className="mt-1.5 h-6 text-[10px] text-[var(--accent-primary)]"
+                    >
+                      <Key className="w-3 h-3 mr-1" />
+                      Open Environment Variables
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2565,11 +2708,16 @@ export function TerminalBlock({
                   <span>MCP Tools</span>
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
-                <Volume2 className="w-3 h-3" />
-                <span>TTS Voice</span>
-              </DropdownMenuItem>
+              {/* TTS Voice - only for Claude Code and Codex */}
+              {(terminalType === "claude" || terminalType === "codex") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
+                    <Volume2 className="w-3 h-3" />
+                    <span>TTS Voice</span>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
