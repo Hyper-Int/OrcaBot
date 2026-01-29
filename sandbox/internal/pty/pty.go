@@ -88,6 +88,14 @@ func filterSensitiveEnv(environ []string) []string {
 // If command is empty, DefaultShell() is used.
 // SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
 func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
+	return NewWithCommandEnvID("", command, cols, rows, dir, extraEnv)
+}
+
+// NewWithCommandEnvID creates a new PTY with a pre-generated ID and extra environment variables.
+// If ptyID is empty, a new ID will be generated.
+// If command is empty, DefaultShell() is used.
+// SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
+func NewWithCommandEnvID(ptyID string, command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		parts = []string{DefaultShell()}
@@ -102,20 +110,28 @@ func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv m
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	return newWithCmd(cmd, cols, rows)
+	return newWithCmdID(ptyID, cmd, cols, rows)
 }
 
 func newWithCmd(cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
+	return newWithCmdID("", cmd, cols, rows)
+}
+
+func newWithCmdID(ptyID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
+	// Pre-generate ID if not provided (so it can be used in env vars before process starts)
+	if ptyID == "" {
+		var err error
+		ptyID, err = id.New()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: cols,
 		Rows: rows,
 	})
 	if err != nil {
-		return nil, err
-	}
-	ptyID, err := id.New()
-	if err != nil {
-		ptmx.Close()
 		return nil, err
 	}
 	return &PTY{

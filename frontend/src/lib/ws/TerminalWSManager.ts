@@ -18,6 +18,7 @@ import type {
   AgentState,
   IncomingControlEvent,
   OutgoingControlMessage,
+  AudioEvent,
 } from "@/types/terminal";
 import { API } from "@/config/env";
 
@@ -53,6 +54,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
   private onAgentStateChangeHandlers: Set<(state: AgentState) => void> =
     new Set();
   private onPtyClosedHandlers: Set<() => void> = new Set();
+  private onAudioHandlers: Set<(event: AudioEvent) => void> = new Set();
 
   constructor(
     sessionId: string,
@@ -202,6 +204,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
     return () => this.onPtyClosedHandlers.delete(handler);
   }
 
+  /**
+   * Subscribe to audio events (for TTS playback)
+   */
+  onAudio(handler: (event: AudioEvent) => void): () => void {
+    this.onAudioHandlers.add(handler);
+    return () => this.onAudioHandlers.delete(handler);
+  }
+
   // ===== Protected overrides =====
 
   protected handleBinaryMessage(data: ArrayBuffer): void {
@@ -293,6 +303,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "pty_closed":
         this.notifyPtyClosed();
         break;
+
+      case "audio":
+        this.notifyAudio(message);
+        break;
     }
   }
 
@@ -367,5 +381,9 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
   private notifyPtyClosed(): void {
     this.onPtyClosedHandlers.forEach((handler) => handler());
+  }
+
+  private notifyAudio(event: AudioEvent): void {
+    this.onAudioHandlers.forEach((handler) => handler(event));
   }
 }

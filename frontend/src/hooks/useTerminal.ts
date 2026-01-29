@@ -6,7 +6,7 @@
 import * as React from "react";
 import { TerminalWSManager, type TerminalWSConfig } from "@/lib/ws";
 import type { ConnectionState } from "@/lib/ws";
-import type { TurnTakingState, AgentState } from "@/types/terminal";
+import type { TurnTakingState, AgentState, AudioEvent } from "@/types/terminal";
 
 export interface UseTerminalOptions {
   sessionId: string;
@@ -46,6 +46,8 @@ export interface UseTerminalActions {
 export interface UseTerminalCallbacks {
   /** Called when terminal data is received */
   onData?: (data: Uint8Array) => void;
+  /** Called when an audio event is received (for TTS playback) */
+  onAudio?: (event: AudioEvent) => void;
 }
 
 const DEFAULT_TURN_TAKING: TurnTakingState = {
@@ -133,6 +135,11 @@ export function useTerminal(
       setPtyClosed(true);
     });
 
+    // Subscribe to audio events (for TTS playback)
+    const unsubAudio = manager.onAudio((event) => {
+      callbacksRef.current?.onAudio?.(event);
+    });
+
     // Connect
     manager.connect();
 
@@ -145,6 +152,7 @@ export function useTerminal(
         { name: 'agentState', fn: unsubAgentState },
         { name: 'data', fn: unsubData },
         { name: 'ptyClosed', fn: unsubPtyClosed },
+        { name: 'audio', fn: unsubAudio },
       ];
 
       for (const { name, fn } of cleanups) {
