@@ -422,6 +422,8 @@ export function TerminalBlock({
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
+  // Track if MCP tools, skills, or agents have changed since session started
+  const [pendingConfigRestart, setPendingConfigRestart] = React.useState(false);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
@@ -540,6 +542,8 @@ export function TerminalBlock({
     setIsClaudeSession(false);
     setActivePanel(null);
     autoControlRequestedRef.current = false;
+    // Reset pending config restart when session changes (new session picks up current config)
+    setPendingConfigRestart(false);
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
@@ -720,8 +724,12 @@ export function TerminalBlock({
           terminalTheme: terminalMeta.terminalTheme,
         }),
       });
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [data, terminalMeta]
+    [data, terminalMeta, session?.id]
   );
 
   const buildAgentAttachmentSpec = React.useCallback((item: UserSubagent): SessionAttachmentSpec => {
@@ -796,8 +804,12 @@ export function TerminalBlock({
           detach: { agents: [subagentName] },
         });
       }
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [data, savedById, syncSessionAttachments, terminalMeta, terminalType]
+    [data, savedById, syncSessionAttachments, terminalMeta, terminalType, session?.id]
   );
 
   const handleUseSavedSubagent = React.useCallback(
@@ -977,8 +989,12 @@ export function TerminalBlock({
           terminalTheme: terminalMeta.terminalTheme,
         }),
       });
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [data, terminalMeta]
+    [data, terminalMeta, session?.id]
   );
 
   const handleDetachSkill = React.useCallback(
@@ -1003,8 +1019,12 @@ export function TerminalBlock({
           detach: { skills: [skillName] },
         });
       }
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [data, savedSkillById, syncSessionAttachments, terminalMeta, terminalType]
+    [data, savedSkillById, syncSessionAttachments, terminalMeta, terminalType, session?.id]
   );
 
   const handleUseSavedSkill = React.useCallback(
@@ -1077,8 +1097,12 @@ export function TerminalBlock({
           terminalTheme: terminalMeta.terminalTheme,
         }),
       });
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [data, terminalMeta]
+    [data, terminalMeta, session?.id]
   );
 
   const handleDetachMcpTool = React.useCallback(
@@ -1100,8 +1124,12 @@ export function TerminalBlock({
         terminalType,
         mcpTools: buildMcpToolsPayload(nextIds),
       });
+      // Mark that config changed - restart needed to apply
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
     },
-    [buildMcpToolsPayload, data, syncSessionAttachments, terminalMeta, terminalType]
+    [buildMcpToolsPayload, data, syncSessionAttachments, terminalMeta, terminalType, session?.id]
   );
 
   const handleUseSavedMcpTool = React.useCallback(
@@ -2538,6 +2566,39 @@ export function TerminalBlock({
           </DropdownMenu>
         </div>
       </div>
+
+      {/* Restart to apply banner - shown when MCP/skills/agents changed */}
+      {pendingConfigRestart && session && (isClaudeSession || isAgentic) && (
+        <div
+          className="flex items-center justify-between gap-2 px-2 py-1 bg-[var(--status-warning)]/10 border-b border-[var(--status-warning)]/30"
+          style={{ pointerEvents: "auto" }}
+        >
+          <div className="flex items-center gap-1.5 text-[11px] text-[var(--foreground)]">
+            <RefreshCw className="w-3 h-3" />
+            <span>Configuration changed. Restart to apply.</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleReopen}
+              disabled={isCreatingSession}
+              className="h-5 px-2 text-[10px] nodrag"
+            >
+              {isCreatingSession ? "Restarting..." : "Restart"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setPendingConfigRestart(false)}
+              className="h-5 w-5 nodrag"
+              title="Dismiss"
+            >
+              <X className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Terminal body - pointerEvents: auto for xterm.js interaction */}
       <div
