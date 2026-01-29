@@ -36,9 +36,67 @@ type Settings struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 }
 
+// AgentType identifies which agentic coder is being used
+type AgentType string
+
+const (
+	AgentTypeClaude   AgentType = "claude"
+	AgentTypeOpenCode AgentType = "opencode"
+	AgentTypeGemini   AgentType = "gemini"
+	AgentTypeCodex    AgentType = "codex"
+	AgentTypeDroid    AgentType = "droid"
+	AgentTypeUnknown  AgentType = ""
+)
+
+// DetectAgentType determines which agent is being launched from the command string.
+// Returns AgentTypeUnknown if no agent is detected (e.g., plain shell).
+func DetectAgentType(command string) AgentType {
+	cmd := strings.ToLower(strings.TrimSpace(command))
+
+	// Check for exact matches or command prefixes
+	switch {
+	case cmd == "claude" || strings.HasPrefix(cmd, "claude "):
+		return AgentTypeClaude
+	case cmd == "opencode" || strings.HasPrefix(cmd, "opencode "):
+		return AgentTypeOpenCode
+	case cmd == "gemini" || strings.HasPrefix(cmd, "gemini "):
+		return AgentTypeGemini
+	case cmd == "codex" || strings.HasPrefix(cmd, "codex "):
+		return AgentTypeCodex
+	case cmd == "droid" || strings.HasPrefix(cmd, "droid "):
+		return AgentTypeDroid
+	default:
+		return AgentTypeUnknown
+	}
+}
+
+// GenerateSettingsForAgent creates settings file for a specific agent only.
+// If agentType is AgentTypeUnknown, no settings are generated.
+func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userTools []MCPTool) error {
+	if agentType == AgentTypeUnknown {
+		return nil // No agent detected, skip settings generation
+	}
+
+	servers := buildServerConfigs(userTools)
+
+	switch agentType {
+	case AgentTypeClaude:
+		return generateClaudeSettings(workspaceRoot, servers)
+	case AgentTypeOpenCode:
+		return generateOpenCodeSettings(workspaceRoot, servers)
+	case AgentTypeGemini:
+		return generateGeminiSettings(workspaceRoot, servers)
+	case AgentTypeCodex:
+		return generateCodexSettings(workspaceRoot, servers)
+	case AgentTypeDroid:
+		return generateDroidSettings(workspaceRoot, servers)
+	default:
+		return nil
+	}
+}
+
 // GenerateSettings creates settings files for all supported agentic coders.
-// It always includes the built-in orcabot MCP server and adds any user-configured tools.
-// Since HOME is set to workspaceRoot, ~ paths resolve there.
+// Deprecated: Use GenerateSettingsForAgent with DetectAgentType for targeted generation.
 func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPTool) error {
 	// Build the server configs once, reuse for all formats
 	servers := buildServerConfigs(userTools)
@@ -148,12 +206,11 @@ type OpenCodeConfig struct {
 }
 
 type OpenCodeMCPServer struct {
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	URL     string            `json:"url,omitempty"`
-	Type    string            `json:"type,omitempty"`
-	Enabled bool              `json:"enabled"`
+	Type        string            `json:"type"`
+	Command     []string          `json:"command,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Enabled     bool              `json:"enabled"`
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 // generateOpenCodeSettings creates ~/.config/opencode/opencode.json
@@ -165,14 +222,24 @@ func generateOpenCodeSettings(workspaceRoot string, servers map[string]MCPServer
 
 	mcpServers := make(map[string]OpenCodeMCPServer)
 	for name, server := range servers {
-		mcpServers[name] = OpenCodeMCPServer{
-			Command: server.Command,
-			Args:    server.Args,
-			Env:     server.Env,
-			URL:     server.URL,
-			Type:    server.Type,
+		ocServer := OpenCodeMCPServer{
 			Enabled: true,
 		}
+
+		if server.URL != "" {
+			// Remote server (SSE or streamable-http)
+			ocServer.Type = "remote"
+			ocServer.URL = server.URL
+		} else if server.Command != "" {
+			// Local stdio server - command is an array [command, ...args]
+			ocServer.Type = "local"
+			ocServer.Command = append([]string{server.Command}, server.Args...)
+			if len(server.Env) > 0 {
+				ocServer.Environment = server.Env
+			}
+		}
+
+		mcpServers[name] = ocServer
 	}
 
 	config := OpenCodeConfig{
