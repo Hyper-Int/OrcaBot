@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Zap } from "lucide-react";
+import { Zap, Mail, ArrowLeft, Check } from "lucide-react";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, SITE_URL } from "@/config/env";
@@ -22,8 +22,11 @@ export default function LoginPage() {
   } = useAuthStore();
 
   const [showDevLogin, setShowDevLogin] = React.useState(false);
+  const [showRegisterInterest, setShowRegisterInterest] = React.useState(false);
+  const [registrationSuccess, setRegistrationSuccess] = React.useState(false);
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
+  const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
 
   // Redirect if already authenticated
@@ -88,6 +91,41 @@ export default function LoginPage() {
     window.location.assign(loginUrl);
   };
 
+  const handleRegisterInterest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!email.trim() || !email.includes("@")) {
+      setError("Valid email is required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API.cloudflare.base}/register-interest`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          note: note.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to register interest");
+      }
+
+      setRegistrationSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to register interest. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[var(--background)] flex flex-col items-center justify-center p-4 relative">
       {/* Theme toggle in top-right corner */}
@@ -113,7 +151,7 @@ export default function LoginPage() {
 
         {/* Login Options */}
         <div className="space-y-4">
-          {!showDevLogin ? (
+          {!showDevLogin && !showRegisterInterest ? (
             <>
               {/* Google OAuth Button */}
               <Button
@@ -145,26 +183,41 @@ export default function LoginPage() {
                 Continue with Google
               </Button>
 
+              {/* Divider */}
+              <div className="relative py-4">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-[var(--border)]" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-[var(--background)] px-4 text-caption text-[var(--foreground-subtle)]">
+                    or
+                  </span>
+                </div>
+              </div>
+
+              {/* Register Interest Button */}
+              <Button
+                variant="ghost"
+                size="lg"
+                className="w-full"
+                onClick={() => setShowRegisterInterest(true)}
+                leftIcon={<Mail className="w-4 h-4" />}
+              >
+                Register Interest
+              </Button>
+
+              <p className="text-micro text-[var(--foreground-subtle)] text-center mt-4">
+                Get notified when access becomes available
+              </p>
+
               {/* Dev Mode - only shown when DEV_MODE_ENABLED */}
               {DEV_MODE_ENABLED && (
                 <>
-                  {/* Divider */}
-                  <div className="relative py-4">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-[var(--border)]" />
-                    </div>
-                    <div className="relative flex justify-center">
-                      <span className="bg-[var(--background)] px-4 text-caption text-[var(--foreground-subtle)]">
-                        or
-                      </span>
-                    </div>
-                  </div>
-
                   {/* Dev Mode Button */}
                   <Button
                     variant="ghost"
                     size="lg"
-                    className="w-full"
+                    className="w-full mt-2"
                     onClick={() => setShowDevLogin(true)}
                     leftIcon={<Zap className="w-4 h-4" />}
                   >
@@ -177,6 +230,106 @@ export default function LoginPage() {
                 </>
               )}
             </>
+          ) : showRegisterInterest ? (
+            /* Register Interest Form */
+            registrationSuccess ? (
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-[var(--status-success)]/10 flex items-center justify-center">
+                  <Check className="w-8 h-8 text-[var(--status-success)]" />
+                </div>
+                <h2 className="text-heading text-[var(--foreground)]">Thanks for registering!</h2>
+                <p className="text-body text-[var(--foreground-muted)]">
+                  We've sent a confirmation to your email. We'll be in touch soon!
+                </p>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowRegisterInterest(false);
+                    setRegistrationSuccess(false);
+                    setEmail("");
+                    setNote("");
+                  }}
+                  leftIcon={<ArrowLeft className="w-4 h-4" />}
+                >
+                  Back to login
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={handleRegisterInterest} className="space-y-4">
+                <div className="p-4 rounded-lg bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20">
+                  <p className="text-caption text-[var(--accent-primary)] flex items-center gap-2">
+                    <Mail className="w-4 h-4" />
+                    Register your interest
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="interest-email"
+                    className="text-caption text-[var(--foreground-muted)]"
+                  >
+                    Email
+                  </label>
+                  <Input
+                    id="interest-email"
+                    type="email"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoFocus
+                  />
+                  <p className="text-micro text-[var(--foreground-subtle)]">
+                    Use a Google account email for easier access later
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="interest-note"
+                    className="text-caption text-[var(--foreground-muted)]"
+                  >
+                    Note (optional)
+                  </label>
+                  <textarea
+                    id="interest-note"
+                    placeholder="Tell us a bit about how you'd like to use OrcaBot..."
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 text-body bg-[var(--background)] border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/50 focus:border-[var(--accent-primary)] resize-none"
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-caption text-[var(--status-error)]">
+                    {error}
+                  </p>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setShowRegisterInterest(false);
+                      setError("");
+                    }}
+                    className="flex-1"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    className="flex-1"
+                    isLoading={isLoading}
+                    disabled={!email.trim() || !email.includes("@")}
+                  >
+                    Register
+                  </Button>
+                </div>
+              </form>
+            )
           ) : DEV_MODE_ENABLED ? (
             /* Dev Login Form - only accessible when DEV_MODE_ENABLED */
             <form onSubmit={handleDevLogin} className="space-y-4">

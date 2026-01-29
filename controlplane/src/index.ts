@@ -35,6 +35,7 @@ import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
+import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail } from './email/resend';
 
 // Export Durable Object
 export { DashboardDO } from './dashboards/DurableObject';
@@ -463,6 +464,53 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   // GET /auth/google/callback - Google OAuth callback
   if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'callback' && method === 'GET') {
     return googleAuth.callbackGoogle(request, env);
+  }
+
+  // POST /register-interest - Register interest (no auth required)
+  if (segments[0] === 'register-interest' && segments.length === 1 && method === 'POST') {
+    // Rate limit by IP for this unauthenticated endpoint
+    const ipLimitResult = await checkRateLimitIp(request, env);
+    if (!ipLimitResult.allowed) {
+      return ipLimitResult.response!;
+    }
+
+    const data = await request.json() as { email?: string; note?: string };
+    const email = typeof data.email === 'string' ? data.email.trim() : '';
+    const note = typeof data.note === 'string' ? data.note.trim() : '';
+
+    // Validate email
+    if (!email || !email.includes('@')) {
+      return Response.json({ error: 'Valid email is required' }, { status: 400 });
+    }
+
+    // Limit note length
+    const truncatedNote = note.slice(0, 1000);
+
+    try {
+      // Send thank-you email to the user
+      const thankYouEmail = buildInterestThankYouEmail();
+      await sendEmail(env, {
+        to: email,
+        subject: thankYouEmail.subject,
+        html: thankYouEmail.html,
+      });
+
+      // Send notification email to admin
+      const notificationEmail = buildInterestNotificationEmail({
+        email,
+        note: truncatedNote || undefined,
+      });
+      await sendEmail(env, {
+        to: 'rob.d.macrae@gmail.com',
+        subject: notificationEmail.subject,
+        html: notificationEmail.html,
+      });
+
+      return Response.json({ success: true, message: 'Interest registered successfully' }, { status: 201 });
+    } catch (error) {
+      console.error('Failed to send interest registration emails:', error);
+      return Response.json({ error: 'Failed to register interest. Please try again.' }, { status: 500 });
+    }
   }
 
   // POST /auth/logout - clear session cookie
