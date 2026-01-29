@@ -35,6 +35,15 @@ type ControlEvent struct {
 	Requests   []string `json:"requests,omitempty"`
 }
 
+// AudioEvent represents an audio playback event to broadcast
+type AudioEvent struct {
+	Type   string `json:"type"`             // always "audio"
+	Action string `json:"action"`           // "play" or "stop"
+	Path   string `json:"path,omitempty"`   // file path in workspace (for file-based)
+	Data   string `json:"data,omitempty"`   // base64-encoded audio (for inline)
+	Format string `json:"format,omitempty"` // "mp3", "wav", etc.
+}
+
 // IdleTimeout is how long a hub stays alive with no connected clients.
 // After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
 const IdleTimeout = 60 * time.Second
@@ -568,4 +577,15 @@ func (h *Hub) broadcastControl(data []byte) {
 		default:
 		}
 	}
+}
+
+// BroadcastAudio sends an audio event to all clients
+func (h *Hub) BroadcastAudio(event AudioEvent) {
+	event.Type = "audio"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal audio event: %v", err)
+		return
+	}
+	h.broadcastControl(data)
 }

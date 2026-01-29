@@ -27,6 +27,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
@@ -326,11 +327,18 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
 func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) {
+	// Pre-generate PTY ID so we can include it in environment variables
+	ptyID, err := id.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
+	}
+
 	envVars := loadEnvFile(filepath.Join(s.workspace.Root(), ".env"))
 	if _, ok := envVars["HISTCONTROL"]; !ok {
 		envVars["HISTCONTROL"] = "ignorespace"
 	}
 	envVars["ORCABOT_SESSION_ID"] = s.ID
+	envVars["ORCABOT_PTY_ID"] = ptyID
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
 	// Point agents to the localhost-only MCP server (no auth required)
@@ -354,7 +362,7 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		}
 	}
 
-	p, err := pty.NewWithCommandEnv(command, 80, 24, s.workspace.Root(), envVars)
+	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, s.workspace.Root(), envVars)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +370,6 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	hub := pty.NewHub(p, creatorID)
 
 	// Register cleanup callback for when hub auto-stops (idle timeout, PTY closed)
-	ptyID := p.ID
 	hub.SetOnStop(func() {
 		s.mu.Lock()
 		delete(s.ptys, ptyID)
@@ -423,6 +430,18 @@ func (s *Session) GetPTY(id string) (*PTYInfo, error) {
 		return nil, ErrPTYNotFound
 	}
 	return info, nil
+}
+
+// GetHub retrieves the Hub for a PTY by ID, or nil if not found
+func (s *Session) GetHub(id string) *pty.Hub {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	info, ok := s.ptys[id]
+	if !ok {
+		return nil
+	}
+	return info.Hub
 }
 
 // ListPTYs returns all PTYs in this session

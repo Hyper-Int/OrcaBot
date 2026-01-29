@@ -41,6 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    python3-dev \
+    # Audio libraries (for talkito/pyaudio)
+    portaudio19-dev \
     # Shell utilities
     bash \
     zsh \
@@ -92,6 +95,14 @@ RUN curl -fsSL https://app.factory.ai/cli | sh \
 
 # Install Moltbot CLI (published as clawdbot on npm)
 RUN npm install -g clawdbot@latest
+
+# Install Talkito (voice assistant)
+# Change TALKITO_VERSION to bust cache and pull latest
+ARG TALKITO_VERSION=1
+RUN git clone https://github.com/robdmac/talkito.git /tmp/talkito \
+    && cd /tmp/talkito \
+    && pip3 install --break-system-packages . \
+    && rm -rf /tmp/talkito
 
 # Install Playwright (browser automation) without bundled browsers
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright

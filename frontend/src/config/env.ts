@@ -122,5 +122,7 @@ export const API = {
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/sessions/${sessionId}/ptys/${ptyId}/ws`,
+    sessionFile: (sessionId: string, path: string) =>
+      `${CLOUDFLARE_API_URL}/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`,
   },
 };

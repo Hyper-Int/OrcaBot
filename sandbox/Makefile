@@ -36,7 +36,7 @@ clean:
 
 # Build Docker image
 docker-build:
-	docker build -f docker/Dockerfile -t orcabot-sandbox .
+	docker build -f docker/Dockerfile -t orcabot-sandbox --build-arg TALKITO_VERSION=$$(date +%s) .
 
 # Run Docker container locally
 docker-run: docker-build
@@ -44,7 +44,7 @@ docker-run: docker-build
 
 # Deploy to Fly.io
 deploy:
-	fly deploy
+	fly deploy --build-arg TALKITO_VERSION=$$(date +%s)
 
 # Deploy without cache (full rebuild)
 deploy-fresh:

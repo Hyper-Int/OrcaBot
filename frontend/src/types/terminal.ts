@@ -180,6 +180,18 @@ export interface PtyClosedEvent {
 }
 
 /**
+ * Audio event (server -> client)
+ * Used by talkito and other TTS tools to play audio in the browser
+ */
+export interface AudioEvent {
+  type: "audio";
+  action: "play" | "stop";
+  path?: string;   // file path in workspace (for file-based audio)
+  data?: string;   // base64-encoded audio (for inline audio)
+  format?: string; // "mp3", "wav", etc.
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -190,4 +202,5 @@ export type IncomingControlEvent =
   | ControlRevokedEvent
   | ControlExpiredEvent
   | AgentStateEvent
-  | PtyClosedEvent;
+  | PtyClosedEvent
+  | AudioEvent;

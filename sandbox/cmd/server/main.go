@@ -20,6 +20,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
@@ -162,6 +163,9 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// Helper endpoint: list sessions (so agents can discover their session)
 	mux.HandleFunc("GET /sessions", s.handleListSessions)
 
+	// Audio playback - allows talkito to emit audio events without auth (localhost only)
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.handleAudioEvent)
+
 	return mux
 }
 
@@ -238,6 +242,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListTооls)))
 	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPCallTооl)))
 	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListItems)))
+
+	// Audio playback - broadcasts audio events to PTY WebSocket clients
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.auth.RequireAuthFunc(s.requireMachine(s.handleAudioEvent)))
 
 	return mux
 }
@@ -618,4 +625,43 @@ func (s *Server) handleStatFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(info)
+}
+
+// handleAudioEvent broadcasts an audio event to all WebSocket clients of a PTY
+func (s *Server) handleAudioEvent(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79730: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"` // "play" or "stop"
+		Path   string `json:"path"`   // file path in workspace
+		Data   string `json:"data"`   // base64-encoded audio data
+		Format string `json:"format"` // "mp3", "wav", etc.
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79731: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Action == "" {
+		req.Action = "play"
+	}
+
+	hub.BroadcastAudio(pty.AudioEvent{
+		Action: req.Action,
+		Path:   req.Path,
+		Data:   req.Data,
+		Format: req.Format,
+	})
+
+	w.WriteHeader(http.StatusNoContent)
 }

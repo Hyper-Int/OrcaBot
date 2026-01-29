@@ -689,6 +689,7 @@ export default function DashboardPage() {
           return {
             ...oldData,
             items: oldData.items.filter((item) => item.id !== itemId),
+            sessions: oldData.sessions.filter((session) => session.itemId !== itemId),
             edges: oldData.edges.filter(
               (edge) => edge.sourceItemId !== itemId && edge.targetItemId !== itemId
             ),
@@ -715,6 +716,7 @@ export default function DashboardPage() {
             return {
               ...oldData,
               items: oldData.items.filter((item) => item.id !== itemId),
+              sessions: oldData.sessions.filter((session) => session.itemId !== itemId),
               edges: oldData.edges.filter(
                 (edge) => edge.sourceItemId !== itemId && edge.targetItemId !== itemId
               ),
@@ -1109,6 +1111,22 @@ export default function DashboardPage() {
             !removedItemIds.includes(edge.target)
         )
       );
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            items: oldData.items.filter((item) => !removedItemIds.includes(item.id)),
+            sessions: oldData.sessions.filter((session) => !removedItemIds.includes(session.itemId)),
+            edges: oldData.edges.filter(
+              (edge) =>
+                !removedItemIds.includes(edge.sourceItemId) &&
+                !removedItemIds.includes(edge.targetItemId)
+            ),
+          };
+        }
+      );
     }
 
     // Check if sessions actually changed (not just exist)
@@ -1139,8 +1157,20 @@ export default function DashboardPage() {
     // Session updates - only invalidate when sessions actually change
     // AND only when no mutations are in flight
     // Skip if we have recently created items (session creation follows item creation)
-    if (sessionsChanged && canInvalidate && recentlyCreatedItemsRef.current.size === 0) {
-      queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
+    if (sessionsChanged && canInvalidate) {
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            sessions: currentSessions,
+          };
+        }
+      );
+      if (recentlyCreatedItemsRef.current.size === 0) {
+        queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
+      }
     }
   }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
 

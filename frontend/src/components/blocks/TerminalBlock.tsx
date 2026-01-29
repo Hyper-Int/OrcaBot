@@ -58,6 +58,7 @@ import {
   type TerminalHandle,
 } from "@/components/terminal";
 import { useTerminal } from "@/hooks/useTerminal";
+import { useTerminalAudio } from "@/hooks/useTerminalAudio";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { attachSessionResources, createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
@@ -1206,6 +1207,12 @@ export function TerminalBlock({
     [data, positionAbsoluteX, positionAbsoluteY, width]
   );
 
+  // Use terminal audio hook for TTS playback
+  const { handleAudioEvent } = useTerminalAudio({
+    sessionId: session?.id || "",
+    enabled: !!session && session.status === "active",
+  });
+
   // Use terminal hook for WebSocket connection
   const [terminalState, terminalActions] = useTerminal(
     {
@@ -1254,6 +1261,7 @@ export function TerminalBlock({
           setIsClaudeSession(true);
         }
       }, [isClaudeSession, maybeCreateBrowserBlock]),
+      onAudio: handleAudioEvent,
     }
   );
 
