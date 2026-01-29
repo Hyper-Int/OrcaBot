@@ -4,6 +4,33 @@
 import { getAuthHeaders } from "@/stores/auth-store";
 
 /**
+ * Request deduplication cache
+ * Prevents repeated identical GET requests within a short time window
+ */
+interface PendingRequest<T> {
+  promise: Promise<T>;
+  timestamp: number;
+}
+
+const pendingRequests = new Map<string, PendingRequest<unknown>>();
+const REQUEST_DEDUP_WINDOW_MS = 5000; // 5 seconds - deduplicate identical requests
+
+// Patterns that should be deduplicated (endpoints that can cause storms)
+const DEDUP_PATTERNS = [
+  '/integrations/',
+  '/dashboards/',  // Dashboard fetches can also storm on errors
+];
+
+function shouldDeduplicate(url: string, method: string): boolean {
+  if (method !== 'GET') return false;
+  return DEDUP_PATTERNS.some(pattern => url.includes(pattern));
+}
+
+function getCacheKey(url: string, method: string): string {
+  return `${method}:${url}`;
+}
+
+/**
  * API Error class with status code
  */
 export class ApiError extends Error {
@@ -19,48 +46,85 @@ export class ApiError extends Error {
 }
 
 /**
- * Fetch wrapper with auth headers and error handling
+ * Fetch wrapper with auth headers, error handling, and request deduplication
  */
 export async function apiFetch<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const method = options.method || 'GET';
+  const cacheKey = getCacheKey(url, method);
+
+  // Check for deduplicated request
+  if (shouldDeduplicate(url, method)) {
+    const pending = pendingRequests.get(cacheKey);
+    const now = Date.now();
+
+    if (pending && now - pending.timestamp < REQUEST_DEDUP_WINDOW_MS) {
+      // Return the cached promise - this prevents duplicate in-flight requests
+      return pending.promise as Promise<T>;
+    }
+  }
+
   const authHeaders = getAuthHeaders();
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders,
-      ...options.headers,
-    },
-    credentials: "include",
-  });
+  const fetchPromise = (async (): Promise<T> => {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders,
+        ...options.headers,
+      },
+      credentials: "include",
+    });
 
-  if (!response.ok) {
-    let errorData: unknown;
-    try {
-      errorData = await response.json();
-    } catch {
-      errorData = await response.text();
+    if (!response.ok) {
+      let errorData: unknown;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = await response.text();
+      }
+
+      const message =
+        typeof errorData === "object" &&
+        errorData !== null &&
+        "error" in errorData
+          ? String((errorData as { error: unknown }).error)
+          : `Request failed with status ${response.status}`;
+
+      throw new ApiError(response.status, message, errorData);
     }
 
-    const message =
-      typeof errorData === "object" &&
-      errorData !== null &&
-      "error" in errorData
-        ? String((errorData as { error: unknown }).error)
-        : `Request failed with status ${response.status}`;
+    // Handle 204 No Content
+    if (response.status === 204) {
+      return undefined as T;
+    }
 
-    throw new ApiError(response.status, message, errorData);
+    return response.json();
+  })();
+
+  // Cache the promise for deduplication
+  if (shouldDeduplicate(url, method)) {
+    pendingRequests.set(cacheKey, {
+      promise: fetchPromise,
+      timestamp: Date.now(),
+    });
+
+    // Clean up after the request completes (success or failure)
+    fetchPromise.finally(() => {
+      // Don't remove immediately - keep for dedup window
+      setTimeout(() => {
+        const cached = pendingRequests.get(cacheKey);
+        if (cached && cached.promise === fetchPromise) {
+          pendingRequests.delete(cacheKey);
+        }
+      }, REQUEST_DEDUP_WINDOW_MS);
+    });
   }
 
-  // Handle 204 No Content
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return response.json();
+  return fetchPromise;
 }
 
 /**

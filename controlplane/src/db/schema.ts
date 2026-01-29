@@ -649,10 +649,8 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
-  await migrateDashboardItemTypes(db);
-  await migrateUserIntegrationProviders(db);
-
-  // Add metadata column to dashboard_items
+  // Add metadata column to dashboard_items BEFORE type migration
+  // (type migration copies this column, so it must exist first)
   try {
     await db.prepare(`
       ALTER TABLE dashboard_items ADD COLUMN metadata TEXT
@@ -660,6 +658,9 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   } catch {
     // Column already exists.
   }
+
+  await migrateDashboardItemTypes(db);
+  await migrateUserIntegrationProviders(db);
 }
 
 // All valid integration providers - add new providers here

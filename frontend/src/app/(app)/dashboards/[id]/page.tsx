@@ -279,6 +279,7 @@ export default function DashboardPage() {
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
+  const prevCollabSessionsRef = React.useRef<Session[]>([]);
   const workspaceCreateRequestedRef = React.useRef(false);
 
   // Fetch dashboard data with better caching
@@ -294,7 +295,15 @@ export default function DashboardPage() {
     gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes (survives disconnects)
     refetchOnWindowFocus: false, // Don't refetch on window focus
     refetchInterval: false, // Don't auto-refetch
-    retry: 3, // Retry failed requests
+    retry: (failureCount, error) => {
+      // Don't retry on 4xx/5xx errors - they won't magically fix themselves
+      if (error && 'status' in error) {
+        const status = (error as { status: number }).status;
+        if (status >= 400 && status < 600) return false;
+      }
+      // Retry network errors up to 3 times
+      return failureCount < 3;
+    },
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
   });
 
@@ -995,6 +1004,16 @@ export default function DashboardPage() {
       );
     }
 
+    // Check if sessions actually changed (not just exist)
+    const prevSessions = prevCollabSessionsRef.current;
+    const currentSessions = collabState.sessions;
+    const sessionsChanged = currentSessions.length !== prevSessions.length ||
+      currentSessions.some((s, i) => {
+        const prev = prevSessions[i];
+        return !prev || prev.id !== s.id || prev.status !== s.status;
+      });
+    prevCollabSessionsRef.current = currentSessions;
+
     // Only invalidate if changed items are from remote users (not in our pending set)
     // AND only when connected - don't trigger refetches during reconnection
     const isConnected = collabState.connectionState === "connected";
@@ -1007,9 +1026,9 @@ export default function DashboardPage() {
       }
     }
 
-    // Session updates are always from the server, so always invalidate
-    // But only when connected - don't trigger failing refetches during reconnection
-    if (collabState.sessions.length > 0 && isConnected) {
+    // Session updates - only invalidate when sessions actually change
+    // AND only when connected - don't trigger failing refetches during reconnection
+    if (sessionsChanged && isConnected) {
       queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
     }
   }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
@@ -1056,11 +1075,9 @@ export default function DashboardPage() {
       content: "",
       position: { x, y },
       size: defaultSizes.workspace,
-    }, {
-      onError: () => {
-        workspaceCreateRequestedRef.current = false;
-      },
     });
+    // Note: Don't reset workspaceCreateRequestedRef on error - that would cause retry loops.
+    // If creation fails, user can refresh the page to retry.
   }, [data, role, items, createItemMutation]);
 
   React.useEffect(() => {
