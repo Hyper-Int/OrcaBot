@@ -4,6 +4,7 @@
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import type { AuthContext } from '../auth/middleware';
 import { requireAuth } from '../auth/middleware';
+import { sandboxFetch } from '../sandbox/fetch';
 
 const GOOGLE_SCOPE = [
   'https://www.googleapis.com/auth/drive',
@@ -3176,17 +3177,16 @@ async function startSandboxDriveSync(
   folderName: string
 ) {
   try {
-    const res = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/drive/sync`, {
+    const res = await sandboxFetch(env, `/sessions/${sandboxSessionId}/drive/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-        ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
       },
       body: JSON.stringify({
         dashboard_id: dashboardId,
         folder_name: folderName,
       }),
+      machineId: sandboxMachineId || undefined,
     });
     if (!res.ok) {
       throw new Error(`sandbox sync failed: ${res.status}`);
@@ -3209,18 +3209,17 @@ async function startSandboxMirrorSync(
   folderName: string
 ) {
   try {
-    const res = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/mirror/sync`, {
+    const res = await sandboxFetch(env, `/sessions/${sandboxSessionId}/mirror/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-        ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
       },
       body: JSON.stringify({
         provider,
         dashboard_id: dashboardId,
         folder_name: folderName,
       }),
+      machineId: sandboxMachineId || undefined,
     });
     if (!res.ok) {
       throw new Error(`sandbox sync failed: ${res.status}`);

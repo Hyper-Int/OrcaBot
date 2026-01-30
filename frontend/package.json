@@ -12,7 +12,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "workers:build": "npx @opennextjs/cloudflare build",
-    "workers:deploy": "npm run workers:build && npx wrangler deploy"
+    "workers:deploy": "node scripts/workers-deploy.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

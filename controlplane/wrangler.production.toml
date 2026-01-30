@@ -19,6 +19,9 @@ routes = [
 ]
 
 [vars]
+# Deployment environment
+ENVIRONMENT = "production"
+
 # Authentication - Dev auth DISABLED, CF Access required
 DEV_AUTH_ENABLED = "false"
 

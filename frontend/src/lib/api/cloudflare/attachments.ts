@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { API } from "@/config/env";
+import { notifyApiError } from "@/lib/alerts";
 import { apiPost } from "../client";
 
 export type SessionAttachmentSpec = {
@@ -35,5 +36,10 @@ export async function attachSessionResources(
   data: SessionAttachmentRequest
 ): Promise<void> {
   const url = `${API.cloudflare.base}/sessions/${sessionId}/attachments`;
-  await apiPost<void>(url, data);
+  try {
+    await apiPost<void>(url, data);
+  } catch (error) {
+    notifyApiError(error);
+    throw error;
+  }
 }

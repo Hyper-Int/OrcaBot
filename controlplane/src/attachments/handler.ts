@@ -3,6 +3,7 @@
 
 import type { Env } from "../types";
 import { isDesktopFeatureDisabledError } from "../storage/drive-cache";
+import { sandboxFetch, sandboxUrl } from "../sandbox/fetch";
 
 type AttachmentSpec = {
   name: string;
@@ -38,6 +39,9 @@ type AttachmentFile = {
 
 const CACHE_PREFIX = "attachments-cache";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 10_000;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB per file
+const MAX_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024; // 25MB total per attachment
 
 const TERMINAL_PATHS: Record<string, { skills: string | null; agents: string | null }> = {
   claude: { skills: "/.claude/skills", agents: "/.claude/agents" },
@@ -49,15 +53,25 @@ const TERMINAL_PATHS: Record<string, { skills: string | null; agents: string | n
   moltbot: { skills: "/.clawdbot/skills", agents: null },
 };
 
+class AttachmentError extends Error {
+  status: number;
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "AttachmentError";
+    this.status = status;
+  }
+}
+
 export async function attachSessionResources(
   env: Env,
   userId: string,
   sessionId: string,
   data: AttachmentRequest
 ): Promise<Response> {
-  if (!data || !data.terminalType) {
-    return Response.json({ error: "E79801: terminalType required" }, { status: 400 });
-  }
+  try {
+    if (!data || !data.terminalType) {
+      return Response.json({ error: "E79801: terminalType required" }, { status: 400 });
+    }
 
   const session = await env.DB.prepare(`
       SELECT s.* FROM sessions s
@@ -141,7 +155,13 @@ export async function attachSessionResources(
     await writeMcpSettings(env, sandboxSessionId, machineId, data.terminalType, data.mcpTools);
   }
 
-  return Response.json({ ok: true });
+    return Response.json({ ok: true });
+  } catch (error) {
+    if (error instanceof AttachmentError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 }
 
 // MCP settings generation — writes config files for all supported agent types
@@ -315,6 +335,7 @@ async function writeMcpSettings(
 
 async function resolveAttachmentFiles(env: Env, attachment: AttachmentSpec): Promise<AttachmentFile[]> {
   if (attachment.sourceUrl) {
+    validateAttachmentUrl(attachment.sourceUrl);
     return getCachedFiles(env, attachment.sourceUrl);
   }
   if (attachment.content) {
@@ -349,6 +370,7 @@ async function getCachedFiles(env: Env, sourceUrl: string): Promise<AttachmentFi
     const fetchedAt = Date.parse(manifest.fetchedAt);
     if (!Number.isNaN(fetchedAt) && now - fetchedAt < CACHE_TTL_MS) {
       const cachedFiles: AttachmentFile[] = [];
+      let totalBytes = 0;
       for (const entry of manifest.files) {
         let object: R2ObjectBody | null = null;
         try {
@@ -360,11 +382,20 @@ async function getCachedFiles(env: Env, sourceUrl: string): Promise<AttachmentFi
           throw error;
         }
         if (!object) continue;
+        if (typeof object.size === "number" && object.size > MAX_ATTACHMENT_BYTES) {
+          throw new AttachmentError("E79811: Attachment file too large");
+        }
         cachedFiles.push({
           path: entry.path,
           data: await object.arrayBuffer(),
           contentType: entry.contentType ?? null,
         });
+      }
+      for (const file of cachedFiles) {
+        totalBytes += file.data.byteLength;
+        if (file.data.byteLength > MAX_ATTACHMENT_BYTES || totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
+          throw new AttachmentError("E79811: Attachment file too large");
+        }
       }
       if (cachedFiles.length > 0) {
         return cachedFiles;
@@ -417,16 +448,28 @@ async function fetchSourceFiles(sourceUrl: string): Promise<AttachmentFile[]> {
       : `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${parsed.ref}/${parsed.path}`;
     return fetchSingleFile(rawUrl, basename(parsed.path));
   }
-  return fetchSingleFile(sourceUrl, basename(new URL(sourceUrl).pathname));
+  throw new AttachmentError("E79809: Unsupported attachment source (only GitHub URLs are allowed)");
 }
 
 async function fetchGitHubTreeFiles(owner: string, repo: string, ref: string, basePath: string): Promise<AttachmentFile[]> {
   const files = await listGitHubDirectory(owner, repo, ref, basePath);
   const result: AttachmentFile[] = [];
+  let totalBytes = 0;
   for (const file of files) {
-    const response = await fetch(file.downloadUrl, { headers: githubHeaders() });
+    const response = await fetchWithTimeout(file.downloadUrl, { headers: githubHeaders() });
     if (!response.ok) continue;
+    const contentLength = response.headers.get("content-length");
+    if (contentLength && Number(contentLength) > MAX_ATTACHMENT_BYTES) {
+      throw new AttachmentError("E79811: Attachment file too large");
+    }
     const data = await response.arrayBuffer();
+    if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new AttachmentError("E79811: Attachment file too large");
+    }
+    totalBytes += data.byteLength;
+    if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
+      throw new AttachmentError("E79812: Attachment exceeds total size limit");
+    }
     result.push({
       path: file.relativePath,
       data,
@@ -448,7 +491,7 @@ async function listGitHubDirectory(
   while (queue.length > 0) {
     const current = queue.shift() || "";
     const url = `https://api.github.com/repos/${owner}/${repo}/contents/${current}?ref=${ref}`;
-    const response = await fetch(url, { headers: githubHeaders() });
+    const response = await fetchWithTimeout(url, { headers: githubHeaders() });
     if (!response.ok) {
       continue;
     }
@@ -493,9 +536,16 @@ function parseGitHubUrl(sourceUrl: string): { type: "raw" | "blob" | "tree"; own
 }
 
 async function fetchSingleFile(sourceUrl: string, fileName: string): Promise<AttachmentFile[]> {
-  const response = await fetch(sourceUrl, { headers: githubHeaders() });
+  const response = await fetchWithTimeout(sourceUrl, { headers: githubHeaders() });
   if (!response.ok) return [];
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number(contentLength) > MAX_ATTACHMENT_BYTES) {
+    throw new AttachmentError("E79811: Attachment file too large");
+  }
   const data = await response.arrayBuffer();
+  if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+    throw new AttachmentError("E79811: Attachment file too large");
+  }
   return [{
     path: fileName,
     data,
@@ -510,19 +560,15 @@ async function putSandboxFile(
   path: string,
   file: AttachmentFile
 ): Promise<void> {
-  const url = new URL(`${env.SANDBOX_URL.replace(/\/$/, "")}/sessions/${sandboxSessionId}/file`);
+  const url = sandboxUrl(env, `/sessions/${sandboxSessionId}/file`);
   url.searchParams.set("path", path);
-  const headers = new Headers({
-    "X-Internal-Token": env.SANDBOX_INTERNAL_TOKEN,
-    "Content-Type": file.contentType || "application/octet-stream",
-  });
-  if (machineId) {
-    headers.set("X-Sandbox-Machine-ID", machineId);
-  }
-  await fetch(url.toString(), {
+  await sandboxFetch(env, url.toString(), {
     method: "PUT",
-    headers,
+    headers: {
+      "Content-Type": file.contentType || "application/octet-stream",
+    },
     body: file.data,
+    machineId,
   });
 }
 
@@ -532,15 +578,9 @@ async function deleteSandboxPath(
   machineId: string | undefined,
   path: string
 ): Promise<void> {
-  const url = new URL(`${env.SANDBOX_URL.replace(/\/$/, "")}/sessions/${sandboxSessionId}/file`);
+  const url = sandboxUrl(env, `/sessions/${sandboxSessionId}/file`);
   url.searchParams.set("path", path);
-  const headers = new Headers({
-    "X-Internal-Token": env.SANDBOX_INTERNAL_TOKEN,
-  });
-  if (machineId) {
-    headers.set("X-Sandbox-Machine-ID", machineId);
-  }
-  await fetch(url.toString(), { method: "DELETE", headers });
+  await sandboxFetch(env, url.toString(), { method: "DELETE", machineId });
 }
 
 function githubHeaders(): Record<string, string> {
@@ -567,6 +607,39 @@ function extensionForPath(path: string): string {
   const index = path.lastIndexOf(".");
   if (index === -1) return ".md";
   return path.slice(index);
+}
+
+function validateAttachmentUrl(sourceUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    throw new AttachmentError("E79809: Invalid attachment URL");
+  }
+  if (url.protocol !== "https:") {
+    throw new AttachmentError("E79809: Attachment URLs must be https");
+  }
+  if (url.hostname !== "github.com" && url.hostname !== "raw.githubusercontent.com") {
+    throw new AttachmentError("E79809: Unsupported attachment source (only GitHub URLs are allowed)");
+  }
+  if (!parseGitHubUrl(sourceUrl)) {
+    throw new AttachmentError("E79809: Unsupported attachment URL format");
+  }
+}
+
+async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      throw new AttachmentError("E79810: Attachment fetch timed out", 408);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function sha256(value: string): Promise<string> {
