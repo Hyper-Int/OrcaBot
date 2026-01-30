@@ -19,6 +19,8 @@ import type {
   IncomingControlEvent,
   OutgoingControlMessage,
   AudioEvent,
+  TtsStatusEvent,
+  TalkitoNoticeEvent,
 } from "@/types/terminal";
 import { API } from "@/config/env";
 
@@ -47,6 +49,9 @@ export class TerminalWSManager extends BaseWebSocketManager {
   // Agent state
   private agentState: AgentState = null;
 
+  // TTS status (from talkito)
+  private ttsStatus: TtsStatusEvent | null = null;
+
   // Callbacks
   private onDataHandlers: Set<(data: Uint8Array) => void> = new Set();
   private onTurnTakingChangeHandlers: Set<(state: TurnTakingState) => void> =
@@ -55,6 +60,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
     new Set();
   private onPtyClosedHandlers: Set<() => void> = new Set();
   private onAudioHandlers: Set<(event: AudioEvent) => void> = new Set();
+  private onTtsStatusHandlers: Set<(event: TtsStatusEvent) => void> = new Set();
 
   constructor(
     sessionId: string,
@@ -212,6 +218,21 @@ export class TerminalWSManager extends BaseWebSocketManager {
     return () => this.onAudioHandlers.delete(handler);
   }
 
+  /**
+   * Subscribe to TTS status changes (from talkito)
+   */
+  onTtsStatus(handler: (event: TtsStatusEvent) => void): () => void {
+    this.onTtsStatusHandlers.add(handler);
+    return () => this.onTtsStatusHandlers.delete(handler);
+  }
+
+  /**
+   * Get current TTS status
+   */
+  getTtsStatus(): TtsStatusEvent | null {
+    return this.ttsStatus;
+  }
+
   // ===== Protected overrides =====
 
   protected handleBinaryMessage(data: ArrayBuffer): void {
@@ -307,6 +328,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "audio":
         this.notifyAudio(message);
         break;
+
+      case "tts_status":
+        this.updateTtsStatus(message);
+        break;
+
+      case "talkito_notice":
+        this.handleTalkitoNotice(message);
+        break;
     }
   }
 
@@ -385,5 +414,30 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
   private notifyAudio(event: AudioEvent): void {
     this.onAudioHandlers.forEach((handler) => handler(event));
+  }
+
+  private updateTtsStatus(event: TtsStatusEvent): void {
+    this.ttsStatus = event;
+    this.notifyTtsStatus(event);
+  }
+
+  private notifyTtsStatus(event: TtsStatusEvent): void {
+    this.onTtsStatusHandlers.forEach((handler) => handler(event));
+  }
+
+  private handleTalkitoNotice(event: TalkitoNoticeEvent): void {
+    const prefix = "Talkito:";
+    const msg = event.message;
+
+    switch (event.level) {
+      case "error":
+        console.error(prefix, msg);
+        break;
+      case "warning":
+        console.warn(prefix, msg);
+        break;
+      default:
+        console.log(prefix, msg);
+    }
   }
 }

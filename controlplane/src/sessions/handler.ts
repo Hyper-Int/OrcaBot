@@ -103,10 +103,26 @@ async function ensureDashbоardSandbоx(
 
   const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
   if (existingSandbox?.sandbox_session_id) {
-    return {
-      sandboxSessionId: existingSandbox.sandbox_session_id,
-      sandboxMachineId: existingSandbox.sandbox_machine_id || '',
-    };
+    // Validate session still exists on sandbox (may be stale after redeploy)
+    const checkUrl = `${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${existingSandbox.sandbox_session_id}/ptys`;
+    const headers: HeadersInit = { 'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN };
+    if (existingSandbox.sandbox_machine_id) {
+      (headers as Record<string, string>)['X-Sandbox-Machine-ID'] = existingSandbox.sandbox_machine_id;
+    }
+    const checkRes = await fetch(checkUrl, { headers });
+
+    if (checkRes.ok) {
+      return {
+        sandboxSessionId: existingSandbox.sandbox_session_id,
+        sandboxMachineId: existingSandbox.sandbox_machine_id || '',
+      };
+    }
+
+    // Session is stale - clear it so a fresh one is created below
+    console.log(`Stale sandbox session detected in ensureDashboardSandbox (${existingSandbox.sandbox_session_id}), clearing`);
+    await env.DB.prepare(`
+      DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+    `).bind(dashboardId).run();
   }
 
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
@@ -319,7 +335,36 @@ export async function createSessiоn(
     }
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
-    const pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
+    // If the session is stale (sandbox redeployed), clear it and create a fresh one
+    let pty: { id: string };
+    try {
+      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
+    } catch (err) {
+      const isStaleSession = err instanceof Error && err.message.includes('404');
+      if (!isStaleSession) {
+        throw err;
+      }
+
+      // Stale session detected - clear it and create a fresh sandbox
+      console.log(`Stale sandbox session detected (${sandboxSessionId}), creating fresh session`);
+      await env.DB.prepare(`
+        DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).run();
+
+      // Create fresh sandbox session
+      const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+      const freshSandbox = await sandbox.createSessiоn(dashboardId, mcpToken);
+      sandboxSessionId = freshSandbox.id;
+      sandboxMachineId = freshSandbox.machineId || '';
+
+      await env.DB.prepare(`
+        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(dashboardId, sandboxSessionId, sandboxMachineId, now).run();
+
+      // Retry PTY creation on fresh session
+      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
+    }
 
     // Update with sandbox session ID and PTY ID
     await env.DB.prepare(`

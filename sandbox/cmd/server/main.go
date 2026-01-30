@@ -166,6 +166,9 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// Audio playback - allows talkito to emit audio events without auth (localhost only)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.handleAudioEvent)
 
+	// TTS status - allows talkito to emit TTS config status without auth (localhost only)
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/status", s.handleTtsStatusEvent)
+
 	return mux
 }
 
@@ -662,6 +665,57 @@ func (s *Server) handleAudioEvent(w http.ResponseWriter, r *http.Request) {
 		Data:   req.Data,
 		Format: req.Format,
 	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleTtsStatusEvent broadcasts TTS status or notice events to all WebSocket clients of a PTY
+func (s *Server) handleTtsStatusEvent(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79732: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Action      string `json:"action"`      // "tts_status" or "notice"
+		Enabled     bool   `json:"enabled"`     // for tts_status
+		Initialized bool   `json:"initialized"` // for tts_status
+		Mode        string `json:"mode"`        // for tts_status
+		Provider    string `json:"provider"`    // for tts_status
+		Voice       string `json:"voice"`       // for tts_status
+		Level       string `json:"level"`       // for notice: "info", "warning", "error"
+		Message     string `json:"message"`     // for notice
+		Category    string `json:"category"`    // for notice
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79733: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	switch req.Action {
+	case "notice":
+		hub.BroadcastTalkitoNotice(pty.TalkitoNoticeEvent{
+			Level:    req.Level,
+			Message:  req.Message,
+			Category: req.Category,
+		})
+	default:
+		// Default to tts_status for backward compatibility
+		hub.BroadcastTtsStatus(pty.TtsStatusEvent{
+			Enabled:     req.Enabled,
+			Initialized: req.Initialized,
+			Mode:        req.Mode,
+			Provider:    req.Provider,
+			Voice:       req.Voice,
+		})
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

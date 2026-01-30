@@ -483,6 +483,7 @@ export function TerminalBlock({
   const [showSavedMcp, setShowSavedMcp] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
+  const secretValueInputRef = React.useRef<HTMLInputElement>(null);
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   // Track if MCP tools, skills, or agents have changed since session started
   const [pendingConfigRestart, setPendingConfigRestart] = React.useState(false);
@@ -1400,7 +1401,7 @@ export function TerminalBlock({
     }
   );
 
-  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError } = terminalState;
+  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError, ttsStatus } = terminalState;
 
   // Track if we were ever connected (to distinguish initial disconnected from lost connection)
   const wasConnectedRef = React.useRef(false);
@@ -2119,30 +2120,51 @@ export function TerminalBlock({
                 </Button>
               </div>
               <div className="p-2 space-y-2 text-xs">
-                <div className="flex gap-1">
+                <form
+                  autoComplete="off"
+                  data-form-type="other"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (newSecretName.trim() && newSecretValue.trim()) {
+                      handleAddSecret();
+                    }
+                  }}
+                  className="flex gap-1"
+                >
                   <Input
+                    name="env_key_name"
                     placeholder="NAME"
                     value={newSecretName}
                     onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
                     className="h-6 text-xs flex-1 nodrag font-mono"
+                    autoComplete="off"
+                    data-form-type="other"
                   />
+                  {/* DO NOT change to type="password" - Chrome will show "Save password?" popup.
+                      Using type="text" with CSS masking avoids password manager detection. */}
                   <Input
-                    type="password"
+                    ref={secretValueInputRef}
+                    name="env_key_value"
+                    type="text"
                     placeholder="Value"
                     value={newSecretValue}
                     onChange={(e) => setNewSecretValue(e.target.value)}
                     className="h-6 text-xs flex-1 nodrag"
+                    autoComplete="off"
+                    data-form-type="other"
+                    data-lpignore="true"
+                    style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
                   />
                   <Button
+                    type="submit"
                     variant="secondary"
                     size="sm"
-                    onClick={handleAddSecret}
                     disabled={!newSecretName.trim() || !newSecretValue.trim()}
                     className="h-6 px-2 nodrag"
                   >
                     <Plus className="w-3 h-3" />
                   </Button>
-                </div>
+                </form>
                 {/* Inline apply notification - only shown for non-Claude/non-Agentic terminals that can apply env vars live */}
                 {pendingSecretApply && !needsRestartForSecrets && (
                   <div className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1">
@@ -2484,6 +2506,32 @@ export function TerminalBlock({
                 </Button>
               </div>
               <div className="p-3 space-y-3">
+                {/* Live TTS status from talkito */}
+                {ttsStatus && (
+                  <div className={cn(
+                    "flex items-center gap-2 px-2 py-1.5 rounded text-[10px]",
+                    ttsStatus.enabled && ttsStatus.initialized
+                      ? "bg-[var(--status-success)]/10 text-[var(--status-success)]"
+                      : "bg-[var(--foreground-subtle)]/10 text-[var(--foreground-muted)]"
+                  )}>
+                    <span className={cn(
+                      "w-2 h-2 rounded-full shrink-0",
+                      ttsStatus.enabled && ttsStatus.initialized
+                        ? "bg-[var(--status-success)] animate-pulse"
+                        : "bg-[var(--foreground-subtle)]"
+                    )} />
+                    <span className="font-medium">
+                      {ttsStatus.enabled && ttsStatus.initialized ? (
+                        <>Live: {ttsStatus.provider}{ttsStatus.voice ? ` (${ttsStatus.voice})` : ""}</>
+                      ) : ttsStatus.enabled ? (
+                        "Initializing..."
+                      ) : (
+                        "TTS disabled in session"
+                      )}
+                    </span>
+                  </div>
+                )}
+
                 {/* Provider selection */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
@@ -2536,7 +2584,13 @@ export function TerminalBlock({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setActivePanel("secrets")}
+                      onClick={() => {
+                        const envKey = TTS_PROVIDERS[terminalMeta.ttsProvider!].envKey;
+                        if (envKey) setNewSecretName(envKey);
+                        setActivePanel("secrets");
+                        // Focus the value input after panel renders
+                        setTimeout(() => secretValueInputRef.current?.focus(), 50);
+                      }}
                       className="mt-1.5 h-6 text-[10px] text-[var(--accent-primary)]"
                     >
                       <Key className="w-3 h-3 mr-1" />
@@ -2683,32 +2737,46 @@ export function TerminalBlock({
                 </button>
               )}
 
-              {/* TTS Voice indicator */}
-              <button
-                type="button"
-                onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")}
-                title={
-                  terminalMeta.ttsProvider
-                    ? `TTS: ${terminalMeta.ttsProvider}${terminalMeta.ttsVoice ? ` (${terminalMeta.ttsVoice})` : ""}`
-                    : "Text-to-speech disabled - click to configure"
-                }
-                className={cn(
-                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
-                  activePanel === "tts-voice"
-                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
-                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
-                )}
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full",
-                    terminalMeta.ttsProvider
-                      ? "bg-[var(--status-success)]"
-                      : "bg-[var(--foreground-subtle)]"
-                  )}
-                />
-              </button>
+              {/* TTS Voice indicator - prefers live status from talkito over config */}
+              {(() => {
+                // Use live TTS status if available and enabled, otherwise fall back to config
+                const liveTtsEnabled = ttsStatus?.enabled && ttsStatus?.initialized;
+                const liveTtsProvider = liveTtsEnabled ? ttsStatus?.provider : null;
+                const liveTtsVoice = liveTtsEnabled ? ttsStatus?.voice : null;
+                const effectiveProvider = liveTtsProvider || terminalMeta.ttsProvider;
+                const effectiveVoice = liveTtsVoice || terminalMeta.ttsVoice;
+                const isActive = !!effectiveProvider && effectiveProvider !== "none";
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")}
+                    title={
+                      isActive
+                        ? `TTS: ${effectiveProvider}${effectiveVoice ? ` (${effectiveVoice})` : ""}${liveTtsEnabled ? " (live)" : ""}`
+                        : "Text-to-speech disabled - click to configure"
+                    }
+                    className={cn(
+                      "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                      activePanel === "tts-voice"
+                        ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                        : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                    )}
+                  >
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full",
+                        liveTtsEnabled
+                          ? "bg-[var(--status-success)] animate-pulse"
+                          : isActive
+                            ? "bg-[var(--status-success)]"
+                            : "bg-[var(--foreground-subtle)]"
+                      )}
+                    />
+                  </button>
+                );
+              })()}
             </>
           )}
 
