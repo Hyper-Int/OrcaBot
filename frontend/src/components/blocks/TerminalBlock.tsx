@@ -58,6 +58,7 @@ import {
   type TerminalHandle,
 } from "@/components/terminal";
 import { useTerminal } from "@/hooks/useTerminal";
+import { useTerminalAudio } from "@/hooks/useTerminalAudio";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { attachSessionResources, createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
@@ -161,6 +162,55 @@ type TerminalContentState = {
   agentic?: boolean;
   bootCommand?: string;
   terminalTheme?: "system" | "light" | "dark";
+  terminalFontSize?: "auto" | "small" | "medium" | "large" | "xlarge";
+  ttsProvider?: string;
+  ttsVoice?: string;
+};
+
+// Font size presets - "auto" means dynamic resizing based on terminal width
+const FONT_SIZE_PRESETS = {
+  auto: { label: "Auto", size: 12 },
+  small: { label: "Small", size: 10 },
+  medium: { label: "Medium", size: 12 },
+  large: { label: "Large", size: 14 },
+  xlarge: { label: "Extra Large", size: 16 },
+} as const;
+
+type FontSizeSetting = keyof typeof FONT_SIZE_PRESETS;
+
+// TTS provider configurations
+const TTS_PROVIDERS: Record<string, { label: string; envKey: string | null; voices: string[] }> = {
+  none: { label: "None", envKey: null, voices: [] },
+  openai: {
+    label: "OpenAI",
+    envKey: "OPENAI_API_KEY",
+    voices: ["alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"],
+  },
+  elevenlabs: {
+    label: "ElevenLabs",
+    envKey: "ELEVENLABS_API_KEY",
+    voices: ["Rachel", "Domi", "Bella", "Antoni", "Elli", "Josh", "Arnold", "Adam", "Sam"],
+  },
+  deepgram: {
+    label: "Deepgram",
+    envKey: "DEEPGRAM_API_KEY",
+    voices: ["asteria", "luna", "stella", "athena", "hera", "orion", "arcas", "perseus", "angus", "orpheus"],
+  },
+  azure: {
+    label: "Azure",
+    envKey: "AZURE_SPEECH_KEY",
+    voices: ["en-US-AriaNeural", "en-US-GuyNeural", "en-US-JennyNeural", "en-GB-LibbyNeural", "en-GB-RyanNeural"],
+  },
+  gcloud: {
+    label: "Google Cloud",
+    envKey: "GOOGLE_APPLICATION_CREDENTIALS",
+    voices: ["en-US-Standard-A", "en-US-Standard-B", "en-US-Standard-C", "en-US-Standard-D", "en-US-Wavenet-A", "en-US-Wavenet-B"],
+  },
+  aws: {
+    label: "AWS Polly",
+    envKey: "AWS_ACCESS_KEY_ID",
+    voices: ["Joanna", "Matthew", "Ivy", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Amy", "Brian", "Emma"],
+  },
 };
 
 type SessionAttachmentSpec = {
@@ -350,6 +400,9 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
         terminalTheme: parsed.terminalTheme,
+        terminalFontSize: parsed.terminalFontSize,
+        ttsProvider: parsed.ttsProvider,
+        ttsVoice: parsed.ttsVoice,
       };
     } catch {
       return { name: content, subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
@@ -368,9 +421,8 @@ export function TerminalBlock({
   width,
   height,
 }: NodeProps<TerminalNode>) {
-  const baseFontSize = 12;
   const minFontSize = 8;
-  const maxFontSize = 16;
+  const maxFontSize = 18;
   const minCols = 90;
   const growColsBuffer = 0;
   const shrinkColsBuffer = 0;
@@ -379,12 +431,22 @@ export function TerminalBlock({
   const terminalRef = React.useRef<TerminalHandle>(null);
   const fitTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFontChangeRef = React.useRef(0);
-  const [fontSize, setFontSize] = React.useState(baseFontSize);
-  const stableFontRef = React.useRef(baseFontSize);
   const terminalMeta = React.useMemo(
     () => parseTerminalContent(data.content),
     [data.content]
   );
+  const fontSizeSetting = terminalMeta.terminalFontSize ?? "auto";
+  const isAutoFontSize = fontSizeSetting === "auto";
+  const baseFontSize: number = FONT_SIZE_PRESETS[fontSizeSetting].size;
+  const [fontSize, setFontSize] = React.useState<number>(baseFontSize);
+  const stableFontRef = React.useRef<number>(baseFontSize);
+
+  // Update font size when setting changes
+  React.useEffect(() => {
+    setFontSize(baseFontSize);
+    stableFontRef.current = baseFontSize;
+    lastFontChangeRef.current = Date.now();
+  }, [baseFontSize]);
   const terminalName = terminalMeta.name;
   const terminalType = React.useMemo(() => {
     const command = (terminalMeta.bootCommand || "").toLowerCase();
@@ -458,7 +520,7 @@ export function TerminalBlock({
     setTimeout(() => setExpandAnimation(null), 300);
     data.onItemChange?.({
       metadata: { ...data.metadata, minimized: false },
-      size: savedSize || { width: 600, height: 400 },
+      size: savedSize || { width: 700, height: 500 },
     });
   }, [data]);
 
@@ -722,6 +784,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -796,6 +861,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       if (subagentName) {
@@ -862,6 +930,62 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: nextTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+        }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleFontSizeChange = React.useCallback(
+    (nextSize: FontSizeSetting) => {
+      if (!data.onItemChange) return;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: nextSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+        }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleTtsChange = React.useCallback(
+    (provider: string, voice: string) => {
+      if (!data.onItemChange) return;
+      const newProvider = provider === "none" ? undefined : provider;
+      const newVoice = provider === "none" ? undefined : voice;
+
+      // Only trigger restart bar if TTS settings actually changed
+      const providerChanged = terminalMeta.ttsProvider !== newProvider;
+      const voiceChanged = terminalMeta.ttsVoice !== newVoice;
+
+      if (providerChanged || voiceChanged) {
+        setPendingConfigRestart(true);
+      }
+
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: newProvider,
+          ttsVoice: newVoice,
         }),
       });
     },
@@ -987,6 +1111,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1011,6 +1138,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       if (skillName) {
@@ -1095,6 +1225,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1118,6 +1251,9 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
         }),
       });
       syncSessionAttachments({
@@ -1206,6 +1342,12 @@ export function TerminalBlock({
     [data, positionAbsoluteX, positionAbsoluteY, width]
   );
 
+  // Use terminal audio hook for TTS playback
+  const { handleAudioEvent } = useTerminalAudio({
+    sessionId: session?.id || "",
+    enabled: !!session && session.status === "active",
+  });
+
   // Use terminal hook for WebSocket connection
   const [terminalState, terminalActions] = useTerminal(
     {
@@ -1254,6 +1396,7 @@ export function TerminalBlock({
           setIsClaudeSession(true);
         }
       }, [isClaudeSession, maybeCreateBrowserBlock]),
+      onAudio: handleAudioEvent,
     }
   );
 
@@ -1321,7 +1464,13 @@ export function TerminalBlock({
         name,
         value,
       });
-      setPendingSecretApply({ name, value });
+      // For Claude/Agentic sessions, use the unified restart banner
+      // For regular terminals, show the inline apply notification
+      if (needsRestartForSecrets) {
+        setPendingConfigRestart(true);
+      } else {
+        setPendingSecretApply({ name, value });
+      }
       if (isOwner && session?.id) {
         await updateSessionEnv(session.id, { set: { [name]: value }, applyNow: false });
       }
@@ -1329,7 +1478,7 @@ export function TerminalBlock({
       setNewSecretName(name);
       setNewSecretValue(value);
     }
-  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id]);
+  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id, needsRestartForSecrets]);
 
   const handleDeleteSecret = React.useCallback(
     async (secret: UserSecret) => {
@@ -1337,11 +1486,15 @@ export function TerminalBlock({
       if (isOwner && session?.id) {
         await updateSessionEnv(session.id, { unset: [secret.name], applyNow: false });
       }
+      // For Claude/Agentic sessions, use the unified restart banner
+      if (needsRestartForSecrets) {
+        setPendingConfigRestart(true);
+      }
       setPendingSecretApply((current) =>
         current?.name === secret.name ? null : current
       );
     },
-    [deleteSecretMutation, isOwner, session?.id]
+    [deleteSecretMutation, isOwner, session?.id, needsRestartForSecrets]
   );
 
 
@@ -1539,6 +1692,8 @@ export function TerminalBlock({
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
+      // Clear the pending config restart banner since we've applied all changes
+      setPendingConfigRestart(false);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Failed to create session";
       setSessionError(errorMsg);
@@ -1550,16 +1705,9 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
 
+  // Apply secret to running terminal (only for non-Claude/non-Agentic terminals that support live env updates)
   const handleApplySecretNow = React.useCallback(async () => {
-    if (!pendingSecretApply || !canApplySecretsNow) {
-      return;
-    }
-    if (needsRestartForSecrets) {
-      setPendingSecretApply(null);
-      await handleReopen();
-      return;
-    }
-    if (!session?.id) {
+    if (!pendingSecretApply || !canApplySecretsNow || !session?.id) {
       return;
     }
     await updateSessionEnv(session.id, {
@@ -1570,8 +1718,6 @@ export function TerminalBlock({
   }, [
     pendingSecretApply,
     canApplySecretsNow,
-    needsRestartForSecrets,
-    handleReopen,
     session?.id,
   ]);
 
@@ -1654,6 +1800,12 @@ export function TerminalBlock({
     }
     fitTimeoutRef.current = setTimeout(() => {
       terminalRef.current?.fit();
+
+      // Only auto-adjust font size when "auto" is selected
+      if (!isAutoFontSize) {
+        return;
+      }
+
       const dims = terminalRef.current?.getDimensions();
       if (!dims) {
         return;
@@ -1674,7 +1826,7 @@ export function TerminalBlock({
         setFontSize(target);
       }
     }, 140);
-  }, [data.size.width, data.size.height, session, blockWidth]);
+  }, [data.size.width, data.size.height, session, blockWidth, isAutoFontSize]);
 
   React.useEffect(() => {
     return () => {
@@ -1991,10 +2143,11 @@ export function TerminalBlock({
                     <Plus className="w-3 h-3" />
                   </Button>
                 </div>
-                {pendingSecretApply && (
+                {/* Inline apply notification - only shown for non-Claude/non-Agentic terminals that can apply env vars live */}
+                {pendingSecretApply && !needsRestartForSecrets && (
                   <div className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1">
                     <div className="text-[10px] text-[var(--foreground-muted)]">
-                      Saved {pendingSecretApply.name}. {needsRestartForSecrets ? "Restart to apply now?" : "Apply to running terminal?"}
+                      Saved {pendingSecretApply.name}. Apply to running terminal?
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
@@ -2004,7 +2157,7 @@ export function TerminalBlock({
                         disabled={!canApplySecretsNow}
                         className="h-5 px-2 text-[10px] nodrag"
                       >
-                        {needsRestartForSecrets ? `Restart ${terminalName || "terminal"}` : "Apply now"}
+                        Apply now
                       </Button>
                       <Button
                         variant="ghost"
@@ -2313,9 +2466,9 @@ export function TerminalBlock({
             />
           )}
 
-          {/* TTS Voice Panel (Placeholder) */}
+          {/* TTS Voice Panel */}
           {activePanel === "tts-voice" && (
-            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-64">
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-72">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                   <Volume2 className="w-3 h-3" />
@@ -2330,8 +2483,67 @@ export function TerminalBlock({
                   <X className="w-3 h-3" />
                 </Button>
               </div>
-              <div className="p-3 text-xs text-[var(--foreground-muted)] text-center">
-                Text-to-speech coming soon...
+              <div className="p-3 space-y-3">
+                {/* Provider selection */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Provider
+                  </label>
+                  <select
+                    value={terminalMeta.ttsProvider || "none"}
+                    onChange={(e) => {
+                      const newProvider = e.target.value;
+                      const voices = TTS_PROVIDERS[newProvider]?.voices || [];
+                      const newVoice = voices[0] || "";
+                      handleTtsChange(newProvider, newVoice);
+                    }}
+                    className="w-full h-7 px-2 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
+                  >
+                    {Object.entries(TTS_PROVIDERS).map(([key, { label }]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Voice selection - only show if provider is not "none" */}
+                {terminalMeta.ttsProvider && terminalMeta.ttsProvider !== "none" && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                      Voice
+                    </label>
+                    <select
+                      value={terminalMeta.ttsVoice || ""}
+                      onChange={(e) => handleTtsChange(terminalMeta.ttsProvider || "none", e.target.value)}
+                      className="w-full h-7 px-2 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]"
+                    >
+                      {(TTS_PROVIDERS[terminalMeta.ttsProvider]?.voices || []).map((voice) => (
+                        <option key={voice} value={voice}>
+                          {voice}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* API Key hint - show if provider requires one */}
+                {terminalMeta.ttsProvider && TTS_PROVIDERS[terminalMeta.ttsProvider]?.envKey && (
+                  <div className="pt-2 border-t border-[var(--border)]">
+                    <div className="text-[10px] text-[var(--foreground-muted)]">
+                      Requires <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">{TTS_PROVIDERS[terminalMeta.ttsProvider].envKey}</code> in Environment Variables
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActivePanel("secrets")}
+                      className="mt-1.5 h-6 text-[10px] text-[var(--accent-primary)]"
+                    >
+                      <Key className="w-3 h-3 mr-1" />
+                      Open Environment Variables
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2470,6 +2682,33 @@ export function TerminalBlock({
                   <span className="text-[10px] font-medium">{attachedMcpToolNames.length}</span>
                 </button>
               )}
+
+              {/* TTS Voice indicator */}
+              <button
+                type="button"
+                onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")}
+                title={
+                  terminalMeta.ttsProvider
+                    ? `TTS: ${terminalMeta.ttsProvider}${terminalMeta.ttsVoice ? ` (${terminalMeta.ttsVoice})` : ""}`
+                    : "Text-to-speech disabled - click to configure"
+                }
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  activePanel === "tts-voice"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span
+                  className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    terminalMeta.ttsProvider
+                      ? "bg-[var(--status-success)]"
+                      : "bg-[var(--foreground-subtle)]"
+                  )}
+                />
+              </button>
             </>
           )}
 
@@ -2540,6 +2779,26 @@ export function TerminalBlock({
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <span>Font Size</span>
+                  <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
+                    {FONT_SIZE_PRESETS[fontSizeSetting].label}
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={fontSizeSetting}
+                    onValueChange={(value) => handleFontSizeChange(value as FontSizeSetting)}
+                  >
+                    <DropdownMenuRadioItem value="auto">Auto</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="small">Small (10px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="medium">Medium (12px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="large">Large (14px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="xlarge">Extra Large (16px)</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuSeparator />
               {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "Moltbot" && (
                 <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
@@ -2557,11 +2816,16 @@ export function TerminalBlock({
                   <span>MCP Tools</span>
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
-                <Volume2 className="w-3 h-3" />
-                <span>TTS Voice</span>
-              </DropdownMenuItem>
+              {/* TTS Voice - only for Claude Code and Codex */}
+              {(terminalType === "claude" || terminalType === "codex") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
+                    <Volume2 className="w-3 h-3" />
+                    <span>TTS Voice</span>
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

@@ -370,6 +370,23 @@ body {
   cursor: grabbing;
 }
 
+/* Extended hit area for resize handles - makes corners easier to click */
+.resize-handle-extended {
+  position: relative;
+}
+
+.resize-handle-extended::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  cursor: inherit;
+}
+
 .react-flow__controls {
   background: var(--background-elevated) !important;
   border: 1px solid var(--border) !important;
