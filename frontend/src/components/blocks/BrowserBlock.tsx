@@ -106,7 +106,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
     setTimeout(() => setExpandAnimation(null), 300);
     data.onItemChange?.({
       metadata: { ...data.metadata, minimized: false },
-      size: savedSize || { width: 800, height: 600 },
+      size: savedSize || { width: 900, height: 650 },
     });
   };
 

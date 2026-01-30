@@ -498,7 +498,7 @@ export function TerminalBlock({
     setTimeout(() => setExpandAnimation(null), 300);
     data.onItemChange?.({
       metadata: { ...data.metadata, minimized: false },
-      size: savedSize || { width: 600, height: 400 },
+      size: savedSize || { width: 700, height: 500 },
     });
   }, [data]);
 
@@ -1413,7 +1413,13 @@ export function TerminalBlock({
         name,
         value,
       });
-      setPendingSecretApply({ name, value });
+      // For Claude/Agentic sessions, use the unified restart banner
+      // For regular terminals, show the inline apply notification
+      if (needsRestartForSecrets) {
+        setPendingConfigRestart(true);
+      } else {
+        setPendingSecretApply({ name, value });
+      }
       if (isOwner && session?.id) {
         await updateSessionEnv(session.id, { set: { [name]: value }, applyNow: false });
       }
@@ -1421,7 +1427,7 @@ export function TerminalBlock({
       setNewSecretName(name);
       setNewSecretValue(value);
     }
-  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id]);
+  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id, needsRestartForSecrets]);
 
   const handleDeleteSecret = React.useCallback(
     async (secret: UserSecret) => {
@@ -1429,11 +1435,15 @@ export function TerminalBlock({
       if (isOwner && session?.id) {
         await updateSessionEnv(session.id, { unset: [secret.name], applyNow: false });
       }
+      // For Claude/Agentic sessions, use the unified restart banner
+      if (needsRestartForSecrets) {
+        setPendingConfigRestart(true);
+      }
       setPendingSecretApply((current) =>
         current?.name === secret.name ? null : current
       );
     },
-    [deleteSecretMutation, isOwner, session?.id]
+    [deleteSecretMutation, isOwner, session?.id, needsRestartForSecrets]
   );
 
 
@@ -1631,6 +1641,8 @@ export function TerminalBlock({
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
+      // Clear the pending config restart banner since we've applied all changes
+      setPendingConfigRestart(false);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : "Failed to create session";
       setSessionError(errorMsg);
@@ -1642,16 +1654,9 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
 
+  // Apply secret to running terminal (only for non-Claude/non-Agentic terminals that support live env updates)
   const handleApplySecretNow = React.useCallback(async () => {
-    if (!pendingSecretApply || !canApplySecretsNow) {
-      return;
-    }
-    if (needsRestartForSecrets) {
-      setPendingSecretApply(null);
-      await handleReopen();
-      return;
-    }
-    if (!session?.id) {
+    if (!pendingSecretApply || !canApplySecretsNow || !session?.id) {
       return;
     }
     await updateSessionEnv(session.id, {
@@ -1662,8 +1667,6 @@ export function TerminalBlock({
   }, [
     pendingSecretApply,
     canApplySecretsNow,
-    needsRestartForSecrets,
-    handleReopen,
     session?.id,
   ]);
 
@@ -2083,10 +2086,11 @@ export function TerminalBlock({
                     <Plus className="w-3 h-3" />
                   </Button>
                 </div>
-                {pendingSecretApply && (
+                {/* Inline apply notification - only shown for non-Claude/non-Agentic terminals that can apply env vars live */}
+                {pendingSecretApply && !needsRestartForSecrets && (
                   <div className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1">
                     <div className="text-[10px] text-[var(--foreground-muted)]">
-                      Saved {pendingSecretApply.name}. {needsRestartForSecrets ? "Restart to apply now?" : "Apply to running terminal?"}
+                      Saved {pendingSecretApply.name}. Apply to running terminal?
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
@@ -2096,7 +2100,7 @@ export function TerminalBlock({
                         disabled={!canApplySecretsNow}
                         className="h-5 px-2 text-[10px] nodrag"
                       >
-                        {needsRestartForSecrets ? `Restart ${terminalName || "terminal"}` : "Apply now"}
+                        Apply now
                       </Button>
                       <Button
                         variant="ghost"
@@ -2621,6 +2625,33 @@ export function TerminalBlock({
                   <span className="text-[10px] font-medium">{attachedMcpToolNames.length}</span>
                 </button>
               )}
+
+              {/* TTS Voice indicator */}
+              <button
+                type="button"
+                onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")}
+                title={
+                  terminalMeta.ttsProvider
+                    ? `TTS: ${terminalMeta.ttsProvider}${terminalMeta.ttsVoice ? ` (${terminalMeta.ttsVoice})` : ""}`
+                    : "Text-to-speech disabled - click to configure"
+                }
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  activePanel === "tts-voice"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Volume2 className="w-3.5 h-3.5" />
+                <span
+                  className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    terminalMeta.ttsProvider
+                      ? "bg-[var(--status-success)]"
+                      : "bg-[var(--foreground-subtle)]"
+                  )}
+                />
+              </button>
             </>
           )}
 
