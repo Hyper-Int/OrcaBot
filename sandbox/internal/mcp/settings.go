@@ -183,20 +183,15 @@ func buildServerConfigs(userTools []MCPTool) map[string]MCPServerConfig {
 	return servers
 }
 
-// generateClaudeSettings creates .claude/settings.json
+// generateClaudeSettings creates .mcp.json (Claude Code CLI reads MCP config from .mcp.json)
 func generateClaudeSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	claudeDir := filepath.Join(workspaceRoot, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return err
-	}
-
 	settings := Settings{MCPServers: servers}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(claudeDir, "settings.json"), data, 0644)
+	return os.WriteFile(filepath.Join(workspaceRoot, ".mcp.json"), data, 0644)
 }
 
 // OpenCodeConfig represents OpenCode's opencode.json structure
@@ -389,7 +384,7 @@ func generateDroidSettings(workspaceRoot string, servers map[string]MCPServerCon
 
 // ReadSettings reads the current Claude settings file if it exists
 func ReadSettings(workspaceRoot string) (*Settings, error) {
-	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.json")
+	settingsPath := filepath.Join(workspaceRoot, ".mcp.json")
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
