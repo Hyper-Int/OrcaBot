@@ -69,6 +69,7 @@ deploy-frontend:
 	npm --prefix frontend run workers:deploy
 
 deploy-controlplane:
+	node scripts/check-prod-env.mjs controlplane/wrangler.production.toml
 	cd controlplane && npx wrangler deploy -c wrangler.production.toml
 
 logs-controlplane:

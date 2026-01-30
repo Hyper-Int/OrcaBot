@@ -12,6 +12,7 @@ import type { Session, DashboardItem } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
+import { sandboxFetch } from '../sandbox/fetch';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -104,12 +105,11 @@ async function ensureDashbоardSandbоx(
   const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
   if (existingSandbox?.sandbox_session_id) {
     // Validate session still exists on sandbox (may be stale after redeploy)
-    const checkUrl = `${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${existingSandbox.sandbox_session_id}/ptys`;
-    const headers: HeadersInit = { 'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN };
-    if (existingSandbox.sandbox_machine_id) {
-      (headers as Record<string, string>)['X-Sandbox-Machine-ID'] = existingSandbox.sandbox_machine_id;
-    }
-    const checkRes = await fetch(checkUrl, { headers });
+    const checkRes = await sandboxFetch(
+      env,
+      `/sessions/${existingSandbox.sandbox_session_id}/ptys`,
+      { machineId: existingSandbox.sandbox_machine_id || undefined }
+    );
 
     if (checkRes.ok) {
       return {
@@ -189,17 +189,16 @@ async function triggerDriveMirrorSync(
     WHERE dashboard_id = ?
   `).bind(dashboardId).run();
 
-  await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/drive/sync`, {
+  await sandboxFetch(env, `/sessions/${sandboxSessionId}/drive/sync`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
     },
     body: JSON.stringify({
       dashboard_id: dashboardId,
       folder_name: mirror.folder_name,
     }),
+    machineId: sandboxMachineId || undefined,
   });
 }
 
@@ -222,18 +221,17 @@ async function triggerMirrorSync(
     WHERE dashboard_id = ?
   `).bind(dashboardId).run();
 
-  await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/mirror/sync`, {
+  await sandboxFetch(env, `/sessions/${sandboxSessionId}/mirror/sync`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
     },
     body: JSON.stringify({
       provider,
       dashboard_id: dashboardId,
       folder_name: folderName,
     }),
+    machineId: sandboxMachineId || undefined,
   });
 }
 
@@ -493,12 +491,11 @@ export async function startDashbоardBrowser(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
-  const statusResponse = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/browser/status`, {
-    headers: {
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
-    },
-  });
+  const statusResponse = await sandboxFetch(
+    env,
+    `/sessions/${sandboxSessionId}/browser/status`,
+    { machineId: sandboxMachineId || undefined }
+  );
 
   if (statusResponse.ok) {
     try {
@@ -511,13 +508,12 @@ export async function startDashbоardBrowser(
     }
   }
 
-  const response = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/browser/start`, {
+  const response = await sandboxFetch(env, `/sessions/${sandboxSessionId}/browser/start`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
     },
+    machineId: sandboxMachineId || undefined,
   });
 
   if (!response.ok) {
@@ -547,12 +543,9 @@ export async function stоpDashbоardBrowser(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
-  await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/browser/stop`, {
+  await sandboxFetch(env, `/sessions/${sandboxSessionId}/browser/stop`, {
     method: 'POST',
-    headers: {
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
-    },
+    machineId: sandboxMachineId || undefined,
   });
 
   return new Response(null, { status: 204 });
@@ -569,12 +562,11 @@ export async function getDashbоardBrowserStatus(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
-  const response = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/browser/status`, {
-    headers: {
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
-    },
-  });
+  const response = await sandboxFetch(
+    env,
+    `/sessions/${sandboxSessionId}/browser/status`,
+    { machineId: sandboxMachineId || undefined }
+  );
 
   if (!response.ok) {
     return Response.json({ running: false }, { status: 200 });
@@ -595,14 +587,13 @@ export async function openDashbоardBrowser(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
-  const response = await fetch(`${env.SANDBOX_URL.replace(/\/$/, '')}/sessions/${sandboxSessionId}/browser/open`, {
+  const response = await sandboxFetch(env, `/sessions/${sandboxSessionId}/browser/open`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Internal-Token': env.SANDBOX_INTERNAL_TOKEN,
-      ...(sandboxMachineId ? { 'X-Sandbox-Machine-ID': sandboxMachineId } : {}),
     },
     body: JSON.stringify({ url }),
+    machineId: sandboxMachineId || undefined,
   });
 
   if (!response.ok) {
@@ -767,7 +758,7 @@ export async function updateSessiоnEnv(
   const session = await env.DB.prepare(`
     SELECT s.* FROM sessions s
     JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
-    WHERE s.id = ? AND dm.user_id = ?
+    WHERE s.id = ? AND dm.user_id = ? AND dm.role IN ('owner', 'editor')
   `).bind(sessionId, userId).first();
 
   if (!session) {
