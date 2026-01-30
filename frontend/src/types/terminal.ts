@@ -192,6 +192,30 @@ export interface AudioEvent {
 }
 
 /**
+ * TTS status event (server -> client)
+ * Sent by talkito to report TTS configuration status
+ */
+export interface TtsStatusEvent {
+  type: "tts_status";
+  enabled: boolean;
+  initialized: boolean;
+  mode?: string;     // "full", "partial", etc.
+  provider?: string; // "openai", "elevenlabs", etc.
+  voice?: string;    // voice name/ID
+}
+
+/**
+ * Talkito notice event (server -> client)
+ * Log/notice messages from talkito to display in console
+ */
+export interface TalkitoNoticeEvent {
+  type: "talkito_notice";
+  level: "info" | "warning" | "error";
+  message: string;
+  category?: string; // e.g. "tts"
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -203,4 +227,6 @@ export type IncomingControlEvent =
   | ControlExpiredEvent
   | AgentStateEvent
   | PtyClosedEvent
-  | AudioEvent;
+  | AudioEvent
+  | TtsStatusEvent
+  | TalkitoNoticeEvent;

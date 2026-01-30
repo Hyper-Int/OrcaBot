@@ -1660,33 +1660,36 @@ export default function DashboardPage() {
               </div>
             </div>
           </div>
-          <div className="absolute right-4 top-2 z-20 pointer-events-none">
-            <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
-              <Tooltip
-                content={
-                  typeof metricsQuery.data?.heapMB === "number"
-                    ? `CPU ${(cpuPercent ?? 0).toFixed(1)}% · Heap ${metricsQuery.data.heapMB.toFixed(1)}MB · Sys ${metricsQuery.data.sysMB.toFixed(1)}MB · Goroutines ${metricsQuery.data.goroutines}`
-                    : "Sandbox metrics unavailable"
-                }
-                side="bottom"
-              >
-                <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
-                  <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                  <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
-                    {typeof metricsQuery.data?.heapMB === "number" ? (
-                      <>
-                        <span>CPU {cpuPercent === null ? "…" : `${cpuPercent.toFixed(1)}%`}</span>
-                        <span>Heap {metricsQuery.data.heapMB.toFixed(1)}MB</span>
-                        <span>Sys {metricsQuery.data.sysMB.toFixed(1)}MB</span>
-                      </>
-                    ) : (
-                      <span>Metrics…</span>
-                    )}
+          {/* Dev-only sandbox metrics display */}
+          {process.env.NODE_ENV === "development" && (
+            <div className="absolute right-4 top-2 z-20 pointer-events-none">
+              <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
+                <Tooltip
+                  content={
+                    typeof metricsQuery.data?.heapMB === "number"
+                      ? `CPU ${(cpuPercent ?? 0).toFixed(1)}% · Heap ${metricsQuery.data.heapMB.toFixed(1)}MB · Sys ${metricsQuery.data.sysMB.toFixed(1)}MB · Goroutines ${metricsQuery.data.goroutines}`
+                      : "Sandbox metrics unavailable"
+                  }
+                  side="bottom"
+                >
+                  <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
+                    <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                    <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
+                      {typeof metricsQuery.data?.heapMB === "number" ? (
+                        <>
+                          <span>CPU {cpuPercent === null ? "…" : `${cpuPercent.toFixed(1)}%`}</span>
+                          <span>Heap {metricsQuery.data.heapMB.toFixed(1)}MB</span>
+                          <span>Sys {metricsQuery.data.sysMB.toFixed(1)}MB</span>
+                        </>
+                      ) : (
+                        <span>Metrics…</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </Tooltip>
+                </Tooltip>
+              </div>
             </div>
-          </div>
+          )}
           <ConnectionDataFlowProvider edges={edgesToRender}>
             <Canvas
               items={items}

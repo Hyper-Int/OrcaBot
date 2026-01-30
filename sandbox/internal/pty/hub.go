@@ -44,6 +44,24 @@ type AudioEvent struct {
 	Format string `json:"format,omitempty"` // "mp3", "wav", etc.
 }
 
+// TtsStatusEvent represents a TTS configuration status update from talkito
+type TtsStatusEvent struct {
+	Type        string `json:"type"`               // always "tts_status"
+	Enabled     bool   `json:"enabled"`            // whether TTS is enabled
+	Initialized bool   `json:"initialized"`        // whether TTS is initialized
+	Mode        string `json:"mode,omitempty"`     // "full", "partial", etc.
+	Provider    string `json:"provider,omitempty"` // "openai", "elevenlabs", etc.
+	Voice       string `json:"voice,omitempty"`    // voice name/ID
+}
+
+// TalkitoNoticeEvent represents a log/notice message from talkito
+type TalkitoNoticeEvent struct {
+	Type     string `json:"type"`              // always "talkito_notice"
+	Level    string `json:"level"`             // "info", "warning", "error"
+	Message  string `json:"message"`           // the log message
+	Category string `json:"category,omitempty"` // e.g. "tts"
+}
+
 // IdleTimeout is how long a hub stays alive with no connected clients.
 // After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
 const IdleTimeout = 60 * time.Second
@@ -585,6 +603,28 @@ func (h *Hub) BroadcastAudio(event AudioEvent) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		log.Printf("failed to marshal audio event: %v", err)
+		return
+	}
+	h.broadcastControl(data)
+}
+
+// BroadcastTtsStatus sends a TTS status event to all clients
+func (h *Hub) BroadcastTtsStatus(event TtsStatusEvent) {
+	event.Type = "tts_status"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal tts status event: %v", err)
+		return
+	}
+	h.broadcastControl(data)
+}
+
+// BroadcastTalkitoNotice sends a talkito notice/log event to all clients
+func (h *Hub) BroadcastTalkitoNotice(event TalkitoNoticeEvent) {
+	event.Type = "talkito_notice"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal talkito notice event: %v", err)
 		return
 	}
 	h.broadcastControl(data)

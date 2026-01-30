@@ -6,7 +6,7 @@
 import * as React from "react";
 import { TerminalWSManager, type TerminalWSConfig } from "@/lib/ws";
 import type { ConnectionState } from "@/lib/ws";
-import type { TurnTakingState, AgentState, AudioEvent } from "@/types/terminal";
+import type { TurnTakingState, AgentState, AudioEvent, TtsStatusEvent } from "@/types/terminal";
 
 export interface UseTerminalOptions {
   sessionId: string;
@@ -22,6 +22,8 @@ export interface UseTerminalState {
   agentState: AgentState;
   ptyClosed: boolean;
   error: Error | null;
+  /** TTS status from talkito (live updates, no restart needed) */
+  ttsStatus: TtsStatusEvent | null;
 }
 
 export interface UseTerminalActions {
@@ -48,6 +50,8 @@ export interface UseTerminalCallbacks {
   onData?: (data: Uint8Array) => void;
   /** Called when an audio event is received (for TTS playback) */
   onAudio?: (event: AudioEvent) => void;
+  /** Called when TTS status is updated (from talkito) */
+  onTtsStatus?: (event: TtsStatusEvent) => void;
 }
 
 const DEFAULT_TURN_TAKING: TurnTakingState = {
@@ -77,6 +81,7 @@ export function useTerminal(
   const [agentState, setAgentState] = React.useState<AgentState>(null);
   const [ptyClosed, setPtyClosed] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
+  const [ttsStatus, setTtsStatus] = React.useState<TtsStatusEvent | null>(null);
 
   // Store callbacks in ref to avoid re-subscribing
   const callbacksRef = React.useRef(callbacks);
@@ -140,6 +145,12 @@ export function useTerminal(
       callbacksRef.current?.onAudio?.(event);
     });
 
+    // Subscribe to TTS status events (from talkito)
+    const unsubTtsStatus = manager.onTtsStatus((event) => {
+      setTtsStatus(event);
+      callbacksRef.current?.onTtsStatus?.(event);
+    });
+
     // Connect
     manager.connect();
 
@@ -153,6 +164,7 @@ export function useTerminal(
         { name: 'data', fn: unsubData },
         { name: 'ptyClosed', fn: unsubPtyClosed },
         { name: 'audio', fn: unsubAudio },
+        { name: 'ttsStatus', fn: unsubTtsStatus },
       ];
 
       for (const { name, fn } of cleanups) {
@@ -215,6 +227,7 @@ export function useTerminal(
     agentState,
     ptyClosed,
     error,
+    ttsStatus,
   };
 
   const actions: UseTerminalActions = {

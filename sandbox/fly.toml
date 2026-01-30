@@ -8,6 +8,9 @@ primary_region = 'sjc'
 
 [build]
   dockerfile = 'docker/Dockerfile'
+  # Note: TALKITO_VERSION is passed dynamically via `make deploy` or `fly deploy --build-arg`
+  # to bust cache and pull latest talkito. If deploying directly, use:
+  # fly deploy --build-arg TALKITO_VERSION=$(date +%s)
 
 [env]
   PORT = '8080'

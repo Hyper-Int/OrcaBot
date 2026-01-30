@@ -97,12 +97,14 @@ RUN curl -fsSL https://app.factory.ai/cli | sh \
 RUN npm install -g clawdbot@latest
 
 # Install Talkito (voice assistant)
-# Change TALKITO_VERSION to bust cache and pull latest
+# Use build arg to bust cache: --build-arg TALKITO_VERSION=$(date +%s)
+# The ADD fetches latest commit info which also helps bust cache on new commits
 ARG TALKITO_VERSION=1
-RUN git clone https://github.com/robdmac/talkito.git /tmp/talkito \
+ADD https://api.github.com/repos/robdmac/talkito/commits/main /tmp/talkito-version.json
+RUN git clone --depth 1 https://github.com/robdmac/talkito.git /tmp/talkito \
     && cd /tmp/talkito \
     && pip3 install --break-system-packages . \
-    && rm -rf /tmp/talkito
+    && rm -rf /tmp/talkito /tmp/talkito-version.json
 
 # Install Playwright (browser automation) without bundled browsers
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
