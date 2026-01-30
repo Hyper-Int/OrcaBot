@@ -162,9 +162,21 @@ type TerminalContentState = {
   agentic?: boolean;
   bootCommand?: string;
   terminalTheme?: "system" | "light" | "dark";
+  terminalFontSize?: "auto" | "small" | "medium" | "large" | "xlarge";
   ttsProvider?: string;
   ttsVoice?: string;
 };
+
+// Font size presets - "auto" means dynamic resizing based on terminal width
+const FONT_SIZE_PRESETS = {
+  auto: { label: "Auto", size: 12 },
+  small: { label: "Small", size: 10 },
+  medium: { label: "Medium", size: 12 },
+  large: { label: "Large", size: 14 },
+  xlarge: { label: "Extra Large", size: 16 },
+} as const;
+
+type FontSizeSetting = keyof typeof FONT_SIZE_PRESETS;
 
 // TTS provider configurations
 const TTS_PROVIDERS: Record<string, { label: string; envKey: string | null; voices: string[] }> = {
@@ -388,6 +400,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
         terminalTheme: parsed.terminalTheme,
+        terminalFontSize: parsed.terminalFontSize,
         ttsProvider: parsed.ttsProvider,
         ttsVoice: parsed.ttsVoice,
       };
@@ -408,9 +421,8 @@ export function TerminalBlock({
   width,
   height,
 }: NodeProps<TerminalNode>) {
-  const baseFontSize = 12;
   const minFontSize = 8;
-  const maxFontSize = 16;
+  const maxFontSize = 18;
   const minCols = 90;
   const growColsBuffer = 0;
   const shrinkColsBuffer = 0;
@@ -419,12 +431,22 @@ export function TerminalBlock({
   const terminalRef = React.useRef<TerminalHandle>(null);
   const fitTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFontChangeRef = React.useRef(0);
-  const [fontSize, setFontSize] = React.useState(baseFontSize);
-  const stableFontRef = React.useRef(baseFontSize);
   const terminalMeta = React.useMemo(
     () => parseTerminalContent(data.content),
     [data.content]
   );
+  const fontSizeSetting = terminalMeta.terminalFontSize ?? "auto";
+  const isAutoFontSize = fontSizeSetting === "auto";
+  const baseFontSize: number = FONT_SIZE_PRESETS[fontSizeSetting].size;
+  const [fontSize, setFontSize] = React.useState<number>(baseFontSize);
+  const stableFontRef = React.useRef<number>(baseFontSize);
+
+  // Update font size when setting changes
+  React.useEffect(() => {
+    setFontSize(baseFontSize);
+    stableFontRef.current = baseFontSize;
+    lastFontChangeRef.current = Date.now();
+  }, [baseFontSize]);
   const terminalName = terminalMeta.name;
   const terminalType = React.useMemo(() => {
     const command = (terminalMeta.bootCommand || "").toLowerCase();
@@ -762,6 +784,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -838,6 +861,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -906,6 +930,28 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: nextTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+        }),
+      });
+    },
+    [data, terminalMeta]
+  );
+
+  const handleFontSizeChange = React.useCallback(
+    (nextSize: FontSizeSetting) => {
+      if (!data.onItemChange) return;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: nextSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -937,6 +983,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: newProvider,
           ttsVoice: newVoice,
         }),
@@ -1064,6 +1111,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -1090,6 +1138,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -1176,6 +1225,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -1201,6 +1251,7 @@ export function TerminalBlock({
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
           terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
         }),
@@ -1749,6 +1800,12 @@ export function TerminalBlock({
     }
     fitTimeoutRef.current = setTimeout(() => {
       terminalRef.current?.fit();
+
+      // Only auto-adjust font size when "auto" is selected
+      if (!isAutoFontSize) {
+        return;
+      }
+
       const dims = terminalRef.current?.getDimensions();
       if (!dims) {
         return;
@@ -1769,7 +1826,7 @@ export function TerminalBlock({
         setFontSize(target);
       }
     }, 140);
-  }, [data.size.width, data.size.height, session, blockWidth]);
+  }, [data.size.width, data.size.height, session, blockWidth, isAutoFontSize]);
 
   React.useEffect(() => {
     return () => {
@@ -2719,6 +2776,26 @@ export function TerminalBlock({
                     <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <span>Font Size</span>
+                  <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
+                    {FONT_SIZE_PRESETS[fontSizeSetting].label}
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={fontSizeSetting}
+                    onValueChange={(value) => handleFontSizeChange(value as FontSizeSetting)}
+                  >
+                    <DropdownMenuRadioItem value="auto">Auto</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="small">Small (10px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="medium">Medium (12px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="large">Large (14px)</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="xlarge">Extra Large (16px)</DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
