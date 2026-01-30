@@ -46,7 +46,7 @@ export function BlockWrapper({
           minWidth={minWidth}
           minHeight={minHeight}
           lineClassName="border-[var(--accent-primary)]"
-          handleClassName="bg-[var(--accent-primary)] w-2 h-2 rounded-sm border-none"
+          handleClassName="resize-handle-extended bg-[var(--accent-primary)] w-3 h-3 rounded-sm border-none"
         />
       )}
       <div
