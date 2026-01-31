@@ -215,8 +215,23 @@ export function Canvas({
   const edgesToRender = controlledEdges ?? edges;
   const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
 
+  // Track previous item IDs to detect new items
+  const prevItemIdsRef = React.useRef<Set<string>>(new Set(items.map(i => i._stableKey || i.id)));
+
   // Update nodes when items or sessions change from server
   React.useEffect(() => {
+    // Detect new items and bring them to front
+    const currentIds = new Set(items.map(i => i._stableKey || i.id));
+    const prevIds = prevItemIdsRef.current;
+    items.forEach(item => {
+      const nodeId = item._stableKey || item.id;
+      if (!prevIds.has(nodeId)) {
+        // This is a new item - bring it to front
+        bringToFront(nodeId);
+      }
+    });
+    prevItemIdsRef.current = currentIds;
+
     const baseNodes = applyZIndex(
       itemsToNodes(
         items,
@@ -235,7 +250,7 @@ export function Canvas({
       )
     );
     setNodes([...baseNodes, ...extraNodes]);
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));

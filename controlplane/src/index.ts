@@ -881,13 +881,14 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   // Secrets routes
   // ============================================
 
-  // GET /secrets - List secrets
+  // GET /secrets - List secrets (optionally filter by type: 'secret' or 'env_var')
   if (segments[0] === 'secrets' && segments.length === 1 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
     const url = new URL(request.url);
     const dashboardId = url.searchParams.get('dashboard_id');
-    return secrets.listSecrets(env, auth.user!.id, dashboardId);
+    const type = url.searchParams.get('type') as 'secret' | 'env_var' | null;
+    return secrets.listSecrets(env, auth.user!.id, dashboardId, type || undefined);
   }
 
   // ============================================
@@ -1041,6 +1042,60 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const url = new URL(request.url);
     const dashboardId = url.searchParams.get('dashboard_id');
     return secrets.deleteSecret(env, auth.user!.id, segments[1], dashboardId);
+  }
+
+  // PATCH /secrets/:id/protection - Update secret broker protection setting
+  if (segments[0] === 'secrets' && segments.length === 3 && segments[2] === 'protection' && method === 'PATCH') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    const data = await request.json() as { brokerProtected: boolean };
+    return secrets.updateSecretProtection(env, auth.user!.id, segments[1], dashboardId, data.brokerProtected);
+  }
+
+  // GET /secrets/:id/allowlist - List approved domains for a secret
+  if (segments[0] === 'secrets' && segments.length === 3 && segments[2] === 'allowlist' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    return secrets.listSecretAllowlist(env, auth.user!.id, segments[1], dashboardId);
+  }
+
+  // POST /secrets/:id/allowlist - Approve a domain for a secret
+  if (segments[0] === 'secrets' && segments.length === 3 && segments[2] === 'allowlist' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    const data = await request.json() as { domain: string; headerName?: string; headerFormat?: string };
+    return secrets.approveSecretDomain(env, auth.user!.id, segments[1], dashboardId, data);
+  }
+
+  // DELETE /secrets/:id/allowlist/:entryId - Revoke domain approval
+  if (segments[0] === 'secrets' && segments.length === 4 && segments[2] === 'allowlist' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    return secrets.revokeSecretDomain(env, auth.user!.id, segments[1], segments[3], dashboardId);
+  }
+
+  // GET /pending-approvals - List pending domain approval requests
+  if (segments[0] === 'pending-approvals' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const url = new URL(request.url);
+    const dashboardId = url.searchParams.get('dashboard_id');
+    return secrets.listPendingApprovals(env, auth.user!.id, dashboardId);
+  }
+
+  // DELETE /pending-approvals/:id - Dismiss a pending approval
+  if (segments[0] === 'pending-approvals' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return secrets.dismissPendingApproval(env, auth.user!.id, segments[1]);
   }
 
   // ============================================

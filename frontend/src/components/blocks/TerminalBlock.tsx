@@ -30,6 +30,9 @@ import {
   Pencil,
   Eye,
   Minimize2,
+  Shield,
+  ShieldOff,
+  Copy,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -38,6 +41,12 @@ import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import {
   Button,
   Badge,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -61,16 +70,22 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useTerminalAudio } from "@/hooks/useTerminalAudio";
 import { useAuthStore } from "@/stores/auth-store";
 import { useThemeStore } from "@/stores/theme-store";
-import { attachSessionResources, createSession, stopSession, updateSessionEnv } from "@/lib/api/cloudflare";
+import { attachSessionResources, createSession, stopSession, updateSessionEnv, applySessionSecrets } from "@/lib/api/cloudflare";
 import {
   createSubagent,
   deleteSubagent,
   listSubagents,
   type UserSubagent,
   createSecret,
+  createEnvVar,
   deleteSecret,
   listSecrets,
+  updateSecretProtection,
+  listPendingApprovals,
+  approveSecretDomain,
+  dismissPendingApproval,
   type UserSecret,
+  type PendingApproval,
   createAgentSkill,
   deleteAgentSkill,
   listAgentSkills,
@@ -483,6 +498,10 @@ export function TerminalBlock({
   const [showSavedMcp, setShowSavedMcp] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
+  const [newEnvVarName, setNewEnvVarName] = React.useState("");
+  const [newEnvVarValue, setNewEnvVarValue] = React.useState("");
+  const [secretsSectionExpanded, setSecretsSectionExpanded] = React.useState(true);
+  const [envVarsSectionExpanded, setEnvVarsSectionExpanded] = React.useState(true);
   const secretValueInputRef = React.useRef<HTMLInputElement>(null);
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   // Track if MCP tools, skills, or agents have changed since session started
@@ -499,6 +518,15 @@ export function TerminalBlock({
       if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
     };
   }, []);
+
+  // Auto-dismiss the env apply hint after 10 seconds
+  React.useEffect(() => {
+    if (!pendingSecretApply) return;
+    const timer = setTimeout(() => {
+      setPendingSecretApply(null);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [pendingSecretApply]);
 
   const handleMinimize = React.useCallback(() => {
     const expandedSize = data.size;
@@ -628,10 +656,67 @@ export function TerminalBlock({
     },
   });
 
+  const createEnvVarMutation = useMutation({
+    mutationFn: createEnvVar,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+      setNewEnvVarName("");
+      setNewEnvVarValue("");
+    },
+  });
+
   const deleteSecretMutation = useMutation({
     mutationFn: ({ id }: { id: string }) => deleteSecret(id, data.dashboardId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+    },
+  });
+
+  const updateProtectionMutation = useMutation({
+    mutationFn: ({ id, brokerProtected }: { id: string; brokerProtected: boolean }) =>
+      updateSecretProtection(id, data.dashboardId, brokerProtected),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+    },
+  });
+
+  // State for disable protection dialog
+  const [secretToDisableProtection, setSecretToDisableProtection] = React.useState<UserSecret | null>(null);
+
+  // Pending domain approvals query (polls every 30 seconds when panel is open)
+  const pendingApprovalsQuery = useQuery({
+    queryKey: ["pending-approvals", data.dashboardId],
+    queryFn: () => listPendingApprovals(data.dashboardId),
+    enabled: activePanel === "secrets",
+    refetchInterval: 30000, // Poll every 30 seconds
+    staleTime: 10000,
+  });
+
+  // State for domain approval dialog
+  const [approvalToShow, setApprovalToShow] = React.useState<PendingApproval | null>(null);
+  const [approvalHeaderName, setApprovalHeaderName] = React.useState("Authorization");
+  const [approvalHeaderFormat, setApprovalHeaderFormat] = React.useState("Bearer %s");
+
+  // Approve domain mutation
+  const approveDomainMutation = useMutation({
+    mutationFn: ({ secretId, domain, headerName, headerFormat }: {
+      secretId: string;
+      domain: string;
+      headerName: string;
+      headerFormat: string;
+    }) => approveSecretDomain(secretId, data.dashboardId, { domain, headerName, headerFormat }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals", data.dashboardId] });
+      setApprovalToShow(null);
+    },
+  });
+
+  // Dismiss approval mutation
+  const dismissApprovalMutation = useMutation({
+    mutationFn: (approvalId: string) => dismissPendingApproval(approvalId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals", data.dashboardId] });
+      setApprovalToShow(null);
     },
   });
 
@@ -755,7 +840,16 @@ export function TerminalBlock({
   }, [savedMcpTools]);
 
   // Secrets computed values
-  const savedSecrets = secretsQuery.data || [];
+  const allSecrets = secretsQuery.data || [];
+  // Split into secrets (brokered) and env vars (non-brokered)
+  const savedSecrets = allSecrets.filter(s => s.type === 'secret' || !s.type); // Default to secret for backwards compat
+  const savedEnvVars = allSecrets.filter(s => s.type === 'env_var');
+
+  // Helper to detect secret-like names for warning
+  const looksLikeSecret = (name: string): boolean => {
+    const patterns = ['_KEY', '_TOKEN', '_SECRET', 'API_KEY', 'ACCESS_KEY', 'PASSWORD', 'CREDENTIAL', 'AUTH_'];
+    return patterns.some(pattern => name.toUpperCase().includes(pattern));
+  };
 
   const handleSaveSubagent = React.useCallback(
     (item: SubagentCatalogItem) => {
@@ -1449,7 +1543,6 @@ export function TerminalBlock({
           },
     [resolvedTerminalTheme]
   );
-  const canApplySecretsNow = isOwner && Boolean(session?.id);
   const needsRestartForSecrets = isClaudeSession || isAgentic;
 
   // Secrets handlers
@@ -1472,8 +1565,9 @@ export function TerminalBlock({
       } else {
         setPendingSecretApply({ name, value });
       }
+      // Apply all secrets with proper broker protection
       if (isOwner && session?.id) {
-        await updateSessionEnv(session.id, { set: { [name]: value }, applyNow: false });
+        await applySessionSecrets(session.id);
       }
     } catch {
       setNewSecretName(name);
@@ -1484,8 +1578,9 @@ export function TerminalBlock({
   const handleDeleteSecret = React.useCallback(
     async (secret: UserSecret) => {
       await deleteSecretMutation.mutateAsync({ id: secret.id });
+      // Re-apply all secrets (the deleted one will no longer be in the DB)
       if (isOwner && session?.id) {
-        await updateSessionEnv(session.id, { unset: [secret.name], applyNow: false });
+        await applySessionSecrets(session.id);
       }
       // For Claude/Agentic sessions, use the unified restart banner
       if (needsRestartForSecrets) {
@@ -1498,6 +1593,35 @@ export function TerminalBlock({
     [deleteSecretMutation, isOwner, session?.id, needsRestartForSecrets]
   );
 
+  // Env var handlers (non-brokered)
+  const handleAddEnvVar = React.useCallback(async () => {
+    const name = newEnvVarName.trim();
+    const value = newEnvVarValue.trim();
+    if (!name || !value) return;
+    setNewEnvVarName("");
+    setNewEnvVarValue("");
+    try {
+      await createEnvVarMutation.mutateAsync({
+        dashboardId: data.dashboardId,
+        name,
+        value,
+      });
+      // For Claude/Agentic sessions, use the unified restart banner
+      // For regular terminals, show the inline apply notification
+      if (needsRestartForSecrets) {
+        setPendingConfigRestart(true);
+      } else {
+        setPendingSecretApply({ name, value });
+      }
+      // Apply all secrets/env vars with proper broker protection
+      if (isOwner && session?.id) {
+        await applySessionSecrets(session.id);
+      }
+    } catch {
+      setNewEnvVarName(name);
+      setNewEnvVarValue(value);
+    }
+  }, [createEnvVarMutation, data.dashboardId, newEnvVarName, newEnvVarValue, isOwner, session?.id, needsRestartForSecrets]);
 
   // Border color based on state
   const getBorderColor = () => {
@@ -1705,22 +1829,6 @@ export function TerminalBlock({
       setIsCreatingSession(false);
     }
   }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
-
-  // Apply secret to running terminal (only for non-Claude/non-Agentic terminals that support live env updates)
-  const handleApplySecretNow = React.useCallback(async () => {
-    if (!pendingSecretApply || !canApplySecretsNow || !session?.id) {
-      return;
-    }
-    await updateSessionEnv(session.id, {
-      set: { [pendingSecretApply.name]: pendingSecretApply.value },
-      applyNow: true,
-    });
-    setPendingSecretApply(null);
-  }, [
-    pendingSecretApply,
-    canApplySecretsNow,
-    session?.id,
-  ]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {
@@ -2102,13 +2210,13 @@ export function TerminalBlock({
             </div>
           )}
 
-          {/* Secrets Panel */}
+          {/* Secrets & Environment Variables Panel */}
           {activePanel === "secrets" && (
             <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-80">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                   <Key className="w-3 h-3" />
-                  <span>Environment Variables</span>
+                  <span>Secrets & Environment Variables</span>
                 </div>
                 <Button
                   variant="ghost"
@@ -2119,106 +2227,284 @@ export function TerminalBlock({
                   <X className="w-3 h-3" />
                 </Button>
               </div>
-              <div className="p-2 space-y-2 text-xs">
-                <form
-                  autoComplete="off"
-                  data-form-type="other"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (newSecretName.trim() && newSecretValue.trim()) {
-                      handleAddSecret();
-                    }
-                  }}
-                  className="flex gap-1"
-                >
-                  <Input
-                    name="env_key_name"
-                    placeholder="NAME"
-                    value={newSecretName}
-                    onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                    className="h-6 text-xs flex-1 nodrag font-mono"
-                    autoComplete="off"
-                    data-form-type="other"
-                  />
-                  {/* DO NOT change to type="password" - Chrome will show "Save password?" popup.
-                      Using type="text" with CSS masking avoids password manager detection. */}
-                  <Input
-                    ref={secretValueInputRef}
-                    name="env_key_value"
-                    type="text"
-                    placeholder="Value"
-                    value={newSecretValue}
-                    onChange={(e) => setNewSecretValue(e.target.value)}
-                    className="h-6 text-xs flex-1 nodrag"
-                    autoComplete="off"
-                    data-form-type="other"
-                    data-lpignore="true"
-                    style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
-                  />
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    size="sm"
-                    disabled={!newSecretName.trim() || !newSecretValue.trim()}
-                    className="h-6 px-2 nodrag"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </Button>
-                </form>
-                {/* Inline apply notification - only shown for non-Claude/non-Agentic terminals that can apply env vars live */}
-                {pendingSecretApply && !needsRestartForSecrets && (
+              <div className="p-2 space-y-2 text-xs max-h-[400px] overflow-auto">
+                {/* Inline hint for applying env vars to running terminal */}
+                {pendingSecretApply && (
                   <div className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1">
-                    <div className="text-[10px] text-[var(--foreground-muted)]">
-                      Saved {pendingSecretApply.name}. Apply to running terminal?
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleApplySecretNow}
-                        disabled={!canApplySecretsNow}
-                        className="h-5 px-2 text-[10px] nodrag"
+                    <div className="flex items-center gap-1 text-[10px] text-[var(--foreground-muted)]">
+                      <span>Saved {pendingSecretApply.name}. Run</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cmd = needsRestartForSecrets ? "! source .env" : "source .env";
+                          navigator.clipboard.writeText(cmd);
+                        }}
+                        className="inline-flex items-center gap-1 font-mono bg-[var(--background-muted)] px-1.5 py-0.5 rounded hover:bg-[var(--background-hover)] transition-colors cursor-pointer nodrag"
+                        title="Click to copy"
                       >
-                        Apply now
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setPendingSecretApply(null)}
-                        className="h-5 w-5 nodrag"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
+                        {needsRestartForSecrets ? "! source .env" : "source .env"}
+                        <Copy className="w-2.5 h-2.5" />
+                      </button>
+                      <span>to apply.</span>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setPendingSecretApply(null)}
+                      className="h-5 w-5 nodrag"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
                   </div>
                 )}
-                <div className="max-h-40 overflow-auto space-y-1">
-                  {secretsQuery.isLoading && (
-                    <div className="text-[var(--foreground-muted)]">Loading...</div>
-                  )}
-                  {!secretsQuery.isLoading && savedSecrets.length === 0 && (
-                    <div className="text-[var(--foreground-muted)]">No environment variables configured.</div>
-                  )}
-                  {savedSecrets.map((secret) => (
-                    <div
-                      key={secret.id}
-                      className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
-                    >
-                      <div className="flex items-center gap-1 min-w-0">
-                        <span className="text-[var(--foreground)] font-mono truncate">{secret.name}</span>
-                        <span className="text-[var(--foreground-muted)] font-mono text-xs">=</span>
-                        <span className="text-[var(--foreground-subtle)] font-mono text-xs tracking-tight">{'•'.repeat(8)}</span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleDeleteSecret(secret)}
-                        className="h-5 w-5 text-[var(--status-error)] nodrag flex-shrink-0"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
+
+                {/* ========== SECRETS SECTION (brokered) ========== */}
+                <div className="border border-[var(--border)] rounded">
+                  <button
+                    type="button"
+                    onClick={() => setSecretsSectionExpanded(!secretsSectionExpanded)}
+                    className="flex items-center justify-between w-full px-2 py-1.5 hover:bg-[var(--background)] transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {secretsSectionExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                      <Shield className="w-3 h-3 text-[var(--status-success)]" />
+                      <span className="font-medium">Secrets</span>
+                      <span className="text-[var(--foreground-muted)]">({savedSecrets.length})</span>
                     </div>
-                  ))}
+                    <span className="text-[10px] text-[var(--foreground-muted)]">API keys, tokens</span>
+                  </button>
+                  {secretsSectionExpanded && (
+                    <div className="border-t border-[var(--border)] p-2 space-y-2">
+                      <div className="text-[10px] text-[var(--foreground-muted)]">
+                        Secrets are brokered - the LLM cannot read them directly.
+                      </div>
+                      <form
+                        autoComplete="off"
+                        data-form-type="other"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (newSecretName.trim() && newSecretValue.trim()) {
+                            handleAddSecret();
+                          }
+                        }}
+                        className="flex gap-1"
+                      >
+                        <Input
+                          name="secret_key_name"
+                          placeholder="NAME"
+                          value={newSecretName}
+                          onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                          className="h-6 text-xs flex-1 nodrag font-mono"
+                          autoComplete="off"
+                          data-form-type="other"
+                        />
+                        <Input
+                          ref={secretValueInputRef}
+                          name="secret_key_value"
+                          type="text"
+                          placeholder="Value"
+                          value={newSecretValue}
+                          onChange={(e) => setNewSecretValue(e.target.value)}
+                          className="h-6 text-xs flex-1 nodrag"
+                          autoComplete="off"
+                          data-form-type="other"
+                          data-lpignore="true"
+                          style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+                        />
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!newSecretName.trim() || !newSecretValue.trim()}
+                          className="h-6 px-2 nodrag"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </form>
+                      {/* Pending domain approvals */}
+                      {pendingApprovalsQuery.data && pendingApprovalsQuery.data.length > 0 && (
+                        <div className="space-y-1">
+                          {pendingApprovalsQuery.data.map((approval) => (
+                            <div
+                              key={approval.id}
+                              className="flex items-center justify-between rounded border border-[var(--status-warning)]/50 bg-[var(--status-warning)]/10 px-2 py-1.5 cursor-pointer hover:bg-[var(--status-warning)]/20 transition-colors"
+                              onClick={() => {
+                                setApprovalToShow(approval);
+                                setApprovalHeaderName("Authorization");
+                                setApprovalHeaderFormat("Bearer %s");
+                              }}
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Shield className="w-3 h-3 text-[var(--status-warning)] flex-shrink-0" />
+                                <span className="text-[var(--foreground)] text-xs">
+                                  Domain approval needed for{" "}
+                                  <code className="font-mono px-1 py-0.5 bg-[var(--background)] rounded text-[10px]">
+                                    {approval.domain}
+                                  </code>
+                                </span>
+                              </div>
+                              <ChevronRight className="w-3 h-3 text-[var(--foreground-muted)] flex-shrink-0" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {/* Secrets list */}
+                      <div className="space-y-1">
+                        {secretsQuery.isLoading && (
+                          <div className="text-[var(--foreground-muted)]">Loading...</div>
+                        )}
+                        {!secretsQuery.isLoading && savedSecrets.length === 0 && (
+                          <div className="text-[var(--foreground-muted)]">No secrets configured.</div>
+                        )}
+                        {savedSecrets.map((secret) => (
+                          <div
+                            key={secret.id}
+                            className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                          >
+                            <div className="flex items-center gap-1 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (secret.brokerProtected) {
+                                    setSecretToDisableProtection(secret);
+                                  } else {
+                                    // Re-enable protection
+                                    updateProtectionMutation.mutate({
+                                      id: secret.id,
+                                      brokerProtected: true,
+                                    });
+                                  }
+                                }}
+                                title={secret.brokerProtected ? "Protected - Click to disable protection" : "Unprotected - Click to enable protection"}
+                                className="nodrag hover:opacity-70 transition-opacity"
+                              >
+                                {secret.brokerProtected ? (
+                                  <Shield className="w-3 h-3 text-[var(--status-success)] flex-shrink-0" />
+                                ) : (
+                                  <ShieldOff className="w-3 h-3 text-[var(--status-warning)] flex-shrink-0" />
+                                )}
+                              </button>
+                              <span className="text-[var(--foreground)] font-mono truncate">{secret.name}</span>
+                              <span className="text-[var(--foreground-muted)] font-mono text-xs">=</span>
+                              <span className="text-[var(--foreground-subtle)] font-mono text-xs tracking-tight">{'•'.repeat(8)}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => handleDeleteSecret(secret)}
+                              className="h-5 w-5 text-[var(--status-error)] nodrag"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ========== ENVIRONMENT VARIABLES SECTION (non-brokered) ========== */}
+                <div className="border border-[var(--border)] rounded">
+                  <button
+                    type="button"
+                    onClick={() => setEnvVarsSectionExpanded(!envVarsSectionExpanded)}
+                    className="flex items-center justify-between w-full px-2 py-1.5 hover:bg-[var(--background)] transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {envVarsSectionExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                      <Settings className="w-3 h-3 text-[var(--foreground-muted)]" />
+                      <span className="font-medium">Environment Variables</span>
+                      <span className="text-[var(--foreground-muted)]">({savedEnvVars.length})</span>
+                    </div>
+                    <span className="text-[10px] text-[var(--foreground-muted)]">Config values</span>
+                  </button>
+                  {envVarsSectionExpanded && (
+                    <div className="border-t border-[var(--border)] p-2 space-y-2">
+                      <div className="text-[10px] text-[var(--foreground-muted)]">
+                        Environment variables are set directly - the LLM can read them.
+                      </div>
+                      {/* Warning for secret-like names */}
+                      {newEnvVarName && looksLikeSecret(newEnvVarName) && (
+                        <div className="flex items-start gap-1.5 rounded border border-[var(--status-warning)]/50 bg-[var(--status-warning)]/10 px-2 py-1.5">
+                          <AlertCircle className="w-3 h-3 text-[var(--status-warning)] flex-shrink-0 mt-0.5" />
+                          <div className="text-[10px] text-[var(--foreground)]">
+                            <span className="font-medium">{newEnvVarName}</span> looks like an API key or secret.
+                            Consider adding it to <span className="font-medium">Secrets</span> instead for protection.
+                          </div>
+                        </div>
+                      )}
+                      <form
+                        autoComplete="off"
+                        data-form-type="other"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+                            handleAddEnvVar();
+                          }
+                        }}
+                        className="flex gap-1"
+                      >
+                        <Input
+                          name="env_var_name"
+                          placeholder="NAME"
+                          value={newEnvVarName}
+                          onChange={(e) => setNewEnvVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                          className="h-6 text-xs flex-1 nodrag font-mono"
+                          autoComplete="off"
+                          data-form-type="other"
+                        />
+                        <Input
+                          name="env_var_value"
+                          type="text"
+                          placeholder="Value"
+                          value={newEnvVarValue}
+                          onChange={(e) => setNewEnvVarValue(e.target.value)}
+                          className="h-6 text-xs flex-1 nodrag"
+                          autoComplete="off"
+                          data-form-type="other"
+                          data-lpignore="true"
+                        />
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!newEnvVarName.trim() || !newEnvVarValue.trim()}
+                          className="h-6 px-2 nodrag"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      </form>
+                      {/* Env vars list */}
+                      <div className="space-y-1">
+                        {secretsQuery.isLoading && (
+                          <div className="text-[var(--foreground-muted)]">Loading...</div>
+                        )}
+                        {!secretsQuery.isLoading && savedEnvVars.length === 0 && (
+                          <div className="text-[var(--foreground-muted)]">No environment variables configured.</div>
+                        )}
+                        {savedEnvVars.map((envVar) => (
+                          <div
+                            key={envVar.id}
+                            className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1"
+                          >
+                            <div className="flex items-center gap-1 min-w-0">
+                              <span className="text-[var(--foreground)] font-mono truncate">{envVar.name}</span>
+                              <span className="text-[var(--foreground-muted)] font-mono text-xs">=</span>
+                              <span className="text-[var(--foreground-subtle)] font-mono text-xs tracking-tight">{'•'.repeat(8)}</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => handleDeleteSecret(envVar)}
+                              className="h-5 w-5 text-[var(--status-error)] nodrag"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3147,6 +3433,176 @@ export function TerminalBlock({
             overlay.root
           )
         : terminalContent}
+
+      {/* Disable Protection Confirmation Dialog */}
+      <Dialog
+        open={!!secretToDisableProtection}
+        onOpenChange={(open) => {
+          if (!open) setSecretToDisableProtection(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[var(--status-warning)]">
+              <ShieldOff className="w-5 h-5" />
+              Disable Secret Protection?
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                <p>
+                  This will expose <code className="px-1.5 py-0.5 rounded bg-[var(--background-elevated)] font-mono text-[var(--foreground)]">{secretToDisableProtection?.name}</code> directly to
+                  AI agents running in this sandbox.
+                </p>
+
+                <div className="rounded border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3 space-y-2">
+                  <p className="font-medium text-[var(--foreground)]">This should rarely be necessary.</p>
+                  <p className="text-[var(--foreground-muted)]">
+                    The broker is compatible with most APIs and SDKs.
+                    If you&apos;re experiencing issues, please check:
+                  </p>
+                  <ul className="list-disc list-inside text-[var(--foreground-muted)] space-y-1">
+                    <li>The API key is correct</li>
+                    <li>The service isn&apos;t experiencing an outage</li>
+                    <li>Your account has sufficient credits/quota</li>
+                  </ul>
+                  <p className="text-[var(--foreground-muted)]">
+                    Only disable protection if you&apos;ve confirmed the service
+                    specifically blocks brokered requests.
+                  </p>
+                </div>
+
+                <div className="rounded border border-[var(--status-error)]/30 bg-[var(--status-error)]/10 p-3">
+                  <p className="text-[var(--status-error)] font-medium">
+                    Risk: The agent will be able to read and potentially exfiltrate this key.
+                  </p>
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="secondary"
+              onClick={() => setSecretToDisableProtection(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (secretToDisableProtection) {
+                  updateProtectionMutation.mutate({
+                    id: secretToDisableProtection.id,
+                    brokerProtected: false,
+                  });
+                }
+                setSecretToDisableProtection(null);
+              }}
+            >
+              I understand, disable protection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Domain Approval Dialog */}
+      <Dialog
+        open={!!approvalToShow}
+        onOpenChange={(open) => {
+          if (!open) setApprovalToShow(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-[var(--status-warning)]" />
+              Domain Approval Required
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-4 text-sm">
+                <p>
+                  A request was blocked because it needs your approval to send a secret to a new domain.
+                </p>
+
+                <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-3 space-y-2 font-mono text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--foreground-muted)]">Secret:</span>
+                    <span className="text-[var(--foreground)]">{approvalToShow?.secretName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-[var(--foreground-muted)]">Domain:</span>
+                    <span className="text-[var(--foreground)]">{approvalToShow?.domain}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[var(--foreground-muted)] text-xs">Header name</label>
+                    <select
+                      value={approvalHeaderName}
+                      onChange={(e) => setApprovalHeaderName(e.target.value)}
+                      className="w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+                    >
+                      <option value="Authorization">Authorization</option>
+                      <option value="x-api-key">x-api-key</option>
+                      <option value="X-API-Key">X-API-Key</option>
+                      <option value="api-key">api-key</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[var(--foreground-muted)] text-xs">Header format</label>
+                    <select
+                      value={approvalHeaderFormat}
+                      onChange={(e) => setApprovalHeaderFormat(e.target.value)}
+                      className="w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+                    >
+                      <option value="Bearer %s">Bearer %s</option>
+                      <option value="%s">%s (plain)</option>
+                      <option value="Token %s">Token %s</option>
+                      <option value="Basic %s">Basic %s</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="rounded border border-[var(--status-warning)]/30 bg-[var(--status-warning)]/10 p-3">
+                  <p className="text-[var(--status-warning)] font-medium text-xs">
+                    ⚠️ This will allow sending your secret to {approvalToShow?.domain}
+                  </p>
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (approvalToShow) {
+                  dismissApprovalMutation.mutate(approvalToShow.id);
+                }
+              }}
+              disabled={dismissApprovalMutation.isPending}
+            >
+              Deny
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (approvalToShow) {
+                  approveDomainMutation.mutate({
+                    secretId: approvalToShow.secretId,
+                    domain: approvalToShow.domain,
+                    headerName: approvalHeaderName,
+                    headerFormat: approvalHeaderFormat,
+                  });
+                }
+              }}
+              disabled={approveDomainMutation.isPending}
+            >
+              Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

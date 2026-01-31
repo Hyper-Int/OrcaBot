@@ -145,12 +145,16 @@ export interface UserMcpTool {
   updatedAt: string;
 }
 
+export type SecretType = 'secret' | 'env_var';
+
 export interface UserSecret {
   id: string;
   userId: string;
   dashboardId: string;
   name: string;
   description: string;
+  type: SecretType; // 'secret' = brokered, 'env_var' = set directly
+  brokerProtected: boolean; // If true, secret is routed through broker (LLM cannot read it directly)
   createdAt: string;
   updatedAt: string;
 }

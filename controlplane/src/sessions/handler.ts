@@ -371,11 +371,23 @@ export async function createSessiоn(
 
     // Auto-apply dashboard secrets to the new session
     try {
-      const { getDecryptedSecretsForDashboard } = await import('../secrets/handler');
-      const secrets = await getDecryptedSecretsForDashboard(env, userId, dashboardId);
-      if (Object.keys(secrets).length > 0) {
-        await sandbox.updateEnv(sandboxSessionId, { set: secrets, applyNow: true }, sandboxMachineId || undefined);
+      console.log(`[session] Auto-applying secrets for session ${id}, dashboard ${dashboardId}, user ${userId}`);
+      const { getSecretsWithProtection } = await import('../secrets/handler');
+      const secrets = await getSecretsWithProtection(env, userId, dashboardId);
+      const secretNames = Object.keys(secrets);
+      console.log(`[session] Found ${secretNames.length} secrets to apply`);
+      if (secretNames.length > 0) {
+        // Convert to the format expected by sandbox: { name: { value, brokerProtected } }
+        // Don't use applyNow - new PTYs will load from .env automatically
+        await sandbox.updateEnv(sandboxSessionId, { secrets, applyNow: false }, sandboxMachineId || undefined);
+        console.log(`[session] Secrets applied successfully`);
       }
+      // Track applied secret names for deletion tracking (upsert in case row exists from sandbox creation)
+      await env.DB.prepare(`
+        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
+      `).bind(dashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(secretNames), now).run();
     } catch (err) {
       console.error('Failed to auto-apply secrets:', err);
       // Non-fatal - continue with session creation
@@ -870,7 +882,7 @@ export async function applySecretsToSession(
   userId: string
 ): Promise<Response> {
   // Import dynamically to avoid circular dependency
-  const { getDecryptedSecretsForDashboard } = await import('../secrets/handler');
+  const { getSecretsWithProtection } = await import('../secrets/handler');
 
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -887,24 +899,51 @@ export async function applySecretsToSession(
   }
 
   try {
-    const secrets = await getDecryptedSecretsForDashboard(
+    const secrets = await getSecretsWithProtection(
       env,
       userId,
       session.dashboard_id as string
     );
 
-    if (Object.keys(secrets).length === 0) {
-      return Response.json({ applied: 0, message: 'No secrets to apply' });
+    // Get previously applied secret names to compute what to unset
+    const dashboardSandbox = await env.DB.prepare(`
+      SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
+    `).bind(session.dashboard_id).first<{ applied_secret_names: string }>();
+
+    const previousNames: string[] = dashboardSandbox?.applied_secret_names
+      ? JSON.parse(dashboardSandbox.applied_secret_names)
+      : [];
+    const currentNames = Object.keys(secrets);
+
+    // Compute secrets to unset (were applied before but not in current set)
+    const unset: string[] = [];
+    for (const name of previousNames) {
+      if (!currentNames.includes(name)) {
+        unset.push(name);
+        // Also unset the _BROKER suffix for custom secrets
+        unset.push(`${name}_BROKER`);
+      }
     }
 
+    console.log(`[applySecrets] previousNames=${JSON.stringify(previousNames)}, currentNames=${JSON.stringify(currentNames)}, unset=${JSON.stringify(unset)}`);
+
+    // Update the applied secret names for next time (upsert in case row doesn't exist)
+    await env.DB.prepare(`
+      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, applied_secret_names)
+      VALUES (?, ?, ?)
+      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
+    `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
+
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    // Don't use applyNow - new PTYs will load from .env automatically
+    // Existing PTYs can run `source ~/.env` if needed
     await sandbox.updateEnv(
       session.sandbox_session_id as string,
-      { set: secrets, applyNow: true },
+      { secrets, unset: unset.length > 0 ? unset : undefined, applyNow: false },
       (session.sandbox_machine_id as string) || undefined
     );
 
-    return Response.json({ applied: Object.keys(secrets).length });
+    return Response.json({ applied: Object.keys(secrets).length, unset: unset.length });
   } catch (error) {
     console.error('Failed to apply secrets:', error);
     return Response.json(

@@ -93,10 +93,15 @@ type Hub struct {
 	// onStop callback invoked when hub stops (for cleanup by owner)
 	onStop func()
 
-	suppressMu     sync.Mutex
-	suppressActive bool
-	suppressMarker []byte
-	suppressBuffer []byte
+	suppressMu      sync.Mutex
+	suppressActive  bool
+	suppressMarkers [][]byte // Multiple markers to wait for
+	suppressBuffer  []byte
+
+	// Secrets redaction
+	secretValues   []string   // Secret values to redact from output
+	secretsMu      sync.RWMutex
+	redactionTail  []byte     // Buffer to handle secrets split across chunks
 }
 
 // NewHub creates a new Hub for the given PTY.
@@ -202,12 +207,14 @@ func (h *Hub) Run() {
 }
 
 // SuppressOutputUntil drops PTY output until the marker is observed.
+// If called multiple times before markers are seen, all markers are queued
+// and suppression continues until all have been observed.
 func (h *Hub) SuppressOutputUntil(marker string) {
 	h.suppressMu.Lock()
 	defer h.suppressMu.Unlock()
 	h.suppressActive = true
-	h.suppressMarker = []byte(marker)
-	h.suppressBuffer = nil
+	h.suppressMarkers = append(h.suppressMarkers, []byte(marker))
+	// Don't reset buffer when adding new markers - keep accumulated data
 }
 
 // readLoop reads from PTY and broadcasts to all clients.
@@ -235,6 +242,9 @@ func (h *Hub) readLооp() {
 
 // broadcast sends PTY output to all connected clients as binary messages
 func (h *Hub) broadcast(data []byte) {
+	// Apply secret redaction first - prevents LLM from seeing secret values
+	data = h.redactSecrets(data)
+
 	data = h.filterSuppressed(data)
 	if len(data) == 0 {
 		return
@@ -257,14 +267,43 @@ func (h *Hub) filterSuppressed(data []byte) []byte {
 	h.suppressMu.Lock()
 	defer h.suppressMu.Unlock()
 
-	if !h.suppressActive || len(h.suppressMarker) == 0 {
+	if !h.suppressActive || len(h.suppressMarkers) == 0 {
 		return data
 	}
 
 	combined := append(h.suppressBuffer, data...)
-	index := bytes.Index(combined, h.suppressMarker)
-	if index == -1 {
-		tailLen := len(h.suppressMarker) - 1
+
+	// Find and remove all markers (in any order they appear)
+	// Keep track of the rightmost marker position to know where to resume output
+	rightmostEnd := -1
+	remainingMarkers := make([][]byte, 0, len(h.suppressMarkers))
+
+	for _, marker := range h.suppressMarkers {
+		index := bytes.Index(combined, marker)
+		if index == -1 {
+			// Marker not found yet - keep it in the list
+			remainingMarkers = append(remainingMarkers, marker)
+		} else {
+			// Found this marker - track where it ends
+			endPos := index + len(marker)
+			if endPos > rightmostEnd {
+				rightmostEnd = endPos
+			}
+		}
+	}
+
+	h.suppressMarkers = remainingMarkers
+
+	if len(remainingMarkers) > 0 {
+		// Still waiting for some markers - keep buffering
+		// Keep enough tail to detect markers spanning reads
+		maxMarkerLen := 0
+		for _, m := range remainingMarkers {
+			if len(m) > maxMarkerLen {
+				maxMarkerLen = len(m)
+			}
+		}
+		tailLen := maxMarkerLen - 1
 		if tailLen < 0 {
 			tailLen = 0
 		}
@@ -276,10 +315,14 @@ func (h *Hub) filterSuppressed(data []byte) []byte {
 		return nil
 	}
 
-	after := combined[index+len(h.suppressMarker):]
+	// All markers found - suppression complete
+	// Return everything after the rightmost marker
 	h.suppressActive = false
 	h.suppressBuffer = nil
-	return after
+	if rightmostEnd >= 0 && rightmostEnd < len(combined) {
+		return combined[rightmostEnd:]
+	}
+	return nil
 }
 
 // Register adds a client to receive PTY output (legacy - no user ID).
@@ -628,4 +671,74 @@ func (h *Hub) BroadcastTalkitoNotice(event TalkitoNoticeEvent) {
 		return
 	}
 	h.broadcastControl(data)
+}
+
+// SetSecretValues updates the list of secret values to redact from output.
+// Values shorter than 8 characters are ignored to prevent false positives.
+func (h *Hub) SetSecretValues(values []string) {
+	h.secretsMu.Lock()
+	defer h.secretsMu.Unlock()
+	h.secretValues = values
+	h.redactionTail = nil // Reset tail buffer when secrets change
+}
+
+// redactSecrets replaces secret values with asterisks in PTY output.
+// Uses a tail buffer to handle secrets that may be split across output chunks.
+func (h *Hub) redactSecrets(data []byte) []byte {
+	h.secretsMu.Lock()
+	defer h.secretsMu.Unlock()
+
+	if len(h.secretValues) == 0 {
+		return data
+	}
+
+	// Find the maximum secret length for cross-chunk buffering
+	maxSecretLen := 0
+	for _, s := range h.secretValues {
+		if len(s) > maxSecretLen {
+			maxSecretLen = len(s)
+		}
+	}
+
+	if maxSecretLen == 0 {
+		return data
+	}
+
+	// Buffer tail bytes from previous output to catch secrets split across chunks.
+	// Keep at most maxSecretLen-1 bytes from the previous output.
+	prefixLen := 0
+	if len(h.redactionTail) > 0 {
+		// Trim tail if it's too long
+		if len(h.redactionTail) > maxSecretLen-1 {
+			h.redactionTail = h.redactionTail[len(h.redactionTail)-(maxSecretLen-1):]
+		}
+		prefixLen = len(h.redactionTail)
+		// Prepend tail to current data for scanning
+		data = append(h.redactionTail, data...)
+	}
+
+	// Update tail buffer for next chunk (last maxSecretLen-1 bytes)
+	if len(data) >= maxSecretLen-1 {
+		h.redactionTail = make([]byte, maxSecretLen-1)
+		copy(h.redactionTail, data[len(data)-(maxSecretLen-1):])
+	} else {
+		h.redactionTail = make([]byte, len(data))
+		copy(h.redactionTail, data)
+	}
+
+	// Redact each secret value using byte-safe operations (no string conversion)
+	result := data
+	for _, secret := range h.secretValues {
+		secretBytes := []byte(secret)
+		if len(secretBytes) >= 8 && bytes.Contains(result, secretBytes) {
+			result = bytes.ReplaceAll(result, secretBytes, bytes.Repeat([]byte("*"), len(secretBytes)))
+		}
+	}
+
+	// Remove the prefix we added from previous chunk's tail
+	if prefixLen > 0 && len(result) >= prefixLen {
+		result = result[prefixLen:]
+	}
+
+	return result
 }
