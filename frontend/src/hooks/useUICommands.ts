@@ -132,6 +132,10 @@ export function useUICommands({
                 content: cmd.url,
                 position,
                 size,
+                // Create edge from source terminal to browser if source_terminal_id is provided
+                sourceId: cmd.source_terminal_id,
+                sourceHandle: cmd.source_terminal_id ? "right-out" : undefined,
+                targetHandle: cmd.source_terminal_id ? "left-in" : undefined,
               },
               {
                 onSuccess: (item) => {
