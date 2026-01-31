@@ -641,16 +641,17 @@ export async function openBrowserFromSandbоxSessionInternal(
   }
 
   const session = await env.DB.prepare(`
-    SELECT dashboard_id FROM sessions WHERE sandbox_session_id = ?
+    SELECT dashboard_id, item_id FROM sessions WHERE sandbox_session_id = ?
     ORDER BY created_at DESC
     LIMIT 1
-  `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
+  `).bind(sandboxSessionId).first<{ dashboard_id: string; item_id: string }>();
 
   if (!session?.dashboard_id) {
     return Response.json({ error: 'E79820: Session not found' }, { status: 404 });
   }
 
   const dashboardId = session.dashboard_id;
+  const terminalItemId = session.item_id;
   const now = new Date().toISOString();
   const existingBrowser = await env.DB.prepare(`
     SELECT * FROM dashboard_items
@@ -711,12 +712,72 @@ export async function openBrowserFromSandbоxSessionInternal(
 
   const formattedItem = savedItem ? fоrmatDashbоardItem(savedItem) : null;
 
+  // Create edge from terminal to browser (right-out -> left-in) if this is a new browser
+  let formattedEdge: {
+    id: string;
+    dashboardId: string;
+    sourceItemId: string;
+    targetItemId: string;
+    sourceHandle: string;
+    targetHandle: string;
+    createdAt: string;
+    updatedAt: string;
+  } | null = null;
+
+  if (!existingBrowser && terminalItemId && browserItemId) {
+    // Check if edge already exists
+    const existingEdge = await env.DB.prepare(`
+      SELECT * FROM dashboard_edges
+      WHERE dashboard_id = ?
+        AND source_item_id = ?
+        AND target_item_id = ?
+        AND COALESCE(source_handle, '') = 'right-out'
+        AND COALESCE(target_handle, '') = 'left-in'
+    `).bind(dashboardId, terminalItemId, browserItemId).first();
+
+    if (!existingEdge) {
+      const edgeId = generateId();
+      await env.DB.prepare(`
+        INSERT INTO dashboard_edges
+          (id, dashboard_id, source_item_id, target_item_id, source_handle, target_handle, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        edgeId,
+        dashboardId,
+        terminalItemId,
+        browserItemId,
+        'right-out',
+        'left-in',
+        now,
+        now
+      ).run();
+
+      formattedEdge = {
+        id: edgeId,
+        dashboardId,
+        sourceItemId: terminalItemId,
+        targetItemId: browserItemId,
+        sourceHandle: 'right-out',
+        targetHandle: 'left-in',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+  }
+
   const doId = env.DASHBOARD.idFromName(dashboardId);
   const stub = env.DASHBOARD.get(doId);
   if (formattedItem) {
     await stub.fetch(new Request('http://do/item', {
       method: existingBrowser ? 'PUT' : 'POST',
       body: JSON.stringify(formattedItem),
+    }));
+  }
+  // Notify DO about the new edge
+  if (formattedEdge) {
+    await stub.fetch(new Request('http://do/edge', {
+      method: 'POST',
+      body: JSON.stringify(formattedEdge),
     }));
   }
   await stub.fetch(new Request('http://do/browser', {
