@@ -155,6 +155,16 @@ export function apiPut<T>(url: string, data?: unknown): Promise<T> {
 }
 
 /**
+ * PATCH request
+ */
+export function apiPatch<T>(url: string, data?: unknown): Promise<T> {
+  return apiFetch<T>(url, {
+    method: "PATCH",
+    body: data ? JSON.stringify(data) : undefined,
+  });
+}
+
+/**
  * DELETE request
  */
 export function apiDelete<T>(url: string): Promise<T> {

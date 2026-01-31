@@ -5,20 +5,29 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
 
+// SecretConfig represents a secret with optional broker protection.
+type SecretConfig struct {
+	Value           string `json:"value"`
+	BrokerProtected bool   `json:"broker_protected"` // If true, use broker instead of setting env var directly
+}
+
 type envUpdateRequest struct {
-	Set      map[string]string `json:"set"`
-	Unset    []string          `json:"unset"`
-	ApplyNow bool              `json:"apply_now"`
+	Set      map[string]string       `json:"set"`       // Regular env vars (set directly)
+	Secrets  map[string]SecretConfig `json:"secrets"`   // Secrets with broker protection option
+	Unset    []string                `json:"unset"`
+	ApplyNow bool                    `json:"apply_now"`
 }
 
 type envUpdateResponse struct {
@@ -39,12 +48,19 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Set) == 0 && len(req.Unset) == 0 {
+	if len(req.Set) == 0 && len(req.Secrets) == 0 && len(req.Unset) == 0 {
 		http.Error(w, "E79745: No environment variables provided", http.StatusBadRequest)
 		return
 	}
 
+	// Validate env var names
 	for key := range req.Set {
+		if !envNamePattern.MatchString(key) {
+			http.Error(w, "E79746: Invalid environment variable name", http.StatusBadRequest)
+			return
+		}
+	}
+	for key := range req.Secrets {
 		if !envNamePattern.MatchString(key) {
 			http.Error(w, "E79746: Invalid environment variable name", http.StatusBadRequest)
 			return
@@ -57,14 +73,77 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Process secrets - configure broker and build effective env vars
+	effectiveEnvVars := make(map[string]string)
+	secretValues := make(map[string]string) // For redaction
+
+	// Copy regular env vars
+	for key, value := range req.Set {
+		effectiveEnvVars[key] = value
+	}
+
+	// Process secrets with broker protection
+	brokerPort := session.BrokerPort()
+	sessionBroker := session.Broker()
+
+	// Clear existing broker configs before setting new ones
+	// This ensures deleted secrets are properly removed
+	sessionBroker.ClearConfigs()
+
+	for secretName, config := range req.Secrets {
+		if !config.BrokerProtected {
+			// Not broker-protected: set the actual value as env var
+			// Don't add to redaction - env vars are meant to be visible
+			effectiveEnvVars[secretName] = config.Value
+			continue
+		}
+
+		// Only brokered secrets should be redacted
+		secretValues[secretName] = config.Value
+
+		// Broker-protected: configure the broker and set dummy env vars
+		providerName, providerSpec := broker.GetProviderByEnvKey(secretName)
+
+		if providerSpec != nil {
+			// Built-in provider: use hardcoded config
+			effectiveEnvVars[secretName] = broker.GetDummyValue(providerName)
+			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://localhost:%d/broker/%s",
+				brokerPort, providerName)
+
+			sessionBroker.SetConfig(providerName, &broker.ProviderConfig{
+				Name:          providerName,
+				TargetBaseURL: providerSpec.TargetBaseURL,
+				HeaderName:    providerSpec.HeaderName,
+				HeaderFormat:  providerSpec.HeaderFormat,
+				SecretValue:   config.Value,
+			})
+		} else {
+			// Custom secret: use dynamic domain approval
+			customID := "custom/" + secretName
+			effectiveEnvVars[secretName] = broker.GetCustomDummyValue(secretName)
+			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://localhost:%d/broker/%s",
+				brokerPort, customID)
+
+			sessionBroker.SetConfig(customID, &broker.ProviderConfig{
+				Name:        customID,
+				SecretValue: config.Value,
+				// TargetBaseURL, HeaderName, HeaderFormat are dynamic for custom secrets
+			})
+		}
+	}
+
+	// Update session's secret values for output redaction
+	session.SetSecrets(secretValues)
+
+	// Write to .env file
 	root := session.Wоrkspace().Root()
-	if err := updateDоtEnv(filepath.Join(root, ".env"), req.Set, req.Unset); err != nil {
+	if err := updateDоtEnv(filepath.Join(root, ".env"), effectiveEnvVars, req.Unset); err != nil {
 		http.Error(w, "E79747: Failed to update .env", http.StatusInternalServerError)
 		return
 	}
 
 	if req.ApplyNow {
-		if err := applyEnvToPTYs(session, req.Set, req.Unset); err != nil {
+		if err := applyEnvToPTYs(session, effectiveEnvVars, req.Unset); err != nil {
 			http.Error(w, "E79748: Failed to update terminal env", http.StatusInternalServerError)
 			return
 		}
@@ -72,6 +151,21 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(envUpdateResponse{Status: "ok"})
+}
+
+// envQuote wraps a value in double quotes for .env file, escaping special chars.
+func envQuote(value string) string {
+	// Escape backslashes, double quotes, dollar signs, and backticks
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	escaped = strings.ReplaceAll(escaped, `$`, `\$`)
+	escaped = strings.ReplaceAll(escaped, "`", "\\`")
+	return `"` + escaped + `"`
+}
+
+// envLine formats a key=value pair for .env file with export prefix
+func envLine(key, value string) string {
+	return "export " + key + "=" + envQuote(value)
 }
 
 func updateDоtEnv(path string, set map[string]string, unset []string) error {
@@ -95,7 +189,12 @@ func updateDоtEnv(path string, set map[string]string, unset []string) error {
 			updated = append(updated, line)
 			continue
 		}
-		key, _, ok := strings.Cut(line, "=")
+		// Strip "export " prefix if present for parsing
+		lineToParse := trimmed
+		if strings.HasPrefix(lineToParse, "export ") {
+			lineToParse = strings.TrimPrefix(lineToParse, "export ")
+		}
+		key, _, ok := strings.Cut(lineToParse, "=")
 		key = strings.TrimSpace(key)
 		if !ok || key == "" {
 			updated = append(updated, line)
@@ -105,7 +204,7 @@ func updateDоtEnv(path string, set map[string]string, unset []string) error {
 			continue
 		}
 		if value, ok := set[key]; ok {
-			updated = append(updated, key+"="+value)
+			updated = append(updated, envLine(key, value))
 			seen[key] = struct{}{}
 			continue
 		}
@@ -117,7 +216,7 @@ func updateDоtEnv(path string, set map[string]string, unset []string) error {
 		if _, ok := seen[key]; ok {
 			continue
 		}
-		updated = append(updated, key+"="+value)
+		updated = append(updated, envLine(key, value))
 	}
 
 	contentOut := strings.TrimRight(strings.Join(updated, "\n"), "\n") + "\n"

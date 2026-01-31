@@ -225,7 +225,15 @@ export async function stopSession(sessionId: string): Promise<void> {
 }
 
 /**
- * Update session environment variables
+ * Apply stored secrets to session (with broker protection).
+ * This fetches secrets from the DB and applies them with proper broker flags.
+ */
+export async function applySessionSecrets(sessionId: string): Promise<{ applied: number }> {
+  return apiPost<{ applied: number }>(`${API.cloudflare.base}/sessions/${sessionId}/apply-secrets`);
+}
+
+/**
+ * Update session environment variables (plain env vars only, no broker protection)
  */
 export async function updateSessionEnv(
   sessionId: string,

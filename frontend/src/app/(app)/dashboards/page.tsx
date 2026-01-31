@@ -14,6 +14,11 @@ import {
   LogOut,
   Code2,
   Boxes,
+  ChevronDown,
+  ChevronRight,
+  AlertCircle,
+  Shield,
+  Settings,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -43,7 +48,9 @@ import {
   deleteDashboard,
   listGlobalSecrets,
   createGlobalSecret,
+  createGlobalEnvVar,
   deleteGlobalSecret,
+  type UserSecret,
 } from "@/lib/api/cloudflare";
 import { listTemplates } from "@/lib/api/cloudflare/templates";
 import { formatRelativeTime, cn } from "@/lib/utils";
@@ -60,6 +67,10 @@ export default function DashboardsPage() {
   const [deleteTarget, setDeleteTarget] = React.useState<Dashboard | null>(null);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
+  const [newEnvVarName, setNewEnvVarName] = React.useState("");
+  const [newEnvVarValue, setNewEnvVarValue] = React.useState("");
+  const [secretsSectionExpanded, setSecretsSectionExpanded] = React.useState(true);
+  const [envVarsSectionExpanded, setEnvVarsSectionExpanded] = React.useState(true);
 
   // Redirect if not authenticated
   React.useEffect(() => {
@@ -89,12 +100,23 @@ export default function DashboardsPage() {
     enabled: isAuthenticated && isAuthResolved,
   });
 
-  // Fetch global secrets
+  // Fetch global secrets (all types)
   const secretsQuery = useQuery({
     queryKey: ["secrets", "_global"],
-    queryFn: listGlobalSecrets,
+    queryFn: () => listGlobalSecrets(),
     enabled: isAuthenticated && isAuthResolved,
   });
+
+  // Split into secrets (brokered) and env vars (non-brokered)
+  const allSecrets = secretsQuery.data || [];
+  const savedSecrets = allSecrets.filter((s: UserSecret) => s.type === 'secret' || !s.type); // Default to secret for backwards compat
+  const savedEnvVars = allSecrets.filter((s: UserSecret) => s.type === 'env_var');
+
+  // Helper to detect secret-like names for warning
+  const looksLikeSecret = (name: string): boolean => {
+    const patterns = ['_KEY', '_TOKEN', '_SECRET', 'API_KEY', 'ACCESS_KEY', 'PASSWORD', 'CREDENTIAL', 'AUTH_'];
+    return patterns.some(pattern => name.toUpperCase().includes(pattern));
+  };
 
   // Create dashboard mutation
   const createMutation = useMutation({
@@ -157,6 +179,29 @@ export default function DashboardsPage() {
       createSecretMutation.mutate({
         name: newSecretName.trim(),
         value: newSecretValue.trim(),
+      });
+    }
+  };
+
+  // Create env var mutation
+  const createEnvVarMutation = useMutation({
+    mutationFn: createGlobalEnvVar,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
+      setNewEnvVarName("");
+      setNewEnvVarValue("");
+      toast.success("Environment variable saved");
+    },
+    onError: (error) => {
+      toast.error(`Failed to create environment variable: ${error.message}`);
+    },
+  });
+
+  const handleAddEnvVar = () => {
+    if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+      createEnvVarMutation.mutate({
+        name: newEnvVarName.trim(),
+        value: newEnvVarValue.trim(),
       });
     }
   };
@@ -363,89 +408,220 @@ export default function DashboardsPage() {
             )}
           </section>
 
-          {/* Environment Variables Section */}
+          {/* Secrets & Environment Variables Section */}
           <section>
             <h2 className="text-h2 text-[var(--foreground)] mb-4">
-              Environment Variables
+              Secrets & Environment Variables
             </h2>
             <Card className="p-5">
               <p className="text-caption text-[var(--foreground-muted)] mb-4">
-                API keys and environment variables that will be auto-applied to all new terminals.
+                Secrets and environment variables that will be auto-applied to all new terminals.
               </p>
 
-              {/* Add new env var form */}
-              <div className="flex gap-2 mb-4">
-                <div className="w-1/3 min-w-0">
-                  <Input
-                    placeholder="NAME"
-                    value={newSecretName}
-                    onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                    className="w-full font-mono"
-                    autoComplete="off"
-                    data-1p-ignore
-                    data-lpignore="true"
-                    data-form-type="other"
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <Input
-                    type="text"
-                    placeholder="Value"
-                    value={newSecretValue}
-                    onChange={(e) => setNewSecretValue(e.target.value)}
-                    className="w-full"
-                    autoComplete="off"
-                    data-1p-ignore
-                    data-lpignore="true"
-                    data-form-type="other"
-                  />
-                </div>
-                <Button
-                  variant="secondary"
-                  size="icon-sm"
-                  onClick={handleAddSecret}
-                  disabled={
-                    !newSecretName.trim() ||
-                    !newSecretValue.trim() ||
-                    createSecretMutation.isPending
-                  }
-                  className="shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {/* Env vars list */}
-              <div className="space-y-2 max-h-80 overflow-auto">
-                {secretsQuery.isLoading && (
-                  <div className="text-sm text-[var(--foreground-muted)]">Loading...</div>
-                )}
-                {!secretsQuery.isLoading &&
-                  (!secretsQuery.data || secretsQuery.data.length === 0) && (
-                    <div className="text-sm text-[var(--foreground-muted)] text-center py-6">
-                      No environment variables configured yet.
+              <div className="space-y-4">
+                {/* ========== SECRETS SECTION (brokered) ========== */}
+                <div className="border border-[var(--border)] rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setSecretsSectionExpanded(!secretsSectionExpanded)}
+                    className="flex items-center justify-between w-full px-4 py-3 hover:bg-[var(--background-elevated)] transition-colors rounded-t-lg"
+                  >
+                    <div className="flex items-center gap-2">
+                      {secretsSectionExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      <Shield className="w-4 h-4 text-[var(--status-success)]" />
+                      <span className="font-medium">Secrets</span>
+                      <span className="text-sm text-[var(--foreground-muted)]">({savedSecrets.length})</span>
+                    </div>
+                    <span className="text-sm text-[var(--foreground-muted)]">API keys, tokens</span>
+                  </button>
+                  {secretsSectionExpanded && (
+                    <div className="border-t border-[var(--border)] p-4 space-y-4">
+                      <p className="text-sm text-[var(--foreground-muted)]">
+                        Secrets are brokered - the LLM cannot read them directly.
+                      </p>
+                      {/* Add new secret form */}
+                      <div className="flex gap-2">
+                        <div className="w-1/3 min-w-0">
+                          <Input
+                            placeholder="NAME"
+                            value={newSecretName}
+                            onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                            className="w-full font-mono"
+                            autoComplete="off"
+                            data-1p-ignore
+                            data-lpignore="true"
+                            data-form-type="other"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <Input
+                            type="text"
+                            placeholder="Value"
+                            value={newSecretValue}
+                            onChange={(e) => setNewSecretValue(e.target.value)}
+                            className="w-full"
+                            autoComplete="off"
+                            data-1p-ignore
+                            data-lpignore="true"
+                            data-form-type="other"
+                            style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+                          />
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="icon-sm"
+                          onClick={handleAddSecret}
+                          disabled={
+                            !newSecretName.trim() ||
+                            !newSecretValue.trim() ||
+                            createSecretMutation.isPending
+                          }
+                          className="shrink-0"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      {/* Secrets list */}
+                      <div className="space-y-2 max-h-40 overflow-auto">
+                        {secretsQuery.isLoading && (
+                          <div className="text-sm text-[var(--foreground-muted)]">Loading...</div>
+                        )}
+                        {!secretsQuery.isLoading && savedSecrets.length === 0 && (
+                          <div className="text-sm text-[var(--foreground-muted)] text-center py-4">
+                            No secrets configured yet.
+                          </div>
+                        )}
+                        {savedSecrets.map((secret) => (
+                          <div
+                            key={secret.id}
+                            className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Shield className="w-4 h-4 text-[var(--status-success)] flex-shrink-0" />
+                              <span className="text-sm font-mono truncate">{secret.name}</span>
+                              <span className="text-sm text-[var(--foreground-muted)]">=</span>
+                              <span className="text-sm text-[var(--foreground-muted)]">••••••••</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => deleteSecretMutation.mutate(secret.id)}
+                              className="text-[var(--status-error)] hover:text-[var(--status-error)] shrink-0"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
-                {secretsQuery.data?.map((secret) => (
-                  <div
-                    key={secret.id}
-                    className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                </div>
+
+                {/* ========== ENVIRONMENT VARIABLES SECTION (non-brokered) ========== */}
+                <div className="border border-[var(--border)] rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setEnvVarsSectionExpanded(!envVarsSectionExpanded)}
+                    className="flex items-center justify-between w-full px-4 py-3 hover:bg-[var(--background-elevated)] transition-colors rounded-t-lg"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-mono truncate">{secret.name}</span>
-                      <span className="text-sm text-[var(--foreground-muted)]">=</span>
-                      <span className="text-sm text-[var(--foreground-muted)]">••••••••</span>
+                    <div className="flex items-center gap-2">
+                      {envVarsSectionExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      <Settings className="w-4 h-4 text-[var(--foreground-muted)]" />
+                      <span className="font-medium">Environment Variables</span>
+                      <span className="text-sm text-[var(--foreground-muted)]">({savedEnvVars.length})</span>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => deleteSecretMutation.mutate(secret.id)}
-                      className="text-[var(--status-error)] hover:text-[var(--status-error)] shrink-0"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
+                    <span className="text-sm text-[var(--foreground-muted)]">Config values</span>
+                  </button>
+                  {envVarsSectionExpanded && (
+                    <div className="border-t border-[var(--border)] p-4 space-y-4">
+                      <p className="text-sm text-[var(--foreground-muted)]">
+                        Environment variables are set directly - the LLM can read them.
+                      </p>
+                      {/* Warning for secret-like names */}
+                      {newEnvVarName && looksLikeSecret(newEnvVarName) && (
+                        <div className="flex items-start gap-2 rounded border border-[var(--status-warning)]/50 bg-[var(--status-warning)]/10 px-3 py-2">
+                          <AlertCircle className="w-4 h-4 text-[var(--status-warning)] flex-shrink-0 mt-0.5" />
+                          <div className="text-sm text-[var(--foreground)]">
+                            <span className="font-medium">{newEnvVarName}</span> looks like an API key or secret.
+                            Consider adding it to <span className="font-medium">Secrets</span> instead for protection.
+                          </div>
+                        </div>
+                      )}
+                      {/* Add new env var form */}
+                      <div className="flex gap-2">
+                        <div className="w-1/3 min-w-0">
+                          <Input
+                            placeholder="NAME"
+                            value={newEnvVarName}
+                            onChange={(e) => setNewEnvVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                            className="w-full font-mono"
+                            autoComplete="off"
+                            data-1p-ignore
+                            data-lpignore="true"
+                            data-form-type="other"
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <Input
+                            type="text"
+                            placeholder="Value"
+                            value={newEnvVarValue}
+                            onChange={(e) => setNewEnvVarValue(e.target.value)}
+                            className="w-full"
+                            autoComplete="off"
+                            data-1p-ignore
+                            data-lpignore="true"
+                            data-form-type="other"
+                          />
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="icon-sm"
+                          onClick={handleAddEnvVar}
+                          disabled={
+                            !newEnvVarName.trim() ||
+                            !newEnvVarValue.trim() ||
+                            createEnvVarMutation.isPending
+                          }
+                          className="shrink-0"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      {/* Env vars list */}
+                      <div className="space-y-2 max-h-40 overflow-auto">
+                        {secretsQuery.isLoading && (
+                          <div className="text-sm text-[var(--foreground-muted)]">Loading...</div>
+                        )}
+                        {!secretsQuery.isLoading && savedEnvVars.length === 0 && (
+                          <div className="text-sm text-[var(--foreground-muted)] text-center py-4">
+                            No environment variables configured yet.
+                          </div>
+                        )}
+                        {savedEnvVars.map((envVar) => (
+                          <div
+                            key={envVar.id}
+                            className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-sm font-mono truncate">{envVar.name}</span>
+                              <span className="text-sm text-[var(--foreground-muted)]">=</span>
+                              <span className="text-sm text-[var(--foreground-muted)]">••••••••</span>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => deleteSecretMutation.mutate(envVar.id)}
+                              className="text-[var(--status-error)] hover:text-[var(--status-error)] shrink-0"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </Card>
           </section>

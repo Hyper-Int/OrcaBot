@@ -40,6 +40,7 @@ export const API = {
     subagents: `${CLOUDFLARE_API_URL}/subagents`,
     templates: `${CLOUDFLARE_API_URL}/templates`,
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
+    pendingApprovals: `${CLOUDFLARE_API_URL}/pending-approvals`,
     agentSkills: `${CLOUDFLARE_API_URL}/agent-skills`,
     mcpTools: `${CLOUDFLARE_API_URL}/mcp-tools`,
     googleDriveIntegration: `${CLOUDFLARE_API_URL}/integrations/google/drive`,

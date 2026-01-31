@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
@@ -64,17 +65,54 @@ type Session struct {
 	agent     *agent.Controller
 	workspace *fs.Workspace
 	browser   *browser.Controller
+
+	// Secrets broker for secure API key handling
+	broker     *broker.SecretsBroker
+	brokerPort int
+
+	// Secrets tracking for output redaction
+	secrets   map[string]string // name -> value (for redaction)
+	secretsMu sync.RWMutex
 }
+
+// DefaultBrokerPort is the port used for the secrets broker.
+// Each sandbox VM runs one session, so this can be a fixed port.
+const DefaultBrokerPort = 8082
 
 // NewSession creates a new session with workspace at the given root
 func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string) *Session {
-	return &Session{
+	brokerPort := DefaultBrokerPort
+
+	s := &Session{
 		ID:          id,
 		DashboardID: dashboardID,
 		MCPToken:    mcpToken,
 		ptys:        make(map[string]*PTYInfo),
 		workspace:   fs.NewWоrkspace(workspaceRoot),
+		broker:      broker.NewSecretsBroker(brokerPort),
+		brokerPort:  brokerPort,
+		secrets:     make(map[string]string),
 	}
+
+	// Start the broker in the background
+	go func() {
+		if err := s.broker.Start(); err != nil {
+			// Log but don't fail - broker is optional enhancement
+			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
+		}
+	}()
+
+	return s
+}
+
+// Broker returns the session's secrets broker for configuration.
+func (s *Session) Broker() *broker.SecretsBroker {
+	return s.broker
+}
+
+// BrokerPort returns the port the secrets broker is listening on.
+func (s *Session) BrokerPort() int {
+	return s.brokerPort
 }
 
 // Workspace returns the session's filesystem workspace
@@ -369,6 +407,9 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 
 	hub := pty.NewHub(p, creatorID)
 
+	// Set secret values for output redaction
+	hub.SetSecretValues(s.GetSecretValues())
+
 	// Register cleanup callback for when hub auto-stops (idle timeout, PTY closed)
 	hub.SetOnStop(func() {
 		s.mu.Lock()
@@ -402,6 +443,10 @@ func loadEnvFile(path string) map[string]string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
+		// Strip "export " prefix if present
+		if strings.HasPrefix(trimmed, "export ") {
+			trimmed = strings.TrimPrefix(trimmed, "export ")
+		}
 		key, value, ok := strings.Cut(trimmed, "=")
 		if !ok {
 			continue
@@ -411,6 +456,11 @@ func loadEnvFile(path string) map[string]string {
 		if len(value) >= 2 {
 			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
 				value = value[1 : len(value)-1]
+				// Unescape common escape sequences from double-quoted values
+				value = strings.ReplaceAll(value, `\$`, `$`)
+				value = strings.ReplaceAll(value, `\"`, `"`)
+				value = strings.ReplaceAll(value, "\\`", "`")
+				value = strings.ReplaceAll(value, `\\`, `\`)
 			}
 		}
 		if key != "" {
@@ -481,6 +531,8 @@ func (s *Session) Clоse() error {
 	s.ptys = make(map[string]*PTYInfo)
 	agentCtrl := s.agent
 	s.agent = nil
+	brokerInstance := s.broker
+	s.broker = nil
 	s.mu.Unlock()
 
 	for _, info := range ptys {
@@ -493,6 +545,11 @@ func (s *Session) Clоse() error {
 
 	if s.browser != nil {
 		s.browser.Stop()
+	}
+
+	// Stop the secrets broker
+	if brokerInstance != nil {
+		brokerInstance.Stop()
 	}
 
 	return nil
@@ -546,4 +603,38 @@ func (s *Session) StоpAgent() error {
 	}
 
 	return agentCtrl.Stоp()
+}
+
+// SetSecrets stores secret values for output redaction.
+// This should be called when secrets are applied to the session.
+func (s *Session) SetSecrets(secrets map[string]string) {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	s.secrets = secrets
+
+	// Update redaction values in all existing hubs
+	values := s.getSecretValuesLocked()
+	s.mu.RLock()
+	for _, info := range s.ptys {
+		info.Hub.SetSecretValues(values)
+	}
+	s.mu.RUnlock()
+}
+
+// GetSecretValues returns secret values for redaction (min 8 chars).
+func (s *Session) GetSecretValues() []string {
+	s.secretsMu.RLock()
+	defer s.secretsMu.RUnlock()
+	return s.getSecretValuesLocked()
+}
+
+// getSecretValuesLocked returns secret values (caller must hold secretsMu).
+func (s *Session) getSecretValuesLocked() []string {
+	values := make([]string, 0, len(s.secrets))
+	for _, v := range s.secrets {
+		if len(v) >= 8 { // Only redact non-trivial values
+			values = append(values, v)
+		}
+	}
+	return values
 }

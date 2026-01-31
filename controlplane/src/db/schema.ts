@@ -172,7 +172,9 @@ CREATE TABLE IF NOT EXISTS user_mcp_tools (
 
 CREATE INDEX IF NOT EXISTS idx_user_mcp_tools_user ON user_mcp_tools(user_id);
 
--- User secrets (environment variables)
+-- User secrets and environment variables
+-- type='secret' → brokered (for API keys, credentials)
+-- type='env_var' → set directly (for regular config)
 CREATE TABLE IF NOT EXISTS user_secrets (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -180,6 +182,8 @@ CREATE TABLE IF NOT EXISTS user_secrets (
   name TEXT NOT NULL,
   value TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  type TEXT NOT NULL DEFAULT 'secret' CHECK (type IN ('secret', 'env_var')),
+  broker_protected INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -581,6 +585,33 @@ CREATE TABLE IF NOT EXISTS system_health (
   consecutive_failures INTEGER NOT NULL DEFAULT 0
 );
 
+-- Secret domain allowlist (approved domains for custom secrets)
+CREATE TABLE IF NOT EXISTS user_secret_allowlist (
+  id TEXT PRIMARY KEY,
+  secret_id TEXT NOT NULL REFERENCES user_secrets(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  header_name TEXT NOT NULL DEFAULT 'Authorization',
+  header_format TEXT NOT NULL DEFAULT 'Bearer %s',
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_secret_allowlist_secret ON user_secret_allowlist(secret_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_secret_allowlist_unique ON user_secret_allowlist(secret_id, domain) WHERE revoked_at IS NULL;
+
+-- Pending domain approval requests (for notification)
+CREATE TABLE IF NOT EXISTS pending_domain_approvals (
+  id TEXT PRIMARY KEY,
+  secret_id TEXT NOT NULL REFERENCES user_secrets(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+  dismissed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_secret ON pending_domain_approvals(secret_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_approvals_unique ON pending_domain_approvals(secret_id, domain) WHERE dismissed_at IS NULL;
+
 -- Dashboard templates (global, shareable)
 CREATE TABLE IF NOT EXISTS dashboard_templates (
   id TEXT PRIMARY KEY,
@@ -644,6 +675,43 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE user_secrets ADD COLUMN encrypted_at TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add broker_protected column for secrets protection
+  try {
+    await db.prepare(`
+      ALTER TABLE user_secrets ADD COLUMN broker_protected INTEGER NOT NULL DEFAULT 1
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add type column to distinguish secrets from env vars
+  try {
+    await db.prepare(`
+      ALTER TABLE user_secrets ADD COLUMN type TEXT NOT NULL DEFAULT 'secret'
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Create index on type column (must be after the column exists)
+  try {
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_user_secrets_type ON user_secrets(type)
+    `).run();
+  } catch {
+    // Index already exists or column doesn't exist yet.
+  }
+
+  // Add applied_secret_names column to track which secrets were applied
+  // Used to compute unset list when secrets are deleted
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_sandboxes ADD COLUMN applied_secret_names TEXT NOT NULL DEFAULT '[]'
     `).run();
   } catch {
     // Column already exists.

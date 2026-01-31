@@ -90,7 +90,12 @@ export class SandboxClient {
   // Environment management
   async updateEnv(
     sessionId: string,
-    payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean },
+    payload: {
+      set?: Record<string, string>;
+      secrets?: Record<string, { value: string; brokerProtected: boolean }>;
+      unset?: string[];
+      applyNow?: boolean;
+    },
     machineId?: string
   ): Promise<void> {
     const headers = new Headers(this.authHeaders());
@@ -99,17 +104,37 @@ export class SandboxClient {
       headers.set('X-Sandbox-Machine-ID', machineId);
     }
     // Convert to snake_case for sandbox API
+    const secretsSnakeCase = payload.secrets
+      ? Object.fromEntries(
+          Object.entries(payload.secrets).map(([name, config]) => [
+            name,
+            { value: config.value, broker_protected: config.brokerProtected },
+          ])
+        )
+      : undefined;
+
+    // Debug log what we're sending to sandbox
+    if (secretsSnakeCase) {
+      for (const [name, config] of Object.entries(secretsSnakeCase)) {
+        console.log(`[sandbox] Sending secret to sandbox: name=${name}, broker_protected=${(config as {broker_protected: boolean}).broker_protected}`);
+      }
+    }
+
     const body = {
       set: payload.set,
+      secrets: secretsSnakeCase,
       unset: payload.unset,
       apply_now: payload.applyNow,
     };
+    console.log(`[sandbox] Sending to sandbox env endpoint: ${JSON.stringify(body)}`);
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
     });
     if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`[sandbox] Failed to update env: ${res.status} - ${errorText}`);
       throw new Error(`Failed to update env: ${res.status}`);
     }
   }
