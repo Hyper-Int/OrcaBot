@@ -309,9 +309,6 @@ export class DashboardDO implements DurableObject {
     // POST /ui-command - Execute a UI command from an agent
     if (path === '/ui-command' && request.method === 'POST') {
       const command = await request.json() as UICommand;
-      const connectedClients = this.getConnectedClientCount();
-
-      console.log(`[DashboardDO] Received ui-command: ${command.type}, command_id: ${command.command_id}, connected clients: ${connectedClients}`);
 
       // Broadcast the UI command to all connected clients
       this.broadcast({ type: 'ui_command', command });
@@ -346,6 +343,17 @@ export class DashboardDO implements DurableObject {
         items: Array.from(this.items.values()),
         edges: Array.from(this.edges.values()),
       });
+    }
+
+    // POST /pending-approval - Notify clients of a new pending approval
+    if (path === '/pending-approval' && request.method === 'POST') {
+      const data = await request.json() as { secretName: string; domain: string };
+      this.broadcast({
+        type: 'pending_approval',
+        secret_name: data.secretName,
+        domain: data.domain,
+      });
+      return Response.json({ success: true });
     }
 
     return new Response('Not found', { status: 404 });
@@ -504,9 +512,6 @@ export class DashboardDO implements DurableObject {
           // Client disconnected
         }
       }
-    }
-    if (message.type === 'ui_command') {
-      console.log(`[DashboardDO] Broadcast ui_command to ${sentCount} clients`);
     }
   }
 

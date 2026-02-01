@@ -308,6 +308,7 @@ export type CollabMessage =
   | { type: 'presence'; users: PresenceInfo[] }
   | { type: 'session_update'; session: Session }
   | { type: 'browser_open'; url: string }
+  | { type: 'pending_approval'; secret_name: string; domain: string }
   | UICommandMessage
   | UICommandResultMessage;
 

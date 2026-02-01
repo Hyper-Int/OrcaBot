@@ -268,6 +268,23 @@ POST   /sessions/:id/upload
 /broker/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
 /broker/custom/{secretName}       # Custom secret with ?target= param
 
+### Testing Custom Secret Domain Approval
+
+To test the broker requesting permission for an unknown domain:
+
+```bash
+# Inside the sandbox, make a request with a custom secret to an unapproved domain
+curl -X POST "http://localhost:8082/broker/custom/MY_API_KEY?target=https://api.example.com/v1/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "test"}'
+
+# Expected response (403): domain requires approval
+# {"error":"domain_not_approved","domain":"api.example.com","secret":"MY_API_KEY","message":"This domain requires owner approval before the secret can be sent."}
+
+# The broker will also notify the control plane, creating a pending approval request
+# that appears in the frontend for the dashboard owner to approve.
+```
+
 ### Coding Agent integration
 Claude Code and Codex CLI are preinstalled in the sandbox image.
 Claude runs as a CLI process inside a PTY.

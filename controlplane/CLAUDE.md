@@ -161,6 +161,25 @@ Approvals:
 - `approveSecretDomain(userId, secretId, data)` — Approve with header config
 - `dismissPendingApproval(userId, approvalId)` — Deny request
 
+### Internal Endpoints (sandbox → controlplane)
+These are called by the sandbox broker when a custom secret hits an unapproved domain:
+
+```bash
+# Create a pending approval request (called by sandbox)
+curl -X POST "http://localhost:8787/internal/sessions/{sessionId}/approval-request" \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -d '{"secretName": "MY_API_KEY", "domain": "api.example.com"}'
+
+# Response: {"status": "pending", "id": "..."}
+
+# Get approved domains for a session (called by sandbox on startup)
+curl "http://localhost:8787/internal/sessions/{sessionId}/approved-domains" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN"
+
+# Response: {"approvedDomains": [{"secretName": "MY_API_KEY", "domain": "api.example.com", "headerName": "Authorization", "headerFormat": "Bearer %s"}]}
+```
+
 ### Auto-Apply Mechanism
 When secrets change, `autoApplySecretsToSessions()` pushes updates to all active sandbox sessions for that dashboard via the sandbox's `updateEnv()` endpoint.
 

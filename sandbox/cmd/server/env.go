@@ -23,11 +23,20 @@ type SecretConfig struct {
 	BrokerProtected bool   `json:"broker_protected"` // If true, use broker instead of setting env var directly
 }
 
+// ApprovedDomainConfig represents an approved domain for a custom secret.
+type ApprovedDomainConfig struct {
+	SecretName   string `json:"secret_name"`
+	Domain       string `json:"domain"`
+	HeaderName   string `json:"header_name"`
+	HeaderFormat string `json:"header_format"`
+}
+
 type envUpdateRequest struct {
-	Set      map[string]string       `json:"set"`       // Regular env vars (set directly)
-	Secrets  map[string]SecretConfig `json:"secrets"`   // Secrets with broker protection option
-	Unset    []string                `json:"unset"`
-	ApplyNow bool                    `json:"apply_now"`
+	Set             map[string]string        `json:"set"`              // Regular env vars (set directly)
+	Secrets         map[string]SecretConfig  `json:"secrets"`          // Secrets with broker protection option
+	ApprovedDomains []ApprovedDomainConfig   `json:"approved_domains"` // Pre-approved domains for custom secrets
+	Unset           []string                 `json:"unset"`
+	ApplyNow        bool                     `json:"apply_now"`
 }
 
 type envUpdateResponse struct {
@@ -86,9 +95,21 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 	brokerPort := session.BrokerPort()
 	sessionBroker := session.Broker()
 
-	// Clear existing broker configs before setting new ones
-	// This ensures deleted secrets are properly removed
-	sessionBroker.ClearConfigs()
+	// Only clear and rebuild broker configs when secrets are provided.
+	// This preserves configs when only updating plain env vars.
+	if len(req.Secrets) > 0 {
+		sessionBroker.ClearConfigs()
+	} else if len(req.Unset) > 0 {
+		// Remove configs for secrets being unset
+		for _, name := range req.Unset {
+			sessionBroker.RemoveConfig("custom/" + name)
+			// Also try removing as built-in provider
+			providerName, _ := broker.GetProviderByEnvKey(name)
+			if providerName != "" {
+				sessionBroker.RemoveConfig(providerName)
+			}
+		}
+	}
 
 	for secretName, config := range req.Secrets {
 		if !config.BrokerProtected {
@@ -116,6 +137,7 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 				HeaderName:    providerSpec.HeaderName,
 				HeaderFormat:  providerSpec.HeaderFormat,
 				SecretValue:   config.Value,
+				SessionID:     session.ID,
 			})
 		} else {
 			// Custom secret: use dynamic domain approval
@@ -127,6 +149,7 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 			sessionBroker.SetConfig(customID, &broker.ProviderConfig{
 				Name:        customID,
 				SecretValue: config.Value,
+				SessionID:   session.ID,
 				// TargetBaseURL, HeaderName, HeaderFormat are dynamic for custom secrets
 			})
 		}
@@ -134,6 +157,19 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	// Update session's secret values for output redaction
 	session.SetSecrets(secretValues)
+
+	// Only update approved domains if explicitly provided in the request
+	// nil means "don't change", empty array means "clear all"
+	if req.ApprovedDomains != nil {
+		sessionBroker.ClearApprovedDomains()
+		for _, approval := range req.ApprovedDomains {
+			sessionBroker.AddApprovedDomain(approval.SecretName, approval.Domain, &broker.ApprovedDomainConfig{
+				Domain:       approval.Domain,
+				HeaderName:   approval.HeaderName,
+				HeaderFormat: approval.HeaderFormat,
+			})
+		}
+	}
 
 	// Write to .env file
 	root := session.Wоrkspace().Root()

@@ -49,11 +49,8 @@ async function autoApplySecretsToSessions(
     }
 
     if (!sessions.results || sessions.results.length === 0) {
-      console.log(`[secrets] No active sessions to update for ${isGlobal ? 'global' : dashboardId}`);
       return;
     }
-
-    console.log(`[secrets] Auto-applying secrets to ${sessions.results.length} active session(s)`);
 
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
@@ -76,6 +73,9 @@ async function autoApplySecretsToSessions(
         // Get fresh secrets for this dashboard
         const secrets = await getSecretsWithProtection(env, userId, sessionDashboardId);
 
+        // Get approved domains for custom secrets
+        const approvedDomains = await getApprovedDomainsForDashboard(env, userId, sessionDashboardId);
+
         // Get previously applied secrets to compute unset list
         const dashboardSandbox = await env.DB.prepare(`
           SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
@@ -95,12 +95,15 @@ async function autoApplySecretsToSessions(
           }
         }
 
-        console.log(`[secrets] Applying to session ${sandboxSessionId}: ${currentNames.length} secrets, ${unset.length} to unset`);
-
         // Apply to sandbox
         await sandbox.updateEnv(
           sandboxSessionId,
-          { secrets, unset: unset.length > 0 ? unset : undefined, applyNow: false },
+          {
+            secrets,
+            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
+            unset: unset.length > 0 ? unset : undefined,
+            applyNow: false,
+          },
           sandboxMachineId || undefined
         );
 
@@ -222,8 +225,6 @@ export async function createSecret(
   // For env_var type, broker protection is always false (they're set directly)
   // For secret type, default to broker protected (true) unless explicitly set to false
   const brokerProtected = type === 'env_var' ? 0 : (data.brokerProtected !== false ? 1 : 0);
-
-  console.log(`[secrets] Creating secret: name=${data.name}, type=${type}, brokerProtected=${brokerProtected}, data.type=${data.type}`);
 
   // Encrypt the secret value before storing
   let encryptedValue: string;
@@ -363,8 +364,6 @@ export async function getSecretsWithProtection(
     // env_var type is never brokered - always set directly
     // secret type respects the broker_protected flag
     const brokerProtected = type === 'env_var' ? false : row.broker_protected !== 0;
-
-    console.log(`[secrets] Processing secret: name=${name}, type=${type}, broker_protected_db=${row.broker_protected}, brokerProtected=${brokerProtected}`);
 
     try {
       // Handle both encrypted and legacy plaintext values
@@ -670,6 +669,11 @@ export async function approveSecretDomain(
     .bind(id)
     .first();
 
+  // Auto-apply to active sessions so they get the new approval immediately
+  autoApplySecretsToSessions(env, userId, effectiveDashboardId).catch(err => {
+    console.error('[secrets] Background auto-apply failed after domain approval:', err);
+  });
+
   return Response.json({ entry: formatAllowlistEntry(row as Record<string, unknown>) });
 }
 
@@ -837,4 +841,48 @@ export async function createPendingApproval(
   )
     .bind(id, secretId, domain)
     .run();
+}
+
+/**
+ * Approved domain config for sandbox broker.
+ */
+export interface ApprovedDomainForSandbox {
+  secretName: string;
+  domain: string;
+  headerName: string;
+  headerFormat: string;
+}
+
+/**
+ * Get all approved domains for a dashboard's secrets.
+ * Used when applying secrets to a sandbox session.
+ */
+export async function getApprovedDomainsForDashboard(
+  env: Env,
+  userId: string,
+  dashboardId: string
+): Promise<ApprovedDomainForSandbox[]> {
+  // Get all approved domains for secrets belonging to this user (dashboard + global)
+  // Join with user_secrets to get the secret name
+  const approvals = await env.DB.prepare(
+    `SELECT
+      s.name as secret_name,
+      a.domain,
+      a.header_name,
+      a.header_format
+    FROM user_secret_allowlist a
+    JOIN user_secrets s ON a.secret_id = s.id
+    WHERE s.user_id = ?
+      AND (s.dashboard_id = ? OR s.dashboard_id = '_global')
+      AND a.revoked_at IS NULL`
+  )
+    .bind(userId, dashboardId)
+    .all();
+
+  return approvals.results.map(row => ({
+    secretName: row.secret_name as string,
+    domain: row.domain as string,
+    headerName: row.header_name as string,
+    headerFormat: row.header_format as string,
+  }));
 }
