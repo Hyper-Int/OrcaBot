@@ -92,7 +92,7 @@ const toFlowEdge = (edge: DashboardEdge): Edge => ({
   target: edge.targetItemId,
   sourceHandle: edge.sourceHandle,
   targetHandle: edge.targetHandle,
-  type: "smoothstep",
+  type: "animated",
   animated: true,
   style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
 });
@@ -203,6 +203,22 @@ export default function DashboardPage() {
   const hasPendingConnection = Boolean(pendingConnection);
   const [connectionCursor, setConnectionCursor] = React.useState<{ x: number; y: number } | null>(null);
   const cursorRef = React.useRef<{ x: number; y: number } | null>(null);
+
+  // Track edges that should animate (packet traveling along edge)
+  const [animatingEdgeIds, setAnimatingEdgeIds] = React.useState<Set<string>>(new Set());
+
+  // Function to trigger edge animation
+  const triggerEdgeAnimation = React.useCallback((edgeId: string) => {
+    setAnimatingEdgeIds((prev) => new Set(prev).add(edgeId));
+    // Auto-reset after animation completes
+    setTimeout(() => {
+      setAnimatingEdgeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(edgeId);
+        return next;
+      });
+    }, 700); // Slightly longer than animation duration (600ms)
+  }, []);
 
   // Toolbar section collapse states
   const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
@@ -497,12 +513,17 @@ export default function DashboardPage() {
               target: tempId,
               sourceHandle: item.sourceHandle,
               targetHandle: item.targetHandle,
-              type: "smoothstep",
+              type: "animated",
               animated: true,
               style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
             },
           ];
         });
+
+        // Trigger packet animation for edges targeting browser items
+        if (item.type === "browser") {
+          triggerEdgeAnimation(edgeId);
+        }
       }
 
       return {
@@ -1031,7 +1052,7 @@ export default function DashboardPage() {
               target: target.nodeId,
               sourceHandle: source.handleId,
               targetHandle: target.handleId,
-              type: "smoothstep",
+              type: "animated",
               animated: true,
               style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
             },
@@ -1100,6 +1121,14 @@ export default function DashboardPage() {
           }
         });
         return next;
+      });
+
+      // Trigger animation for new edges targeting browser items
+      addedEdges.forEach((edge) => {
+        const targetItem = currentItems.find((item) => item.id === edge.targetItemId);
+        if (targetItem?.type === "browser") {
+          triggerEdgeAnimation(edge.id);
+        }
       });
     }
 
@@ -1172,7 +1201,7 @@ export default function DashboardPage() {
         queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
       }
     }
-  }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
+  }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges, triggerEdgeAnimation]);
 
   // Item delete handler
   const handleItemDelete = (itemId: string) => {
@@ -1250,7 +1279,7 @@ export default function DashboardPage() {
           target: workspaceItem.id,
           sourceHandle: "bottom-out",
           targetHandle: "top-in",
-          type: "smoothstep",
+          type: "animated",
           animated: true,
           style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
         });
@@ -1369,7 +1398,18 @@ export default function DashboardPage() {
     } as const;
   }, [pendingConnection, connectionCursor]);
 
-  const edgesToRender = pendingEdge ? [...edges, pendingEdge] : edges;
+  // Add animation data to edges
+  const edgesWithAnimation = React.useMemo(() => {
+    return edges.map((edge) => ({
+      ...edge,
+      data: {
+        ...((edge.data as Record<string, unknown>) || {}),
+        animating: animatingEdgeIds.has(edge.id),
+      },
+    }));
+  }, [edges, animatingEdgeIds]);
+
+  const edgesToRender = pendingEdge ? [...edgesWithAnimation, pendingEdge] : edgesWithAnimation;
   const extraNodes = cursorNode ? [cursorNode] : [];
 
   if (!isAuthResolved || !isAuthenticated) {

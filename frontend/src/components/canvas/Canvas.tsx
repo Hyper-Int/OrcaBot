@@ -13,6 +13,7 @@ import {
   useEdgesState,
   BackgroundVariant,
   type NodeTypes,
+  type EdgeTypes,
   type Node,
   type Edge,
   type EdgeChange,
@@ -38,6 +39,7 @@ import { ContactsBlock } from "@/components/blocks/ContactsBlock";
 import { SheetsBlock } from "@/components/blocks/SheetsBlock";
 import { FormsBlock } from "@/components/blocks/FormsBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
+import { AnimatedEdge } from "@/components/canvas/AnimatedEdge";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
 import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
@@ -59,6 +61,11 @@ const nodeTypes: NodeTypes = {
   sheets: SheetsBlock,
   forms: FormsBlock,
   cursor: CursorNode,
+};
+
+// Register custom edge types
+const edgeTypes: EdgeTypes = {
+  animated: AnimatedEdge,
 };
 
 // Convert dashboard items to React Flow nodes
@@ -390,6 +397,7 @@ export function Canvas({
             onViewportChange?.(nextViewport);
           }}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView={fitViewEnabled}
           fitViewOptions={{ maxZoom: 0.75 }}
           snapToGrid
