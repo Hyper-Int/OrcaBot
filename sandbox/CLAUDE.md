@@ -22,6 +22,7 @@ Claude should **not invent alternative architectures** or expand scope beyond wh
 ## High-level product model
 
 - **Dashboards are multiplayer and persistent**
+- **Each dashboard gets its own dedicated VM** (one sandbox per dashboard)
 - **Sandboxes are ephemeral and single-tenant**
 - **A sandbox may host multiple terminals (PTYs)**
 - **Each terminal supports multiple viewers but only one controller at a time**
@@ -37,7 +38,7 @@ Claude should **not invent alternative architectures** or expand scope beyond wh
 Browser
 ├── Dashboard UI (multiplayer)
 ├── File explorer
-└── Terminal panes (Ghostty-web)
+└── Terminal panes (xterm.js)
 ↓
 Cloudflare (control plane)
 ├── Auth
@@ -51,6 +52,7 @@ Fly.io (execution plane)
 ├── Multiple PTYs (terminals)
 ├── Turn-taking controller (per PTY)
 ├── Agent controller (Claude Code)
+├── Secrets broker (localhost:8082)
 └── /workspace filesystem
 
 ---
@@ -65,17 +67,18 @@ Fly.io (execution plane)
 - Filesystem access (`/workspace`)
 - Agent execution (Claude Code)
 - Session metadata persistence
+- Secrets broker and output redaction
 
 ### Frontend (not in this repo) owns **experience**
 - Dashboard UI
 - Multiplayer presence & UX
-- Terminal rendering (Ghostty-web)
+- Terminal rendering (xterm.js)
 - Turn-taking UI (request / grant / revoke)
 - File explorer UI
 - Session lifecycle UX
 
 ### Explicit constraints
-- Ghostty-web lives **only** in the frontend
+- xterm.js lives **only** in the frontend
 - Docker / sandbox runtime lives **only** in the backend
 - No IDE/editor features
 - No concurrent terminal typing
@@ -157,6 +160,52 @@ The backend enforces a "soft lock" on agent PTYs:
 
 ---
 
+## Secrets Protection
+
+The sandbox implements two layers of defense against LLM secret exfiltration.
+
+### Output Redaction
+**File:** `internal/pty/hub.go`
+
+- All PTY output is scanned before broadcasting
+- Secret values (≥8 chars) are replaced with asterisks
+- Handles secrets split across output chunks via tail buffering
+- One-way redaction - no reveal UI
+
+### Session-Local Auth Broker
+**File:** `internal/broker/secrets_broker.go`
+
+- HTTP server running on `localhost:8082` inside each sandbox
+- API keys are NOT set as env vars (only dummy placeholders)
+- Broker injects real keys when forwarding requests
+
+Built-in providers (hardcoded allowlist):
+- Anthropic, OpenAI, Google, Gemini
+- ElevenLabs, Deepgram
+- Groq, Together, Fireworks, Mistral, Cohere, Replicate, Hugging Face
+
+Custom secrets use dynamic domain approval:
+- Route: `/broker/custom/{secretName}?target=https://...`
+- Returns 403 with approval request if domain not in allowlist
+- Owner approves via frontend (out-of-band)
+
+Security rules:
+- HTTPS only (except localhost in dev mode)
+- No redirect following to different hosts
+- Auth headers stripped from responses
+- Target host must match provider or approved allowlist
+
+### Env Setup Flow
+**File:** `cmd/server/env.go`
+
+When secrets are applied to a session:
+1. `brokerProtected=true`: Set dummy value + broker URL in env
+2. `brokerProtected=false`: Set actual value in env (user override)
+3. Pass secret values to Hub for redaction
+4. Configure broker with provider configs
+
+---
+
 ## Persistence model
 
 ### Persisted (Postgres)
@@ -189,7 +238,7 @@ GET    /sessions/:id/ptys
 POST   /sessions/:id/ptys
 DELETE /sessions/:id/ptys/:ptyId
 
-### Attach terminal (Ghostty-web)
+### Attach terminal (xterm.js)
 wss://sandbox/sessions/:id/ptys/:ptyId/ws
 
 - Binary frames: PTY output
@@ -215,6 +264,10 @@ PUT    /sessions/:id/file
 DELETE /sessions/:id/file
 POST   /sessions/:id/upload
 
+### Broker (session-local, localhost:8082)
+/broker/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
+/broker/custom/{secretName}       # Custom secret with ?target= param
+
 ### Coding Agent integration
 Claude Code and Codex CLI are preinstalled in the sandbox image.
 Claude runs as a CLI process inside a PTY.
@@ -230,50 +283,12 @@ Claude runs as a CLI process inside a PTY.
 
 ---
 
-## Work plan (phased)
+## Directory structure
 
-### Phase 1 — Core sandbox & PTY (backend)
-- Go HTTP server skeleton
-- Fly Machine–based sandbox launch
-- Docker image with Claude Code installed
-- Single PTY per sandbox
-- WebSocket ↔ PTY streaming
-- Resize + signal handling
-- Hard kill / cleanup
-
-Goal: one user, one terminal, works reliably
-
-### Phase 2 — Multiple PTYs per sandbox
-- PTY manager (map of PTYs)
-- Create / destroy terminal endpoints
-- Independent PTY lifecycles
-- Shared /workspace
-
-Goal: multiple terminals like tmux windows
-
-### Phase 3 — Multiplayer terminals with turn-taking
-- PTY hub with fan-out
-- Turn controller state machine
-- Request / grant / revoke control
-- Auto-revoke on disconnect (10s grace period for reconnect)
-- Optional control timeouts
-
-Goal: safe shared terminals
-
-### Phase 4 — Claude Code as agent
-- Dedicated Claude terminal
-- Agent controller wrapper
-- Pause (SIGSTOP) / resume (SIGCONT) / stop (SIGINT→SIGTERM→SIGKILL)
-- Soft lock: agent has exclusive input control while running
-- Humans can only type when agent is paused
-- `agent_state` WebSocket events for UI sync
-
-Goal: Claude can "drive" visibly and safely
-
-backend/
+sandbox/
 ├── cmd/
 │   └── server/
-│       └── main.go 
+│       └── main.go
 ├── internal/
 │   ├── sessions/
 │   │   ├── manager.go
@@ -288,6 +303,9 @@ backend/
 │   │   ├── session.go
 │   │   ├── hub.go
 │   │   └── turn.go
+│   ├── broker/
+│   │   ├── secrets_broker.go
+│   │   └── providers.go
 │   ├── ws/
 │   │   ├── handler.go
 │   │   ├── router.go
@@ -311,7 +329,7 @@ Role:
   Start HTTP + WS server
   Handle shutdown
   Keep this thin.
-  
+
 internal/sessions/
 Role:
   Session lifecycle
@@ -330,23 +348,32 @@ Role:
   Environment variables
   Volume mounts
   Image selection
-  This is the “execution substrate” layer.
+  This is the "execution substrate" layer.
     sandbox/
       ├── fly.go
       ├── spec.go        // machine specs
       └── launcher.go    // abstract interface (future-proof)
-  
+
 internal/pty/
   This is where multiplayer complexity lives
     pty/
       ├── pty.go          // low-level PTY creation (os/exec, creack/pty)
       ├── session.go      // PTYSession (1 PTY = 1 terminal)
-      ├── hub.go          // fan-out, clients, broadcast
+      ├── hub.go          // fan-out, clients, broadcast, output redaction
       └── turn.go         // turn-taking state machine
   This keeps:
     PTY mechanics
     multiplayer logic
     turn control
+
+internal/broker/
+  Role:
+    Session-local auth broker for API keys
+    Provider definitions and allowlists
+    Request forwarding with key injection
+    broker/
+      ├── secrets_broker.go  // HTTP server, request handling
+      └── providers.go       // Provider specs (URLs, headers)
 
 internal/ws/
   This should:
@@ -354,7 +381,7 @@ internal/ws/
     Authenticate user
     Route to correct PTY hub
     Translate frames
-    
+
     ws/
       ├── handler.go
       ├── router.go      // maps WS → PTYSession

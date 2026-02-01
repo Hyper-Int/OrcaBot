@@ -108,6 +108,11 @@ CREATE INDEX IF NOT EXISTS idx_sessions_dashboard ON sessions(dashboard_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_item ON sessions(item_id);
 
 -- Dashboard sandbox mapping (one sandbox per dashboard)
+-- SECURITY CRITICAL: The PRIMARY KEY on dashboard_id enforces that each dashboard
+-- gets exactly ONE dedicated VM. This isolation is essential for secrets security.
+-- DO NOT modify this to allow multiple dashboards per sandbox or shared sandboxes.
+-- The secrets broker runs per-sandbox and would leak secrets/approvals between
+-- dashboards if this 1:1 mapping were ever broken.
 CREATE TABLE IF NOT EXISTS dashboard_sandboxes (
   dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
   sandbox_session_id TEXT NOT NULL,
