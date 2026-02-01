@@ -35,6 +35,7 @@ import {
   Copy,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
@@ -683,13 +684,13 @@ export function TerminalBlock({
   // State for disable protection dialog
   const [secretToDisableProtection, setSecretToDisableProtection] = React.useState<UserSecret | null>(null);
 
-  // Pending domain approvals query (polls every 30 seconds when panel is open)
+  // Pending domain approvals query (primary updates via WebSocket push, long poll as fallback)
   const pendingApprovalsQuery = useQuery({
     queryKey: ["pending-approvals", data.dashboardId],
     queryFn: () => listPendingApprovals(data.dashboardId),
     enabled: activePanel === "secrets",
-    refetchInterval: 30000, // Poll every 30 seconds
-    staleTime: 10000,
+    refetchInterval: 300000, // 5 min fallback (primary updates via WebSocket push)
+    staleTime: 60000,
   });
 
   // State for domain approval dialog
@@ -705,9 +706,12 @@ export function TerminalBlock({
       headerName: string;
       headerFormat: string;
     }) => approveSecretDomain(secretId, data.dashboardId, { domain, headerName, headerFormat }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["pending-approvals", data.dashboardId] });
       setApprovalToShow(null);
+      toast.success(`Domain approved: ${variables.domain}`, {
+        description: "Future requests to this domain will now succeed. Retry your previous request.",
+      });
     },
   });
 

@@ -85,34 +85,73 @@ type Session struct {
 	secretsMu sync.RWMutex
 }
 
-// DefaultBrokerPort is the port used for the secrets broker.
-// Each sandbox VM runs one session, so this can be a fixed port.
-const DefaultBrokerPort = 8082
-
-// NewSession creates a new session with workspace at the given root
-func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string) *Session {
-	brokerPort := DefaultBrokerPort
-
+// NewSession creates a new session with workspace at the given root.
+// The broker is shared across all sessions in this sandbox.
+func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int) *Session {
 	s := &Session{
 		ID:          id,
 		DashboardID: dashboardID,
 		MCPToken:    mcpToken,
 		ptys:        make(map[string]*PTYInfo),
 		workspace:   fs.NewWоrkspace(workspaceRoot),
-		broker:      broker.NewSecretsBroker(brokerPort),
+		broker:      sharedBroker,
 		brokerPort:  brokerPort,
 		secrets:     make(map[string]string),
 	}
 
-	// Start the broker in the background
-	go func() {
-		if err := s.broker.Start(); err != nil {
-			// Log but don't fail - broker is optional enhancement
-			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
-		}
-	}()
+	// Wire up broker callback to notify control plane of pending domain approvals
+	// The callback receives sessionID from the broker (stored in provider config)
+	s.broker.SetOnApprovalNeeded(func(sessionID, secretName, domain string) {
+		go notifyApprovalNeeded(sessionID, secretName, domain)
+	})
 
 	return s
+}
+
+// notifyApprovalNeeded sends a pending approval request to the control plane.
+func notifyApprovalNeeded(sessionID, secretName, domain string) {
+	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
+	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+	if controlplaneURL == "" || internalToken == "" {
+		fmt.Fprintf(os.Stderr, "Warning: cannot notify approval needed - missing CONTROLPLANE_URL or INTERNAL_API_TOKEN\n")
+		return
+	}
+
+	url := fmt.Sprintf("%s/internal/sessions/%s/approval-request", controlplaneURL, sessionID)
+
+	payload := struct {
+		SecretName string `json:"secretName"`
+		Domain     string `json:"domain"`
+	}{
+		SecretName: secretName,
+		Domain:     domain,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to marshal approval request: %v\n", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create approval request: %v\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to send approval request: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Warning: approval request returned status %d\n", resp.StatusCode)
+	}
 }
 
 // Broker returns the session's secrets broker for configuration.
@@ -531,7 +570,8 @@ func (s *Session) DeletePTY(id string) error {
 	return nil
 }
 
-// Close shuts down all PTYs and agent in this session
+// Close shuts down all PTYs and agent in this session.
+// Note: The secrets broker is shared and managed by the Manager, not stopped here.
 func (s *Session) Clоse() error {
 	s.mu.Lock()
 	ptys := make([]*PTYInfo, 0, len(s.ptys))
@@ -541,8 +581,6 @@ func (s *Session) Clоse() error {
 	s.ptys = make(map[string]*PTYInfo)
 	agentCtrl := s.agent
 	s.agent = nil
-	brokerInstance := s.broker
-	s.broker = nil
 	s.mu.Unlock()
 
 	for _, info := range ptys {
@@ -555,11 +593,6 @@ func (s *Session) Clоse() error {
 
 	if s.browser != nil {
 		s.browser.Stop()
-	}
-
-	// Stop the secrets broker
-	if brokerInstance != nil {
-		brokerInstance.Stop()
 	}
 
 	return nil

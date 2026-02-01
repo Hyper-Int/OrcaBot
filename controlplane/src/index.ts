@@ -1663,6 +1663,21 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return sessions.openBrowserFromSandbоxSessionInternal(env, sandboxSessionId, url);
   }
 
+  // POST /internal/sessions/:sessionId/approval-request - Create pending approval (called by sandbox broker)
+  if (segments[0] === 'internal' && segments[1] === 'sessions' && segments.length === 4 && segments[3] === 'approval-request' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    const data = await request.json() as { secretName: string; domain: string };
+    return sessions.createApprovalRequestInternal(env, segments[2], data);
+  }
+
+  // GET /internal/sessions/:sessionId/approved-domains - Get approved domain configs (called by sandbox)
+  if (segments[0] === 'internal' && segments[1] === 'sessions' && segments.length === 4 && segments[3] === 'approved-domains' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return sessions.getApprovedDomainsInternal(env, segments[2]);
+  }
+
   // ============================================
   // Schedule routes
   // ============================================

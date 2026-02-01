@@ -5,10 +5,12 @@ package sessions
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
@@ -16,11 +18,19 @@ var (
 	ErrSessionNotFound = errors.New("session not found")
 )
 
+// DefaultBrokerPort is the port used for the secrets broker.
+// Each sandbox VM runs one broker shared by all sessions.
+const DefaultBrokerPort = 8082
+
 // Manager handles session lifecycle
 type Manager struct {
 	mu            sync.RWMutex
 	sessions      map[string]*Session
 	workspaceBase string
+
+	// Shared secrets broker for all sessions
+	broker     *broker.SecretsBroker
+	brokerPort int
 }
 
 // NewManager creates a new session manager with workspaces under the given base path.
@@ -35,10 +45,34 @@ func NewManager() *Manager {
 
 // NewManagerWithWorkspace creates a manager with a custom workspace base path
 func NewManagerWithWоrkspace(workspaceBase string) *Manager {
-	return &Manager{
+	brokerPort := DefaultBrokerPort
+	b := broker.NewSecretsBroker(brokerPort)
+
+	m := &Manager{
 		sessions:      make(map[string]*Session),
 		workspaceBase: workspaceBase,
+		broker:        b,
+		brokerPort:    brokerPort,
 	}
+
+	// Start the broker in the background (singleton for all sessions)
+	go func() {
+		if err := b.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
+		}
+	}()
+
+	return m
+}
+
+// Broker returns the shared secrets broker.
+func (m *Manager) Broker() *broker.SecretsBroker {
+	return m.broker
+}
+
+// BrokerPort returns the port the shared secrets broker is listening on.
+func (m *Manager) BrokerPort() int {
+	return m.brokerPort
 }
 
 // Create creates a new session with a workspace directory
@@ -56,7 +90,7 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspacePath)
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspacePath, m.broker, m.brokerPort)
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session
@@ -130,5 +164,10 @@ func (m *Manager) Shutdоwn() {
 		// Clean up workspace directory
 		workspacePath := filepath.Join(m.workspaceBase, ids[i])
 		os.RemoveAll(workspacePath)
+	}
+
+	// Stop the shared secrets broker
+	if m.broker != nil {
+		m.broker.Stop()
 	}
 }

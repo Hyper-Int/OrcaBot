@@ -93,6 +93,12 @@ export class SandboxClient {
     payload: {
       set?: Record<string, string>;
       secrets?: Record<string, { value: string; brokerProtected: boolean }>;
+      approvedDomains?: Array<{
+        secretName: string;
+        domain: string;
+        headerName: string;
+        headerFormat: string;
+      }>;
       unset?: string[];
       applyNow?: boolean;
     },
@@ -113,20 +119,21 @@ export class SandboxClient {
         )
       : undefined;
 
-    // Debug log what we're sending to sandbox
-    if (secretsSnakeCase) {
-      for (const [name, config] of Object.entries(secretsSnakeCase)) {
-        console.log(`[sandbox] Sending secret to sandbox: name=${name}, broker_protected=${(config as {broker_protected: boolean}).broker_protected}`);
-      }
-    }
+    // Convert approved domains to snake_case
+    const approvedDomainsSnakeCase = payload.approvedDomains?.map(ad => ({
+      secret_name: ad.secretName,
+      domain: ad.domain,
+      header_name: ad.headerName,
+      header_format: ad.headerFormat,
+    }));
 
     const body = {
       set: payload.set,
       secrets: secretsSnakeCase,
+      approved_domains: approvedDomainsSnakeCase,
       unset: payload.unset,
       apply_now: payload.applyNow,
     };
-    console.log(`[sandbox] Sending to sandbox env endpoint: ${JSON.stringify(body)}`);
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
       method: 'POST',
       headers,

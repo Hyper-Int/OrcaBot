@@ -226,6 +226,13 @@ export default function DashboardPage() {
     onMessage: (message) => {
       if (message.type === "browser_open") {
         browserOpenHandlerRef.current(message.url);
+      } else if (message.type === "pending_approval") {
+        // Push notification for new approval request - invalidate the query and show toast
+        queryClient.invalidateQueries({ queryKey: ["pending-approvals", dashboardId] });
+        toast.warning(`Domain approval required: ${message.domain}`, {
+          description: `Secret "${message.secret_name}" needs permission to access this domain. Open terminal settings to approve.`,
+          duration: 10000,
+        });
       }
     },
     onUICommand: (command) => {

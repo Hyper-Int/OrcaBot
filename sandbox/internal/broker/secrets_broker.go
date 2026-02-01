@@ -24,6 +24,7 @@ type ProviderConfig struct {
 	HeaderName    string // Auth header name
 	HeaderFormat  string // Auth header format (e.g., "Bearer %s")
 	SecretValue   string // The actual API key value
+	SessionID     string // Session ID that owns this config (for approval callbacks)
 }
 
 // ApprovedDomainConfig holds configuration for an approved custom secret domain.
@@ -48,7 +49,8 @@ type SecretsBroker struct {
 	allowlist   map[string]map[string]*ApprovedDomainConfig // secretName -> domain -> config
 
 	// Callback for notifying owner of pending domain approvals
-	onApprovalNeeded func(secretName, domain string)
+	// Takes (sessionID, secretName, domain) so we know which session to notify
+	onApprovalNeeded func(sessionID, secretName, domain string)
 }
 
 // NewSecretsBroker creates a new broker listening on the given port.
@@ -67,13 +69,6 @@ func (b *SecretsBroker) SetConfig(provider string, config *ProviderConfig) {
 	b.configs[provider] = config
 }
 
-// RemoveConfig removes a provider configuration.
-func (b *SecretsBroker) RemoveConfig(provider string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.configs, provider)
-}
-
 // ClearConfigs removes all provider configurations.
 // Call this before re-setting configs to ensure deleted secrets are removed.
 func (b *SecretsBroker) ClearConfigs() {
@@ -82,8 +77,17 @@ func (b *SecretsBroker) ClearConfigs() {
 	b.configs = make(map[string]*ProviderConfig)
 }
 
+// RemoveConfig removes a specific provider configuration.
+// Use this to remove individual secrets without clearing all configs.
+func (b *SecretsBroker) RemoveConfig(providerID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.configs, providerID)
+}
+
 // SetOnApprovalNeeded sets the callback for domain approval notifications.
-func (b *SecretsBroker) SetOnApprovalNeeded(fn func(secretName, domain string)) {
+// The callback receives (sessionID, secretName, domain) so it knows which session to notify.
+func (b *SecretsBroker) SetOnApprovalNeeded(fn func(sessionID, secretName, domain string)) {
 	b.onApprovalNeeded = fn
 }
 
@@ -102,6 +106,14 @@ func (b *SecretsBroker) AddApprovedDomain(secretName, domain string, config *App
 		b.allowlist[secretName] = make(map[string]*ApprovedDomainConfig)
 	}
 	b.allowlist[secretName][domain] = config
+}
+
+// ClearApprovedDomains removes all approved domain configurations.
+// Call this before re-setting approved domains to ensure revocations take effect.
+func (b *SecretsBroker) ClearApprovedDomains() {
+	b.allowlistMu.Lock()
+	defer b.allowlistMu.Unlock()
+	b.allowlist = make(map[string]map[string]*ApprovedDomainConfig)
 }
 
 // ServeHTTP handles broker proxy requests.
@@ -145,6 +157,18 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		domain := parsedTarget.Host
 
+		// Get secret config first (we need session ID for approval callback)
+		b.mu.RLock()
+		config, exists := b.configs[providerID]
+		b.mu.RUnlock()
+		if !exists || config.SecretValue == "" {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, fmt.Sprintf(`{"error":"secret_not_configured","message":"%s not configured","hint":"Add your secret in Environment Variables"}`, secretName), http.StatusNotFound)
+			return
+		}
+		secretValue = config.SecretValue
+		sessionID := config.SessionID
+
 		// Check if domain is approved
 		allowedConfig := b.getApprovedDomainConfig(secretName, domain)
 		if allowedConfig == nil {
@@ -157,25 +181,14 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"secret":  secretName,
 				"message": "This domain requires owner approval before the secret can be sent.",
 			})
-			// Notify owner asynchronously
-			if b.onApprovalNeeded != nil {
-				go b.onApprovalNeeded(secretName, domain)
+			// Notify owner asynchronously with the session ID from the config
+			if b.onApprovalNeeded != nil && sessionID != "" {
+				go b.onApprovalNeeded(sessionID, secretName, domain)
 			}
 			return
 		}
 		headerName = allowedConfig.HeaderName
 		headerFormat = allowedConfig.HeaderFormat
-
-		// Get secret value
-		b.mu.RLock()
-		config, exists := b.configs[providerID]
-		b.mu.RUnlock()
-		if !exists || config.SecretValue == "" {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"secret_not_configured","message":"%s not configured","hint":"Add your secret in Environment Variables"}`, secretName), http.StatusNotFound)
-			return
-		}
-		secretValue = config.SecretValue
 
 	} else {
 		// Built-in provider: /broker/{provider}/path

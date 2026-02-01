@@ -158,6 +158,15 @@ export interface BrowserOpenMessage {
 }
 
 /**
+ * Pending approval notification (server -> client)
+ */
+export interface PendingApprovalMessage {
+  type: "pending_approval";
+  secret_name: string;
+  domain: string;
+}
+
+/**
  * All incoming collaboration messages
  */
 export type IncomingCollabMessage =
@@ -173,6 +182,7 @@ export type IncomingCollabMessage =
   | PresenceMessage
   | SessionUpdateMessage
   | BrowserOpenMessage
+  | PendingApprovalMessage
   | UICommandMessage
   | UICommandResultMessage;
 

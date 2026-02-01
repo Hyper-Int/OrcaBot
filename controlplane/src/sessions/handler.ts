@@ -384,16 +384,22 @@ export async function createSessiоn(
 
     // Auto-apply dashboard secrets to the new session
     try {
-      console.log(`[session] Auto-applying secrets for session ${id}, dashboard ${dashboardId}, user ${userId}`);
-      const { getSecretsWithProtection } = await import('../secrets/handler');
+      const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
       const secrets = await getSecretsWithProtection(env, userId, dashboardId);
+      const approvedDomains = await getApprovedDomainsForDashboard(env, userId, dashboardId);
       const secretNames = Object.keys(secrets);
-      console.log(`[session] Found ${secretNames.length} secrets to apply`);
-      if (secretNames.length > 0) {
+      if (secretNames.length > 0 || approvedDomains.length > 0) {
         // Convert to the format expected by sandbox: { name: { value, brokerProtected } }
         // Don't use applyNow - new PTYs will load from .env automatically
-        await sandbox.updateEnv(sandboxSessionId, { secrets, applyNow: false }, sandboxMachineId || undefined);
-        console.log(`[session] Secrets applied successfully`);
+        await sandbox.updateEnv(
+          sandboxSessionId,
+          {
+            secrets: secretNames.length > 0 ? secrets : undefined,
+            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
+            applyNow: false,
+          },
+          sandboxMachineId || undefined
+        );
       }
       // Track applied secret names for deletion tracking (upsert in case row exists from sandbox creation)
       await env.DB.prepare(`
@@ -956,7 +962,7 @@ export async function applySecretsToSession(
   userId: string
 ): Promise<Response> {
   // Import dynamically to avoid circular dependency
-  const { getSecretsWithProtection } = await import('../secrets/handler');
+  const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
 
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -974,6 +980,13 @@ export async function applySecretsToSession(
 
   try {
     const secrets = await getSecretsWithProtection(
+      env,
+      userId,
+      session.dashboard_id as string
+    );
+
+    // Get approved domains for custom secrets
+    const approvedDomains = await getApprovedDomainsForDashboard(
       env,
       userId,
       session.dashboard_id as string
@@ -999,8 +1012,6 @@ export async function applySecretsToSession(
       }
     }
 
-    console.log(`[applySecrets] previousNames=${JSON.stringify(previousNames)}, currentNames=${JSON.stringify(currentNames)}, unset=${JSON.stringify(unset)}`);
-
     // Update the applied secret names for next time (upsert in case row doesn't exist)
     await env.DB.prepare(`
       INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, applied_secret_names)
@@ -1013,11 +1024,16 @@ export async function applySecretsToSession(
     // Existing PTYs can run `source ~/.env` if needed
     await sandbox.updateEnv(
       session.sandbox_session_id as string,
-      { secrets, unset: unset.length > 0 ? unset : undefined, applyNow: false },
+      {
+        secrets,
+        approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
+        unset: unset.length > 0 ? unset : undefined,
+        applyNow: false,
+      },
       (session.sandbox_machine_id as string) || undefined
     );
 
-    return Response.json({ applied: Object.keys(secrets).length, unset: unset.length });
+    return Response.json({ applied: Object.keys(secrets).length, approvedDomains: approvedDomains.length, unset: unset.length });
   } catch (error) {
     console.error('Failed to apply secrets:', error);
     return Response.json(
@@ -1025,4 +1041,195 @@ export async function applySecretsToSession(
       { status: 500 }
     );
   }
+}
+
+// ============================================
+// Internal routes for sandbox-to-controlplane communication
+// ============================================
+
+/**
+ * Create a pending approval request for a custom secret domain.
+ * Called by sandbox broker when a request is made to an unapproved domain.
+ * Internal endpoint - no user auth, uses X-Internal-Token.
+ */
+export async function createApprovalRequestInternal(
+  env: EnvWithDriveCache,
+  sandboxSessionId: string,
+  data: { secretName: string; domain: string }
+): Promise<Response> {
+  const { secretName, domain } = data;
+
+  if (!secretName || !domain) {
+    return Response.json(
+      { error: 'E79220: secretName and domain are required' },
+      { status: 400 }
+    );
+  }
+
+  // Find the dashboard from the sandbox session
+  const session = await env.DB.prepare(`
+    SELECT dashboard_id FROM sessions WHERE sandbox_session_id = ?
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
+
+  if (!session?.dashboard_id) {
+    // Also check dashboard_sandboxes in case no PTY session exists yet
+    const sandbox = await env.DB.prepare(`
+      SELECT dashboard_id FROM dashboard_sandboxes WHERE sandbox_session_id = ?
+    `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
+
+    if (!sandbox?.dashboard_id) {
+      return Response.json(
+        { error: 'E79221: Session not found' },
+        { status: 404 }
+      );
+    }
+
+    session.dashboard_id = sandbox.dashboard_id;
+  }
+
+  const dashboardId = session.dashboard_id;
+
+  // Get the dashboard owner to find their secrets
+  const dashboard = await env.DB.prepare(`
+    SELECT owner_id FROM dashboards WHERE id = ?
+  `).bind(dashboardId).first<{ owner_id: string }>();
+
+  if (!dashboard?.owner_id) {
+    return Response.json(
+      { error: 'E79222: Dashboard not found' },
+      { status: 404 }
+    );
+  }
+
+  const userId = dashboard.owner_id;
+
+  // Find the secret by name - check both dashboard-specific and global secrets
+  const secret = await env.DB.prepare(`
+    SELECT id, name FROM user_secrets
+    WHERE user_id = ? AND name = ? AND (dashboard_id = ? OR dashboard_id = '_global')
+    ORDER BY CASE WHEN dashboard_id = ? THEN 1 ELSE 0 END DESC
+    LIMIT 1
+  `).bind(userId, secretName, dashboardId, dashboardId).first<{ id: string; name: string }>();
+
+  if (!secret?.id) {
+    return Response.json(
+      { error: 'E79223: Secret not found' },
+      { status: 404 }
+    );
+  }
+
+  // Check if already pending or approved
+  const existingPending = await env.DB.prepare(`
+    SELECT id FROM pending_domain_approvals
+    WHERE secret_id = ? AND domain = ? AND dismissed_at IS NULL
+  `).bind(secret.id, domain.toLowerCase()).first();
+
+  if (existingPending) {
+    return Response.json({ status: 'already_pending' });
+  }
+
+  const existingApproval = await env.DB.prepare(`
+    SELECT id FROM user_secret_allowlist
+    WHERE secret_id = ? AND domain = ? AND revoked_at IS NULL
+  `).bind(secret.id, domain.toLowerCase()).first();
+
+  if (existingApproval) {
+    return Response.json({ status: 'already_approved' });
+  }
+
+  // Create pending approval
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`
+    INSERT INTO pending_domain_approvals (id, secret_id, domain, requested_at)
+    VALUES (?, ?, ?, datetime('now'))
+  `).bind(id, secret.id, domain.toLowerCase()).run();
+
+  // Notify Dashboard DO to push update to connected clients
+  try {
+    const doId = env.DASHBOARD.idFromName(dashboardId);
+    const stub = env.DASHBOARD.get(doId);
+    await stub.fetch(new Request('http://do/pending-approval', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secretName, domain: domain.toLowerCase() }),
+    }));
+  } catch (e) {
+    // Non-fatal - approval is created, just couldn't push notification
+    console.warn('[approval] Failed to push notification to DO:', e);
+  }
+
+  return Response.json({ status: 'pending', id });
+}
+
+/**
+ * Get approved domain configurations for a sandbox session.
+ * Returns all approved domains for custom secrets in the dashboard.
+ * Internal endpoint - no user auth, uses X-Internal-Token.
+ */
+export async function getApprovedDomainsInternal(
+  env: EnvWithDriveCache,
+  sandboxSessionId: string
+): Promise<Response> {
+  // Find the dashboard from the sandbox session
+  const session = await env.DB.prepare(`
+    SELECT dashboard_id FROM sessions WHERE sandbox_session_id = ?
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
+
+  let dashboardId = session?.dashboard_id;
+
+  if (!dashboardId) {
+    // Also check dashboard_sandboxes
+    const sandbox = await env.DB.prepare(`
+      SELECT dashboard_id FROM dashboard_sandboxes WHERE sandbox_session_id = ?
+    `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
+
+    dashboardId = sandbox?.dashboard_id;
+  }
+
+  if (!dashboardId) {
+    return Response.json(
+      { error: 'E79224: Session not found' },
+      { status: 404 }
+    );
+  }
+
+  // Get the dashboard owner
+  const dashboard = await env.DB.prepare(`
+    SELECT owner_id FROM dashboards WHERE id = ?
+  `).bind(dashboardId).first<{ owner_id: string }>();
+
+  if (!dashboard?.owner_id) {
+    return Response.json(
+      { error: 'E79225: Dashboard not found' },
+      { status: 404 }
+    );
+  }
+
+  const userId = dashboard.owner_id;
+
+  // Get all approved domains for secrets belonging to this user (dashboard + global)
+  // Join with user_secrets to get the secret name
+  const approvals = await env.DB.prepare(`
+    SELECT
+      s.name as secret_name,
+      a.domain,
+      a.header_name,
+      a.header_format
+    FROM user_secret_allowlist a
+    JOIN user_secrets s ON a.secret_id = s.id
+    WHERE s.user_id = ?
+      AND (s.dashboard_id = ? OR s.dashboard_id = '_global')
+      AND a.revoked_at IS NULL
+  `).bind(userId, dashboardId).all();
+
+  const result = approvals.results.map(row => ({
+    secretName: row.secret_name as string,
+    domain: row.domain as string,
+    headerName: row.header_name as string,
+    headerFormat: row.header_format as string,
+  }));
+
+  return Response.json({ approvedDomains: result });
 }
