@@ -11,6 +11,9 @@ It is responsible for:
 - terminal rendering (xterm.js)
 - turn-taking and agent interaction UX
 - file explorer UI
+- environment variables / secrets management UI
+- TTS voice configuration
+- domain approval workflow for custom secrets
 
 It does **not**:
 - run terminals or agents
@@ -18,6 +21,7 @@ It does **not**:
 - orchestrate workflows
 - manage durable state
 - make execution decisions
+- store secrets locally (all in control plane, encrypted)
 
 Claude should act as a **product- and UX-oriented assistant**, helping build clear, predictable interfaces that accurately reflect backend state.
 
@@ -40,8 +44,8 @@ Claude should act as a **product- and UX-oriented assistant**, helping build cle
 
 UI:
 - Product name + short value prop
-- “Continue with Google”
-- “Dev mode login” (clearly labeled)
+- "Continue with Google"
+- "Dev mode login" (clearly labeled)
 
 Rules:
 - Dev mode bypasses Google OAuth only
@@ -176,6 +180,37 @@ Frontend does NOT:
 
 ---
 
+## Secrets & Environment Variables
+
+The frontend provides UI for managing secrets and environment variables.
+
+### Environment Variables Panel (TerminalBlock)
+- Lists secrets (broker-protected) and regular env vars
+- Shows protection status with visual indicators (lock = protected, warning = exposed)
+- Edit/delete functionality
+
+### Domain Approval Flow
+- Displays pending approval requests (polled every 30s)
+- Approval dialog with header configuration (header name, format)
+- Warning about security implications
+- Approve/Deny actions
+
+### Protection Toggle
+- Dialog explaining risks when disabling broker protection
+- Requires explicit confirmation
+- Lists troubleshooting steps before disabling
+
+### TTS Configuration
+- Voice selection dropdown per provider
+- Live status display from WebSocket events
+
+Frontend does NOT:
+- Store secrets locally (all in control plane, encrypted)
+- Make decisions about which domains are safe
+- Decrypt secrets client-side (display only)
+
+---
+
 ## Session & recovery UX
 
 - Dashboards can exist with **no active sandboxes**
@@ -190,7 +225,7 @@ Recovery model:
 - execution restarts cleanly
 - UI must communicate this clearly
 
-Never promise “process continuity”.
+Never promise "process continuity".
 
 ---
 
@@ -213,6 +248,7 @@ Never promise “process continuity”.
 - Turn-taking UI
 - Agent controls UI
 - File explorer UI
+- Secrets management UI
 - Navigation and error states
 
 ### Frontend does NOT own
@@ -222,6 +258,7 @@ Never promise “process continuity”.
 - Orchestration
 - Scheduling
 - Persistence decisions
+- Secret storage or encryption
 
 If correctness is involved, it belongs in the backend.
 
@@ -245,8 +282,8 @@ If something requires backend changes, call it out explicitly.
 > **The frontend explains and visualizes the system — it never *becomes* the system.**
 
 If unsure:
-- “How it looks or feels” → frontend
-- “What happens or when” → backend
+- "How it looks or feels" → frontend
+- "What happens or when" → backend
 
 ---
 

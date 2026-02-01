@@ -10,6 +10,8 @@ It is responsible for:
 - durable state and orchestration
 - session and sandbox lifecycle coordination
 - schedules, recipes, and agent workflows
+- secrets storage and encryption
+- domain approval workflow for custom secrets
 
 It does **not** run terminals, PTYs, shells, or agents.
 
@@ -53,6 +55,7 @@ Cloudflare (this repo)
 ├── Durable Objects (live collaboration)
 ├── Orchestrator (workflows, recipes, schedules)
 ├── Session coordinator
+├── Secrets management (encrypted storage)
 ├── Integration adapters (Drive, GitHub, etc.)
 └── Postgres (durable state)
 ↓
@@ -60,6 +63,7 @@ Fly.io (execution plane – separate repo)
 └── Sandbox (Go server)
     ├── PTYs
     ├── Claude Code / Codex CLI
+    ├── Secrets broker
     ├── Filesystem
     └── Reports results back
 
@@ -77,6 +81,8 @@ Fly.io (execution plane – separate repo)
 - Mapping dashboards → sandbox sessions
 - Durable orchestration state
 - Integrations (Drive, GitHub, enterprise tools)
+- Secrets storage and encryption
+- Domain approval workflow for custom secrets
 
 ### This repo does NOT own
 - PTYs
@@ -121,12 +127,47 @@ Rules:
 - Integration credentials (encrypted)
 - Session metadata (start/end, region, status)
 - Artifacts & summaries
+- User secrets (encrypted)
+- Secret domain allowlists
 
 ### Not stored here
 - PTY buffers
 - Shell history
 - Running process state
 - Live agent execution
+
+---
+
+## Secrets Management
+
+The control plane stores and manages all user secrets with encryption at rest.
+
+### Database Tables
+- `user_secrets` — Encrypted secrets with broker_protected flag
+- `user_secret_allowlist` — Approved domains for custom secrets
+- `pending_domain_approvals` — Pending approval requests from sandbox
+
+### Key APIs
+**File:** `src/secrets/handler.ts`
+
+CRUD:
+- `listSecrets(userId, dashboardId, type?)` — List with type filtering
+- `createSecret(userId, data)` — Create + auto-apply to sessions
+- `deleteSecret(userId, id)` — Delete + auto-apply (remove from sessions)
+- `updateSecretProtection(userId, secretId, brokerProtected)` — Toggle protection
+
+Approvals:
+- `listPendingApprovals(userId, dashboardId)` — Get pending requests
+- `approveSecretDomain(userId, secretId, data)` — Approve with header config
+- `dismissPendingApproval(userId, approvalId)` — Deny request
+
+### Auto-Apply Mechanism
+When secrets change, `autoApplySecretsToSessions()` pushes updates to all active sandbox sessions for that dashboard via the sandbox's `updateEnv()` endpoint.
+
+### Encryption
+- Secrets encrypted at rest using configured encryption key
+- Supports legacy plaintext migration
+- Decryption only on read for sandbox delivery
 
 ---
 
@@ -155,7 +196,8 @@ Think: **Beads / Temporal-like, domain-specific**.
 
 ## Session & sandbox lifecycle
 
-- Dashboards may exist with **zero sandboxes**
+- **Each dashboard gets its own dedicated VM** (one sandbox per dashboard)
+- Dashboards may exist with **zero sandboxes** (VM spun up on first terminal)
 - A sandbox is created only when:
   - a terminal is opened
   - a recipe step requires execution
@@ -192,6 +234,7 @@ This repo exposes APIs for:
 - schedules
 - sessions
 - integrations
+- secrets
 
 It does NOT expose:
 - PTY APIs
@@ -219,9 +262,9 @@ If a feature requires execution, delegate it.
 
 > **This layer decides *what should happen* and *when* — never *how it executes*.**
 
-If you’re unsure whether something belongs here or in the sandbox:
-- If it’s durable, declarative, or collaborative → here
-- If it’s procedural, interactive, or process-bound → sandbox
+If you're unsure whether something belongs here or in the sandbox:
+- If it's durable, declarative, or collaborative → here
+- If it's procedural, interactive, or process-bound → sandbox
 
 ---
 

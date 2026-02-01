@@ -1,6 +1,14 @@
 # AGENTS.md
 
-This repo is a monorepo for Orcabot. Each app has its own `CLAUDE.md` with deeper, app-specific guidance.
+This repo is a monorepo for Orcabot - a sandboxed, multiplayer AI coding platform.
+
+## What Orcabot Does
+- Run Claude Code, Codex, or shell in the browser with zero setup
+- Sandboxed VMs for security (isolated execution)
+- Built-in Chromium browser for testing
+- Secrets broker protects API keys from LLM exfiltration
+- Persistent, background intelligent processes
+- Multiplayer dashboards (Figma-like collaboration)
 
 ## Structure
 - `frontend` — Next.js dashboard UI
@@ -41,10 +49,26 @@ Frontend:
 npx wrangler dev
 ```
 
-## Auth + Control Plane Notes
-- Frontend never talks directly to sandbox; all traffic goes through the control plane.
-- Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`.
-- Internal sandbox auth uses `SANDBOX_INTERNAL_TOKEN` (do not reuse Cloudflare API keys).
+## Auth + Security Architecture
+
+### Auth Flow
+- Frontend never talks directly to sandbox; all traffic goes through the control plane
+- Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`
+- Internal sandbox auth uses `SANDBOX_INTERNAL_TOKEN` (do not reuse Cloudflare API keys)
+
+### Secrets Protection (Security-Critical)
+Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
+
+1. **Secrets Broker** - API keys are NOT set as env vars. Instead, a session-local broker injects keys server-side. LLMs only see placeholder values.
+
+2. **Output Redaction** - Any secret values in PTY output are replaced with asterisks before reaching WebSocket clients.
+
+3. **Domain Allowlisting** - Built-in providers (Anthropic, OpenAI, ElevenLabs, etc.) have hardcoded target domains. Custom secrets require owner approval per-domain.
+
+Key files:
+- `sandbox/internal/broker/` — Broker implementation
+- `controlplane/src/secrets/` — Secrets API + encryption
+- `frontend/src/components/blocks/TerminalBlock.tsx` — Secrets UI
 
 ## OAuth Integrations (Drive/GitHub)
 - Control plane provides connect + callback endpoints:
@@ -56,20 +80,28 @@ npx wrangler dev
   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
   - `OAUTH_REDIRECT_BASE` (optional; defaults to request origin)
-- D1 tables: `oauth_states`, `user_integrations` (run `/init-db` after schema updates).
+- D1 tables: `oauth_states`, `user_integrations` (run `/init-db` after schema updates)
 
-## Sandbox Behavior
-- Sandbox sessions use a shared `/workspace` by default (no per-session folder).
-- PTY cwd is set to the session workspace.
+## Key Subsystems
 
-## Browser Block
-- Browser block checks embeddability via control plane `/embed-check`.
-- If embedding is blocked, UI collapses to a small “open in new tab” panel.
+### Sandbox Behavior
+- Each dashboard gets its own dedicated VM (one sandbox per dashboard)
+- Sandbox sessions use a shared `/workspace` by default
+- PTY cwd is set to the session workspace
+- Multiple PTYs per sandbox with turn-taking
 
-## Subagents
-- Saved subagents persist per user in control plane.
-- Catalog lives in `frontend/src/data/claude-subagents.json`.
+### Browser Block
+- Browser block checks embeddability via control plane `/embed-check`
+- If embedding is blocked, UI collapses to a small "open in new tab" panel
 
-## Workspace Sidebar
-- File tree is populated via control plane proxy of sandbox filesystem APIs.
-- Delete support only; edits to follow.
+### TTS (Text-to-Speech)
+- Sandbox-side talkito handles TTS via brokered API calls
+- Frontend shows TTS status via WebSocket events
+- Supports OpenAI, ElevenLabs, Deepgram, Google providers
+
+### Subagents
+- Saved subagents persist per user in control plane
+- Catalog lives in `frontend/src/data/claude-subagents.json`
+
+### Workspace Sidebar
+- File tree is populated via control plane proxy of sandbox filesystem APIs

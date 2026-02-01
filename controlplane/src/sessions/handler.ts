@@ -88,6 +88,19 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
   }>();
 }
 
+/**
+ * Ensures a dashboard has exactly one sandbox VM.
+ *
+ * SECURITY CRITICAL: This function enforces the 1:1 dashboard-to-sandbox mapping.
+ * Each dashboard MUST have its own dedicated VM because:
+ * 1. The secrets broker runs per-sandbox and holds decrypted API keys
+ * 2. Domain approvals are stored per-secret, not per-dashboard
+ * 3. Output redaction uses session-local secret values
+ *
+ * If multiple dashboards ever shared a sandbox, secrets from one dashboard
+ * would be accessible to agents/users in another dashboard. DO NOT modify
+ * this to allow sandbox sharing between dashboards.
+ */
 async function ensureDashbоardSandbоx(
   env: EnvWithDriveCache,
   dashboardId: string,

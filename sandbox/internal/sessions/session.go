@@ -55,6 +55,16 @@ type PTYInfo struct {
 
 // Session represents a sandbox instance with PTYs and an optional agent.
 // Each session maps 1:1 to a Fly Machine and owns all resources within it.
+//
+// SECURITY CRITICAL: Each dashboard gets exactly ONE session/VM. This isolation
+// is essential because:
+//   - The secrets broker (localhost:8082) holds decrypted API keys for this dashboard
+//   - Output redaction uses this session's secret values
+//   - Domain approvals are scoped to secrets owned by the dashboard's user
+//
+// If sessions were ever shared across dashboards, secrets from one dashboard
+// would leak to agents/users in another. The control plane enforces this via
+// the dashboard_sandboxes table's PRIMARY KEY constraint.
 type Session struct {
 	ID          string
 	DashboardID string // The dashboard this session belongs to (for MCP proxy)
