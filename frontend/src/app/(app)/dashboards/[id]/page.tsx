@@ -3,6 +3,10 @@
 
 "use client";
 
+// REVISION: dashboard-v2-topprocs
+console.log(`[dashboard] loaded at ${new Date().toISOString()}`);
+
+
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -368,29 +372,6 @@ export default function DashboardPage() {
     staleTime: 4000,
     retry: false, // Don't retry on 404 - expected when no sandbox exists
   });
-
-  const [cpuPercent, setCpuPercent] = React.useState<number | null>(null);
-  const cpuSampleRef = React.useRef<{ totalMs: number; ts: number } | null>(null);
-
-  React.useEffect(() => {
-    if (!metricsQuery.data) {
-      return;
-    }
-    const totalMs = metricsQuery.data.cpuUserMs + metricsQuery.data.cpuSystemMs;
-    const now = Date.now();
-    const previous = cpuSampleRef.current;
-    cpuSampleRef.current = { totalMs, ts: now };
-    if (!previous) {
-      return;
-    }
-    const deltaMs = totalMs - previous.totalMs;
-    const deltaTime = now - previous.ts;
-    if (deltaTime <= 0) {
-      return;
-    }
-    const percent = (deltaMs / deltaTime) * 100;
-    setCpuPercent(Math.max(0, Math.min(100, percent)));
-  }, [metricsQuery.data?.cpuUserMs, metricsQuery.data?.cpuSystemMs]);
 
   React.useEffect(() => {
     if (!isAuthenticated || !isAuthResolved || !dashboardId) {
@@ -1673,20 +1654,58 @@ export default function DashboardPage() {
               <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
                 <Tooltip
                   content={
-                    typeof metricsQuery.data?.heapMB === "number"
-                      ? `CPU ${(cpuPercent ?? 0).toFixed(1)}% · Heap ${metricsQuery.data.heapMB.toFixed(1)}MB · Sys ${metricsQuery.data.sysMB.toFixed(1)}MB · Goroutines ${metricsQuery.data.goroutines}`
-                      : "Sandbox metrics unavailable"
+                    typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
+                      <div className="text-xs">
+                        <div className="mb-2">
+                          CPU {metricsQuery.data.systemCpuPct.toFixed(1)}% · Mem {metricsQuery.data.systemMemUsedMB.toFixed(0)}MB / {metricsQuery.data.systemMemTotalMB.toFixed(0)}MB ({metricsQuery.data.systemMemPct.toFixed(1)}%)
+                          {metricsQuery.data.revision && (
+                            <span className="block text-[9px] text-[var(--foreground-muted)] mt-1">rev: {metricsQuery.data.revision}</span>
+                          )}
+                        </div>
+                        {metricsQuery.data.topProcesses?.length > 0 && (
+                          <div className="border-t border-[var(--border)] pt-2 mt-1">
+                            <div className="font-medium mb-1">Top Processes</div>
+                            <table className="text-[10px] w-full">
+                              <thead>
+                                <tr className="text-[var(--foreground-muted)]">
+                                  <th className="text-left pr-2">Name</th>
+                                  <th className="text-right pr-2">CPU</th>
+                                  <th className="text-right pr-2">Mem</th>
+                                  <th className="text-right">Total</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {metricsQuery.data.topProcesses.map((proc) => (
+                                  <tr key={proc.pid}>
+                                    <td className="pr-2 truncate max-w-[100px]" title={proc.name}>{proc.name}</td>
+                                    <td className="text-right pr-2">{proc.cpuPct.toFixed(1)}%</td>
+                                    <td className="text-right pr-2">{proc.memPct.toFixed(1)}%</td>
+                                    <td className="text-right font-medium">{proc.combined.toFixed(1)}%</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      "Sandbox metrics unavailable"
+                    )
                   }
                   side="bottom"
                 >
                   <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
                     <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
                     <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
-                      {typeof metricsQuery.data?.heapMB === "number" ? (
+                      {typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
                         <>
-                          <span>CPU {cpuPercent === null ? "…" : `${cpuPercent.toFixed(1)}%`}</span>
-                          <span>Heap {metricsQuery.data.heapMB.toFixed(1)}MB</span>
-                          <span>Sys {metricsQuery.data.sysMB.toFixed(1)}MB</span>
+                          <span>CPU {metricsQuery.data.systemCpuPct.toFixed(1)}%</span>
+                          <span>Mem {metricsQuery.data.systemMemPct.toFixed(1)}%</span>
+                          {metricsQuery.data.topProcesses?.[0] && (
+                            <span className="text-[var(--foreground-muted)] border-l border-[var(--border)] pl-2">
+                              Top: {metricsQuery.data.topProcesses[0].name} ({metricsQuery.data.topProcesses[0].combined.toFixed(1)}%)
+                            </span>
+                          )}
                         </>
                       ) : (
                         <span>Metrics…</span>
