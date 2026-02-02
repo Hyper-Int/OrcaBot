@@ -12,3 +12,4 @@ export * from "./agent-skills";
 export * from "./mcp-tools";
 export * from "./integrations";
 export * from "./members";
+export * from "./bug-reports";

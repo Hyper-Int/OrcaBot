@@ -1,5 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: controlplane-v2-bugreport
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -32,6 +33,7 @@ import * as integrationPolicies from './integration-policies/handler';
 import * as templates from './templates/handler';
 import * as members from './members/handler';
 import * as mcpUi from './mcp-ui/handler';
+import * as bugReports from './bug-reports/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
@@ -556,6 +558,32 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
       console.error('Failed to send interest registration emails:', error);
       return Response.json({ error: 'Failed to register interest. Please try again.' }, { status: 500 });
     }
+  }
+
+  // POST /bug-reports - Submit bug report (requires auth)
+  if (segments[0] === 'bug-reports' && segments.length === 1 && method === 'POST') {
+    console.log('[controlplane] Bug report route matched, revision: controlplane-v2-bugreport');
+    const authError = requireAuth(auth);
+    if (authError) {
+      console.log('[controlplane] Bug report auth error:', authError);
+      return authError;
+    }
+
+    let data: {
+      notes?: string;
+      screenshot?: string;
+      dashboardId?: string;
+      dashboardName?: string;
+      userAgent?: string;
+      url?: string;
+    };
+    try {
+      data = await request.json();
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    return bugReports.submitBugReport(env, auth.user!, data);
   }
 
   // POST /auth/logout - clear session cookie
