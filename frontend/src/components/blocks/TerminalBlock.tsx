@@ -102,11 +102,14 @@ import subagentCatalog from "@/data/claude-subagents.json";
 import agentSkillsCatalog from "@/data/claude-agent-skills.json";
 import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import { IntegrationsPanel } from "./IntegrationsPanel";
+import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
   size: { width: number; height: number };
   dashboardId: string;
+  itemId: string; // Actual database item ID (different from React Flow node ID when using _stableKey)
   metadata?: { minimized?: boolean; [key: string]: unknown };
   // Session info (can be injected from parent or fetched)
   session?: Session;
@@ -119,6 +122,10 @@ interface TerminalData extends Record<string, unknown> {
   ) => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
+  /** Called when integration policy is updated, for syncing edge data */
+  onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  /** Called after attaching integration, to create integration block on canvas if needed */
+  onIntegrationAttached?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
@@ -168,7 +175,7 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | null;
 
 type TerminalContentState = {
   name: string;
@@ -1433,10 +1440,12 @@ export function TerminalBlock({
         return;
       }
       createdBrowserUrlsRef.current.add(url);
+      // Use data.itemId (actual database ID) instead of id (React Flow node ID)
+      // because id may be a temp ID like "temp-xxx" when using optimistic updates
       data.onCreateBrowserBlock?.(url, {
         x: positionAbsoluteX + (width ?? data.size.width) + 24,
         y: positionAbsoluteY + 24,
-      }, id);
+      }, data.itemId);
     },
     [data, positionAbsoluteX, positionAbsoluteY, width]
   );
@@ -2891,6 +2900,17 @@ export function TerminalBlock({
               </div>
             </div>
           )}
+
+          {/* Integrations Panel */}
+          {activePanel === "integrations" && session?.ptyId && (
+            <IntegrationsPanel
+              dashboardId={data.dashboardId}
+              terminalId={session.ptyId}
+              onClose={() => setActivePanel(null)}
+              onPolicyUpdate={data.onPolicyUpdate}
+              onIntegrationAttached={data.onIntegrationAttached}
+            />
+          )}
         </div>
       )}
 
@@ -3027,6 +3047,21 @@ export function TerminalBlock({
                 </button>
               )}
 
+              {/* Integrations button */}
+              <button
+                type="button"
+                onClick={() => setActivePanel(activePanel === "integrations" ? null : "integrations")}
+                title="Manage integrations (Gmail, Calendar, GitHub, etc.)"
+                className={cn(
+                  "flex items-center gap-0.5 px-1 py-0.5 rounded text-xs nodrag",
+                  activePanel === "integrations"
+                    ? "text-[var(--foreground)] bg-[var(--background-hover)]"
+                    : "text-[var(--foreground-muted)] hover:bg-[var(--background-hover)]"
+                )}
+              >
+                <Plug className="w-3.5 h-3.5" />
+              </button>
+
               {/* TTS Voice indicator - prefers live status from talkito over config */}
               {(() => {
                 // Use live TTS status if available and enabled, otherwise fall back to config
@@ -3114,7 +3149,7 @@ export function TerminalBlock({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem onClick={() => setActivePanel("secrets")} className="gap-2">
+              <DropdownMenuItem onClick={() => setActivePanel(activePanel === "secrets" ? null : "secrets")} className="gap-2">
                 <Key className="w-3 h-3" />
                 <span>Environment Variables</span>
               </DropdownMenuItem>
@@ -3159,26 +3194,30 @@ export function TerminalBlock({
               </DropdownMenuSub>
               <DropdownMenuSeparator />
               {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "Moltbot" && (
-                <DropdownMenuItem onClick={() => setActivePanel("subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+                <DropdownMenuItem onClick={() => setActivePanel(activePanel === "subagents" ? null : "subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
                   <span>Agents</span>
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem onClick={() => setActivePanel("agent-skills")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
+              <DropdownMenuItem onClick={() => setActivePanel(activePanel === "agent-skills" ? null : "agent-skills")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                 <Wand2 className="w-3 h-3" />
                 <span>Skills</span>
               </DropdownMenuItem>
               {supportsMcp && (
-                <DropdownMenuItem onClick={() => setActivePanel("mcp-tools")} className="gap-2">
+                <DropdownMenuItem onClick={() => setActivePanel(activePanel === "mcp-tools" ? null : "mcp-tools")} className="gap-2">
                   <Wrench className="w-3 h-3" />
                   <span>MCP Tools</span>
                 </DropdownMenuItem>
               )}
+              <DropdownMenuItem onClick={() => setActivePanel(activePanel === "integrations" ? null : "integrations")} className="gap-2">
+                <Plug className="w-3 h-3" />
+                <span>Integrations</span>
+              </DropdownMenuItem>
               {/* TTS Voice - only for Claude Code and Codex */}
               {(terminalType === "claude" || terminalType === "codex") && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setActivePanel("tts-voice")} className="gap-2">
+                  <DropdownMenuItem onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")} className="gap-2">
                     <Volume2 className="w-3 h-3" />
                     <span>TTS Voice</span>
                   </DropdownMenuItem>

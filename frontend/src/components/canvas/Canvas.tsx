@@ -13,6 +13,7 @@ import {
   useEdgesState,
   BackgroundVariant,
   type NodeTypes,
+  type EdgeTypes,
   type Node,
   type Edge,
   type EdgeChange,
@@ -22,6 +23,8 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+
+import { IntegrationEdge } from "@/components/canvas/IntegrationEdge";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
@@ -61,6 +64,11 @@ const nodeTypes: NodeTypes = {
   cursor: CursorNode,
 };
 
+// Register custom edge types
+const edgeTypes: EdgeTypes = {
+  integration: IntegrationEdge,
+};
+
 // Convert dashboard items to React Flow nodes
 function itemsToNodes(
   items: DashboardItem[],
@@ -73,7 +81,10 @@ function itemsToNodes(
     sourceId?: string
   ) => void,
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void,
-  connectorMode?: boolean
+  connectorMode?: boolean,
+  onPolicyUpdate?: (terminalItemId: string, provider: string, securityLevel: string) => void,
+  onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void,
+  onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void
 ): Node[] {
   const workspaceSession =
     sessions.find((s) => s.status === "active")
@@ -119,6 +130,18 @@ function itemsToNodes(
         onContentChange: onItemChange
           ? (content: string) => onItemChange(item.id, { content })
           : undefined,
+        // For terminal blocks: callback to update edge data when policy changes
+        onPolicyUpdate: item.type === "terminal" && onPolicyUpdate
+          ? (provider: string, securityLevel: string) => onPolicyUpdate(item.id, provider, securityLevel)
+          : undefined,
+        // For terminal blocks: callback to create integration block after attaching
+        onIntegrationAttached: item.type === "terminal" && onIntegrationAttached
+          ? (provider: string, securityLevel: string) => onIntegrationAttached(item.id, provider, securityLevel)
+          : undefined,
+        // For workspace blocks: callback when cloud storage is linked
+        onStorageLinked: item.type === "workspace" && onStorageLinked
+          ? (provider: "google_drive" | "onedrive" | "box" | "github") => onStorageLinked(item.id, provider)
+          : undefined,
       },
       style: {
         width: item.size.width,
@@ -145,6 +168,12 @@ interface CanvasProps {
   onEdgesChange?: (changes: EdgeChange[]) => void;
   readOnly?: boolean;
   extraNodes?: Node[];
+  /** Called when a terminal's integration policy is updated, to sync edge data */
+  onPolicyUpdate?: (terminalItemId: string, provider: string, securityLevel: string) => void;
+  /** Called when an integration is attached via IntegrationsPanel, to auto-create block */
+  onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void;
+  /** Called when cloud storage is linked to workspace, to auto-attach to connected terminals */
+  onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void;
 }
 
 export function Canvas({
@@ -164,6 +193,9 @@ export function Canvas({
   onEdgesChange: onEdgesChangeProp,
   readOnly = false,
   extraNodes = [],
+  onPolicyUpdate,
+  onIntegrationAttached,
+  onStorageLinked,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
@@ -205,7 +237,10 @@ export function Canvas({
         },
         onCreateBrowserBlock,
         onConnectorClick,
-        connectorMode
+        connectorMode,
+        onPolicyUpdate,
+        onIntegrationAttached,
+        onStorageLinked
       )
     );
     return [...baseNodes, ...extraNodes];
@@ -246,11 +281,14 @@ export function Canvas({
         },
         onCreateBrowserBlock,
         onConnectorClick,
-        connectorMode
+        connectorMode,
+        onPolicyUpdate,
+        onIntegrationAttached,
+        onStorageLinked
       )
     );
     setNodes([...baseNodes, ...extraNodes]);
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onStorageLinked]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));
@@ -390,6 +428,7 @@ export function Canvas({
             onViewportChange?.(nextViewport);
           }}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView={fitViewEnabled}
           fitViewOptions={{ maxZoom: 0.75 }}
           snapToGrid

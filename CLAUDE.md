@@ -112,6 +112,8 @@ Key files:
 
 ### Sandbox Behavior
 - Each dashboard gets its own dedicated VM (one sandbox per dashboard)
+- Each terminal creates its own **session** in the control plane (one session per terminal item)
+- All terminal sessions in a dashboard share the same sandbox VM; each session maps to a PTY inside that VM
 - Sandbox sessions use a shared `/workspace` by default
 - PTY cwd is set to the session workspace
 - Multiple PTYs per sandbox with turn-taking

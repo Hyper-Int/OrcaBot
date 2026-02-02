@@ -105,6 +105,8 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const [status, setStatus] = React.useState<GmailStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [tokenRevoked, setTokenRevoked] = React.useState(false);
+  const [enabling, setEnabling] = React.useState(false);
 
   // Messages state
   const [messages, setMessages] = React.useState<GmailMessage[]>([]);
@@ -412,7 +414,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex items-center justify-center h-full p-4">
             <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
@@ -431,7 +433,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex flex-col items-center justify-center h-full p-4">
             <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
@@ -456,7 +458,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex flex-col items-center justify-center h-full p-4">
             <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
@@ -465,11 +467,41 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
             </p>
             <Button
               size="sm"
-              onClick={() => dashboardId && setupGmailMirror(dashboardId).then(() => loadIntegration())}
+              disabled={enabling}
+              onClick={async () => {
+                if (!dashboardId || enabling) return;
+                try {
+                  setEnabling(true);
+                  setTokenRevoked(false);
+                  await setupGmailMirror(dashboardId);
+                  await loadIntegration();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.includes("TOKEN_REVOKED") || msg.includes("revoked")) {
+                    setTokenRevoked(true);
+                  } else {
+                    console.error("Failed to setup Gmail:", err);
+                  }
+                } finally {
+                  setEnabling(false);
+                }
+              }}
               className="nodrag"
             >
-              Enable Sync
+              {enabling ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                "Enable Sync"
+              )}
             </Button>
+            {tokenRevoked && (
+              <p className="text-[10px] text-red-500 text-center mt-2">
+                Access was revoked. Please disconnect and reconnect Gmail.
+              </p>
+            )}
           </div>
         </div>
       </BlockWrapper>
@@ -485,7 +517,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         onConnectorClick={data.onConnectorClick}
       />
       {/* All content fades during minimize */}
-      <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+      <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
         {/* Two pane layout */}

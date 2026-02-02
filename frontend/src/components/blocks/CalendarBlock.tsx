@@ -100,6 +100,8 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
   const [status, setStatus] = React.useState<CalendarStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [tokenRevoked, setTokenRevoked] = React.useState(false);
+  const [enabling, setEnabling] = React.useState(false);
 
   // Events state
   const [events, setEvents] = React.useState<CalendarEvent[]>([]);
@@ -409,7 +411,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex items-center justify-center h-full p-4">
             <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
@@ -428,7 +430,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex flex-col items-center justify-center h-full p-4">
             <Calendar className="w-8 h-8 text-[var(--text-muted)] mb-2" />
@@ -453,7 +455,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
           visible={connectorsVisible}
           onConnectorClick={data.onConnectorClick}
         />
-        <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
           {header}
           <div className="flex flex-col items-center justify-center h-full p-4">
             <Calendar className="w-8 h-8 text-[var(--text-muted)] mb-2" />
@@ -462,11 +464,42 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
             </p>
             <Button
               size="sm"
-              onClick={() => dashboardId && setupCalendarMirror(dashboardId).then(() => loadIntegration())}
+              disabled={enabling}
+              onClick={async () => {
+                if (!dashboardId || enabling) return;
+                try {
+                  setEnabling(true);
+                  setTokenRevoked(false);
+                  await setupCalendarMirror(dashboardId);
+                  await loadIntegration();
+                } catch (err) {
+                  // Check if token was revoked (user needs to reconnect)
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.includes("TOKEN_REVOKED") || msg.includes("revoked")) {
+                    setTokenRevoked(true);
+                  } else {
+                    console.error("Failed to setup calendar:", err);
+                  }
+                } finally {
+                  setEnabling(false);
+                }
+              }}
               className="nodrag"
             >
-              Enable Sync
+              {enabling ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                "Enable Sync"
+              )}
             </Button>
+            {tokenRevoked && (
+              <p className="text-[10px] text-red-500 text-center mt-2">
+                Access was revoked. Please disconnect and reconnect Calendar.
+              </p>
+            )}
           </div>
         </div>
       </BlockWrapper>
@@ -482,7 +515,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
         onConnectorClick={data.onConnectorClick}
       />
       {/* All content fades during minimize */}
-      <div className={cn("flex flex-col h-full", isAnimatingMinimize && "animate-content-fade-out")}>
+      <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
         {/* Two pane layout */}

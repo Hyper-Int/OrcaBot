@@ -242,9 +242,44 @@ export async function deleteDashbоard(
     return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
   }
 
+  // Delete dependent records that don't have ON DELETE CASCADE
+  // Order matters: delete from most dependent tables first
+
+  // Get all terminal_integrations for this dashboard
+  const terminalIntegrations = await env.DB.prepare(`
+    SELECT id FROM terminal_integrations WHERE dashboard_id = ?
+  `).bind(dashboardId).all<{ id: string }>();
+
+  if (terminalIntegrations.results.length > 0) {
+    const tiIds = terminalIntegrations.results.map(ti => ti.id);
+    const placeholders = tiIds.map(() => '?').join(',');
+
+    // Delete high_risk_confirmations (references terminal_integrations)
+    await env.DB.prepare(`
+      DELETE FROM high_risk_confirmations WHERE terminal_integration_id IN (${placeholders})
+    `).bind(...tiIds).run();
+
+    // Delete integration_audit_log (references terminal_integrations)
+    await env.DB.prepare(`
+      DELETE FROM integration_audit_log WHERE terminal_integration_id IN (${placeholders})
+    `).bind(...tiIds).run();
+
+    // Delete integration_policies (references terminal_integrations)
+    await env.DB.prepare(`
+      DELETE FROM integration_policies WHERE terminal_integration_id IN (${placeholders})
+    `).bind(...tiIds).run();
+  }
+
+  // Delete user_secrets (no cascade from dashboards)
   await env.DB.prepare(`DELETE FROM user_secrets WHERE dashboard_id = ?`)
     .bind(dashboardId)
     .run();
+
+  // Delete the dashboard (cascades to: dashboard_members, dashboard_invitations,
+  // dashboard_items, dashboard_edges, sessions, dashboard_sandboxes, drive_mirrors,
+  // github_mirrors, gmail_mirrors, calendar_mirrors, contacts_mirrors, sheets_mirrors,
+  // forms_mirrors, gmail_messages, gmail_actions, calendar_events, contacts,
+  // form_responses, terminal_integrations)
   await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
 
   return new Response(null, { status: 204 });

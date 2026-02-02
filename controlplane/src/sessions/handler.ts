@@ -12,6 +12,7 @@ import type { Session, DashboardItem } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
+import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 
 function generateId(): string {
@@ -347,9 +348,22 @@ export async function createSessiоn(
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
     // If the session is stale (sandbox redeployed), clear it and create a fresh one
+    // Generate PTY ID and integration token on control plane for secure gateway authentication
+    const ptyId = generateId();
+    const integrationToken = await createPtyToken(
+      ptyId,
+      sandboxSessionId,
+      dashboardId,
+      userId,
+      env.INTERNAL_API_TOKEN
+    );
+
     let pty: { id: string };
     try {
-      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
+      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
+        ptyId,
+        integrationToken,
+      });
     } catch (err) {
       const isStaleSession = err instanceof Error && err.message.includes('404');
       if (!isStaleSession) {
@@ -373,8 +387,20 @@ export async function createSessiоn(
         VALUES (?, ?, ?, ?)
       `).bind(dashboardId, sandboxSessionId, sandboxMachineId, now).run();
 
-      // Retry PTY creation on fresh session
-      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId);
+      // Regenerate integration token with fresh sandbox session ID
+      const freshIntegrationToken = await createPtyToken(
+        ptyId,
+        sandboxSessionId,
+        dashboardId,
+        userId,
+        env.INTERNAL_API_TOKEN
+      );
+
+      // Retry PTY creation on fresh session with fresh token
+      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
+        ptyId,
+        integrationToken: freshIntegrationToken,
+      });
     }
 
     // Update with sandbox session ID and PTY ID

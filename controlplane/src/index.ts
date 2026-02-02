@@ -28,6 +28,7 @@ import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
 import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
+import * as integrationPolicies from './integration-policies/handler';
 import * as templates from './templates/handler';
 import * as members from './members/handler';
 import * as mcpUi from './mcp-ui/handler';
@@ -38,8 +39,9 @@ import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail } from './email/resend';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
-// Export Durable Object
+// Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
+export { RateLimitCounter } from './rate-limit/DurableObject';
 
 // CORS headers (base - origin is added dynamically)
 const CORS_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
@@ -825,6 +827,108 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireAuth(auth);
     if (authError) return authError;
     return members.cancelInvitation(env, segments[1], auth.user!.id, segments[3]);
+  }
+
+  // ============================================
+  // Terminal Integration Policy routes
+  // ============================================
+
+  // GET /dashboards/:id/terminals/:terminalId/available-integrations - List integrations available to attach
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'available-integrations' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return integrationPolicies.listAvailableIntegrations(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // GET /dashboards/:id/terminals/:terminalId/integrations - List attached integrations
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return integrationPolicies.listTerminalIntegrations(env, segments[1], segments[3], auth.user!.id);
+  }
+
+  // POST /dashboards/:id/terminals/:terminalId/integrations - Attach integration to terminal
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as {
+      provider: string;
+      userIntegrationId?: string;
+      policy?: Record<string, unknown>;
+      accountLabel?: string;
+      highRiskConfirmations?: string[];
+    };
+    return integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+  }
+
+  // PUT /dashboards/:id/terminals/:terminalId/integrations/:provider - Update integration policy
+  if (segments[0] === 'dashboards' && segments.length === 6 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as {
+      policy: Record<string, unknown>;
+      highRiskConfirmations?: string[];
+    };
+    return integrationPolicies.updateIntegrationPolicy(
+      env,
+      segments[1],
+      segments[3],
+      segments[5] as Parameters<typeof integrationPolicies.updateIntegrationPolicy>[3],
+      auth.user!.id,
+      data as Parameters<typeof integrationPolicies.updateIntegrationPolicy>[5]
+    );
+  }
+
+  // DELETE /dashboards/:id/terminals/:terminalId/integrations/:provider - Detach integration
+  if (segments[0] === 'dashboards' && segments.length === 6 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return integrationPolicies.detachIntegration(
+      env,
+      segments[1],
+      segments[3],
+      segments[5] as Parameters<typeof integrationPolicies.detachIntegration>[3],
+      auth.user!.id
+    );
+  }
+
+  // GET /dashboards/:id/terminals/:terminalId/integrations/:provider/history - Policy history
+  if (segments[0] === 'dashboards' && segments.length === 7 && segments[2] === 'terminals' && segments[4] === 'integrations' && segments[6] === 'history' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return integrationPolicies.getPolicyHistory(
+      env,
+      segments[1],
+      segments[3],
+      segments[5] as Parameters<typeof integrationPolicies.getPolicyHistory>[3],
+      auth.user!.id
+    );
+  }
+
+  // GET /dashboards/:id/terminals/:terminalId/integrations/:provider/audit - Audit log
+  if (segments[0] === 'dashboards' && segments.length === 7 && segments[2] === 'terminals' && segments[4] === 'integrations' && segments[6] === 'audit' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const limit = parseInt(url.searchParams.get('limit') || '100', 10);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+    return integrationPolicies.getAuditLog(
+      env,
+      segments[1],
+      segments[3],
+      segments[5] as Parameters<typeof integrationPolicies.getAuditLog>[3],
+      auth.user!.id,
+      limit,
+      offset
+    );
+  }
+
+  // GET /dashboards/:id/integration-audit - Dashboard-wide audit log
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'integration-audit' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const limit = parseInt(url.searchParams.get('limit') || '100', 10);
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10);
+    return integrationPolicies.getDashboardAuditLog(env, segments[1], auth.user!.id, limit, offset);
   }
 
   // ============================================
@@ -1676,6 +1780,72 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
     return sessions.getApprovedDomainsInternal(env, segments[2]);
+  }
+
+  // ============================================
+  // Internal Integration Gateway routes (Sandbox → Control Plane)
+  // ============================================
+
+  // POST /internal/gateway/:provider/validate - Validate gateway request and get policy (DEPRECATED - use token-based validation)
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    const data = await request.json() as {
+      terminalId: string;
+      dashboardId: string;
+      userId: string;
+    };
+    return integrationPolicies.validateGatewayRequest(
+      env,
+      data.terminalId,
+      segments[2] as Parameters<typeof integrationPolicies.validateGatewayRequest>[2],
+      data.dashboardId,
+      data.userId
+    );
+  }
+
+  // POST /internal/gateway/:provider/validate-token - Validate using PTY token (SECURE)
+  // Security: terminal_id extracted from cryptographically verified token, not from body
+  // Body: { action?: string, context?: { url?, recipient?, recipientDomain?, sender?, senderDomain?, resourceId? } }
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate-token' && method === 'POST') {
+    const ptyToken = request.headers.get('X-PTY-Token');
+    if (!ptyToken) {
+      return Response.json({ error: 'AUTH_DENIED', reason: 'Missing X-PTY-Token header' }, { status: 401 });
+    }
+    let action: string | undefined;
+    let context: {
+      url?: string;
+      recipient?: string;
+      recipientDomain?: string;
+      sender?: string;
+      senderDomain?: string;
+      resourceId?: string;
+    } | undefined;
+    try {
+      const body = await request.json() as {
+        action?: string;
+        context?: typeof context;
+      };
+      action = body.action;
+      context = body.context;
+    } catch {
+      // No body or invalid JSON - action and context remain undefined
+    }
+    return integrationPolicies.validateGatewayWithToken(
+      env,
+      ptyToken,
+      segments[2] as Parameters<typeof integrationPolicies.validateGatewayWithToken>[2],
+      action,
+      context
+    );
+  }
+
+  // POST /internal/gateway/audit - Log audit entry for gateway operation
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments[2] === 'audit' && segments.length === 3 && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    const data = await request.json() as Parameters<typeof integrationPolicies.logAuditEntry>[1];
+    return integrationPolicies.logAuditEntry(env, data);
   }
 
   // ============================================

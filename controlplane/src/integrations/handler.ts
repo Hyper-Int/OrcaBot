@@ -4552,6 +4552,10 @@ async function refreshGmailAccessToken(env: EnvWithDriveCache, userId: string): 
   });
 
   if (!tokenResponse.ok) {
+    // 400/401 means token was revoked or is invalid - user needs to reconnect
+    if (tokenResponse.status === 400 || tokenResponse.status === 401) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to refresh Gmail access token.');
   }
 
@@ -4610,6 +4614,10 @@ async function getGmailProfile(accessToken: string): Promise<{ emailAddress: str
   });
 
   if (!res.ok) {
+    // 401/403 means token is invalid/revoked - user needs to reconnect
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to fetch Gmail profile.');
   }
 
@@ -5022,11 +5030,28 @@ export async function setupGmailMirror(
   let accessToken: string;
   try {
     accessToken = await getGmailAccessToken(env, auth.user!.id);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79904: Gmail access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
     return Response.json({ error: 'E79903: Gmail not connected' }, { status: 404 });
   }
 
-  const profile = await getGmailProfile(accessToken);
+  let profile: { emailAddress: string };
+  try {
+    profile = await getGmailProfile(accessToken);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79904: Gmail access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
+    throw err;
+  }
   const labelIds = data.labelIds || ['INBOX'];
   const now = new Date().toISOString();
 
@@ -5833,6 +5858,10 @@ async function refreshCalendarAccessToken(env: EnvWithDriveCache, userId: string
   });
 
   if (!tokenResponse.ok) {
+    // 400/401 means token was revoked or is invalid - user needs to reconnect
+    if (tokenResponse.status === 400 || tokenResponse.status === 401) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to refresh Calendar access token.');
   }
 
@@ -5891,6 +5920,10 @@ async function getCalendarProfile(accessToken: string): Promise<{ email: string;
   });
 
   if (!res.ok) {
+    // 401/403 means token is invalid/revoked - user needs to reconnect
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to fetch calendar profile.');
   }
 
@@ -6200,11 +6233,28 @@ export async function setupCalendarMirror(
   let accessToken: string;
   try {
     accessToken = await getCalendarAccessToken(env, auth.user!.id);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79933: Calendar access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
     return Response.json({ error: 'E79932: Calendar not connected' }, { status: 404 });
   }
 
-  const profile = await getCalendarProfile(accessToken);
+  let profile: { email: string; name?: string };
+  try {
+    profile = await getCalendarProfile(accessToken);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79933: Calendar access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
+    throw err;
+  }
   const calendarId = data.calendarId || 'primary';
 
   await env.DB.prepare(`
@@ -6730,6 +6780,10 @@ async function refreshContactsAccessToken(env: EnvWithDriveCache, userId: string
   });
 
   if (!tokenResponse.ok) {
+    // 400/401 means token was revoked or is invalid - user needs to reconnect
+    if (tokenResponse.status === 400 || tokenResponse.status === 401) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to refresh Contacts access token.');
   }
 
@@ -6788,6 +6842,10 @@ async function getContactsProfile(accessToken: string): Promise<{ email: string;
   });
 
   if (!res.ok) {
+    // 401/403 means token is invalid/revoked - user needs to reconnect
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('TOKEN_REVOKED');
+    }
     throw new Error('Failed to fetch contacts profile.');
   }
 
@@ -7103,11 +7161,28 @@ export async function setupContactsMirror(
   let accessToken: string;
   try {
     accessToken = await getContactsAccessToken(env, auth.user!.id);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79953: Contacts access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
     return Response.json({ error: 'E79952: Contacts not connected' }, { status: 404 });
   }
 
-  const profile = await getContactsProfile(accessToken);
+  let profile: { email: string; name?: string };
+  try {
+    profile = await getContactsProfile(accessToken);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({
+        error: 'E79953: Contacts access was revoked. Please reconnect.',
+        code: 'TOKEN_REVOKED'
+      }, { status: 401 });
+    }
+    throw err;
+  }
 
   await env.DB.prepare(`
     INSERT INTO contacts_mirrors (

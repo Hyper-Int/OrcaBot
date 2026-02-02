@@ -96,15 +96,12 @@ RUN curl -fsSL https://app.factory.ai/cli | sh \
 # Install Moltbot CLI (published as clawdbot on npm)
 RUN npm install -g clawdbot@latest
 
-# Install Talkito (voice assistant)
-# Use build arg to bust cache: --build-arg TALKITO_VERSION=$(date +%s)
-# The ADD fetches latest commit info which also helps bust cache on new commits
-ARG TALKITO_VERSION=1
-ADD https://api.github.com/repos/robdmac/talkito/commits/main /tmp/talkito-version.json
-RUN git clone --depth 1 https://github.com/robdmac/talkito.git /tmp/talkito \
+# Install Talkito (voice assistant) - cached, no submodules
+# To force update: rebuild with --no-cache or bump a comment here
+RUN git clone --depth 1 --no-recurse-submodules https://github.com/robdmac/talkito.git /tmp/talkito \
     && cd /tmp/talkito \
     && pip3 install --break-system-packages . \
-    && rm -rf /tmp/talkito /tmp/talkito-version.json
+    && rm -rf /tmp/talkito
 
 # Install Playwright (browser automation) without bundled browsers
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
