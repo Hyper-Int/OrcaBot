@@ -2,6 +2,32 @@
 
 This repo is a monorepo for Orcabot - a sandboxed, multiplayer AI coding platform.
 
+## Coding Practices (MANDATORY for ALL repos)
+
+### Revision Markers
+**ALWAYS** add a revision marker when modifying code. This eliminates "did you deploy?" debugging.
+
+1. **Comment at top of modified file:**
+   ```
+   // REVISION: <feature>-v<N>-<brief>
+   ```
+
+2. **Log on load/startup with runtime timestamp:**
+   ```typescript
+   // Frontend (TypeScript)
+   const MODULE_REVISION = "feature-v1-desc";
+   console.log(`[module] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+   ```
+   ```go
+   // Backend (Go)
+   const moduleRevision = "feature-v1-desc"
+   log.Printf("[module] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
+   ```
+
+3. **For API responses:** Add a `revision` field so clients can display what version is running.
+
+This is non-negotiable. Never speculate about deployment issues - add logs that prove it.
+
 ## What Orcabot Does
 - Run Claude Code, Codex, or shell in the browser with zero setup
 - Sandboxed VMs for security (isolated execution)

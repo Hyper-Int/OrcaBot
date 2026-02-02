@@ -27,6 +27,26 @@ Claude should act as a **product- and UX-oriented assistant**, helping build cle
 
 ---
 
+## Coding Practices (MANDATORY)
+
+### Revision Markers
+**ALWAYS** add revision markers when modifying code. This eliminates "did you deploy?" debugging.
+
+1. **At top of modified file:**
+   ```typescript
+   // REVISION: feature-v1-desc
+   const MODULE_REVISION = "feature-v1-desc";
+   console.log(`[module] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+   ```
+
+2. **For page components:** Log on module load (outside component function)
+
+3. **For API functions:** Log when called with timestamp: `console.log(\`[fn] called at ${new Date().toISOString()}\`)`
+
+Never speculate about deployment - add logs that prove what version is running.
+
+---
+
 ## Related Repos
 
   Cloudflare control plane middle layer reference: ../controlplane

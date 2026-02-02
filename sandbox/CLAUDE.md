@@ -19,6 +19,30 @@ Claude should **not invent alternative architectures** or expand scope beyond wh
 
 ---
 
+## Coding Practices (MANDATORY)
+
+### Revision Markers
+**ALWAYS** add a revision marker comment when modifying code that will be deployed. This helps verify which version is running.
+
+Format: `// REVISION: <feature>-v<N>-<brief-desc>`
+
+Example:
+```go
+// REVISION: metrics-v2-topprocs
+const metricsRevision = "metrics-v2-topprocs"
+
+func init() {
+    log.Printf("[metrics] REVISION: %s loaded at %s", metricsRevision, time.Now().Format(time.RFC3339))
+}
+```
+
+For API responses that can be inspected, include a `revision` field in the response struct so the frontend/client can display what version is running.
+
+### Logging for Deployments
+Add a log line on startup or first use of new features that includes the revision with runtime timestamp, so logs confirm deployment success.
+
+---
+
 ## High-level product model
 
 - **Dashboards are multiplayer and persistent**

@@ -303,7 +303,16 @@ export async function updateSessionEnv(
   });
 }
 
+export type TopProcess = {
+  pid: number;
+  name: string;
+  cpuPct: number;
+  memPct: number;
+  combined: number;
+};
+
 export type SandboxMetrics = {
+  revision: string;
   heapBytes: number;
   sysBytes: number;
   heapObjects: number;
@@ -315,43 +324,74 @@ export type SandboxMetrics = {
   sessionCount: number;
   heapMB: number;
   sysMB: number;
+  topProcesses: TopProcess[];
+  // System-wide metrics
+  systemCpuPct: number;
+  systemMemPct: number;
+  systemMemUsedMB: number;
+  systemMemTotalMB: number;
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseTopProcesses(raw: any): TopProcess[] {
+  const processes = raw?.top_processes ?? raw?.topProcesses ?? [];
+  if (!Array.isArray(processes)) return [];
+  return processes.map((p: Record<string, unknown>) => ({
+    pid: (p.pid as number) ?? 0,
+    name: (p.name as string) ?? (p.comm as string) ?? "unknown",
+    cpuPct: (p.cpu_pct as number) ?? (p.cpuPct as number) ?? 0,
+    memPct: (p.mem_pct as number) ?? (p.memPct as number) ?? 0,
+    combined: (p.combined as number) ?? 0,
+  }));
+}
+
 export async function getSessionMetrics(sessionId: string): Promise<SandboxMetrics> {
-  const raw = await apiGet<Record<string, number>>(
+  const raw = await apiGet<Record<string, unknown>>(
     `${API.cloudflare.base}/sessions/${sessionId}/metrics`
   );
   return {
-    heapBytes: raw.heap_bytes ?? raw.heapBytes ?? 0,
-    sysBytes: raw.sys_bytes ?? raw.sysBytes ?? 0,
-    heapObjects: raw.heap_objects ?? raw.heapObjects ?? 0,
-    goroutines: raw.goroutines ?? 0,
-    gcRuns: raw.gc_runs ?? raw.gcRuns ?? 0,
-    cpuUserMs: raw.cpu_user_ms ?? raw.cpuUserMs ?? 0,
-    cpuSystemMs: raw.cpu_system_ms ?? raw.cpuSystemMs ?? 0,
-    uptimeMs: raw.uptime_ms ?? raw.uptimeMs ?? 0,
-    sessionCount: raw.session_count ?? raw.sessionCount ?? 0,
-    heapMB: raw.heap_mb ?? raw.heapMB ?? 0,
-    sysMB: raw.sys_mb ?? raw.sysMB ?? 0,
+    revision: (raw.revision as string) ?? "",
+    heapBytes: (raw.heap_bytes as number) ?? (raw.heapBytes as number) ?? 0,
+    sysBytes: (raw.sys_bytes as number) ?? (raw.sysBytes as number) ?? 0,
+    heapObjects: (raw.heap_objects as number) ?? (raw.heapObjects as number) ?? 0,
+    goroutines: (raw.goroutines as number) ?? 0,
+    gcRuns: (raw.gc_runs as number) ?? (raw.gcRuns as number) ?? 0,
+    cpuUserMs: (raw.cpu_user_ms as number) ?? (raw.cpuUserMs as number) ?? 0,
+    cpuSystemMs: (raw.cpu_system_ms as number) ?? (raw.cpuSystemMs as number) ?? 0,
+    uptimeMs: (raw.uptime_ms as number) ?? (raw.uptimeMs as number) ?? 0,
+    sessionCount: (raw.session_count as number) ?? (raw.sessionCount as number) ?? 0,
+    heapMB: (raw.heap_mb as number) ?? (raw.heapMB as number) ?? 0,
+    sysMB: (raw.sys_mb as number) ?? (raw.sysMB as number) ?? 0,
+    topProcesses: parseTopProcesses(raw),
+    systemCpuPct: (raw.system_cpu_pct as number) ?? (raw.systemCpuPct as number) ?? 0,
+    systemMemPct: (raw.system_mem_pct as number) ?? (raw.systemMemPct as number) ?? 0,
+    systemMemUsedMB: (raw.system_mem_used_mb as number) ?? (raw.systemMemUsedMB as number) ?? 0,
+    systemMemTotalMB: (raw.system_mem_total_mb as number) ?? (raw.systemMemTotalMB as number) ?? 0,
   };
 }
 
 export async function getDashboardMetrics(dashboardId: string): Promise<SandboxMetrics> {
-  const raw = await apiGet<Record<string, number>>(
+  const raw = await apiGet<Record<string, unknown>>(
     `${API.cloudflare.dashboards}/${dashboardId}/metrics`
   );
   return {
-    heapBytes: raw.heap_bytes ?? raw.heapBytes ?? 0,
-    sysBytes: raw.sys_bytes ?? raw.sysBytes ?? 0,
-    heapObjects: raw.heap_objects ?? raw.heapObjects ?? 0,
-    goroutines: raw.goroutines ?? 0,
-    gcRuns: raw.gc_runs ?? raw.gcRuns ?? 0,
-    cpuUserMs: raw.cpu_user_ms ?? raw.cpuUserMs ?? 0,
-    cpuSystemMs: raw.cpu_system_ms ?? raw.cpuSystemMs ?? 0,
-    uptimeMs: raw.uptime_ms ?? raw.uptimeMs ?? 0,
-    sessionCount: raw.session_count ?? raw.sessionCount ?? 0,
-    heapMB: raw.heap_mb ?? raw.heapMB ?? 0,
-    sysMB: raw.sys_mb ?? raw.sysMB ?? 0,
+    revision: (raw.revision as string) ?? "",
+    heapBytes: (raw.heap_bytes as number) ?? (raw.heapBytes as number) ?? 0,
+    sysBytes: (raw.sys_bytes as number) ?? (raw.sysBytes as number) ?? 0,
+    heapObjects: (raw.heap_objects as number) ?? (raw.heapObjects as number) ?? 0,
+    goroutines: (raw.goroutines as number) ?? 0,
+    gcRuns: (raw.gc_runs as number) ?? (raw.gcRuns as number) ?? 0,
+    cpuUserMs: (raw.cpu_user_ms as number) ?? (raw.cpuUserMs as number) ?? 0,
+    cpuSystemMs: (raw.cpu_system_ms as number) ?? (raw.cpuSystemMs as number) ?? 0,
+    uptimeMs: (raw.uptime_ms as number) ?? (raw.uptimeMs as number) ?? 0,
+    sessionCount: (raw.session_count as number) ?? (raw.sessionCount as number) ?? 0,
+    heapMB: (raw.heap_mb as number) ?? (raw.heapMB as number) ?? 0,
+    sysMB: (raw.sys_mb as number) ?? (raw.sysMB as number) ?? 0,
+    topProcesses: parseTopProcesses(raw),
+    systemCpuPct: (raw.system_cpu_pct as number) ?? (raw.systemCpuPct as number) ?? 0,
+    systemMemPct: (raw.system_mem_pct as number) ?? (raw.systemMemPct as number) ?? 0,
+    systemMemUsedMB: (raw.system_mem_used_mb as number) ?? (raw.systemMemUsedMB as number) ?? 0,
+    systemMemTotalMB: (raw.system_mem_total_mb as number) ?? (raw.systemMemTotalMB as number) ?? 0,
   };
 }
 
