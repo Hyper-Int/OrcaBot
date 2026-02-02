@@ -116,6 +116,8 @@ interface WorkspaceData extends Record<string, unknown> {
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
+  /** Called when cloud storage is linked (Drive, OneDrive, etc.) to auto-attach to connected terminals */
+  onStorageLinked?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
 }
 
 type WorkspaceNode = Node<WorkspaceData, "workspace">;
@@ -687,6 +689,8 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
         if (dashboardId) {
           void syncGoogleDrive(dashboardId).catch(() => undefined);
         }
+        // Notify parent to auto-attach Drive to connected terminals
+        data.onStorageLinked?.("google_drive");
         return;
       }
       if (payload?.type === "github-auth-complete") {
@@ -715,6 +719,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [
     apiOrigin,
     data.dashboardId,
+    data.onStorageLinked,
     loadDriveIntegration,
     loadDriveStatus,
     loadGithubIntegration,
@@ -864,10 +869,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await loadGithubIntegration();
       await loadGithubStatus();
       setGithubPickerOpen(false);
+      // Notify parent to auto-attach GitHub to connected terminals
+      data.onStorageLinked?.("github");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to link GitHub repo");
     }
-  }, [data.dashboardId, loadGithubIntegration, loadGithubStatus]);
+  }, [data.dashboardId, loadGithubIntegration, loadGithubStatus, data.onStorageLinked]);
 
   const handleConfirmGithubRepo = React.useCallback(async () => {
     if (!githubSelected) return;
@@ -899,10 +906,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await loadBoxIntegration();
       await loadBoxStatus();
       setBoxPickerOpen(false);
+      // Notify parent to auto-attach Box to connected terminals
+      data.onStorageLinked?.("box");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to link Box folder");
     }
-  }, [data.dashboardId, loadBoxIntegration, loadBoxStatus]);
+  }, [data.dashboardId, loadBoxIntegration, loadBoxStatus, data.onStorageLinked]);
 
   const handleUnlinkOnedrive = React.useCallback(async () => {
     if (!data.dashboardId) return;
@@ -972,10 +981,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await loadOnedriveIntegration();
       await loadOnedriveStatus();
       setOnedrivePickerOpen(false);
+      // Notify parent to auto-attach OneDrive to connected terminals
+      data.onStorageLinked?.("onedrive");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to link OneDrive folder");
     }
-  }, [data.dashboardId, loadOnedriveIntegration, loadOnedriveStatus]);
+  }, [data.dashboardId, loadOnedriveIntegration, loadOnedriveStatus, data.onStorageLinked]);
 
   const handleOpenBoxFolder = React.useCallback((folder: BoxFolder) => {
     const nextPath = [...boxPath, folder];

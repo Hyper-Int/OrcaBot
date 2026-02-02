@@ -33,7 +33,8 @@ Claude should **not** introduce execution logic, PTYs, Docker, or Fly Machine in
 ## High-level product model
 
 - **Dashboards are documents** (multiplayer, persistent)
-- **Sandboxes are workers** (ephemeral, disposable)
+- **Sandboxes are workers** (ephemeral, disposable; one per dashboard)
+- **Sessions are per-terminal** (one session per terminal item; each session maps to a PTY inside the dashboard sandbox)
 - **Execution is external** (Fly Machines)
 - **Orchestration is durable** (Postgres-backed)
 - **Humans and agents collaborate** through explicit state, not hidden processes
@@ -216,6 +217,7 @@ Think: **Beads / Temporal-like, domain-specific**.
 ## Session & sandbox lifecycle
 
 - **Each dashboard gets its own dedicated VM** (one sandbox per dashboard)
+- **Each terminal creates its own session** (one session per terminal item; sessions map to PTYs inside the dashboard sandbox)
 - Dashboards may exist with **zero sandboxes** (VM spun up on first terminal)
 - A sandbox is created only when:
   - a terminal is opened

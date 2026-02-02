@@ -49,6 +49,8 @@ Add a log line on startup or first use of new features that includes the revisio
 - **Each dashboard gets its own dedicated VM** (one sandbox per dashboard)
 - **Sandboxes are ephemeral and single-tenant**
 - **A sandbox may host multiple terminals (PTYs)**
+- **Each terminal maps to a control-plane session** (one session per terminal item)
+- **Each session maps to a PTY inside the dashboard sandbox**
 - **Each terminal supports multiple viewers but only one controller at a time**
 - **Terminal input uses explicit turn-taking**
 - **Claude Code runs inside a sandbox as an agent, not as infrastructure**

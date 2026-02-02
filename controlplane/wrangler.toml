@@ -49,9 +49,18 @@ simple = { limit = 200, period = 60 }  # 200 requests per minute per user
 name = "DASHBOARD"
 class_name = "DashboardDO"
 
+# Durable Objects for integration policy rate limiting
+[[durable_objects.bindings]]
+name = "RATE_LIMIT_COUNTER"
+class_name = "RateLimitCounter"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["DashboardDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitCounter"]
 
 # D1 Database for persistent state
 [[d1_databases]]

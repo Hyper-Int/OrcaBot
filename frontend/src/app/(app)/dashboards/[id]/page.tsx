@@ -65,9 +65,21 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration, useDebouncedCallback, useUICommands } from "@/hooks";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
-import type { DashboardItem, Dashboard, Session, DashboardEdge } from "@/types/dashboard";
+import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
 import { ConnectionDataFlowProvider } from "@/contexts/ConnectionDataFlowContext";
+import {
+  isIntegrationBlockType,
+  getProviderForBlockType,
+  getBlockTypeForProvider,
+  attachIntegration,
+  detachIntegration,
+  listAvailableIntegrations,
+  createReadOnlyPolicy,
+  getProviderDisplayName,
+  type IntegrationProvider,
+  type BrowserPolicy,
+} from "@/lib/api/cloudflare/integration-policies";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -624,11 +636,484 @@ export default function DashboardPage() {
           };
         }
       );
+
+      // Auto-attach integration when edge connects integration block to terminal
+      handleIntegrationEdge(createdEdge, "attach");
     },
     onError: (error) => {
       toast.error(`Failed to save connection: ${error.message}`);
     },
   });
+
+  // Handle integration-to-terminal edge creation/deletion
+  const handleIntegrationEdge = React.useCallback(
+    async (edge: { id: string; sourceItemId: string; targetItemId: string }, action: "attach" | "detach") => {
+      // Get current items from cache
+      const data = queryClient.getQueryData<{
+        dashboard: Dashboard;
+        items: DashboardItem[];
+        sessions: Session[];
+        edges: DashboardEdge[];
+        role: string;
+      }>(["dashboard", dashboardId]);
+      if (!data) return;
+
+      const { items: currentItems, sessions: currentSessions } = data;
+
+      const sourceItem = currentItems.find((i) => i.id === edge.sourceItemId);
+      const targetItem = currentItems.find((i) => i.id === edge.targetItemId);
+      if (!sourceItem || !targetItem) return;
+
+      // Determine which is the integration and which is the terminal
+      let integrationItem: DashboardItem | null = null;
+      let terminalItem: DashboardItem | null = null;
+
+      if (isIntegrationBlockType(sourceItem.type) && targetItem.type === "terminal") {
+        integrationItem = sourceItem;
+        terminalItem = targetItem;
+      } else if (isIntegrationBlockType(targetItem.type) && sourceItem.type === "terminal") {
+        integrationItem = targetItem;
+        terminalItem = sourceItem;
+      }
+
+      if (!integrationItem || !terminalItem) return;
+
+      // Get the terminal's active session
+      const session = currentSessions.find(
+        (s) => s.itemId === terminalItem!.id && s.status === "active"
+      );
+      if (!session) {
+        if (action === "attach") {
+          toast.warning("Terminal not active. Start the terminal first, then draw the connection.");
+        }
+        return;
+      }
+
+      // Use ptyId as the terminal ID - this is what the control plane expects
+      const ptyId = session.ptyId;
+      if (!ptyId) {
+        if (action === "attach") {
+          toast.warning("Terminal PTY not ready. Wait for terminal to initialize.");
+        }
+        return;
+      }
+
+      const provider = getProviderForBlockType(integrationItem.type);
+      if (!provider) return;
+
+      try {
+        if (action === "attach") {
+          // Browser is special - doesn't need OAuth, but needs URL patterns
+          if (provider === "browser") {
+            // Check if already attached
+            const availableIntegrations = await listAvailableIntegrations(dashboardId, ptyId);
+            const alreadyAttached = availableIntegrations.find(
+              (i) => i.provider === "browser" && i.attached
+            );
+            if (alreadyAttached) {
+              toast.info("Browser is already attached to this terminal");
+              return;
+            }
+
+            // Get URL from browser block content
+            const browserUrl = integrationItem.content?.trim();
+
+            let browserPolicy: BrowserPolicy;
+            let toastMessage: string;
+
+            if (browserUrl) {
+              // Browser has a URL - create restricted policy for that domain
+              let urlPattern = browserUrl;
+              try {
+                const url = new URL(browserUrl);
+                urlPattern = `${url.origin}/*`;
+              } catch {
+                // If not a valid URL, use as-is
+                urlPattern = browserUrl;
+              }
+
+              browserPolicy = {
+                canNavigate: true,
+                urlFilter: { mode: "allowlist", patterns: [urlPattern] },
+                canClick: true,
+                canType: true,
+                canScroll: true,
+                canScreenshot: true,
+                canExtractText: true,
+                canFillForms: false,
+                canSubmitForms: false,
+                canDownload: false,
+                canUpload: false,
+                canExecuteJs: false,
+                canUseStoredCredentials: false,
+                canInputCredentials: false,
+                canReadCookies: false,
+                canInspectNetwork: false,
+                canModifyRequests: false,
+              };
+              toastMessage = `Browser attached to terminal (${urlPattern})`;
+            } else {
+              // No URL - attach with full access (all URLs allowed)
+              browserPolicy = {
+                canNavigate: true,
+                urlFilter: { mode: "allowlist", patterns: ["*://*/*"] },
+                canClick: true,
+                canType: true,
+                canScroll: true,
+                canScreenshot: true,
+                canExtractText: true,
+                canFillForms: true,
+                canSubmitForms: true,
+                canDownload: true,
+                canUpload: true,
+                canExecuteJs: true,
+                canUseStoredCredentials: false,
+                canInputCredentials: true,
+                canReadCookies: true,
+                canInspectNetwork: true,
+                canModifyRequests: false,
+              };
+              toastMessage = "Browser attached to terminal (full access)";
+            }
+
+            const result = await attachIntegration(dashboardId, ptyId, {
+              provider: "browser",
+              policy: browserPolicy,
+            });
+
+            // Update edge to show security indicator
+            setEdges((prev) =>
+              prev.map((e) =>
+                e.id === edge.id
+                  ? {
+                      ...e,
+                      type: "integration",
+                      data: { securityLevel: result.securityLevel, provider: "browser" },
+                    }
+                  : e
+              )
+            );
+            toast.success(toastMessage);
+          } else {
+            // OAuth-based integrations - need userIntegrationId
+            const availableIntegrations = await listAvailableIntegrations(dashboardId, ptyId);
+            const userIntegration = availableIntegrations.find(
+              (i) => i.provider === provider && i.connected && !i.attached
+            );
+
+            if (!userIntegration) {
+              // Check if already attached
+              const alreadyAttached = availableIntegrations.find(
+                (i) => i.provider === provider && i.attached
+              );
+              if (alreadyAttached) {
+                toast.info(`${getProviderDisplayName(provider)} is already attached to this terminal`);
+                return;
+              }
+              // Not connected via OAuth yet - delete the edge and show warning
+              await deleteEdge(dashboardId, edge.id);
+              setEdges((prev) => prev.filter((e) => e.id !== edge.id));
+              queryClient.setQueryData(
+                ["dashboard", dashboardId],
+                (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+                  if (!oldData) return oldData;
+                  return {
+                    ...oldData,
+                    edges: oldData.edges.filter((e) => e.id !== edge.id),
+                  };
+                }
+              );
+              toast.warning(`Sign in to ${getProviderDisplayName(provider)} first. Click the ${getProviderDisplayName(provider)} block and select "Connect" to authenticate.`);
+              return;
+            }
+
+            const result = await attachIntegration(dashboardId, ptyId, {
+              provider,
+              userIntegrationId: userIntegration.userIntegrationId,
+              policy: createReadOnlyPolicy(provider),
+            });
+
+            // Update edge to show security indicator
+            setEdges((prev) =>
+              prev.map((e) =>
+                e.id === edge.id
+                  ? {
+                      ...e,
+                      type: "integration",
+                      data: { securityLevel: result.securityLevel, provider },
+                    }
+                  : e
+              )
+            );
+            toast.success(`${getProviderDisplayName(provider)} attached to terminal (read-only)`);
+          }
+        } else {
+          await detachIntegration(dashboardId, ptyId, provider);
+
+          // Reset edge back to normal type
+          setEdges((prev) =>
+            prev.map((e) =>
+              e.id === edge.id
+                ? { ...e, type: "smoothstep", data: undefined }
+                : e
+            )
+          );
+          toast.success(`${getProviderDisplayName(provider)} detached from terminal`);
+        }
+        // Invalidate terminal integrations to refresh the IntegrationsPanel
+        queryClient.invalidateQueries({
+          queryKey: ["terminal-integrations", dashboardId, ptyId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["available-integrations", dashboardId, ptyId],
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        if (action === "attach") {
+          toast.error(`Failed to attach integration: ${msg}`);
+        } else {
+          toast.error(`Failed to detach integration: ${msg}`);
+        }
+      }
+    },
+    [dashboardId, queryClient, setEdges]
+  );
+
+  // Handle policy update from IntegrationsPanel - sync edge data with new security level
+  const handlePolicyUpdate = React.useCallback(
+    (terminalItemId: string, provider: string, securityLevel: string) => {
+      // Find edges connecting this terminal to integration blocks
+      setEdges((prev) =>
+        prev.map((edge) => {
+          // Check if this edge connects the terminal to an integration block
+          const otherItemId = edge.source === terminalItemId ? edge.target : edge.target === terminalItemId ? edge.source : null;
+          if (!otherItemId) return edge;
+
+          // Find the other item to check if it's the right integration type
+          const otherItem = items.find((i) => i.id === otherItemId);
+          if (!otherItem) return edge;
+
+          // Check if the integration block type matches the provider
+          const blockProvider = getProviderForBlockType(otherItem.type);
+          if (blockProvider !== provider) return edge;
+
+          // Update this edge's security level
+          return {
+            ...edge,
+            type: "integration",
+            data: { ...edge.data, securityLevel, provider },
+          };
+        })
+      );
+    },
+    [items, setEdges]
+  );
+
+  // Handle integration attached via IntegrationsPanel - auto-create integration block if needed
+  const handleIntegrationAttached = React.useCallback(
+    async (terminalItemId: string, provider: string, securityLevel: string) => {
+      // Get the block type for this provider
+      const blockType = getBlockTypeForProvider(provider as IntegrationProvider);
+      if (!blockType) return; // Not a block-creating provider
+
+      // Check if an integration block of this type already exists
+      const existingBlock = items.find((item) => item.type === blockType);
+      if (existingBlock) {
+        // Block exists - check if edge exists, if not create one
+        const edgeExists = edges.some(
+          (e) =>
+            (e.source === existingBlock.id && e.target === terminalItemId) ||
+            (e.source === terminalItemId && e.target === existingBlock.id)
+        );
+        if (!edgeExists) {
+          // Create edge from integration block to terminal
+          const edgeId = generateId();
+          const now = new Date().toISOString();
+          const newEdge: DashboardEdge = {
+            id: edgeId,
+            dashboardId,
+            sourceItemId: existingBlock.id,
+            targetItemId: terminalItemId,
+            createdAt: now,
+            updatedAt: now,
+          };
+          try {
+            await createEdge(dashboardId, newEdge);
+            setEdges((prev) => [
+              ...prev,
+              {
+                id: edgeId,
+                source: existingBlock.id,
+                target: terminalItemId,
+                type: "integration",
+                data: { securityLevel, provider },
+              },
+            ]);
+          } catch (err) {
+            console.warn("Failed to create edge:", err);
+          }
+        } else {
+          // Edge exists - just update its security level
+          setEdges((prev) =>
+            prev.map((e) =>
+              (e.source === existingBlock.id && e.target === terminalItemId) ||
+              (e.source === terminalItemId && e.target === existingBlock.id)
+                ? { ...e, type: "integration", data: { ...e.data, securityLevel, provider } }
+                : e
+            )
+          );
+        }
+        return;
+      }
+
+      // No existing block - create one
+      const terminalItem = items.find((i) => i.id === terminalItemId);
+      if (!terminalItem) return;
+
+      // Position the new block to the left of the terminal
+      const blockSize = defaultSizes[blockType] || { width: 280, height: 280 };
+      const newPosition = {
+        x: terminalItem.position.x - blockSize.width - 50,
+        y: terminalItem.position.y,
+      };
+
+      // Create the integration block
+      const tempId = `temp-${generateId()}`;
+      createItemMutation.mutate(
+        {
+          type: blockType as DashboardItemType,
+          position: newPosition,
+          size: blockSize,
+          content: "",
+          clientTempId: tempId,
+          sourceId: undefined,
+          sourceHandle: "right",
+          targetHandle: "left",
+        },
+        {
+          onSuccess: (createdItem) => {
+            // Create edge from new integration block to terminal
+            const edgeId = generateId();
+            const now2 = new Date().toISOString();
+            const newEdge: DashboardEdge = {
+              id: edgeId,
+              dashboardId,
+              sourceItemId: createdItem.id,
+              targetItemId: terminalItemId,
+              createdAt: now2,
+              updatedAt: now2,
+            };
+            createEdge(dashboardId, newEdge)
+              .then(() => {
+                setEdges((prev) => [
+                  ...prev,
+                  {
+                    id: edgeId,
+                    source: createdItem.id,
+                    target: terminalItemId,
+                    type: "integration",
+                    data: { securityLevel, provider },
+                  },
+                ]);
+                toast.success(`Created ${getProviderDisplayName(provider as IntegrationProvider)} block`);
+              })
+              .catch((err) => {
+                console.warn("Failed to create edge:", err);
+              });
+          },
+        }
+      );
+    },
+    [items, edges, dashboardId, setEdges, createItemMutation]
+  );
+
+  // Handle storage linked to workspace - auto-attach to all terminals in the dashboard
+  const handleStorageLinked = React.useCallback(
+    async (_workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => {
+      console.log(`[handleStorageLinked] called for provider: ${provider}`);
+      // Find all terminal items with active sessions
+      // Terminals share the sandbox session with the workspace, so we attach to all active terminals
+      const terminalItems = items.filter((item) => item.type === "terminal");
+
+      if (terminalItems.length === 0) {
+        console.log("[handleStorageLinked] no terminal items on dashboard");
+        return;
+      }
+
+      let attachedCount = 0;
+      let skippedNoSession = 0;
+      let skippedNoIntegration = 0;
+
+      // For each terminal, try to attach the storage integration
+      for (const terminalItem of terminalItems) {
+        // Find the terminal's active session
+        const session = sessions.find(
+          (s) => s.itemId === terminalItem.id && s.status === "active"
+        );
+        if (!session?.ptyId) {
+          console.log(`[handleStorageLinked] terminal ${terminalItem.id} has no active session`);
+          skippedNoSession++;
+          continue;
+        }
+
+        try {
+          // Check if already attached
+          const availableIntegrations = await listAvailableIntegrations(dashboardId, session.ptyId);
+          console.log(`[handleStorageLinked] available integrations:`, availableIntegrations.map(i => ({
+            provider: i.provider,
+            connected: i.connected,
+            attached: i.attached,
+          })));
+          const alreadyAttached = availableIntegrations.find(
+            (i) => i.provider === provider && i.attached
+          );
+          if (alreadyAttached) {
+            console.log(`[handleStorageLinked] ${provider} already attached to terminal`);
+            continue;
+          }
+
+          // Find the user's integration for this provider
+          const userIntegration = availableIntegrations.find(
+            (i) => i.provider === provider && i.connected && !i.attached
+          );
+          if (!userIntegration) {
+            console.log(`[handleStorageLinked] no connected ${provider} integration found`);
+            skippedNoIntegration++;
+            continue;
+          }
+
+          // Attach with full access (read/write) since it's workspace storage
+          await attachIntegration(dashboardId, session.ptyId, {
+            provider,
+            userIntegrationId: userIntegration.userIntegrationId,
+            // Use full access policy for workspace storage
+          });
+
+          attachedCount++;
+
+          // Invalidate queries
+          queryClient.invalidateQueries({
+            queryKey: ["terminal-integrations", dashboardId, session.ptyId],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["available-integrations", dashboardId, session.ptyId],
+          });
+        } catch (err) {
+          console.warn(`Failed to auto-attach ${provider} to terminal:`, err);
+        }
+      }
+
+      const providerName = getProviderDisplayName(provider);
+      if (attachedCount > 0) {
+        toast.success(`${providerName} auto-attached to ${attachedCount} terminal${attachedCount > 1 ? 's' : ''}`);
+      } else if (skippedNoSession > 0) {
+        toast.info(`${providerName} linked. Start a terminal to attach it.`);
+      } else if (skippedNoIntegration > 0) {
+        console.log(`[handleStorageLinked] ${provider} linked but no matching integration record found`);
+      }
+    },
+    [items, sessions, dashboardId, queryClient]
+  );
 
   // Update item mutation - don't invalidate cache to avoid excessive refetches
   const updateItemMutation = useMutation({
@@ -768,6 +1253,16 @@ export default function DashboardPage() {
   // Delete edge function for useUICommands
   const deleteEdgeFn = React.useCallback(
     async (edgeId: string) => {
+      // Look up the edge before deleting to handle auto-detach
+      const data = queryClient.getQueryData<{
+        dashboard: Dashboard;
+        items: DashboardItem[];
+        sessions: Session[];
+        edges: DashboardEdge[];
+        role: string;
+      }>(["dashboard", dashboardId]);
+      const edgeToDelete = data?.edges?.find((e) => e.id === edgeId);
+
       await deleteEdge(dashboardId, edgeId);
       // Update local state
       setEdges((prev) => prev.filter((e) => e.id !== edgeId));
@@ -781,8 +1276,16 @@ export default function DashboardPage() {
           };
         }
       );
+
+      // Auto-detach integration when edge between integration and terminal is removed
+      if (edgeToDelete) {
+        handleIntegrationEdge(
+          { id: edgeToDelete.id, sourceItemId: edgeToDelete.sourceItemId, targetItemId: edgeToDelete.targetItemId },
+          "detach"
+        );
+      }
     },
-    [dashboardId, queryClient]
+    [dashboardId, queryClient, handleIntegrationEdge]
   );
 
   // Callback to send UI command results back to DashboardDO for broadcast
@@ -1163,10 +1666,61 @@ export default function DashboardPage() {
   }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
 
   // Item delete handler
-  const handleItemDelete = (itemId: string) => {
+  const handleItemDelete = async (itemId: string) => {
     // Remove from pending tracking
     pendingUpdatesRef.current.delete(itemId);
     pendingItemIdsRef.current.delete(itemId);
+
+    // Check if this is an integration block - if so, detach from any connected terminals
+    const data = queryClient.getQueryData<{
+      dashboard: Dashboard;
+      items: DashboardItem[];
+      sessions: Session[];
+      edges: DashboardEdge[];
+      role: string;
+    }>(["dashboard", dashboardId]);
+
+    if (data) {
+      const itemToDelete = data.items.find((i) => i.id === itemId);
+      if (itemToDelete && isIntegrationBlockType(itemToDelete.type)) {
+        const provider = getProviderForBlockType(itemToDelete.type);
+        if (provider) {
+          // Find all edges connecting this integration to terminals
+          const connectedEdges = data.edges.filter(
+            (e) => e.sourceItemId === itemId || e.targetItemId === itemId
+          );
+
+          for (const edge of connectedEdges) {
+            const otherItemId = edge.sourceItemId === itemId ? edge.targetItemId : edge.sourceItemId;
+            const otherItem = data.items.find((i) => i.id === otherItemId);
+
+            if (otherItem?.type === "terminal") {
+              // Find the terminal's session
+              const session = data.sessions.find(
+                (s) => s.itemId === otherItem.id && s.status === "active"
+              );
+              if (session?.ptyId) {
+                // Detach the integration and invalidate the terminal-integrations query
+                detachIntegration(dashboardId, session.ptyId, provider)
+                  .then(() => {
+                    // Invalidate so IntegrationsPanel updates
+                    queryClient.invalidateQueries({
+                      queryKey: ["terminal-integrations", dashboardId, session.ptyId],
+                    });
+                    queryClient.invalidateQueries({
+                      queryKey: ["available-integrations", dashboardId, session.ptyId],
+                    });
+                  })
+                  .catch((err) => {
+                    console.warn(`Failed to auto-detach ${provider}:`, err);
+                  });
+              }
+            }
+          }
+        }
+      }
+    }
+
     deleteItemMutation.mutate(itemId);
   };
 
@@ -1737,6 +2291,9 @@ export default function DashboardPage() {
               fitViewEnabled={false}
               extraNodes={extraNodes}
               readOnly={role === "viewer"}
+              onPolicyUpdate={handlePolicyUpdate}
+              onIntegrationAttached={handleIntegrationAttached}
+              onStorageLinked={handleStorageLinked}
             />
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}

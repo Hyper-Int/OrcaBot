@@ -84,6 +84,7 @@ function renderTerminal(sessionOwnerId: string, viewerId: string) {
             content: "Terminal",
             size: { width: 420, height: 320 },
             dashboardId: "dashboard-1",
+            itemId: "terminal-1",
             session: {
               id: "session-1",
               dashboardId: "dashboard-1",

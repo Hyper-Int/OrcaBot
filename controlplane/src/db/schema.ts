@@ -638,6 +638,80 @@ CREATE TABLE IF NOT EXISTS dashboard_templates (
 CREATE INDEX IF NOT EXISTS idx_templates_category ON dashboard_templates(category);
 CREATE INDEX IF NOT EXISTS idx_templates_featured ON dashboard_templates(is_featured);
 CREATE INDEX IF NOT EXISTS idx_templates_author ON dashboard_templates(author_id);
+
+-- Terminal integrations (per-terminal integration bindings)
+-- SECURITY: Each binding is immutable once created (terminal_id, provider, user_integration_id cannot change)
+-- Uses soft delete to preserve audit history
+CREATE TABLE IF NOT EXISTS terminal_integrations (
+  id TEXT PRIMARY KEY,
+  terminal_id TEXT NOT NULL,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'google_drive', 'onedrive', 'box', 'github', 'browser')),
+  user_integration_id TEXT REFERENCES user_integrations(id),
+  active_policy_id TEXT,
+  account_email TEXT,
+  account_label TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  CHECK (provider = 'browser' OR user_integration_id IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id);
+
+-- Integration policies (append-only policy revisions)
+CREATE TABLE IF NOT EXISTS integration_policies (
+  id TEXT PRIMARY KEY,
+  terminal_integration_id TEXT NOT NULL REFERENCES terminal_integrations(id),
+  version INTEGER NOT NULL,
+  policy TEXT NOT NULL,
+  security_level TEXT NOT NULL CHECK (security_level IN ('restricted', 'elevated', 'full')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  UNIQUE(terminal_integration_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policies_terminal_integration ON integration_policies(terminal_integration_id);
+
+-- Integration audit log (all gateway operations)
+CREATE TABLE IF NOT EXISTS integration_audit_log (
+  id TEXT PRIMARY KEY,
+  terminal_integration_id TEXT NOT NULL REFERENCES terminal_integrations(id),
+  terminal_id TEXT NOT NULL,
+  dashboard_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  action TEXT NOT NULL,
+  resource_id TEXT,
+  policy_id TEXT NOT NULL REFERENCES integration_policies(id),
+  policy_version INTEGER NOT NULL,
+  policy_decision TEXT NOT NULL CHECK (policy_decision IN ('allowed', 'denied', 'filtered')),
+  denial_reason TEXT,
+  request_summary TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_terminal ON integration_audit_log(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_audit_dashboard ON integration_audit_log(dashboard_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_policy ON integration_audit_log(policy_id);
+CREATE INDEX IF NOT EXISTS idx_audit_terminal_integration ON integration_audit_log(terminal_integration_id);
+
+-- High-risk capability confirmations (anti-social-engineering audit trail)
+CREATE TABLE IF NOT EXISTS high_risk_confirmations (
+  id TEXT PRIMARY KEY,
+  terminal_integration_id TEXT NOT NULL REFERENCES terminal_integrations(id),
+  capability TEXT NOT NULL,
+  confirmed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  confirmed_by TEXT NOT NULL REFERENCES users(id),
+  user_agent TEXT,
+  ip_address TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_high_risk_terminal_integration ON high_risk_confirmations(terminal_integration_id);
 `;
 
 // Initialize the database
@@ -734,6 +808,17 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   await migrateDashboardItemTypes(db);
   await migrateUserIntegrationProviders(db);
+
+  // Add partial unique index for terminal_integrations (one provider per terminal for active rows)
+  try {
+    await db.prepare(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active
+        ON terminal_integrations(terminal_id, provider)
+        WHERE deleted_at IS NULL
+    `).run();
+  } catch {
+    // Index already exists.
+  }
 }
 
 // All valid integration providers - add new providers here

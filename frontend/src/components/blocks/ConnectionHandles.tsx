@@ -18,8 +18,13 @@ interface ConnectionHandlesProps {
   bottomMode?: VerticalHandleMode;
 }
 
+// Visual handle - small dot
 const HANDLE_CLASSES =
-  "h-2.5 w-2.5 rounded-full border border-[var(--border-strong)] bg-[var(--background)] shadow-sm";
+  "h-3 w-3 rounded-full border-2 border-[var(--border-strong)] bg-[var(--background)] shadow-sm";
+
+// Invisible hit area wrapper - larger clickable zone
+const HIT_AREA_CLASSES =
+  "flex items-center justify-center h-8 w-8 -m-2.5 cursor-pointer hover:scale-110 transition-transform";
 
 export function ConnectionHandles({
   nodeId,
@@ -29,11 +34,12 @@ export function ConnectionHandles({
   bottomMode = "source",
 }: ConnectionHandlesProps) {
   const containerClass = cn(
-    "absolute inset-0 pointer-events-none",
+    "absolute inset-0 pointer-events-none z-20",
     visible ? "opacity-100" : "opacity-0"
   );
 
-  const handleClass = cn(HANDLE_CLASSES, visible ? "pointer-events-auto" : "pointer-events-none");
+  const handleClass = cn(HANDLE_CLASSES);
+  const hitAreaClass = cn(HIT_AREA_CLASSES, visible ? "pointer-events-auto" : "pointer-events-none");
 
   const labelClass = cn(
     "absolute text-[10px] text-[var(--foreground-muted)] whitespace-nowrap opacity-0",
@@ -43,59 +49,75 @@ export function ConnectionHandles({
   return (
     <div className={containerClass}>
       {/* Left input */}
-      <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <Handle
-          type="target"
-          id="left-in"
-          position={Position.Left}
-          className={handleClass}
+      <div className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 group">
+        <div
+          className={hitAreaClass}
           onClick={() => onConnectorClick?.(nodeId, "left-in", "target")}
           data-connector="true"
-        />
-        <span className={cn(labelClass, "right-full mr-2 top-1/2 -translate-y-1/2")}>
+        >
+          <Handle
+            type="target"
+            id="left-in"
+            position={Position.Left}
+            className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+          />
+        </div>
+        <span className={cn(labelClass, "right-full mr-4 top-1/2 -translate-y-1/2")}>
           Input
         </span>
       </div>
 
       {/* Right output */}
-      <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2">
-        <Handle
-          type="source"
-          id="right-out"
-          position={Position.Right}
-          className={handleClass}
+      <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 group">
+        <div
+          className={hitAreaClass}
           onClick={() => onConnectorClick?.(nodeId, "right-out", "source")}
           data-connector="true"
-        />
-        <span className={cn(labelClass, "left-full ml-2 top-1/2 -translate-y-1/2")}>
+        >
+          <Handle
+            type="source"
+            id="right-out"
+            position={Position.Right}
+            className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+          />
+        </div>
+        <span className={cn(labelClass, "left-full ml-4 top-1/2 -translate-y-1/2")}>
           Output
         </span>
       </div>
 
       {/* Top connectors */}
       {topMode !== "none" && (
-        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2">
+        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 group">
           {(topMode === "both" || topMode === "target") && (
-            <Handle
-              type="target"
-              id="top-in"
-              position={Position.Top}
-              className={handleClass}
+            <div
+              className={hitAreaClass}
               onClick={() => onConnectorClick?.(nodeId, "top-in", "target")}
               data-connector="true"
-            />
+            >
+              <Handle
+                type="target"
+                id="top-in"
+                position={Position.Top}
+                className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+              />
+            </div>
           )}
           {(topMode === "both" || topMode === "source") && (
-            <Handle
-              type="source"
-              id="top-out"
-              position={Position.Top}
-              className={handleClass}
+            <div
+              className={hitAreaClass}
               onClick={() => onConnectorClick?.(nodeId, "top-out", "source")}
               data-connector="true"
-            />
+            >
+              <Handle
+                type="source"
+                id="top-out"
+                position={Position.Top}
+                className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+              />
+            </div>
           )}
-          <span className={cn(labelClass, "left-1/2 -translate-x-1/2 top-full mt-2")}>
+          <span className={cn(labelClass, "left-1/2 -translate-x-1/2 top-full mt-4")}>
             {topMode === "both" ? "Input/Output" : topMode === "source" ? "Output" : "Input"}
           </span>
         </div>
@@ -103,28 +125,36 @@ export function ConnectionHandles({
 
       {/* Bottom connectors */}
       {bottomMode !== "none" && (
-        <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2">
+        <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2 group">
           {(bottomMode === "both" || bottomMode === "target") && (
-            <Handle
-              type="target"
-              id="bottom-in"
-              position={Position.Bottom}
-              className={handleClass}
+            <div
+              className={hitAreaClass}
               onClick={() => onConnectorClick?.(nodeId, "bottom-in", "target")}
               data-connector="true"
-            />
+            >
+              <Handle
+                type="target"
+                id="bottom-in"
+                position={Position.Bottom}
+                className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+              />
+            </div>
           )}
           {(bottomMode === "both" || bottomMode === "source") && (
-            <Handle
-              type="source"
-              id="bottom-out"
-              position={Position.Bottom}
-              className={handleClass}
+            <div
+              className={hitAreaClass}
               onClick={() => onConnectorClick?.(nodeId, "bottom-out", "source")}
               data-connector="true"
-            />
+            >
+              <Handle
+                type="source"
+                id="bottom-out"
+                position={Position.Bottom}
+                className={cn(handleClass, "!relative !transform-none !left-0 !top-0")}
+              />
+            </div>
           )}
-          <span className={cn(labelClass, "left-1/2 -translate-x-1/2 bottom-full mb-2")}>
+          <span className={cn(labelClass, "left-1/2 -translate-x-1/2 bottom-full mb-4")}>
             {bottomMode === "both" ? "Input/Output" : bottomMode === "source" ? "Output" : "Input"}
           </span>
         </div>

@@ -10,6 +10,8 @@ export interface RateLimiter {
 export interface Env {
   DB: D1Database;
   DASHBOARD: DurableObjectNamespace;
+  /** Rate limit counter DO for integration policy enforcement */
+  RATE_LIMIT_COUNTER: DurableObjectNamespace;
   DRIVE_CACHE?: R2Bucket;
   SANDBOX_URL: string;
   /** Desktop-only: D1 shim HTTP endpoint (e.g. http://127.0.0.1:9001). */
@@ -492,3 +494,469 @@ export interface UICommandResultMessage {
   error?: string;
   created_item_id?: string;
 }
+
+// ============================================
+// Integration Policies Types
+// ============================================
+
+/**
+ * Provider types for terminal integrations
+ * Note: Includes 'browser' which doesn't require OAuth (unlike UserIntegration.provider)
+ */
+export type IntegrationProvider =
+  | 'gmail'
+  | 'google_calendar'
+  | 'google_contacts'
+  | 'google_sheets'
+  | 'google_forms'
+  | 'google_drive'
+  | 'onedrive'
+  | 'box'
+  | 'github'
+  | 'browser';
+
+/**
+ * Security level for integration policies
+ */
+export type SecurityLevel = 'restricted' | 'elevated' | 'full';
+
+/**
+ * Base policy interface shared by all providers
+ */
+export interface BasePolicy {
+  rateLimits?: {
+    readsPerMinute?: number;
+    writesPerHour?: number;
+    // Provider-specific limits added in each policy
+  };
+}
+
+/**
+ * Gmail policy configuration
+ */
+export interface GmailPolicy extends BasePolicy {
+  canRead: boolean;
+  senderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    domains?: string[];
+    addresses?: string[];
+  };
+  labelFilter?: {
+    mode: 'all' | 'allowlist';
+    labels?: string[];
+  };
+  canArchive: boolean;
+  canTrash: boolean;
+  canMarkRead: boolean;
+  canLabel: boolean;
+  canSend: boolean;
+  sendPolicy?: {
+    allowedRecipients?: string[];
+    allowedDomains?: string[];
+    requiredCc?: string[];
+    maxPerHour?: number;
+  };
+  rateLimits?: BasePolicy['rateLimits'] & {
+    sendsPerDay?: number;
+    archivesPerHour?: number;
+  };
+}
+
+/**
+ * Calendar policy configuration
+ */
+export interface CalendarPolicy extends BasePolicy {
+  canRead: boolean;
+  calendarFilter?: {
+    mode: 'all' | 'allowlist';
+    calendarIds?: string[];
+  };
+  canCreate: boolean;
+  createPolicy?: {
+    maxDuration?: string; // ISO 8601 duration, e.g., "PT2H"
+    requireDescription?: boolean;
+    allowedCalendars?: string[];
+    blockedTimeRanges?: {
+      start: string; // "HH:MM"
+      end: string;
+    }[];
+  };
+  canUpdate: boolean;
+  canDelete: boolean;
+  rateLimits?: BasePolicy['rateLimits'] & {
+    createsPerDay?: number;
+    updatesPerHour?: number;
+  };
+}
+
+/**
+ * Contacts policy configuration
+ */
+export interface ContactsPolicy extends BasePolicy {
+  canRead: boolean;
+  contactFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    groups?: string[];
+    domains?: string[];
+  };
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+/**
+ * Sheets policy configuration
+ */
+export interface SheetsPolicy extends BasePolicy {
+  canRead: boolean;
+  spreadsheetFilter?: {
+    mode: 'all' | 'allowlist';
+    spreadsheetIds?: string[];
+    folderIds?: string[];
+  };
+  canWrite: boolean;
+  writePolicy?: {
+    allowedSpreadsheets?: string[];
+    canCreateNew: boolean;
+    canDeleteSheets: boolean;
+  };
+  canUseFormulas: boolean;
+  blockedFormulas?: string[];
+}
+
+/**
+ * Forms policy configuration
+ */
+export interface FormsPolicy extends BasePolicy {
+  canRead: boolean;
+  canReadResponses: boolean;
+  formFilter?: {
+    mode: 'all' | 'allowlist';
+    formIds?: string[];
+  };
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+/**
+ * Google Drive policy configuration
+ */
+export interface GoogleDrivePolicy extends BasePolicy {
+  canRead: boolean;
+  canDownload: boolean;
+  folderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    folderIds?: string[];
+    folderPaths?: string[];
+  };
+  fileTypeFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    mimeTypes?: string[];
+    extensions?: string[];
+  };
+  maxFileSize?: number;
+  canUpload: boolean;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canMove: boolean;
+  uploadPolicy?: {
+    allowedFolders?: string[];
+    allowedTypes?: string[];
+    maxFileSize?: number;
+  };
+  canShare: boolean;
+  sharePolicy?: {
+    allowedDomains?: string[];
+    maxPermission?: 'reader' | 'commenter' | 'writer';
+    noPublicSharing: boolean;
+  };
+  rateLimits?: BasePolicy['rateLimits'] & {
+    downloadsPerHour?: number;
+  };
+}
+
+/**
+ * OneDrive policy configuration
+ */
+export interface OneDrivePolicy extends BasePolicy {
+  canRead: boolean;
+  canDownload: boolean;
+  folderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    folderPaths?: string[];
+  };
+  fileTypeFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    extensions?: string[];
+  };
+  maxFileSize?: number;
+  canUpload: boolean;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canMove: boolean;
+  uploadPolicy?: {
+    allowedFolders?: string[];
+    allowedTypes?: string[];
+    maxFileSize?: number;
+  };
+  canShare: boolean;
+  sharePolicy?: {
+    allowedDomains?: string[];
+    maxPermission?: 'read' | 'write';
+    noAnonymousLinks: boolean;
+  };
+}
+
+/**
+ * Box policy configuration
+ */
+export interface BoxPolicy extends BasePolicy {
+  canRead: boolean;
+  canDownload: boolean;
+  folderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    folderIds?: string[];
+  };
+  fileTypeFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    extensions?: string[];
+  };
+  maxFileSize?: number;
+  canUpload: boolean;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canMove: boolean;
+  canShare: boolean;
+  sharePolicy?: {
+    maxAccessLevel?: 'previewer' | 'viewer' | 'editor';
+    noOpenAccess: boolean;
+  };
+}
+
+/**
+ * GitHub policy configuration
+ */
+export interface GitHubPolicy extends BasePolicy {
+  canReadRepos: boolean;
+  repoFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    repos?: string[];
+    orgs?: string[];
+    visibility?: 'all' | 'public' | 'private';
+  };
+  canReadCode: boolean;
+  canClone: boolean;
+  canPush: boolean;
+  pushPolicy?: {
+    allowedBranches?: string[];
+    blockedBranches?: string[];
+    requireBranchPrefix?: string;
+  };
+  canReadIssues: boolean;
+  canCreateIssues: boolean;
+  canCommentIssues: boolean;
+  canCloseIssues: boolean;
+  canReadPRs: boolean;
+  canCreatePRs: boolean;
+  canApprovePRs: boolean;
+  canMergePRs: boolean;
+  canCreateReleases: boolean;
+  canTriggerActions: boolean;
+  canCreateRepos: boolean;
+  canDeleteRepos: boolean;
+  canManageSettings: boolean;
+  rateLimits?: BasePolicy['rateLimits'] & {
+    pushesPerDay?: number;
+    mergesPerDay?: number;
+    prsPerDay?: number;
+  };
+}
+
+/**
+ * Browser policy configuration
+ * CRITICAL: Browser is highest-risk - requires URL allowlist
+ */
+export interface BrowserPolicy extends BasePolicy {
+  canNavigate: boolean;
+  urlFilter: {
+    mode: 'allowlist'; // Must be allowlist for security
+    patterns: string[];
+    blockedPatterns?: string[];
+  };
+  canClick: boolean;
+  canType: boolean;
+  canScroll: boolean;
+  canScreenshot: boolean;
+  canExtractText: boolean;
+  canFillForms: boolean;
+  canSubmitForms: boolean;
+  formPolicy?: {
+    allowedDomains?: string[];
+    noPasswordFields: boolean;
+    noPaymentFields: boolean;
+  };
+  canDownload: boolean;
+  downloadPolicy?: {
+    allowedTypes?: string[];
+    maxFileSize?: number;
+    allowedDomains?: string[];
+  };
+  canUpload: boolean;
+  uploadPolicy?: {
+    allowedDomains?: string[];
+    maxFileSize?: number;
+  };
+  canExecuteJs: boolean;
+  jsPolicy?: {
+    allowedDomains?: string[];
+    noEval: boolean;
+  };
+  canUseStoredCredentials: boolean;
+  canInputCredentials: boolean;
+  canReadCookies: boolean;
+  canInspectNetwork: boolean;
+  canModifyRequests: boolean;
+  rateLimits?: BasePolicy['rateLimits'] & {
+    navigationsPerMinute?: number;
+    requestsPerHour?: number;
+  };
+}
+
+/**
+ * Type-safe policy lookup by provider
+ */
+export type PolicyForProvider<P extends IntegrationProvider> =
+  P extends 'gmail' ? GmailPolicy :
+  P extends 'google_calendar' ? CalendarPolicy :
+  P extends 'google_contacts' ? ContactsPolicy :
+  P extends 'google_sheets' ? SheetsPolicy :
+  P extends 'google_forms' ? FormsPolicy :
+  P extends 'google_drive' ? GoogleDrivePolicy :
+  P extends 'onedrive' ? OneDrivePolicy :
+  P extends 'box' ? BoxPolicy :
+  P extends 'github' ? GitHubPolicy :
+  P extends 'browser' ? BrowserPolicy :
+  never;
+
+/**
+ * Union of all policy types
+ */
+export type AnyPolicy =
+  | GmailPolicy
+  | CalendarPolicy
+  | ContactsPolicy
+  | SheetsPolicy
+  | FormsPolicy
+  | GoogleDrivePolicy
+  | OneDrivePolicy
+  | BoxPolicy
+  | GitHubPolicy
+  | BrowserPolicy;
+
+/**
+ * Terminal integration binding (immutable once created)
+ */
+export interface TerminalIntegration {
+  id: string;
+  terminalId: string;
+  dashboardId: string;
+  userId: string;
+  provider: IntegrationProvider;
+  userIntegrationId: string | null; // NULL for browser
+  activePolicyId: string | null;
+  accountEmail: string | null;
+  accountLabel: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+/**
+ * Integration policy revision (append-only)
+ */
+export interface IntegrationPolicy {
+  id: string;
+  terminalIntegrationId: string;
+  version: number;
+  policy: AnyPolicy;
+  securityLevel: SecurityLevel;
+  createdAt: string;
+  createdBy: string;
+}
+
+/**
+ * Integration audit log entry
+ */
+export interface IntegrationAuditLog {
+  id: string;
+  terminalIntegrationId: string;
+  terminalId: string;
+  dashboardId: string;
+  userId: string;
+  provider: IntegrationProvider;
+  action: string;
+  resourceId: string | null;
+  policyId: string;
+  policyVersion: number;
+  policyDecision: 'allowed' | 'denied' | 'filtered';
+  denialReason: string | null;
+  requestSummary: string | null;
+  createdAt: string;
+}
+
+/**
+ * High-risk confirmation record
+ */
+export interface HighRiskConfirmation {
+  id: string;
+  terminalIntegrationId: string;
+  capability: string;
+  confirmedAt: string;
+  confirmedBy: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+}
+
+/**
+ * Terminal integration with active policy (for API responses)
+ */
+export interface TerminalIntegrationWithPolicy extends TerminalIntegration {
+  policy: AnyPolicy | null;
+  policyVersion: number | null;
+  securityLevel: SecurityLevel | null;
+}
+
+/**
+ * Available integration for attaching (API response)
+ */
+export interface AvailableIntegration {
+  provider: IntegrationProvider;
+  userIntegrationId?: string;
+  accountEmail?: string;
+  accountLabel?: string;
+  connected: boolean;
+  attached: boolean;
+  terminalIntegrationId?: string;
+  policyId?: string;
+}
+
+/**
+ * High-risk capabilities that require explicit confirmation
+ */
+export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
+  gmail: ['canSend', 'canTrash'],
+  google_calendar: ['canDelete'],
+  google_contacts: ['canDelete'],
+  google_sheets: ['writePolicy.canDeleteSheets'],
+  google_forms: ['canDelete'],
+  google_drive: ['canDelete', 'canShare'],
+  onedrive: ['canDelete', 'canShare'],
+  box: ['canDelete', 'canShare'],
+  github: ['canPush', 'canMergePRs', 'canApprovePRs', 'canDeleteRepos'],
+  browser: ['canSubmitForms', 'canExecuteJs', 'canUpload', 'canInputCredentials'],
+};

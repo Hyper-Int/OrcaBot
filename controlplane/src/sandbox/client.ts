@@ -147,12 +147,28 @@ export class SandboxClient {
   }
 
   // PTY management
-  async createPty(sessionId: string, creatorId?: string, command?: string, machineId?: string): Promise<SandboxPty> {
-    const shouldSendBody = Boolean(creatorId || command);
+  async createPty(
+    sessionId: string,
+    creatorId?: string,
+    command?: string,
+    machineId?: string,
+    options?: {
+      // Control plane can optionally provide the PTY ID (for pre-generating integration tokens)
+      ptyId?: string;
+      // PTY token for integration policy gateway calls
+      // This token is bound to this specific PTY (terminal_id)
+      integrationToken?: string;
+    }
+  ): Promise<SandboxPty> {
+    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken);
     const body = shouldSendBody
       ? JSON.stringify({
           creator_id: creatorId,
           command: command,
+          // If control plane provides an ID, sandbox should use it
+          pty_id: options?.ptyId,
+          // Integration token bound to this PTY
+          integration_token: options?.integrationToken,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
