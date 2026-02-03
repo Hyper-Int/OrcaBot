@@ -27,6 +27,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agenthooks"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
@@ -439,6 +440,14 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
 
+	// Write MCP URL to a well-known file so mcp-bridge can discover it
+	// even when agents (like Codex) don't forward env vars to subprocesses
+	orcabotDir := filepath.Join(s.workspace.Root(), ".orcabot")
+	if err := os.MkdirAll(orcabotDir, 0755); err == nil {
+		mcpURLFile := filepath.Join(orcabotDir, "mcp-url")
+		os.WriteFile(mcpURLFile, []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+	}
+
 	// Generate MCP settings file only for the specific agent being launched
 	// This allows agents to discover the orcabot MCP server and user's MCP tools
 	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
@@ -446,6 +455,12 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
 			// Log but don't fail - settings generation is not critical for PTY creation
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
+		}
+
+		// Generate agent stop hooks so we can detect when the agent finishes
+		// The hooks will call back to our localhost endpoint to trigger WebSocket events
+		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 	}
 

@@ -13,6 +13,7 @@ import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import { CodeBlockRenderer } from "./CodeBlockRenderer";
 import type { DashboardItem } from "@/types/dashboard";
 
 type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
@@ -40,6 +41,8 @@ const colorClasses: Record<NoteColor, string> = {
 
 export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
   const [content, setContent] = React.useState(data.content || "");
+  const [isEditing, setIsEditing] = React.useState(false);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const color = data.color || "yellow";
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
@@ -107,6 +110,11 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
     if (!connectionFlow) return;
 
     const handler = (payload: { text: string }) => {
+      console.log("[NoteBlock] Received input from connection", {
+        id,
+        textLength: payload.text?.length,
+        textPreview: payload.text?.slice(0, 50),
+      });
       if (payload.text) {
         handleContentChange(payload.text);
       }
@@ -159,16 +167,35 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
         >
           <Minimize2 className="w-3 h-3" />
         </Button>
-        <textarea
-          value={content}
-          onChange={(e) => handleContentChange(e.target.value)}
-          placeholder="Write a note..."
-          className={cn(
-            "w-full flex-1 bg-transparent resize-none",
-            "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
-            "focus:outline-none"
-          )}
-        />
+        {isEditing ? (
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => handleContentChange(e.target.value)}
+            onBlur={() => setIsEditing(false)}
+            placeholder="Write a note..."
+            className={cn(
+              "w-full flex-1 bg-transparent resize-none",
+              "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
+              "focus:outline-none"
+            )}
+          />
+        ) : (
+          <div
+            onClick={() => {
+              setIsEditing(true);
+              // Focus textarea after render
+              setTimeout(() => textareaRef.current?.focus(), 0);
+            }}
+            className="w-full flex-1 cursor-text overflow-auto"
+          >
+            <CodeBlockRenderer
+              content={content}
+              placeholder="Write a note..."
+              className="text-sm text-[var(--foreground)]"
+            />
+          </div>
+        )}
       </div>
       <ConnectionHandles
         nodeId={id}

@@ -22,6 +22,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -61,10 +63,17 @@ func main() {
 		}
 	}
 
+	// Fallback: read from config file (for agents like Codex that strip env vars)
+	if mcpURL == "" {
+		mcpURL = readMCPURLFromFile()
+	}
+
 	if mcpURL == "" {
 		fmt.Fprintf(os.Stderr, "mcp-bridge: ORCABOT_MCP_URL or ORCABOT_SESSION_ID must be set\n")
 		os.Exit(1)
 	}
+
+	fmt.Fprintf(os.Stderr, "mcp-bridge: using MCP URL: %s\n", mcpURL)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	// Increase buffer for large messages (10MB max)
@@ -217,4 +226,28 @@ func errorResponse(id interface{}, code int, message string) *jsonRPCResponse {
 			Message: message,
 		},
 	}
+}
+
+// readMCPURLFromFile reads MCP URL from a well-known config file.
+// This is a fallback for agents (like Codex) that don't forward env vars to MCP subprocesses.
+// Checks $HOME/.orcabot/mcp-url first, then /workspace/.orcabot/mcp-url as fallback.
+func readMCPURLFromFile() string {
+	paths := []string{}
+	if home := os.Getenv("HOME"); home != "" {
+		paths = append(paths, filepath.Join(home, ".orcabot", "mcp-url"))
+	}
+	// Also check common workspace paths
+	paths = append(paths, "/workspace/.orcabot/mcp-url")
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			url := strings.TrimSpace(string(data))
+			if url != "" {
+				fmt.Fprintf(os.Stderr, "mcp-bridge: read MCP URL from %s\n", p)
+				return url
+			}
+		}
+	}
+	return ""
 }

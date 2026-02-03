@@ -16,6 +16,7 @@ import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { useThemeStore } from "@/stores/theme-store";
 import { useASR } from "@/hooks/useASR";
 import { ASRSettingsDialog } from "./ASRSettingsDialog";
+import { CodeBlockRenderer } from "./CodeBlockRenderer";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface PromptData extends Record<string, unknown> {
@@ -34,6 +35,8 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   const [content, setContent] = React.useState(data.content || "");
   const [interimTranscript, setInterimTranscript] = React.useState("");
   const [asrError, setAsrError] = React.useState<string | null>(null);
+  const [isEditing, setIsEditing] = React.useState(false);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const connectionFlow = useConnectionDataFlow();
   const theme = useThemeStore((s) => s.theme);
@@ -239,24 +242,51 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
 
         {/* Textarea with interim transcript overlay */}
         <div className="relative flex-1">
-          <textarea
-            value={content}
-            onChange={(e) => handleContentChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter a prompt..."
-            style={{
-              backgroundColor: isDark ? "black" : "white",
-              color: isDark ? "white" : "black"
-            }}
-            className={cn(
-              "w-full h-full resize-none rounded-md p-2",
-              "border border-slate-300",
-              "text-sm placeholder:text-slate-400",
-              "focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]",
-              "dark:border-slate-600",
-              isListening && "border-emerald-500 ring-1 ring-emerald-500"
-            )}
-          />
+          {isEditing ? (
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => handleContentChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onBlur={() => setIsEditing(false)}
+              placeholder="Enter a prompt..."
+              style={{
+                backgroundColor: isDark ? "black" : "white",
+                color: isDark ? "white" : "black"
+              }}
+              className={cn(
+                "w-full h-full resize-none rounded-md p-2",
+                "border border-slate-300",
+                "text-sm placeholder:text-slate-400",
+                "focus:outline-none focus:ring-1 focus:ring-[var(--accent-primary)]",
+                "dark:border-slate-600",
+                isListening && "border-emerald-500 ring-1 ring-emerald-500"
+              )}
+            />
+          ) : (
+            <div
+              onClick={() => {
+                setIsEditing(true);
+                setTimeout(() => textareaRef.current?.focus(), 0);
+              }}
+              style={{
+                backgroundColor: isDark ? "black" : "white",
+                color: isDark ? "white" : "black"
+              }}
+              className={cn(
+                "w-full h-full rounded-md p-2 cursor-text overflow-auto",
+                "border border-slate-300",
+                "dark:border-slate-600",
+                isListening && "border-emerald-500 ring-1 ring-emerald-500"
+              )}
+            >
+              <CodeBlockRenderer
+                content={content}
+                placeholder="Enter a prompt..."
+                className="text-sm"
+              />
+            </div>
+          )}
           {/* Interim transcript overlay */}
           {interimTranscript && (
             <div

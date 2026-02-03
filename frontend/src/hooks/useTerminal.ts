@@ -6,7 +6,7 @@
 import * as React from "react";
 import { TerminalWSManager, type TerminalWSConfig } from "@/lib/ws";
 import type { ConnectionState } from "@/lib/ws";
-import type { TurnTakingState, AgentState, AudioEvent, TtsStatusEvent } from "@/types/terminal";
+import type { TurnTakingState, AgentState, AudioEvent, TtsStatusEvent, AgentStoppedEvent } from "@/types/terminal";
 
 export interface UseTerminalOptions {
   sessionId: string;
@@ -31,6 +31,8 @@ export interface UseTerminalActions {
   sendInput: (data: string) => boolean;
   /** Send raw bytes to the terminal */
   sendRawInput: (data: Uint8Array) => boolean;
+  /** Send text and execute atomically (server handles timing) */
+  sendExecute: (text: string) => boolean;
   /** Send resize command */
   sendResize: (cols: number, rows: number) => void;
   /** Take control of the terminal */
@@ -52,6 +54,8 @@ export interface UseTerminalCallbacks {
   onAudio?: (event: AudioEvent) => void;
   /** Called when TTS status is updated (from talkito) */
   onTtsStatus?: (event: TtsStatusEvent) => void;
+  /** Called when an agent finishes its turn (from native stop hooks) */
+  onAgentStopped?: (event: AgentStoppedEvent) => void;
 }
 
 const DEFAULT_TURN_TAKING: TurnTakingState = {
@@ -151,6 +155,11 @@ export function useTerminal(
       callbacksRef.current?.onTtsStatus?.(event);
     });
 
+    // Subscribe to agent stopped events (from native stop hooks)
+    const unsubAgentStopped = manager.onAgentStopped((event) => {
+      callbacksRef.current?.onAgentStopped?.(event);
+    });
+
     // Connect
     manager.connect();
 
@@ -165,6 +174,7 @@ export function useTerminal(
         { name: 'ptyClosed', fn: unsubPtyClosed },
         { name: 'audio', fn: unsubAudio },
         { name: 'ttsStatus', fn: unsubTtsStatus },
+        { name: 'agentStopped', fn: unsubAgentStopped },
       ];
 
       for (const { name, fn } of cleanups) {
@@ -192,6 +202,10 @@ export function useTerminal(
 
   const sendRawInput = React.useCallback((data: Uint8Array): boolean => {
     return managerRef.current?.sendRawInput(data) ?? false;
+  }, []);
+
+  const sendExecute = React.useCallback((text: string): boolean => {
+    return managerRef.current?.sendExecute(text) ?? false;
   }, []);
 
   const sendResize = React.useCallback((cols: number, rows: number) => {
@@ -233,6 +247,7 @@ export function useTerminal(
   const actions: UseTerminalActions = {
     sendInput,
     sendRawInput,
+    sendExecute,
     sendResize,
     takeControl,
     requestControl,

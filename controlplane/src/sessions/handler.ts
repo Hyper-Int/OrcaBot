@@ -1019,15 +1019,25 @@ export async function applySecretsToSession(
       ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
     `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
 
+    // Skip updateEnv call if there's nothing to do
+    const hasSecrets = Object.keys(secrets).length > 0;
+    const hasUnset = unset.length > 0;
+    const hasApprovedDomains = approvedDomains.length > 0;
+
+    if (!hasSecrets && !hasUnset && !hasApprovedDomains) {
+      // Nothing to apply - return success without calling sandbox
+      return Response.json({ applied: 0, approvedDomains: 0, unset: 0 });
+    }
+
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
     // Don't use applyNow - new PTYs will load from .env automatically
     // Existing PTYs can run `source ~/.env` if needed
     await sandbox.updateEnv(
       session.sandbox_session_id as string,
       {
-        secrets,
-        approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-        unset: unset.length > 0 ? unset : undefined,
+        secrets: hasSecrets ? secrets : undefined,
+        approvedDomains: hasApprovedDomains ? approvedDomains : undefined,
+        unset: hasUnset ? unset : undefined,
         applyNow: false,
       },
       (session.sandbox_machine_id as string) || undefined

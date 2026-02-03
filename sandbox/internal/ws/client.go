@@ -26,6 +26,7 @@ type ControlMessage struct {
 	Rows   uint16 `json:"rows,omitempty"`
 	To     string `json:"to,omitempty"`      // For grant_control
 	UserID string `json:"user_id,omitempty"` // For identifying sender
+	Text   string `json:"text,omitempty"`    // For execute
 }
 
 // Client represents a WebSocket client connected to a PTY
@@ -136,6 +137,12 @@ func (c *Client) handleCоntrоl(msg ControlMessage) {
 	case "revoke_control":
 		if c.userID != "" {
 			c.hub.RevоkeCоntrol(c.userID)
+		}
+
+	case "execute":
+		// Write text + CR atomically (server handles timing)
+		if c.userID != "" && msg.Text != "" {
+			c.hub.Execute(c.userID, msg.Text)
 		}
 
 	case "ping":

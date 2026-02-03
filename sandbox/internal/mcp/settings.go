@@ -27,7 +27,8 @@ type MCPServerConfig struct {
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
-	URL     string            `json:"url,omitempty"` // For remote servers
+	EnvVars []string          `json:"env_vars,omitempty"` // Env var names to forward from parent (Codex)
+	URL     string            `json:"url,omitempty"`      // For remote servers
 	Type    string            `json:"type,omitempty"`
 }
 
@@ -45,6 +46,8 @@ const (
 	AgentTypeGemini   AgentType = "gemini"
 	AgentTypeCodex    AgentType = "codex"
 	AgentTypeDroid    AgentType = "droid"
+	AgentTypeCopilot  AgentType = "copilot"
+	AgentTypeMoltbot  AgentType = "moltbot"
 	AgentTypeUnknown  AgentType = ""
 )
 
@@ -65,6 +68,12 @@ func DetectAgentType(command string) AgentType {
 		return AgentTypeCodex
 	case cmd == "droid" || strings.HasPrefix(cmd, "droid "):
 		return AgentTypeDroid
+	case cmd == "gh" || strings.HasPrefix(cmd, "gh copilot") || strings.HasPrefix(cmd, "copilot "):
+		return AgentTypeCopilot
+	case cmd == "moltbot" || strings.HasPrefix(cmd, "moltbot ") ||
+		cmd == "molt" || strings.HasPrefix(cmd, "molt ") ||
+		cmd == "clawdbot" || strings.HasPrefix(cmd, "clawdbot "):
+		return AgentTypeMoltbot
 	default:
 		return AgentTypeUnknown
 	}
@@ -90,6 +99,10 @@ func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userToo
 		return generateCodexSettings(workspaceRoot, servers)
 	case AgentTypeDroid:
 		return generateDroidSettings(workspaceRoot, servers)
+	case AgentTypeCopilot:
+		return generateCopilotSettings(workspaceRoot, servers)
+	case AgentTypeMoltbot:
+		return generateMoltbotSettings(workspaceRoot, servers)
 	default:
 		return nil
 	}
@@ -124,6 +137,14 @@ func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPToo
 		errs = append(errs, fmt.Errorf("droid: %w", err))
 	}
 
+	if err := generateCopilotSettings(workspaceRoot, servers); err != nil {
+		errs = append(errs, fmt.Errorf("copilot: %w", err))
+	}
+
+	if err := generateMoltbotSettings(workspaceRoot, servers); err != nil {
+		errs = append(errs, fmt.Errorf("moltbot: %w", err))
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("settings generation errors: %v", errs)
 	}
@@ -139,6 +160,7 @@ func buildServerConfigs(userTools []MCPTool) map[string]MCPServerConfig {
 	servers["orcabot"] = MCPServerConfig{
 		Command: "mcp-bridge",
 		Env:     map[string]string{},
+		EnvVars: []string{"ORCABOT_SESSION_ID", "ORCABOT_MCP_URL", "MCP_LOCAL_PORT", "ORCABOT_PTY_ID"},
 	}
 
 	// Add user-configured MCP tools
@@ -183,71 +205,91 @@ func buildServerConfigs(userTools []MCPTool) map[string]MCPServerConfig {
 	return servers
 }
 
-// generateClaudeSettings creates .mcp.json (Claude Code CLI reads MCP config from .mcp.json)
+// generateClaudeSettings merges MCP servers into ~/.claude/settings.json
+// This file also contains hooks, so we must merge rather than overwrite.
 func generateClaudeSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	settings := Settings{MCPServers: servers}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
+	claudeDir := filepath.Join(workspaceRoot, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(workspaceRoot, ".mcp.json"), data, 0644)
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+
+	// Read existing settings or create new
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	// Convert servers to interface{} map for merging
+	mcpServers := make(map[string]interface{})
+	for name, server := range servers {
+		serverMap := map[string]interface{}{
+			"command": server.Command,
+		}
+		if len(server.Args) > 0 {
+			serverMap["args"] = server.Args
+		}
+		if len(server.Env) > 0 {
+			serverMap["env"] = server.Env
+		} else {
+			serverMap["env"] = map[string]interface{}{}
+		}
+		if server.URL != "" {
+			serverMap["url"] = server.URL
+		}
+		if server.Type != "" {
+			serverMap["type"] = server.Type
+		}
+		mcpServers[name] = serverMap
+	}
+
+	// Merge our servers with existing ones (our servers take precedence)
+	existingServers, ok := settings["mcpServers"].(map[string]interface{})
+	if ok {
+		for name, server := range mcpServers {
+			existingServers[name] = server
+		}
+		settings["mcpServers"] = existingServers
+	} else {
+		settings["mcpServers"] = mcpServers
+	}
+
+	// Write back
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, data, 0644)
 }
 
 // OpenCodeConfig represents OpenCode's opencode.json structure
+// See: https://github.com/opencode-ai/opencode/blob/main/internal/config/config.go
 type OpenCodeConfig struct {
-	Schema string                       `json:"$schema"`
-	MCP    map[string]OpenCodeMCPServer `json:"mcp"`
+	MCPServers map[string]OpenCodeMCPServer `json:"mcpServers,omitempty"`
 }
 
 type OpenCodeMCPServer struct {
-	Type        string            `json:"type"`
-	Command     []string          `json:"command,omitempty"`
-	URL         string            `json:"url,omitempty"`
-	Enabled     bool              `json:"enabled"`
-	Environment map[string]string `json:"environment,omitempty"`
+	Type    string            `json:"type"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     []string          `json:"env"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// generateOpenCodeSettings creates ~/.config/opencode/opencode.json
+// generateOpenCodeSettings is a no-op for now.
+// OpenCode rewrites its config on startup, mangling MCP entries (drops type,
+// changes command format, renames fields), then fails to validate its own output.
+// TODO: revisit when OpenCode's config format stabilizes. Users can add MCP
+// servers at runtime via `opencode mcp add`.
 func generateOpenCodeSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	configDir := filepath.Join(workspaceRoot, ".config", "opencode")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return err
-	}
-
-	mcpServers := make(map[string]OpenCodeMCPServer)
-	for name, server := range servers {
-		ocServer := OpenCodeMCPServer{
-			Enabled: true,
-		}
-
-		if server.URL != "" {
-			// Remote server (SSE or streamable-http)
-			ocServer.Type = "remote"
-			ocServer.URL = server.URL
-		} else if server.Command != "" {
-			// Local stdio server - command is an array [command, ...args]
-			ocServer.Type = "local"
-			ocServer.Command = append([]string{server.Command}, server.Args...)
-			if len(server.Env) > 0 {
-				ocServer.Environment = server.Env
-			}
-		}
-
-		mcpServers[name] = ocServer
-	}
-
-	config := OpenCodeConfig{
-		Schema: "https://opencode.ai/config.json",
-		MCP:    mcpServers,
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(filepath.Join(configDir, "opencode.json"), data, 0644)
+	return nil
 }
 
 // GeminiSettings represents Gemini's settings.json structure
@@ -295,15 +337,22 @@ func generateCodexSettings(workspaceRoot string, servers map[string]MCPServerCon
 		return err
 	}
 
+	fmt.Fprintf(os.Stderr, "[DEBUG] generateCodexSettings v2: codexDir=%s (env_vars+bare_keys)\n", codexDir)
+
 	var sb strings.Builder
-	sb.WriteString("# Codex MCP configuration (auto-generated by OrcaBot)\n\n")
+	sb.WriteString("# Codex MCP configuration (auto-generated by OrcaBot v2)\n\n")
 
 	for name, server := range servers {
 		if server.Command == "" {
 			continue // Skip non-stdio servers for TOML format
 		}
 
-		sb.WriteString(fmt.Sprintf("[mcp_servers.%q]\n", name))
+		// Use bare key if valid (alphanumeric, dash, underscore), otherwise quote
+		if isBareKey(name) {
+			sb.WriteString(fmt.Sprintf("[mcp_servers.%s]\n", name))
+		} else {
+			sb.WriteString(fmt.Sprintf("[mcp_servers.%q]\n", name))
+		}
 		sb.WriteString(fmt.Sprintf("command = %q\n", server.Command))
 
 		if len(server.Args) > 0 {
@@ -322,6 +371,15 @@ func generateCodexSettings(workspaceRoot string, servers map[string]MCPServerCon
 			}
 			sb.WriteString(strings.Join(envPairs, ", "))
 			sb.WriteString(" }\n")
+		}
+
+		// env_vars: list of env var names to forward from parent process
+		if len(server.EnvVars) > 0 {
+			varsQuoted := make([]string, len(server.EnvVars))
+			for i, v := range server.EnvVars {
+				varsQuoted[i] = fmt.Sprintf("%q", v)
+			}
+			sb.WriteString(fmt.Sprintf("env_vars = [%s]\n", strings.Join(varsQuoted, ", ")))
 		}
 
 		sb.WriteString("\n")
@@ -382,6 +440,107 @@ func generateDroidSettings(workspaceRoot string, servers map[string]MCPServerCon
 	return os.WriteFile(filepath.Join(factoryDir, "mcp.json"), data, 0644)
 }
 
+// CopilotConfig represents GitHub Copilot CLI's MCP configuration
+// See: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli
+type CopilotConfig struct {
+	MCPServers map[string]CopilotMCPServer `json:"mcpServers"`
+}
+
+type CopilotMCPServer struct {
+	Type    string            `json:"type"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Tools   []string          `json:"tools,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// generateCopilotSettings creates .copilot/mcp-config.json
+func generateCopilotSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
+	// Copilot CLI reads MCP config from .copilot/mcp-config.json in the repo root
+	copilotDir := filepath.Join(workspaceRoot, ".copilot")
+	if err := os.MkdirAll(copilotDir, 0755); err != nil {
+		return err
+	}
+
+	mcpServers := make(map[string]CopilotMCPServer)
+	for name, server := range servers {
+		if server.Command != "" {
+			mcpServers[name] = CopilotMCPServer{
+				Type:    "local",
+				Command: server.Command,
+				Args:    server.Args,
+				Tools:   []string{"*"},
+				Env:     server.Env,
+			}
+		}
+	}
+
+	config := CopilotConfig{MCPServers: mcpServers}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(copilotDir, "mcp-config.json"), data, 0644)
+}
+
+// MoltbotConfig represents Moltbot/Clawdbot's MCP configuration
+type MoltbotConfig struct {
+	MCPServers map[string]MoltbotMCPServer `json:"mcpServers"`
+}
+
+type MoltbotMCPServer struct {
+	Type    string   `json:"type"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	URL     string   `json:"url,omitempty"`
+}
+
+// generateMoltbotSettings creates .openclaw/mcp.json
+func generateMoltbotSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
+	openclawDir := filepath.Join(workspaceRoot, ".openclaw")
+	if err := os.MkdirAll(openclawDir, 0755); err != nil {
+		return err
+	}
+
+	mcpServers := make(map[string]MoltbotMCPServer)
+	for name, server := range servers {
+		moltServer := MoltbotMCPServer{}
+
+		if server.URL != "" {
+			moltServer.Type = "http"
+			moltServer.URL = server.URL
+		} else {
+			moltServer.Type = "stdio"
+			moltServer.Command = server.Command
+			moltServer.Args = server.Args
+		}
+
+		mcpServers[name] = moltServer
+	}
+
+	config := MoltbotConfig{MCPServers: mcpServers}
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(openclawDir, "mcp.json"), data, 0644)
+}
+
+// isBareKey returns true if the string is valid as a TOML bare key (A-Za-z0-9_-)
+func isBareKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // ReadSettings reads the current Claude settings file if it exists
 func ReadSettings(workspaceRoot string) (*Settings, error) {
 	settingsPath := filepath.Join(workspaceRoot, ".mcp.json")
@@ -434,6 +593,12 @@ func UpdateSettings(workspaceRoot string, newServers map[string]MCPServerConfig)
 	}
 	if err := generateDroidSettings(workspaceRoot, settings.MCPServers); err != nil {
 		errs = append(errs, fmt.Errorf("droid: %w", err))
+	}
+	if err := generateCopilotSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("copilot: %w", err))
+	}
+	if err := generateMoltbotSettings(workspaceRoot, settings.MCPServers); err != nil {
+		errs = append(errs, fmt.Errorf("moltbot: %w", err))
 	}
 
 	if len(errs) > 0 {

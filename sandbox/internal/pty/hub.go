@@ -62,6 +62,17 @@ type TalkitoNoticeEvent struct {
 	Category string `json:"category,omitempty"` // e.g. "tts"
 }
 
+// AgentStoppedEvent is broadcast when an agentic coder finishes its turn.
+// This event is triggered by native stop hooks from Claude Code, Gemini CLI,
+// GitHub Copilot CLI, OpenCode, Moltbot, Droid, and Codex CLI.
+type AgentStoppedEvent struct {
+	Type        string `json:"type"`        // always "agent_stopped"
+	Agent       string `json:"agent"`       // claude-code, gemini, codex, etc.
+	LastMessage string `json:"lastMessage"` // the agent's final response (truncated to 4KB)
+	Reason      string `json:"reason"`      // complete, interrupted, error, unknown
+	Timestamp   string `json:"timestamp"`   // ISO 8601 timestamp
+}
+
 // IdleTimeout is how long a hub stays alive with no connected clients.
 // After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
 const IdleTimeout = 60 * time.Second
@@ -102,20 +113,29 @@ type Hub struct {
 	secretValues   []string   // Secret values to redact from output
 	secretsMu      sync.RWMutex
 	redactionTail  []byte     // Buffer to handle secrets split across chunks
+
+	// Scrollback ring buffer: stores last scrollbackMax bytes of PTY output (post-redaction).
+	// Used as fallback when agent transcript doesn't contain the text response.
+	scrollbackMu  sync.Mutex
+	scrollback    []byte
+	scrollbackPos int // write position in ring buffer
+	scrollbackMax int // capacity (default 64KB)
 }
 
 // NewHub creates a new Hub for the given PTY.
 // If creatorID is provided, they are automatically assigned control.
 func NewHub(p *PTY, creatorID string) *Hub {
 	h := &Hub{
-		pty:          p,
-		turn:         NewTurnController(),
-		clients:      make(map[chan HubMessage]*ClientInfo),
-		register:     make(chan *ClientInfo),
-		unregister:   make(chan chan HubMessage),
-		stop:         make(chan struct{}),
-		readLoopDone: make(chan struct{}),
-		idleChan:     make(chan struct{}),
+		pty:           p,
+		turn:          NewTurnController(),
+		clients:       make(map[chan HubMessage]*ClientInfo),
+		register:      make(chan *ClientInfo),
+		unregister:    make(chan chan HubMessage),
+		stop:          make(chan struct{}),
+		readLoopDone:  make(chan struct{}),
+		idleChan:      make(chan struct{}),
+		scrollbackMax: 64 * 1024, // 64KB ring buffer
+		scrollback:    make([]byte, 64*1024),
 	}
 
 	// Set up callback to broadcast when controller's grace period expires
@@ -249,6 +269,9 @@ func (h *Hub) broadcast(data []byte) {
 	if len(data) == 0 {
 		return
 	}
+
+	// Store in scrollback ring buffer (post-redaction)
+	h.appendScrollback(data)
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -413,6 +436,38 @@ func (h *Hub) Write(userID string, data []byte) (int, error) {
 		return 0, nil // Silently drop input from non-controllers
 	}
 	return h.pty.Write(data)
+}
+
+// Execute sends text to PTY followed by CR after a brief delay.
+// The delay allows the terminal to process the text before execution.
+// Only the controller can execute commands.
+func (h *Hub) Execute(userID string, text string) (int, error) {
+	h.mu.RLock()
+	agentMode := h.agentMode
+	agentRunning := h.agentRunning
+	h.mu.RUnlock()
+
+	// In agent mode, block human input while agent is running
+	if agentMode && agentRunning {
+		return 0, nil // Silently drop - agent has exclusive control
+	}
+
+	if !h.turn.IsController(userID) {
+		return 0, nil // Silently drop input from non-controllers
+	}
+
+	// Write text first
+	n, err := h.pty.Write([]byte(text))
+	if err != nil {
+		return n, err
+	}
+
+	// Brief delay to let terminal process the text
+	time.Sleep(50 * time.Millisecond)
+
+	// Send CR to execute
+	_, err = h.pty.Write([]byte{0x0D})
+	return n, err
 }
 
 // WriteAgent sends input to the PTY from the agent process.
@@ -673,6 +728,18 @@ func (h *Hub) BroadcastTalkitoNotice(event TalkitoNoticeEvent) {
 	h.broadcastControl(data)
 }
 
+// BroadcastAgentStopped sends an agent stopped event to all clients.
+// This is called when an agentic coder's native stop hook fires.
+func (h *Hub) BroadcastAgentStopped(event AgentStoppedEvent) {
+	event.Type = "agent_stopped"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal agent stopped event: %v", err)
+		return
+	}
+	h.broadcastControl(data)
+}
+
 // SetSecretValues updates the list of secret values to redact from output.
 // Values shorter than 8 characters are ignored to prevent false positives.
 func (h *Hub) SetSecretValues(values []string) {
@@ -741,4 +808,118 @@ func (h *Hub) redactSecrets(data []byte) []byte {
 	}
 
 	return result
+}
+
+// appendScrollback writes data to the ring buffer.
+func (h *Hub) appendScrollback(data []byte) {
+	h.scrollbackMu.Lock()
+	defer h.scrollbackMu.Unlock()
+
+	for _, b := range data {
+		h.scrollback[h.scrollbackPos%h.scrollbackMax] = b
+		h.scrollbackPos++
+	}
+}
+
+// Scrollback returns the recent PTY output from the ring buffer, with ANSI escape codes stripped.
+func (h *Hub) Scrollback(maxBytes int) string {
+	h.scrollbackMu.Lock()
+	defer h.scrollbackMu.Unlock()
+
+	total := h.scrollbackPos
+	if total == 0 {
+		return ""
+	}
+
+	size := total
+	if size > h.scrollbackMax {
+		size = h.scrollbackMax
+	}
+	if maxBytes > 0 && size > maxBytes {
+		size = maxBytes
+	}
+
+	// Read from ring buffer in order
+	out := make([]byte, size)
+	start := h.scrollbackPos - size
+	if start < 0 {
+		start = 0
+	}
+	for i := 0; i < size; i++ {
+		out[i] = h.scrollback[(start+i)%h.scrollbackMax]
+	}
+
+	return stripANSI(string(out))
+}
+
+// stripANSI removes ANSI escape sequences and control characters from a string.
+// Handles CSI, OSC, DCS, PM, APC sequences and C0/C1 control codes.
+func stripANSI(s string) string {
+	var result []byte
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b { // ESC
+			i++
+			if i >= len(s) {
+				break
+			}
+			switch s[i] {
+			case '[':
+				// CSI sequence: ESC [ ... <final byte 0x40-0x7e>
+				i++
+				for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
+					i++
+				}
+				if i < len(s) {
+					i++ // skip the final byte
+				}
+			case ']':
+				// OSC sequence: skip until ST (ESC \ or BEL)
+				i++
+				for i < len(s) {
+					if s[i] == 0x07 { // BEL
+						i++
+						break
+					}
+					if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+			case 'P', '^', '_':
+				// DCS (P), PM (^), APC (_): skip until ST
+				i++
+				for i < len(s) {
+					if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					if s[i] == 0x07 {
+						i++
+						break
+					}
+					i++
+				}
+			default:
+				i++ // skip single char after ESC (e.g., ESC =, ESC >)
+			}
+		} else if s[i] == 0x9b {
+			// C1 CSI (0x9b): same as ESC [
+			i++
+			for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+		} else if s[i] < 0x20 && s[i] != '\n' && s[i] != '\r' && s[i] != '\t' {
+			// Strip C0 control chars except newline, CR, tab
+			i++
+		} else {
+			result = append(result, s[i])
+			i++
+		}
+	}
+	return string(result)
 }

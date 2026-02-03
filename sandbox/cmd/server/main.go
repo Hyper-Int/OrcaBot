@@ -169,6 +169,12 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// TTS status - allows talkito to emit TTS config status without auth (localhost only)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/status", s.handleTtsStatusEvent)
 
+	// Agent stopped - allows agent stop hooks to notify when agent finishes (localhost only)
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/agent-stopped", s.handleAgentStopped)
+
+	// PTY scrollback - returns recent terminal output (localhost only, used by stop hooks as fallback)
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.handleScrollback)
+
 	return mux
 }
 
@@ -718,4 +724,74 @@ func (s *Server) handleTtsStatusEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAgentStopped broadcasts an agent_stopped event to all WebSocket clients of a PTY.
+// This is called by native stop hooks from agentic coders (Claude Code, Gemini CLI, etc.)
+func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79734: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Agent       string `json:"agent"`
+		LastMessage string `json:"lastMessage"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79735: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate and default values
+	if req.Agent == "" {
+		req.Agent = "unknown"
+	}
+	if req.Reason == "" {
+		req.Reason = "complete"
+	}
+
+	// Truncate last message to 4KB
+	if len(req.LastMessage) > 4096 {
+		req.LastMessage = req.LastMessage[:4096]
+	}
+
+	hub.BroadcastAgentStopped(pty.AgentStoppedEvent{
+		Agent:       req.Agent,
+		LastMessage: req.LastMessage,
+		Reason:      req.Reason,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleScrollback returns recent PTY output from the scrollback ring buffer.
+// Used by agent stop hooks as a fallback when the transcript doesn't contain the text response.
+func (s *Server) handleScrollback(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79736: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	// Return last 16KB of scrollback (ANSI stripped)
+	text := hub.Scrollback(16 * 1024)
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(text))
 }
