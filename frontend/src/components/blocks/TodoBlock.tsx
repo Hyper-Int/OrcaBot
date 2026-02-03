@@ -1,16 +1,33 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: todo-settings-v1-font-size-duplicate
 
 "use client";
 
+const TODO_BLOCK_REVISION = "todo-settings-v1-font-size-duplicate";
+console.log(`[TodoBlock] REVISION: ${TODO_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Plus, Check, X, CheckSquare, Minimize2 } from "lucide-react";
+import { Plus, Check, X, CheckSquare, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
-import { Badge, Button } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
@@ -21,13 +38,23 @@ interface TodoItem {
   completed: boolean;
 }
 
+type FontSizeSetting = "small" | "medium" | "large" | "xlarge";
+
+const FONT_SIZES: Record<FontSizeSetting, { label: string; className: string }> = {
+  small:  { label: "Small",  className: "text-[10px]" },
+  medium: { label: "Medium", className: "text-sm" },
+  large:  { label: "Large",  className: "text-base" },
+  xlarge: { label: "X-Large", className: "text-lg" },
+};
+
 interface TodoData extends Record<string, unknown> {
   content: string; // JSON stringified array of TodoItem
   title?: string;
   size: { width: number; height: number };
-  metadata?: { minimized?: boolean; [key: string]: unknown };
+  metadata?: { minimized?: boolean; fontSize?: FontSizeSetting; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -59,6 +86,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
   const [items, setItems] = React.useState<TodoItem[]>(initialParsed.items);
   const [newItemText, setNewItemText] = React.useState("");
   const [isAdding, setIsAdding] = React.useState(false);
+  const fontSizeSetting = (data.metadata?.fontSize as FontSizeSetting) || "medium";
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
@@ -116,6 +144,15 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
   );
 
   const completedCount = items.filter((item) => item.completed).length;
+
+  const handleFontSizeChange = React.useCallback(
+    (value: string) => {
+      data.onItemChange?.({
+        metadata: { ...data.metadata, fontSize: value as FontSizeSetting },
+      });
+    },
+    [data]
+  );
 
   const addItem = () => {
     if (newItemText.trim()) {
@@ -212,6 +249,38 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
             <Badge variant="secondary" size="sm" title={`${completedCount} of ${items.length} items completed`}>
               {completedCount}/{items.length}
             </Badge>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">
+                  <Settings className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="gap-2">
+                    <span>Font Size</span>
+                    <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
+                      {FONT_SIZES[fontSizeSetting].label}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={fontSizeSetting}
+                      onValueChange={handleFontSizeChange}
+                    >
+                      {Object.entries(FONT_SIZES).map(([key, { label }]) => (
+                        <DropdownMenuRadioItem key={key} value={key}>{label}</DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                  <Copy className="w-3 h-3" />
+                  <span>Duplicate</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -245,7 +314,8 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
             </button>
             <span
               className={cn(
-                "flex-1 text-sm",
+                "flex-1",
+                FONT_SIZES[fontSizeSetting].className,
                 item.completed
                   ? "text-[var(--foreground-subtle)] line-through"
                   : "text-[var(--foreground)]"
@@ -282,13 +352,13 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
                 if (!newItemText.trim()) setIsAdding(false);
               }}
               placeholder="New item..."
-              className="flex-1 text-sm bg-transparent text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)] focus:outline-none"
+              className={cn("flex-1 bg-transparent text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)] focus:outline-none", FONT_SIZES[fontSizeSetting].className)}
             />
           </div>
         ) : (
           <button
             onClick={() => setIsAdding(true)}
-            className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--background-hover)] rounded transition-colors"
+            className={cn("flex items-center gap-2 w-full px-2 py-1.5 text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:bg-[var(--background-hover)] rounded transition-colors", FONT_SIZES[fontSizeSetting].className)}
             title="Add new todo item"
           >
             <Plus className="w-4 h-4" />

@@ -155,13 +155,14 @@ const terminalTools: BlockTool[] = [
     icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "codex", agentic: true },
   },
-  {
-    type: "terminal",
-    label: "OpenCode",
-    icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "opencode", agentic: true },
-  },
-  // GitHub Copilot CLI - hidden until hooks integration is complete
+  // OpenCode - temporarily hidden until connection issues are resolved
+  // {
+  //   type: "terminal",
+  //   label: "OpenCode",
+  //   icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
+  //   terminalPreset: { command: "opencode", agentic: true },
+  // },
+  // GitHub Copilot CLI - temporarily hidden until hooks integration is complete
   // {
   //   type: "terminal",
   //   label: "GitHub Copilot CLI",
@@ -1373,6 +1374,21 @@ export default function DashboardPage() {
     [createItemMutation]
   );
 
+  const handleDuplicate = React.useCallback(
+    (itemId: string) => {
+      const item = items.find((i) => i.id === itemId);
+      if (!item) return;
+      createItemMutation.mutate({
+        type: item.type,
+        content: item.content,
+        position: { x: item.position.x + 30, y: item.position.y + 30 },
+        size: { ...item.size },
+        metadata: item.metadata ? { ...item.metadata, minimized: false } : undefined,
+      });
+    },
+    [items, createItemMutation]
+  );
+
   const handleBrowserOpen = React.useCallback(
     (url: string) => {
       if (!url) return;
@@ -2329,6 +2345,7 @@ export default function DashboardPage() {
               onPolicyUpdate={handlePolicyUpdate}
               onIntegrationAttached={handleIntegrationAttached}
               onStorageLinked={handleStorageLinked}
+              onDuplicate={role === "viewer" ? undefined : handleDuplicate}
             />
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}

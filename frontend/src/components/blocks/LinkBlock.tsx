@@ -5,12 +5,18 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { ExternalLink, Globe, Link, Minimize2 } from "lucide-react";
+import { ExternalLink, Globe, Link, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface LinkData extends Record<string, unknown> {
@@ -21,6 +27,7 @@ interface LinkData extends Record<string, unknown> {
   size: { width: number; height: number };
   metadata?: { minimized?: boolean; [key: string]: unknown };
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -131,6 +138,19 @@ export function LinkBlock({ id, data, selected }: NodeProps<LinkNode>) {
           <span className="text-xs text-[var(--foreground-subtle)] truncate flex-1">
             {hostname}
           </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings" onClick={(e) => e.stopPropagation()}>
+                <Settings className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-36">
+              <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                <Copy className="w-3 h-3" />
+                <span>Duplicate</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="ghost"
             size="icon-sm"

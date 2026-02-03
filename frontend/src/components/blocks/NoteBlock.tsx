@@ -1,30 +1,63 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: note-settings-v2-color-picker
 
 "use client";
 
+const NOTE_BLOCK_REVISION = "note-settings-v2-color-picker";
+console.log(`[NoteBlock] REVISION: ${NOTE_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { StickyNote, Minimize2 } from "lucide-react";
+import { StickyNote, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { CodeBlockRenderer } from "./CodeBlockRenderer";
 import type { DashboardItem } from "@/types/dashboard";
 
 type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
+type FontSizeSetting = "small" | "medium" | "large" | "xlarge";
+
+const FONT_SIZES: Record<FontSizeSetting, { label: string; className: string }> = {
+  small:  { label: "Small",  className: "text-[10px]" },
+  medium: { label: "Medium", className: "text-sm" },
+  large:  { label: "Large",  className: "text-base" },
+  xlarge: { label: "X-Large", className: "text-lg" },
+};
+
+const NOTE_COLORS: Record<NoteColor, { label: string; dot: string }> = {
+  yellow: { label: "Yellow", dot: "bg-amber-400" },
+  blue:   { label: "Blue",   dot: "bg-blue-400" },
+  green:  { label: "Green",  dot: "bg-emerald-400" },
+  pink:   { label: "Pink",   dot: "bg-pink-400" },
+  purple: { label: "Purple", dot: "bg-violet-400" },
+};
 
 interface NoteData extends Record<string, unknown> {
   content: string;
   color?: NoteColor;
   size: { width: number; height: number };
-  metadata?: { minimized?: boolean; [key: string]: unknown };
+  metadata?: { minimized?: boolean; fontSize?: FontSizeSetting; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -44,6 +77,7 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
   const [isEditing, setIsEditing] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const color = data.color || "yellow";
+  const fontSizeSetting = (data.metadata?.fontSize as FontSizeSetting) || "medium";
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
 
@@ -104,6 +138,24 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
     [debouncedUpdate]
   );
 
+  const handleFontSizeChange = React.useCallback(
+    (value: string) => {
+      data.onItemChange?.({
+        metadata: { ...data.metadata, fontSize: value as FontSizeSetting },
+      });
+    },
+    [data]
+  );
+
+  const handleColorChange = React.useCallback(
+    (value: string) => {
+      data.onItemChange?.({
+        metadata: { ...data.metadata, color: value as NoteColor },
+      });
+    },
+    [data]
+  );
+
   // Register handlers for incoming data from connections (both left and top inputs)
   const connectionFlow = useConnectionDataFlow();
   React.useEffect(() => {
@@ -157,16 +209,71 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
     >
       {/* All content fades during minimize */}
       <div className={cn("flex flex-col flex-1", isAnimatingMinimize && "animate-content-fade-out")}>
-        {/* Minimize button */}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={handleMinimize}
-          title="Minimize"
-          className="nodrag absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-5 w-5"
-        >
-          <Minimize2 className="w-3 h-3" />
-        </Button>
+        {/* Header controls */}
+        <div className="nodrag absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="h-5 w-5" title="Settings">
+                <Settings className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-36">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <span>Font Size</span>
+                  <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
+                    {FONT_SIZES[fontSizeSetting].label}
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={fontSizeSetting}
+                    onValueChange={handleFontSizeChange}
+                  >
+                    {Object.entries(FONT_SIZES).map(([key, { label }]) => (
+                      <DropdownMenuRadioItem key={key} value={key}>{label}</DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <span>Color</span>
+                  <span className="ml-auto">
+                    <span className={cn("inline-block w-2.5 h-2.5 rounded-full", NOTE_COLORS[color].dot)} />
+                  </span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={color}
+                    onValueChange={handleColorChange}
+                  >
+                    {Object.entries(NOTE_COLORS).map(([key, { label, dot }]) => (
+                      <DropdownMenuRadioItem key={key} value={key} className="gap-2">
+                        <span className={cn("inline-block w-2.5 h-2.5 rounded-full", dot)} />
+                        {label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                <Copy className="w-3 h-3" />
+                <span>Duplicate</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleMinimize}
+            title="Minimize"
+            className="h-5 w-5"
+          >
+            <Minimize2 className="w-3 h-3" />
+          </Button>
+        </div>
         {isEditing ? (
           <textarea
             ref={textareaRef}
@@ -176,7 +283,8 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
             placeholder="Write a note..."
             className={cn(
               "w-full flex-1 bg-transparent resize-none",
-              "text-sm text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
+              FONT_SIZES[fontSizeSetting].className,
+              "text-[var(--foreground)] placeholder:text-[var(--foreground-subtle)]",
               "focus:outline-none"
             )}
           />
@@ -192,7 +300,7 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
             <CodeBlockRenderer
               content={content}
               placeholder="Write a note..."
-              className="text-sm text-[var(--foreground)]"
+              className={cn(FONT_SIZES[fontSizeSetting].className, "text-[var(--foreground)]")}
             />
           </div>
         )}

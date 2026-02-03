@@ -84,7 +84,8 @@ function itemsToNodes(
   connectorMode?: boolean,
   onPolicyUpdate?: (terminalItemId: string, provider: string, securityLevel: string) => void,
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void,
-  onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void
+  onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
+  onDuplicate?: (itemId: string) => void
 ): Node[] {
   const workspaceSession =
     sessions.find((s) => s.status === "active")
@@ -142,6 +143,8 @@ function itemsToNodes(
         onStorageLinked: item.type === "workspace" && onStorageLinked
           ? (provider: "google_drive" | "onedrive" | "box" | "github") => onStorageLinked(item.id, provider)
           : undefined,
+        // Duplicate this block
+        onDuplicate: onDuplicate ? () => onDuplicate(item.id) : undefined,
       },
       style: {
         width: item.size.width,
@@ -174,6 +177,8 @@ interface CanvasProps {
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void;
   /** Called when cloud storage is linked to workspace, to auto-attach to connected terminals */
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void;
+  /** Called when a block wants to duplicate itself */
+  onDuplicate?: (itemId: string) => void;
 }
 
 export function Canvas({
@@ -196,6 +201,7 @@ export function Canvas({
   onPolicyUpdate,
   onIntegrationAttached,
   onStorageLinked,
+  onDuplicate,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
@@ -240,7 +246,8 @@ export function Canvas({
         connectorMode,
         onPolicyUpdate,
         onIntegrationAttached,
-        onStorageLinked
+        onStorageLinked,
+        readOnly ? undefined : onDuplicate
       )
     );
     return [...baseNodes, ...extraNodes];
@@ -284,11 +291,12 @@ export function Canvas({
         connectorMode,
         onPolicyUpdate,
         onIntegrationAttached,
-        onStorageLinked
+        onStorageLinked,
+        readOnly ? undefined : onDuplicate
       )
     );
     setNodes([...baseNodes, ...extraNodes]);
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onStorageLinked]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onStorageLinked, onDuplicate]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));

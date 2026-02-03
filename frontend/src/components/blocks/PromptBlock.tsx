@@ -5,12 +5,18 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Play, MessageSquare, Minimize2, Mic } from "lucide-react";
+import { Play, MessageSquare, Minimize2, Mic, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { useThemeStore } from "@/stores/theme-store";
@@ -25,6 +31,7 @@ interface PromptData extends Record<string, unknown> {
   metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -157,14 +164,10 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   React.useEffect(() => {
     if (!connectionFlow) return;
 
-    const handler = (payload: { text?: string; execute?: boolean }) => {
-      if (payload.text) {
-        handleContentChange(payload.text);
-      }
-      // When receiving execute signal, fire current content to outputs
-      if (payload.execute) {
-        handleGo();
-      }
+    const handler = (_payload: { text?: string; execute?: boolean }) => {
+      // Input events trigger the prompt to fire its current content to outputs,
+      // same as pressing the Go button. Content is NOT overwritten by incoming text.
+      handleGo();
     };
 
     const cleanupLeft = connectionFlow.registerInputHandler(id, "left-in", handler);
@@ -174,7 +177,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
       cleanupLeft();
       cleanupTop();
     };
-  }, [id, connectionFlow, handleContentChange, handleGo]);
+  }, [id, connectionFlow, handleGo]);
 
   // Handle Ctrl/Cmd+Enter to fire
   const handleKeyDown = React.useCallback(
@@ -221,6 +224,19 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
           <span>Prompt</span>
           <div className="flex items-center gap-1">
             <ASRSettingsDialog />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5 text-white hover:text-white hover:bg-white/20" title="Settings">
+                  <Settings className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                  <Copy className="w-3 h-3" />
+                  <span>Duplicate</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="ghost"
               size="icon-sm"
