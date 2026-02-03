@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v9-gmail-response-format
-console.log(`[integration-gateway] REVISION: gateway-v9-gmail-response-format loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v10-strip-tracking-urls
+console.log(`[integration-gateway] REVISION: gateway-v10-strip-tracking-urls loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -904,8 +904,12 @@ function formatSingleGmailMessage(msg: RawGmailMessage): Record<string, unknown>
   const getHeader = (name: string): string | undefined =>
     headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value;
 
-  // Extract body text from the message payload
-  const bodyText = extractMessageBody(msg.payload);
+  // Extract body text from the message payload, capped at 4KB for LLM context efficiency
+  let bodyText = extractMessageBody(msg.payload);
+  const MAX_BODY_LENGTH = 4096;
+  if (bodyText.length > MAX_BODY_LENGTH) {
+    bodyText = bodyText.slice(0, MAX_BODY_LENGTH) + '\n[... truncated]';
+  }
 
   return {
     id: msg.id,
@@ -986,6 +990,8 @@ function stripHtml(html: string): string {
     // Remove style/script blocks entirely
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    // Remove hidden/tracking elements (1x1 images, display:none, etc.)
+    .replace(/<img[^>]*(?:width\s*=\s*["']1["']|height\s*=\s*["']1["'])[^>]*>/gi, '')
     // Replace block elements with newlines
     .replace(/<\/(p|div|tr|li|h[1-6]|blockquote)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -998,8 +1004,12 @@ function stripHtml(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCharCode(parseInt(dec)))
+    // Remove bare URLs on their own lines (tracking links, long encoded URLs)
+    .replace(/^\s*https?:\/\/\S+\s*$/gm, '')
+    // Remove remaining inline URLs longer than 100 chars (tracking URLs)
+    .replace(/https?:\/\/\S{100,}/g, '')
     // Collapse whitespace
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')

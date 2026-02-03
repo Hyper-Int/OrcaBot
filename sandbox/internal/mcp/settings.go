@@ -70,7 +70,8 @@ func DetectAgentType(command string) AgentType {
 		return AgentTypeDroid
 	case cmd == "gh" || strings.HasPrefix(cmd, "gh copilot") || strings.HasPrefix(cmd, "copilot "):
 		return AgentTypeCopilot
-	case cmd == "moltbot" || strings.HasPrefix(cmd, "moltbot ") ||
+	case cmd == "openclaw" || strings.HasPrefix(cmd, "openclaw ") ||
+		cmd == "moltbot" || strings.HasPrefix(cmd, "moltbot ") ||
 		cmd == "molt" || strings.HasPrefix(cmd, "molt ") ||
 		cmd == "clawdbot" || strings.HasPrefix(cmd, "clawdbot "):
 		return AgentTypeMoltbot
@@ -484,7 +485,7 @@ func generateCopilotSettings(workspaceRoot string, servers map[string]MCPServerC
 	return os.WriteFile(filepath.Join(copilotDir, "mcp-config.json"), data, 0644)
 }
 
-// MoltbotConfig represents Moltbot/Clawdbot's MCP configuration
+// MoltbotConfig represents OpenClaw's MCP configuration
 type MoltbotConfig struct {
 	MCPServers map[string]MoltbotMCPServer `json:"mcpServers"`
 }
