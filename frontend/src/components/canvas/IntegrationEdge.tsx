@@ -1,6 +1,9 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: integration-edge-v1-clickable-labels
+console.log(`[IntegrationEdge] REVISION: integration-edge-v1-clickable-labels loaded at ${new Date().toISOString()}`);
+
 "use client";
 
 import * as React from "react";
@@ -10,7 +13,6 @@ import {
   getSmoothStepPath,
   type EdgeProps,
 } from "@xyflow/react";
-// Shield icons removed - using text-only labels now
 import { cn } from "@/lib/utils";
 import type { SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 
@@ -18,6 +20,14 @@ export interface IntegrationEdgeData {
   securityLevel?: SecurityLevel;
   provider?: string;
 }
+
+/**
+ * Context for edge label click handlers.
+ * Provided by Canvas, consumed by IntegrationEdge.
+ */
+export const EdgeLabelClickContext = React.createContext<
+  ((edgeId: string, provider: string) => void) | null
+>(null);
 
 export function IntegrationEdge({
   id,
@@ -33,6 +43,8 @@ export function IntegrationEdge({
 }: EdgeProps) {
   const edgeData = data as IntegrationEdgeData | undefined;
   const securityLevel = edgeData?.securityLevel;
+  const provider = edgeData?.provider;
+  const onLabelClick = React.useContext(EdgeLabelClickContext);
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -48,17 +60,17 @@ export function IntegrationEdge({
     switch (level) {
       case "restricted":
         return {
-          bg: "bg-green-500/20 border-green-500/50 text-green-700",
+          bg: "bg-green-500/20 border-green-500/50 text-green-700 hover:bg-green-500/30",
           label: "Read-only",
         };
       case "elevated":
         return {
-          bg: "bg-yellow-500/20 border-yellow-500/50 text-yellow-700",
+          bg: "bg-yellow-500/20 border-yellow-500/50 text-yellow-700 hover:bg-yellow-500/30",
           label: "Elevated",
         };
       case "full":
         return {
-          bg: "bg-red-500/20 border-red-500/50 text-red-700",
+          bg: "bg-red-500/20 border-red-500/50 text-red-700 hover:bg-red-500/30",
           label: "Full access",
         };
       default:
@@ -67,6 +79,16 @@ export function IntegrationEdge({
   };
 
   const badgeStyle = getBadgeStyle(securityLevel);
+
+  const handleClick = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (onLabelClick && provider) {
+        onLabelClick(id, provider);
+      }
+    },
+    [onLabelClick, id, provider]
+  );
 
   return (
     <>
@@ -83,10 +105,13 @@ export function IntegrationEdge({
           >
             <div
               className={cn(
-                "px-2 py-0.5 rounded-full border text-[9px] font-medium",
+                "px-2 py-0.5 rounded-full border text-[9px] font-medium transition-colors",
                 "bg-[var(--background)] shadow-sm",
+                onLabelClick ? "cursor-pointer" : "",
                 badgeStyle.bg
               )}
+              onClick={handleClick}
+              title={onLabelClick ? "Click to edit policy" : undefined}
             >
               {badgeStyle.label}
             </div>

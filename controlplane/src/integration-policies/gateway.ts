@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v10-strip-tracking-urls
-console.log(`[integration-gateway] REVISION: gateway-v10-strip-tracking-urls loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v11-clean-plaintext-urls
+console.log(`[integration-gateway] REVISION: gateway-v11-clean-plaintext-urls loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -926,24 +926,40 @@ function formatSingleGmailMessage(msg: RawGmailMessage): Record<string, unknown>
 }
 
 /**
+ * Clean tracking/long URLs from any body text (plain or post-HTML-strip).
+ * Applied to ALL email body output regardless of source format.
+ */
+function cleanBodyUrls(text: string): string {
+  return text
+    // Remove bare URLs on their own lines (tracking links, long encoded URLs)
+    .replace(/^\s*https?:\/\/\S+\s*$/gm, '')
+    // Remove remaining inline URLs longer than 80 chars (tracking URLs)
+    .replace(/https?:\/\/\S{80,}/g, '')
+    // Collapse excessive blank lines left behind
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
  * Extract readable text from a Gmail message payload.
  * Handles single-part and multipart messages, preferring text/plain over text/html.
+ * All output is cleaned of tracking URLs via cleanBodyUrls().
  */
 function extractMessageBody(payload: RawGmailMessage['payload']): string {
   if (!payload) return '';
 
   // Try to find text/plain first, then text/html
   const plainText = findBodyByMimeType(payload, 'text/plain');
-  if (plainText) return plainText;
+  if (plainText) return cleanBodyUrls(plainText);
 
   const htmlText = findBodyByMimeType(payload, 'text/html');
-  if (htmlText) return stripHtml(htmlText);
+  if (htmlText) return cleanBodyUrls(stripHtml(htmlText));
 
   // Fallback: try the top-level body
   if (payload.body?.data) {
     const decoded = decodeBase64Url(payload.body.data);
-    if (payload.mimeType === 'text/html') return stripHtml(decoded);
-    return decoded;
+    if (payload.mimeType === 'text/html') return cleanBodyUrls(stripHtml(decoded));
+    return cleanBodyUrls(decoded);
   }
 
   return '';
@@ -1006,10 +1022,7 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, ' ')
     .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec: string) => String.fromCharCode(parseInt(dec)))
-    // Remove bare URLs on their own lines (tracking links, long encoded URLs)
-    .replace(/^\s*https?:\/\/\S+\s*$/gm, '')
-    // Remove remaining inline URLs longer than 100 chars (tracking URLs)
-    .replace(/https?:\/\/\S{100,}/g, '')
+    // URL cleaning now handled by cleanBodyUrls() applied after extraction
     // Collapse whitespace
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
