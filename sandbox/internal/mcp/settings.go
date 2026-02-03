@@ -1,6 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: gemini-auth-v1-merge-settings
+
 // Package mcp provides MCP (Model Context Protocol) settings generation
 // for agentic coders running in the sandbox.
 package mcp
@@ -305,30 +307,60 @@ type GeminiMCPServer struct {
 	Type    string   `json:"type,omitempty"`
 }
 
-// generateGeminiSettings creates ~/.gemini/settings.json
+// generateGeminiSettings merges MCP servers into ~/.gemini/settings.json,
+// preserving existing fields (auth config, user preferences, etc.).
 func generateGeminiSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
 	geminiDir := filepath.Join(workspaceRoot, ".gemini")
 	if err := os.MkdirAll(geminiDir, 0755); err != nil {
 		return err
 	}
 
-	mcpServers := make(map[string]GeminiMCPServer)
-	for name, server := range servers {
-		mcpServers[name] = GeminiMCPServer{
-			Command: server.Command,
-			Args:    server.Args,
-			URL:     server.URL,
-			Type:    server.Type,
+	settingsPath := filepath.Join(geminiDir, "settings.json")
+
+	// Read existing settings to preserve auth-related and other user fields
+	var settings map[string]interface{}
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			settings = make(map[string]interface{})
 		}
+	} else {
+		settings = make(map[string]interface{})
 	}
 
-	settings := GeminiSettings{MCPServers: mcpServers}
+	// Build our MCP servers
+	mcpServers := make(map[string]interface{})
+	for name, server := range servers {
+		entry := map[string]interface{}{}
+		if server.Command != "" {
+			entry["command"] = server.Command
+		}
+		if len(server.Args) > 0 {
+			entry["args"] = server.Args
+		}
+		if server.URL != "" {
+			entry["url"] = server.URL
+		}
+		if server.Type != "" {
+			entry["type"] = server.Type
+		}
+		mcpServers[name] = entry
+	}
+
+	// Merge: preserve existing MCP servers, our entries take precedence
+	if existing, ok := settings["mcpServers"].(map[string]interface{}); ok {
+		for name, server := range mcpServers {
+			existing[name] = server
+		}
+	} else {
+		settings["mcpServers"] = mcpServers
+	}
+
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(geminiDir, "settings.json"), data, 0644)
+	return os.WriteFile(settingsPath, data, 0644)
 }
 
 // generateCodexSettings creates ~/.codex/config.toml
@@ -402,43 +434,61 @@ type DroidMCPServer struct {
 	Disabled bool     `json:"disabled"`
 }
 
-// generateDroidSettings creates ~/.factory/mcp.json
+// generateDroidSettings merges MCP servers into ~/.factory/mcp.json,
+// preserving existing user config fields.
 func generateDroidSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
 	factoryDir := filepath.Join(workspaceRoot, ".factory")
 	if err := os.MkdirAll(factoryDir, 0755); err != nil {
 		return err
 	}
 
-	mcpServers := make(map[string]DroidMCPServer)
-	for name, server := range servers {
-		droidServer := DroidMCPServer{
-			Disabled: false,
-		}
+	configPath := filepath.Join(factoryDir, "mcp.json")
 
-		if server.URL != "" {
-			// HTTP/SSE transport
-			droidServer.Type = "http"
-			if server.Type == "sse" {
-				droidServer.Type = "sse"
-			}
-			droidServer.URL = server.URL
-		} else {
-			// stdio transport
-			droidServer.Type = "stdio"
-			droidServer.Command = server.Command
-			droidServer.Args = server.Args
+	var config map[string]interface{}
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			config = make(map[string]interface{})
 		}
-
-		mcpServers[name] = droidServer
+	} else {
+		config = make(map[string]interface{})
 	}
 
-	config := DroidConfig{MCPServers: mcpServers}
+	mcpServers := make(map[string]interface{})
+	for name, server := range servers {
+		entry := map[string]interface{}{
+			"disabled": false,
+		}
+		if server.URL != "" {
+			entry["type"] = "http"
+			if server.Type == "sse" {
+				entry["type"] = "sse"
+			}
+			entry["url"] = server.URL
+		} else {
+			entry["type"] = "stdio"
+			entry["command"] = server.Command
+			if len(server.Args) > 0 {
+				entry["args"] = server.Args
+			}
+		}
+		mcpServers[name] = entry
+	}
+
+	// Merge: preserve existing servers, our entries take precedence
+	if existing, ok := config["mcpServers"].(map[string]interface{}); ok {
+		for name, server := range mcpServers {
+			existing[name] = server
+		}
+	} else {
+		config["mcpServers"] = mcpServers
+	}
+
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(factoryDir, "mcp.json"), data, 0644)
+	return os.WriteFile(configPath, data, 0644)
 }
 
 // CopilotConfig represents GitHub Copilot CLI's MCP configuration
@@ -455,34 +505,57 @@ type CopilotMCPServer struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-// generateCopilotSettings creates .copilot/mcp-config.json
+// generateCopilotSettings merges MCP servers into .copilot/mcp-config.json,
+// preserving existing user config fields.
 func generateCopilotSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	// Copilot CLI reads MCP config from .copilot/mcp-config.json in the repo root
 	copilotDir := filepath.Join(workspaceRoot, ".copilot")
 	if err := os.MkdirAll(copilotDir, 0755); err != nil {
 		return err
 	}
 
-	mcpServers := make(map[string]CopilotMCPServer)
+	configPath := filepath.Join(copilotDir, "mcp-config.json")
+
+	var config map[string]interface{}
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			config = make(map[string]interface{})
+		}
+	} else {
+		config = make(map[string]interface{})
+	}
+
+	mcpServers := make(map[string]interface{})
 	for name, server := range servers {
 		if server.Command != "" {
-			mcpServers[name] = CopilotMCPServer{
-				Type:    "local",
-				Command: server.Command,
-				Args:    server.Args,
-				Tools:   []string{"*"},
-				Env:     server.Env,
+			entry := map[string]interface{}{
+				"type":    "local",
+				"command": server.Command,
+				"tools":   []string{"*"},
 			}
+			if len(server.Args) > 0 {
+				entry["args"] = server.Args
+			}
+			if len(server.Env) > 0 {
+				entry["env"] = server.Env
+			}
+			mcpServers[name] = entry
 		}
 	}
 
-	config := CopilotConfig{MCPServers: mcpServers}
+	if existing, ok := config["mcpServers"].(map[string]interface{}); ok {
+		for name, server := range mcpServers {
+			existing[name] = server
+		}
+	} else {
+		config["mcpServers"] = mcpServers
+	}
+
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(copilotDir, "mcp-config.json"), data, 0644)
+	return os.WriteFile(configPath, data, 0644)
 }
 
 // MoltbotConfig represents OpenClaw's MCP configuration
@@ -497,36 +570,55 @@ type MoltbotMCPServer struct {
 	URL     string   `json:"url,omitempty"`
 }
 
-// generateMoltbotSettings creates .openclaw/mcp.json
+// generateMoltbotSettings merges MCP servers into .openclaw/mcp.json,
+// preserving existing user config fields.
 func generateMoltbotSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
 	openclawDir := filepath.Join(workspaceRoot, ".openclaw")
 	if err := os.MkdirAll(openclawDir, 0755); err != nil {
 		return err
 	}
 
-	mcpServers := make(map[string]MoltbotMCPServer)
-	for name, server := range servers {
-		moltServer := MoltbotMCPServer{}
+	configPath := filepath.Join(openclawDir, "mcp.json")
 
-		if server.URL != "" {
-			moltServer.Type = "http"
-			moltServer.URL = server.URL
-		} else {
-			moltServer.Type = "stdio"
-			moltServer.Command = server.Command
-			moltServer.Args = server.Args
+	var config map[string]interface{}
+	if data, err := os.ReadFile(configPath); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			config = make(map[string]interface{})
 		}
-
-		mcpServers[name] = moltServer
+	} else {
+		config = make(map[string]interface{})
 	}
 
-	config := MoltbotConfig{MCPServers: mcpServers}
+	mcpServers := make(map[string]interface{})
+	for name, server := range servers {
+		entry := map[string]interface{}{}
+		if server.URL != "" {
+			entry["type"] = "http"
+			entry["url"] = server.URL
+		} else {
+			entry["type"] = "stdio"
+			entry["command"] = server.Command
+			if len(server.Args) > 0 {
+				entry["args"] = server.Args
+			}
+		}
+		mcpServers[name] = entry
+	}
+
+	if existing, ok := config["mcpServers"].(map[string]interface{}); ok {
+		for name, server := range mcpServers {
+			existing[name] = server
+		}
+	} else {
+		config["mcpServers"] = mcpServers
+	}
+
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(openclawDir, "mcp.json"), data, 0644)
+	return os.WriteFile(configPath, data, 0644)
 }
 
 // isBareKey returns true if the string is valid as a TOML bare key (A-Za-z0-9_-)

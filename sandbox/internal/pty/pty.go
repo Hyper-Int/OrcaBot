@@ -67,6 +67,10 @@ var sensitiveEnvVars = map[string]bool{
 	"BOX_CLIENT_SECRET":       true,
 	"ONEDRIVE_CLIENT_SECRET":  true,
 	"RESEND_API_KEY":          true,
+	// DEBIAN_FRONTEND=noninteractive is set in the Docker image for apt-get.
+	// Agents like Gemini CLI treat it as a CI/headless signal and suppress
+	// browser launch, breaking OAuth login flows.
+	"DEBIAN_FRONTEND":         true,
 }
 
 // filterSensitiveEnv filters out sensitive environment variables

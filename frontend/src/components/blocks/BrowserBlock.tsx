@@ -1,5 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: browser-clipboard-v3-remove-panel
 
 "use client";
 
@@ -290,6 +291,20 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
         {header}
 
         <div className="relative flex-1 min-h-0 bg-white flex flex-col">
+          {/* TODO: Clipboard — Copy/paste does not work across the VNC boundary.
+              The iframe renders a noVNC canvas (remote desktop pixels), so native
+              text selection and navigator.clipboard have no effect. x11vnc already
+              syncs X11 CLIPBOARD ↔ VNC CutText, but noVNC does not bridge VNC
+              clipboard events to the host's navigator.clipboard API.
+              Future fix: fork noVNC to add postMessage-based clipboard bridging:
+              1. On VNC ServerCutText → noVNC posts { type: "vnc-clipboard", text }
+                 to parent via window.parent.postMessage.
+              2. Parent listens for the message and calls navigator.clipboard.writeText.
+              3. On paste (Ctrl+V in parent or a UI action), parent posts
+                 { type: "vnc-paste", text } into the iframe.
+              4. noVNC receives it and sends VNC ClientCutText so the remote X11
+                 selection is updated before the keystroke reaches the app.
+              This gives seamless Ctrl+C / Ctrl+V across the VNC boundary. */}
           {status === "running" && browserUrl ? (
             <div className="flex-1 min-h-0">
               <iframe
@@ -297,6 +312,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
                 title="Browser"
                 src={browserUrl}
                 className="w-full h-full"
+                allow="clipboard-read; clipboard-write"
               />
             </div>
           ) : (

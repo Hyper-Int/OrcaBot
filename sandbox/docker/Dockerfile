@@ -109,11 +109,13 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
 # Install xdg-open wrapper to route URLs into the sandbox browser
 COPY docker/xdg-open.sh /usr/local/bin/xdg-open
 COPY docker/gio /usr/local/bin/gio
-RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio \
+COPY docker/chromium-wrapper.sh /usr/local/bin/chromium-wrapper
+RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio /usr/local/bin/chromium-wrapper \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/open \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/x-www-browser \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/sensible-browser \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/google-chrome \
+    && ln -sf /usr/local/bin/xdg-open /usr/local/bin/google-chrome-stable \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/chrome \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/chromium-browser \
     && if [ -x /usr/bin/xdg-open ]; then mv /usr/bin/xdg-open /usr/bin/xdg-open.real; fi \
@@ -122,7 +124,12 @@ RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio \
     && if [ -x /usr/bin/gio ]; then mv /usr/bin/gio /usr/bin/gio.real; fi \
     && ln -sf /usr/local/bin/gio /usr/bin/gio \
     && if [ -x /usr/bin/gnome-open ]; then mv /usr/bin/gnome-open /usr/bin/gnome-open.real; fi \
-    && if [ -x /usr/bin/gnome-open.real ]; then ln -sf /usr/local/bin/xdg-open /usr/bin/gnome-open; fi
+    && if [ -x /usr/bin/gnome-open.real ]; then ln -sf /usr/local/bin/xdg-open /usr/bin/gnome-open; fi \
+    # Wrap /usr/bin/chromium so CLI tools that exec chromium with a URL get routed
+    # through xdg-open, while the browser block (which passes --no-sandbox etc.) still
+    # reaches the real binary.
+    && if [ -x /usr/bin/chromium ]; then mv /usr/bin/chromium /usr/bin/chromium.real; fi \
+    && ln -sf /usr/local/bin/chromium-wrapper /usr/bin/chromium
 
 # Create workspace directory
 RUN mkdir -p /workspace && chmod 777 /workspace
