@@ -1,6 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: hooks-v1-gemini-user-config
+
 package agenthooks
 
 import (
@@ -359,14 +361,16 @@ echo '{}'  # Gemini requires JSON output
 		return fmt.Errorf("failed to write gemini hook script: %w", err)
 	}
 
-	// Update Gemini settings - use system-level config to avoid being overwritten
-	// Gemini config precedence: project > user > system, but user/project get overwritten
-	settingsDir := "/etc/gemini-cli"
-	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create system gemini config dir: %w", err)
+	// Write Gemini system override settings to a separate file.
+	// Gemini CLI overwrites ~/.gemini/settings.json on startup (losing our ui/hooks sections).
+	// Using GEMINI_CLI_SYSTEM_SETTINGS_PATH (highest precedence, never overwritten by CLI)
+	// ensures our settings persist. The env var is set in session.go CreatePTY.
+	overrideDir := filepath.Join(workspaceRoot, ".orcabot")
+	if err := os.MkdirAll(overrideDir, 0755); err != nil {
+		return fmt.Errorf("failed to create orcabot dir: %w", err)
 	}
-	settingsPath := filepath.Join(settingsDir, "settings.json")
-	return mergeGeminiHookSettings(settingsPath, scriptPath)
+	overridePath := filepath.Join(overrideDir, "gemini-system-settings.json")
+	return mergeGeminiHookSettings(overridePath, scriptPath)
 }
 
 // mergeGeminiHookSettings adds AfterAgent hook to existing Gemini settings without overwriting user hooks

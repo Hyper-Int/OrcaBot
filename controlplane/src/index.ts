@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
+// REVISION: index-v2-gateway-routes
+console.log(`[controlplane] REVISION: index-v2-gateway-routes loaded at ${new Date().toISOString()}`);
+
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
  *
@@ -1834,37 +1837,59 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
 
   // POST /internal/gateway/:provider/validate-token - Validate using PTY token (SECURE)
   // Security: terminal_id extracted from cryptographically verified token, not from body
-  // Body: { action?: string, context?: { url?, recipient?, recipientDomain?, sender?, senderDomain?, resourceId? } }
+  // Body: { action?: string, args?: Record<string, unknown> }
+  // NOTE: context is derived server-side from args (same as execute endpoint) to prevent spoofing
   if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate-token' && method === 'POST') {
     const ptyToken = request.headers.get('X-PTY-Token');
     if (!ptyToken) {
       return Response.json({ error: 'AUTH_DENIED', reason: 'Missing X-PTY-Token header' }, { status: 401 });
     }
     let action: string | undefined;
-    let context: {
-      url?: string;
-      recipient?: string;
-      recipientDomain?: string;
-      sender?: string;
-      senderDomain?: string;
-      resourceId?: string;
-    } | undefined;
+    let args: Record<string, unknown> | undefined;
     try {
       const body = await request.json() as {
         action?: string;
-        context?: typeof context;
+        args?: Record<string, unknown>;
       };
       action = body.action;
-      context = body.context;
+      args = body.args;
     } catch {
-      // No body or invalid JSON - action and context remain undefined
+      // No body or invalid JSON - action and args remain undefined
     }
+    // Derive context server-side from args (never trust body.context)
+    const { deriveEnforcementContext } = await import('./integration-policies/gateway');
+    const context = args && action ? deriveEnforcementContext(action, args) : undefined;
     return integrationPolicies.validateGatewayWithToken(
       env,
       ptyToken,
       segments[2] as Parameters<typeof integrationPolicies.validateGatewayWithToken>[2],
       action,
       context
+    );
+  }
+
+  // POST /internal/gateway/:provider/execute - Execute gateway request with full policy enforcement
+  // REVISION: gateway-execute-v1-route
+  // Security: PTY token in Authorization header (Bearer <token>), terminal_id extracted from verified token
+  // Body: { action: string, args: Record<string, unknown>, context?: { url?, recipient?, ... } }
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'execute' && method === 'POST') {
+    const { handleGatewayExecute } = await import('./integration-policies/gateway');
+    return handleGatewayExecute(
+      request,
+      env,
+      segments[2] as Parameters<typeof handleGatewayExecute>[2]
+    );
+  }
+
+  // GET /internal/terminals/:ptyId/integrations - List integrations attached to a terminal
+  // REVISION: terminal-integrations-v1-route
+  // Security: PTY token in Authorization header, ptyId must match token's terminal_id
+  if (segments[0] === 'internal' && segments[1] === 'terminals' && segments.length === 4 && segments[3] === 'integrations' && method === 'GET') {
+    const { handleListTerminalIntegrations } = await import('./integration-policies/gateway');
+    return handleListTerminalIntegrations(
+      request,
+      env,
+      segments[2]
     );
   }
 

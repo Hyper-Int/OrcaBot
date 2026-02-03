@@ -33,5 +33,12 @@ desktop/app/src-tauri/resources/workerd/
 # Tauri frontend dist
 desktop/app/dist/
 
+# Go compiled binaries
+sandbox/server
+sandbox/mcp-bridge
+
+# Node
+node_modules/
+
 # Claude Code settings
 .claude/

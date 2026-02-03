@@ -1,6 +1,9 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: handler-v7-drive-write-enforce
+console.log(`[integration-handler] REVISION: handler-v7-drive-write-enforce loaded at ${new Date().toISOString()}`);
+
 import type {
   Env,
   IntegrationProvider,
@@ -28,6 +31,21 @@ import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
 // ============================================
 // Helper Functions
 // ============================================
+
+/**
+ * Convert a glob pattern to a regex, properly escaping regex metacharacters.
+ * Only `*` (match any chars) and `?` (match single char) are treated as wildcards.
+ * All other regex-special characters (`.`, `+`, `(`, etc.) are escaped so they
+ * match literally. This prevents patterns like `example.com` from matching
+ * `exampleXcom` via unescaped `.`.
+ */
+export function globToRegex(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape all regex metacharacters except * and ?
+    .replace(/\*/g, '.*')                    // * → match any chars
+    .replace(/\?/g, '.');                    // ? → match single char
+  return new RegExp('^' + escaped + '$', 'i');
+}
 
 function generateId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -544,9 +562,13 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'gmail.archive': 'canArchive',
     'gmail.trash': 'canTrash',
     'gmail.markRead': 'canMarkRead',
+    'gmail.mark_read': 'canMarkRead',
     'gmail.markUnread': 'canMarkRead',
+    'gmail.mark_unread': 'canMarkRead',
     'gmail.label': 'canLabel',
+    'gmail.add_label': 'canLabel',
     'gmail.removeLabel': 'canLabel',
+    'gmail.remove_label': 'canLabel',
     'gmail.send': 'canSend',
     'gmail.draft': 'canSend',
     'gmail.reply': 'canSend',
@@ -558,6 +580,13 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'calendar.create': 'canCreate',
     'calendar.update': 'canUpdate',
     'calendar.delete': 'canDelete',
+    'calendar.list_calendars': 'canRead',
+    'calendar.list_events': 'canRead',
+    'calendar.get_event': 'canRead',
+    'calendar.search_events': 'canRead',
+    'calendar.create_event': 'canCreate',
+    'calendar.update_event': 'canUpdate',
+    'calendar.delete_event': 'canDelete',
   },
   google_contacts: {
     'contacts.read': 'canRead',
@@ -624,19 +653,28 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
   github: {
     'github.readRepos': 'canReadRepos',
     'github.listRepos': 'canReadRepos',
+    'github.list_repos': 'canReadRepos',
+    'github.get_repo': 'canReadRepos',
     'github.readCode': 'canReadCode',
     'github.getFile': 'canReadCode',
+    'github.get_file': 'canReadCode',
+    'github.list_files': 'canReadCode',
+    'github.search_code': 'canReadCode',
     'github.clone': 'canClone',
     'github.push': 'canPush',
     'github.commit': 'canPush',
     'github.readIssues': 'canReadIssues',
     'github.listIssues': 'canReadIssues',
+    'github.list_issues': 'canReadIssues',
     'github.createIssue': 'canCreateIssues',
+    'github.create_issue': 'canCreateIssues',
     'github.commentIssue': 'canCommentIssues',
     'github.closeIssue': 'canCloseIssues',
     'github.readPRs': 'canReadPRs',
     'github.listPRs': 'canReadPRs',
+    'github.list_prs': 'canReadPRs',
     'github.createPR': 'canCreatePRs',
+    'github.create_pr': 'canCreatePRs',
     'github.approvePR': 'canApprovePRs',
     'github.mergePR': 'canMergePRs',
     'github.createRelease': 'canCreateReleases',
@@ -646,6 +684,7 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'github.manageSettings': 'canManageSettings',
   },
   browser: {
+    'browser.lifecycle': 'canNavigate',   // start/stop/status - no URL needed
     'browser.navigate': 'canNavigate',
     'browser.click': 'canClick',
     'browser.type': 'canType',
@@ -678,8 +717,8 @@ export interface EnforcementResult {
  * @param provider - The integration provider
  * @param action - The action being performed (e.g., "gmail.send")
  * @param policy - The active policy
- * @param confirmedCapabilities - List of high-risk capabilities the user has confirmed
- * @param context - Optional context for filters (e.g., { url, recipient, sender })
+ * @param terminalIntegrationId - The terminal integration ID for high-risk confirmation lookup
+ * @param context - Enforcement context derived server-side (NEVER from sandbox request body)
  */
 export async function enforcePolicy(
   env: Env,
@@ -691,9 +730,17 @@ export async function enforcePolicy(
     url?: string;
     recipient?: string;
     recipientDomain?: string;
+    recipients?: string[];           // ALL recipients (to + cc + bcc)
+    recipientDomains?: string[];     // ALL recipient domains
     sender?: string;
     senderDomain?: string;
     resourceId?: string;
+    repoOwner?: string;              // GitHub repo owner
+    repoName?: string;               // GitHub repo name
+    calendarId?: string;             // Calendar ID
+    folderId?: string;               // Drive target folder ID
+    fileName?: string;               // Drive file name (for extension check)
+    mimeType?: string;               // Drive MIME type
   }
 ): Promise<EnforcementResult> {
   // 1. Map action to capability
@@ -745,90 +792,257 @@ export async function enforcePolicy(
   if (provider === 'gmail' && context) {
     const gmailPolicy = policy as GmailPolicy;
 
-    // Check sender filter for read operations
-    if (action.includes('read') || action.includes('search') || action === 'gmail.get') {
-      if (gmailPolicy.senderFilter && gmailPolicy.senderFilter.mode !== 'all') {
-        const { mode, domains, addresses } = gmailPolicy.senderFilter;
-        const senderDomain = context.senderDomain?.toLowerCase();
-        const sender = context.sender?.toLowerCase();
+    // NOTE: Sender filtering for read/search is NOT enforced at request time.
+    // The sender is unknown until the API returns results. Sender filtering
+    // is applied at response time by filterGmailResponse() in response-filter.ts,
+    // which strips messages from non-allowed senders before returning to the agent.
 
-        if (mode === 'allowlist') {
-          const domainAllowed = domains?.some(d => d.toLowerCase() === senderDomain);
-          const addressAllowed = addresses?.some(a => a.toLowerCase() === sender);
-          if (!domainAllowed && !addressAllowed) {
-            return {
-              allowed: false,
-              decision: 'filtered',
-              reason: 'Sender not in allowlist',
-            };
-          }
-        } else if (mode === 'blocklist') {
-          const domainBlocked = domains?.some(d => d.toLowerCase() === senderDomain);
-          const addressBlocked = addresses?.some(a => a.toLowerCase() === sender);
-          if (domainBlocked || addressBlocked) {
-            return {
-              allowed: false,
-              decision: 'filtered',
-              reason: 'Sender is blocklisted',
-            };
-          }
-        }
-      }
-    }
-
-    // Check send policy for send operations
+    // Check send policy for send operations - ALL recipients must be allowed
     if (action === 'gmail.send' || action === 'gmail.reply' || action === 'gmail.draft') {
       if (gmailPolicy.sendPolicy) {
         const { allowedRecipients, allowedDomains } = gmailPolicy.sendPolicy;
-        const recipientDomain = context.recipientDomain?.toLowerCase();
-        const recipient = context.recipient?.toLowerCase();
 
         if (allowedDomains?.length || allowedRecipients?.length) {
-          const domainAllowed = allowedDomains?.some(d => d.toLowerCase() === recipientDomain);
-          const recipientAllowed = allowedRecipients?.some(r => r.toLowerCase() === recipient);
-          if (!domainAllowed && !recipientAllowed) {
+          // Use recipients array (all to/cc/bcc) if available, fall back to single recipient
+          const allRecipients = context.recipients?.length
+            ? context.recipients
+            : context.recipient ? [context.recipient] : [];
+          const allDomains = context.recipientDomains?.length
+            ? context.recipientDomains
+            : context.recipientDomain ? [context.recipientDomain] : [];
+
+          if (allRecipients.length === 0) {
             return {
               allowed: false,
               decision: 'denied',
-              reason: 'Recipient not in allowed list',
+              reason: 'No recipients provided for send operation',
             };
+          }
+
+          // EVERY recipient must match the allowlist - not just the first one
+          for (let i = 0; i < allRecipients.length; i++) {
+            const recipient = allRecipients[i]?.toLowerCase();
+            const recipientDomain = allDomains[i]?.toLowerCase();
+
+            const domainAllowed = allowedDomains?.some(d => d.toLowerCase() === recipientDomain);
+            const recipientAllowed = allowedRecipients?.some(r => r.toLowerCase() === recipient);
+            if (!domainAllowed && !recipientAllowed) {
+              return {
+                allowed: false,
+                decision: 'denied',
+                reason: `Recipient ${recipient} not in allowed list`,
+              };
+            }
           }
         }
       }
     }
   }
 
-  // Browser URL filter
-  if (provider === 'browser' && context?.url) {
-    const browserPolicy = policy as BrowserPolicy;
-    if (browserPolicy.urlFilter) {
-      const { mode, patterns } = browserPolicy.urlFilter;
-      const url = context.url.toLowerCase();
+  // GitHub repoFilter enforcement for direct actions (get_repo, list_issues, get_file, etc.)
+  if (provider === 'github' && context) {
+    const githubPolicy = policy as GitHubPolicy;
+
+    if (githubPolicy.repoFilter && githubPolicy.repoFilter.mode !== 'all' && context.repoOwner) {
+      const { mode, repos: repoPatterns, orgs } = githubPolicy.repoFilter;
+      const ownerName = context.repoOwner.toLowerCase();
+      const fullName = context.repoName
+        ? `${context.repoOwner}/${context.repoName}`.toLowerCase()
+        : '';
+
+      let orgMatch = true;  // default pass if no org filter
+      let repoMatch = true; // default pass if no repo pattern filter
+
+      if (orgs?.length) {
+        orgMatch = orgs.some(o => o.toLowerCase() === ownerName);
+      }
+
+      if (repoPatterns?.length && fullName) {
+        repoMatch = repoPatterns.some(pattern => {
+          return globToRegex(pattern.toLowerCase()).test(fullName);
+        });
+      }
 
       if (mode === 'allowlist') {
-        const allowed = patterns?.some(pattern => {
-          // Simple glob matching: * matches any chars
-          const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
-          return regex.test(url);
-        });
+        // Must match at least one allowed org or repo pattern
+        const orgAllowed = orgs?.length ? orgMatch : false;
+        const repoAllowed = repoPatterns?.length ? repoMatch : false;
+        if (!orgAllowed && !repoAllowed) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `Repository ${fullName || ownerName} not in allowlist`,
+          };
+        }
+      }
+
+      if (mode === 'blocklist') {
+        // Must NOT match any blocked org or repo pattern
+        const orgBlocked = orgs?.length && orgMatch;
+        const repoBlocked = repoPatterns?.length && repoMatch;
+        if (orgBlocked || repoBlocked) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `Repository ${fullName || ownerName} is blocklisted`,
+          };
+        }
+      }
+    }
+  }
+
+  // Calendar calendarFilter and createPolicy enforcement
+  if (provider === 'google_calendar' && context) {
+    const calendarPolicy = policy as CalendarPolicy;
+
+    // Skip calendarFilter for actions that don't target a specific calendar
+    // (e.g., list_calendars just lists available calendars)
+    const isCalendarScoped = action !== 'calendar.list_calendars' && action !== 'calendar.list';
+
+    if (isCalendarScoped) {
+      const calendarId = context.calendarId?.toLowerCase() || 'primary';
+
+      // Check calendarFilter for calendar-scoped operations
+      if (calendarPolicy.calendarFilter && calendarPolicy.calendarFilter.mode !== 'all') {
+        const { calendarIds } = calendarPolicy.calendarFilter;
+        if (calendarIds?.length) {
+          const allowed = calendarIds.some(id => id.toLowerCase() === calendarId || (calendarId === 'primary' && id === 'primary'));
+          if (!allowed) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: `Calendar ${calendarId} not in allowlist`,
+            };
+          }
+        }
+      }
+
+      // Check createPolicy.allowedCalendars for create operations
+      if (action.includes('create') && calendarPolicy.createPolicy?.allowedCalendars?.length) {
+        const allowed = calendarPolicy.createPolicy.allowedCalendars.some(
+          id => id.toLowerCase() === calendarId || (calendarId === 'primary' && id === 'primary')
+        );
         if (!allowed) {
           return {
             allowed: false,
             decision: 'denied',
-            reason: `URL ${url} not in allowlist`,
+            reason: `Cannot create events in calendar ${calendarId}`,
           };
         }
-      } else if (mode === 'blocklist') {
-        const blocked = patterns?.some(pattern => {
-          const regex = new RegExp('^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
-          return regex.test(url);
-        });
-        if (blocked) {
+      }
+    }
+  }
+
+  // Drive folderFilter and fileTypeFilter enforcement for write actions
+  // (create, update, share). Read/list/download filtering is handled by
+  // response-filter.ts and the gateway pre-check, but writes must be
+  // checked at request time to prevent creating files in disallowed folders
+  // or with disallowed file types.
+  if (provider === 'google_drive' && context) {
+    const drivePolicy = policy as GoogleDrivePolicy;
+
+    // Folder filter: enforce for create (target folderId) and update/share (existing file)
+    if (drivePolicy.folderFilter && drivePolicy.folderFilter.mode !== 'all' && drivePolicy.folderFilter.folderIds?.length) {
+      const { mode, folderIds } = drivePolicy.folderFilter;
+
+      if (action === 'drive.create' && context.folderId) {
+        const inAllowedFolder = folderIds.includes(context.folderId);
+        if (mode === 'allowlist' && !inAllowedFolder) {
           return {
             allowed: false,
             decision: 'denied',
-            reason: `URL ${url} is blocklisted`,
+            reason: `Folder ${context.folderId} not in allowed folder list`,
           };
+        }
+        if (mode === 'blocklist' && inAllowedFolder) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `Folder ${context.folderId} is blocklisted`,
+          };
+        }
+      }
+      // Note: drive.update and drive.share target existing files. Their folder
+      // is checked via the gateway pre-check (metadata fetch + filter), not here,
+      // because the folder info isn't in the request args.
+    }
+
+    // File type filter: enforce for create (mimeType and file name from args)
+    if (drivePolicy.fileTypeFilter && drivePolicy.fileTypeFilter.mode !== 'all') {
+      const { mode, mimeTypes, extensions } = drivePolicy.fileTypeFilter;
+
+      if (action === 'drive.create') {
+        const fileMime = context.mimeType?.toLowerCase();
+        const fileName = context.fileName?.toLowerCase();
+
+        const mimeMatch = mimeTypes?.some(t => fileMime?.includes(t.toLowerCase()));
+        const extMatch = extensions?.some(ext => fileName?.endsWith(ext.toLowerCase()));
+        const typeMatch = mimeMatch || extMatch;
+
+        if (mode === 'allowlist' && !typeMatch) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `File type ${fileMime || 'unknown'} (${fileName || 'unnamed'}) not in allowed types`,
+          };
+        }
+        if (mode === 'blocklist' && typeMatch) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `File type ${fileMime || 'unknown'} (${fileName || 'unnamed'}) is blocklisted`,
+          };
+        }
+      }
+    }
+  }
+
+  // Browser URL filter
+  if (provider === 'browser') {
+    const browserPolicy = policy as BrowserPolicy;
+    if (browserPolicy.urlFilter && browserPolicy.urlFilter.patterns?.length) {
+      // Browser lifecycle actions (start/stop/status) don't interact with any page
+      // and don't need URL checks. All other actions require a URL when a filter
+      // is configured.
+      const BROWSER_LIFECYCLE_ACTIONS = new Set([
+        'browser.lifecycle',  // start/stop/status mapped to this action
+      ]);
+
+      if (!BROWSER_LIFECYCLE_ACTIONS.has(action)) {
+        if (!context?.url) {
+          // Fail closed: all non-lifecycle browser actions require a URL
+          // when an allowlist or blocklist is configured, including browser.navigate.
+          // A navigate call without a URL is invalid and should be denied.
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: 'Browser URL required for URL filter enforcement but not available',
+          };
+        }
+      }
+
+      if (context?.url) {
+        const { mode, patterns } = browserPolicy.urlFilter;
+        const url = context.url.toLowerCase();
+
+        if (mode === 'allowlist') {
+          const allowed = patterns.some(pattern => globToRegex(pattern).test(url));
+          if (!allowed) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: `URL ${url} not in allowlist`,
+            };
+          }
+        } else if (mode === 'blocklist') {
+          const blocked = patterns.some(pattern => globToRegex(pattern).test(url));
+          if (blocked) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: `URL ${url} is blocklisted`,
+            };
+          }
         }
       }
     }

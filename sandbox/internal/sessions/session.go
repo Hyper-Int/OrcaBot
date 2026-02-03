@@ -1,6 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: session-v2-integration-tokens
+
 // Package sessions manages session lifecycle.
 //
 // A Session represents a single sandbox instance - an isolated execution environment
@@ -17,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +36,12 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
+
+const sessionRevision = "session-v2-integration-tokens"
+
+func init() {
+	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
+}
 
 var (
 	ErrPTYNotFound = errors.New("pty not found")
@@ -84,20 +93,26 @@ type Session struct {
 	// Secrets tracking for output redaction
 	secrets   map[string]string // name -> value (for redaction)
 	secretsMu sync.RWMutex
+
+	// Integration tokens for policy gateway authentication (per-PTY)
+	// REVISION: integration-tokens-v1-storage
+	integrationTokens   map[string]string // ptyID -> JWT token
+	integrationTokensMu sync.RWMutex
 }
 
 // NewSession creates a new session with workspace at the given root.
 // The broker is shared across all sessions in this sandbox.
 func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int) *Session {
 	s := &Session{
-		ID:          id,
-		DashboardID: dashboardID,
-		MCPToken:    mcpToken,
-		ptys:        make(map[string]*PTYInfo),
-		workspace:   fs.NewWоrkspace(workspaceRoot),
-		broker:      sharedBroker,
-		brokerPort:  brokerPort,
-		secrets:     make(map[string]string),
+		ID:                id,
+		DashboardID:       dashboardID,
+		MCPToken:          mcpToken,
+		ptys:              make(map[string]*PTYInfo),
+		workspace:         fs.NewWоrkspace(workspaceRoot),
+		broker:            sharedBroker,
+		brokerPort:        brokerPort,
+		secrets:           make(map[string]string),
+		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
 	}
 
 	// Wire up broker callback to notify control plane of pending domain approvals
@@ -462,6 +477,12 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
+
+		// Gemini CLI overwrites ~/.gemini/settings.json on startup, losing our hooks
+		// and UI settings. Point it to a system override file (highest precedence).
+		if agentType == mcp.AgentTypeGemini {
+			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
+		}
 	}
 
 	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, s.workspace.Root(), envVars)
@@ -493,6 +514,99 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	s.mu.Unlock()
 
 	return info, nil
+}
+
+// CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
+// REVISION: integration-tokens-v1-createpty
+// If ptyID is provided, it will be used instead of generating a new one.
+// If integrationToken is provided, it will be stored and injected into the PTY environment.
+func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken string) (*PTYInfo, error) {
+	// Use provided ID or generate new one
+	var err error
+	if ptyID == "" {
+		ptyID, err = id.New()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
+		}
+	}
+
+	// Store integration token if provided
+	if integrationToken != "" {
+		s.integrationTokensMu.Lock()
+		s.integrationTokens[ptyID] = integrationToken
+		s.integrationTokensMu.Unlock()
+	}
+
+	envVars := loadEnvFile(filepath.Join(s.workspace.Root(), ".env"))
+	if _, ok := envVars["HISTCONTROL"]; !ok {
+		envVars["HISTCONTROL"] = "ignorespace"
+	}
+	envVars["ORCABOT_SESSION_ID"] = s.ID
+	envVars["ORCABOT_PTY_ID"] = ptyID
+	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
+	envVars["HOME"] = s.workspace.Root()
+	// Point agents to the localhost-only MCP server (no auth required)
+	mcpPort := os.Getenv("MCP_LOCAL_PORT")
+	if mcpPort == "" {
+		mcpPort = "8081"
+	}
+	envVars["MCP_LOCAL_PORT"] = mcpPort
+	envVars["ORCABOT_MCP_URL"] = "http://localhost:" + mcpPort + "/sessions/" + s.ID + "/mcp"
+	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
+	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
+	envVars["CHROME_BIN"] = "/usr/bin/chromium"
+
+	// Inject integration token for policy gateway authentication
+	if integrationToken != "" {
+		envVars["ORCABOT_INTEGRATION_TOKEN"] = integrationToken
+	}
+
+	// Generate MCP settings file only for the specific agent being launched
+	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
+		userTools := s.fetchUserMCPTools()
+		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
+		}
+	}
+
+	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, s.workspace.Root(), envVars)
+	if err != nil {
+		return nil, err
+	}
+
+	hub := pty.NewHub(p, creatorID)
+	hub.SetSecretValues(s.GetSecretValues())
+
+	hub.SetOnStop(func() {
+		s.mu.Lock()
+		delete(s.ptys, ptyID)
+		s.mu.Unlock()
+		// Also clean up integration token
+		s.integrationTokensMu.Lock()
+		delete(s.integrationTokens, ptyID)
+		s.integrationTokensMu.Unlock()
+	})
+
+	go hub.Run()
+
+	info := &PTYInfo{
+		ID:  p.ID,
+		Hub: hub,
+	}
+
+	s.mu.Lock()
+	s.ptys[p.ID] = info
+	s.mu.Unlock()
+
+	return info, nil
+}
+
+// GetIntegrationToken returns the integration token for a PTY.
+// REVISION: integration-tokens-v1-getter
+func (s *Session) GetIntegrationToken(ptyID string) string {
+	s.integrationTokensMu.RLock()
+	defer s.integrationTokensMu.RUnlock()
+	return s.integrationTokens[ptyID]
 }
 
 func loadEnvFile(path string) map[string]string {

@@ -1,6 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: main-v2-pty-token-injection
+
 package main
 
 import (
@@ -24,6 +26,12 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
+
+const mainRevision = "main-v2-pty-token-injection"
+
+func init() {
+	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
+}
 
 func main() {
 	port := os.Getenv("PORT")
@@ -341,29 +349,40 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// REVISION: integration-tokens-v1-handler
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
 		return
 	}
 
-	// Parse optional creator_id from request body
+	// Parse optional fields from request body
 	var req struct {
-		CreatorID string `json:"creator_id"`
-		Command   string `json:"command"`
+		CreatorID        string `json:"creator_id"`
+		Command          string `json:"command"`
+		PtyID            string `json:"pty_id"`            // Control plane can provide pre-generated ID
+		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 	}
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - creator_id is optional
+		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
 	}
 
-	pty, err := session.CreatePTY(req.CreatorID, req.Command)
+	// Use CreatePTYWithToken if pty_id or integration_token is provided
+	var ptyInfo *sessions.PTYInfo
+	var err error
+	if req.PtyID != "" || req.IntegrationToken != "" {
+		ptyInfo, err = session.CreatePTYWithToken(req.CreatorID, req.Command, req.PtyID, req.IntegrationToken)
+	} else {
+		ptyInfo, err = session.CreatePTY(req.CreatorID, req.Command)
+	}
+
 	if err != nil {
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": pty.ID})
+	json.NewEncoder(w).Encode(map[string]string{"id": ptyInfo.ID})
 }
 
 func (s *Server) requireMachine(next http.HandlerFunc) http.HandlerFunc {

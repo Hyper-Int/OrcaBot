@@ -96,17 +96,73 @@ Key files:
 - `controlplane/src/secrets/` — Secrets API + encryption
 - `frontend/src/components/blocks/TerminalBlock.tsx` — Secrets UI
 
-## OAuth Integrations (Drive/GitHub)
+## OAuth Integrations (Gmail/Drive/GitHub/Calendar)
 - Control plane provides connect + callback endpoints:
-  - `/integrations/google/drive/connect`
-  - `/integrations/google/drive/callback`
-  - `/integrations/github/connect`
-  - `/integrations/github/callback`
+  - `/integrations/google/drive/connect` + `/callback`
+  - `/integrations/google/gmail/connect` + `/callback`
+  - `/integrations/google/calendar/connect` + `/callback`
+  - `/integrations/github/connect` + `/callback`
 - Required env vars on Cloudflare:
   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
   - `OAUTH_REDIRECT_BASE` (optional; defaults to request origin)
-- D1 tables: `oauth_states`, `user_integrations` (run `/init-db` after schema updates)
+- D1 tables: `oauth_states`, `user_integrations`, `terminal_integrations`, `integration_policies`
+
+## Integration Policy Enforcement (Security-Critical)
+
+Orcabot uses a **component integration gate** model: on the dashboard canvas, users draw edges
+from terminal blocks to integration blocks (Gmail, GitHub, Drive, Calendar). Only attached
+integrations are visible as MCP tools to the LLM in that terminal. Each attachment has a policy
+that controls what actions are allowed and what data the LLM can see.
+
+### Security Invariants (non-negotiable)
+1. **No tool without edge** — MCP only exposes tools for integrations attached to the terminal
+2. **No policy from request** — Policy is loaded from `active_policy_id` in DB, never from the sandbox
+3. **Boolean enforcement** — `enforcePolicy()` uses only if/else logic, no LLM judgment
+4. **OAuth tokens stay in control plane** — Never sent to sandbox; API calls made server-side
+5. **Fail-closed** — Missing policy, expired token, or unknown action = deny
+6. **Audit before response** — Every request logged before response is returned
+7. **Filtered responses only** — LLM never sees raw API data; responses are filtered + formatted
+
+### Request Flow
+```
+LLM (in sandbox PTY)
+  → calls gmail_search via MCP
+  → mcp-bridge forwards to sandbox MCP server (HTTP)
+  → sandbox calls control plane gateway: POST /internal/gateway/gmail/execute
+    (sends PTY token for auth, action + args only — no OAuth token)
+  → control plane:
+    1. Verify PTY token (HMAC-SHA256 JWT → terminal_id, dashboard_id, user_id)
+    2. Load terminal_integration + active_policy from DB
+    3. Check rate limits
+    4. enforcePolicy() — boolean logic
+    5. Get OAuth access token (refresh if expired)
+    6. Call Gmail/GitHub/Drive/Calendar API
+    7. Filter response based on policy (sender allowlist, repo filter, etc.)
+    8. Format response for LLM (decode base64, strip HTML, extract headers)
+    9. Log audit entry
+    10. Return filtered response
+  → sandbox wraps in MCP content format
+  → mcp-bridge returns to LLM
+```
+
+### Key Files
+- `controlplane/src/integration-policies/gateway.ts` — Gateway execute endpoint + PTY token verification
+- `controlplane/src/integration-policies/handler.ts` — Attach/detach integrations, policy CRUD
+- `controlplane/src/integration-policies/response-filter.ts` — Policy-based response filtering
+- `controlplane/src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar API wrappers
+- `controlplane/src/auth/pty-token.ts` — PTY token creation/verification
+- `sandbox/cmd/mcp-bridge/main.go` — stdio-to-HTTP bridge with tool change notifications
+- `sandbox/cmd/server/mcp.go` — MCP server with integration tool handling
+- `sandbox/internal/mcp/integration_tools.go` — Tool definitions for all providers
+- `sandbox/internal/mcp/gateway_client.go` — Client for control plane gateway calls
+
+### Agent Hooks
+When an LLM agent (Claude, Gemini, Copilot, etc.) finishes a turn, stop hooks notify the
+sandbox so it can broadcast `agent_stopped` WebSocket events to all connected clients.
+- Hook scripts: `sandbox/internal/agenthooks/hooks.go`
+- Supported agents: Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, Moltbot
+- Settings files generated per-agent (`.claude/settings.json`, `.gemini/settings.json`, etc.)
 
 ## Key Subsystems
 
