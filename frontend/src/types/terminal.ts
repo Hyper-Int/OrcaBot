@@ -219,11 +219,11 @@ export interface TalkitoNoticeEvent {
  * Agent stopped event (server -> client)
  * Emitted when an agentic coder finishes its turn via native stop hooks.
  * Supported agents: Claude Code, Gemini CLI, GitHub Copilot CLI, OpenCode,
- * Moltbot/Clawdbot, Droid, Codex CLI.
+ * OpenClaw, Droid, Codex CLI.
  */
 export interface AgentStoppedEvent {
   type: "agent_stopped";
-  agent: string; // claude-code, gemini, codex, copilot, opencode, moltbot, droid
+  agent: string; // claude-code, gemini, codex, copilot, opencode, openclaw/moltbot, droid
   lastMessage: string; // the agent's final response (truncated to 4KB)
   reason: "complete" | "interrupted" | "error" | "unknown";
   timestamp: string; // ISO 8601

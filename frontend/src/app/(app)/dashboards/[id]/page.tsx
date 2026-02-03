@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: dashboard-v3-bugreport
+// REVISION: dashboard-v4-integration-sync
 console.log(`[dashboard] loaded at ${new Date().toISOString()}`);
 
 
@@ -177,9 +177,9 @@ const terminalTools: BlockTool[] = [
   },
   {
     type: "terminal",
-    label: "Moltbot",
+    label: "OpenClaw",
     icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "clawdbot tui", agentic: true },
+    terminalPreset: { command: "openclaw", agentic: true },
   },
   {
     type: "terminal",
@@ -984,52 +984,46 @@ export default function DashboardPage() {
         y: terminalItem.position.y,
       };
 
-      // Create the integration block
-      const tempId = `temp-${generateId()}`;
-      createItemMutation.mutate(
-        {
+      // Create the integration block - await to ensure it appears before creating edge
+      try {
+        const createdItem = await createItemMutation.mutateAsync({
           type: blockType as DashboardItemType,
           position: newPosition,
           size: blockSize,
           content: "",
-          clientTempId: tempId,
+          clientTempId: `temp-${generateId()}`,
           sourceId: undefined,
           sourceHandle: "right",
           targetHandle: "left",
-        },
-        {
-          onSuccess: (createdItem) => {
-            // Create edge from new integration block to terminal
-            const edgeId = generateId();
-            const now2 = new Date().toISOString();
-            const newEdge: DashboardEdge = {
-              id: edgeId,
-              dashboardId,
-              sourceItemId: createdItem.id,
-              targetItemId: terminalItemId,
-              createdAt: now2,
-              updatedAt: now2,
-            };
-            createEdge(dashboardId, newEdge)
-              .then(() => {
-                setEdges((prev) => [
-                  ...prev,
-                  {
-                    id: edgeId,
-                    source: createdItem.id,
-                    target: terminalItemId,
-                    type: "integration",
-                    data: { securityLevel, provider },
-                  },
-                ]);
-                toast.success(`Created ${getProviderDisplayName(provider as IntegrationProvider)} block`);
-              })
-              .catch((err) => {
-                console.warn("Failed to create edge:", err);
-              });
+        });
+
+        // Create edge from new integration block to terminal
+        const edgeId = generateId();
+        const now2 = new Date().toISOString();
+        const newEdge: DashboardEdge = {
+          id: edgeId,
+          dashboardId,
+          sourceItemId: createdItem.id,
+          targetItemId: terminalItemId,
+          createdAt: now2,
+          updatedAt: now2,
+        };
+        await createEdge(dashboardId, newEdge);
+        setEdges((prev) => [
+          ...prev,
+          {
+            id: edgeId,
+            source: createdItem.id,
+            target: terminalItemId,
+            type: "integration",
+            data: { securityLevel, provider },
           },
-        }
-      );
+        ]);
+        toast.success(`Created ${getProviderDisplayName(provider as IntegrationProvider)} block`);
+      } catch (err) {
+        console.warn("Failed to create integration block:", err);
+        toast.error("Failed to create integration block");
+      }
     },
     [items, edges, dashboardId, setEdges, createItemMutation]
   );
@@ -1222,6 +1216,57 @@ export default function DashboardPage() {
       toast.error(`Failed to delete block: ${error.message}`);
     },
   });
+
+  // Handle integration detached via IntegrationsPanel - remove canvas block + edge
+  const handleIntegrationDetached = React.useCallback(
+    (terminalItemId: string, provider: string) => {
+      const blockType = getBlockTypeForProvider(provider as IntegrationProvider);
+      if (!blockType) return;
+
+      // Find the specific integration block connected to this terminal via edges,
+      // not just any block of the same type (there may be multiple gmail blocks, etc.)
+      const connectedBlockIds = new Set<string>();
+      for (const e of edges) {
+        const otherId = e.source === terminalItemId ? e.target : e.target === terminalItemId ? e.source : null;
+        if (otherId) connectedBlockIds.add(otherId);
+      }
+      const integrationBlock = items.find(
+        (item) => item.type === blockType && connectedBlockIds.has(item.id)
+      );
+      if (!integrationBlock) return;
+
+      // Remove edges between this integration block and terminal
+      const edgesToRemove = edges.filter(
+        (e) =>
+          (e.source === integrationBlock.id && e.target === terminalItemId) ||
+          (e.source === terminalItemId && e.target === integrationBlock.id)
+      );
+
+      if (edgesToRemove.length > 0) {
+        const edgeIdsToRemove = new Set(edgesToRemove.map((e) => e.id));
+        setEdges((prev) => prev.filter((e) => !edgeIdsToRemove.has(e.id)));
+
+        for (const edge of edgesToRemove) {
+          deleteEdge(dashboardId, edge.id).catch((err) => {
+            console.warn("Failed to delete edge:", err);
+          });
+        }
+      }
+
+      // Check if the integration block has any remaining edges
+      const remainingEdges = edges.filter(
+        (e) =>
+          (e.source === integrationBlock.id || e.target === integrationBlock.id) &&
+          !edgesToRemove.some((r) => r.id === e.id)
+      );
+
+      // Only delete the block if it has no other connections
+      if (remainingEdges.length === 0) {
+        deleteItemMutation.mutate(integrationBlock.id);
+      }
+    },
+    [items, edges, dashboardId, setEdges, deleteItemMutation]
+  );
 
   // Flush pending updates to API (debounced)
   const flushPendingUpdates = useDebouncedCallback(() => {
@@ -1712,6 +1757,8 @@ export default function DashboardPage() {
             (e) => e.sourceItemId === itemId || e.targetItemId === itemId
           );
 
+          // Await all detach operations before deleting the block
+          const detachPromises: Promise<void>[] = [];
           for (const edge of connectedEdges) {
             const otherItemId = edge.sourceItemId === itemId ? edge.targetItemId : edge.sourceItemId;
             const otherItem = data.items.find((i) => i.id === otherItemId);
@@ -1722,23 +1769,26 @@ export default function DashboardPage() {
                 (s) => s.itemId === otherItem.id && s.status === "active"
               );
               if (session?.ptyId) {
-                // Detach the integration and invalidate the terminal-integrations query
-                detachIntegration(dashboardId, session.ptyId, provider)
-                  .then(() => {
-                    // Invalidate so IntegrationsPanel updates
-                    queryClient.invalidateQueries({
-                      queryKey: ["terminal-integrations", dashboardId, session.ptyId],
-                    });
-                    queryClient.invalidateQueries({
-                      queryKey: ["available-integrations", dashboardId, session.ptyId],
-                    });
-                  })
-                  .catch((err) => {
-                    console.warn(`Failed to auto-detach ${provider}:`, err);
-                  });
+                detachPromises.push(
+                  detachIntegration(dashboardId, session.ptyId, provider)
+                    .then(() => {
+                      queryClient.invalidateQueries({
+                        queryKey: ["terminal-integrations", dashboardId, session.ptyId],
+                      });
+                      queryClient.invalidateQueries({
+                        queryKey: ["available-integrations", dashboardId, session.ptyId],
+                      });
+                    })
+                    .catch((err) => {
+                      console.warn(`Failed to auto-detach ${provider}:`, err);
+                    })
+                );
               }
             }
           }
+
+          // Wait for all detach operations to complete
+          await Promise.all(detachPromises);
         }
       }
     }
@@ -2344,6 +2394,7 @@ export default function DashboardPage() {
               readOnly={role === "viewer"}
               onPolicyUpdate={handlePolicyUpdate}
               onIntegrationAttached={handleIntegrationAttached}
+              onIntegrationDetached={handleIntegrationDetached}
               onStorageLinked={handleStorageLinked}
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
             />

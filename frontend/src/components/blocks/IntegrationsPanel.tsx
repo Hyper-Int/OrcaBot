@@ -1,6 +1,9 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: integrations-panel-v1-detach-sync
+console.log(`[IntegrationsPanel] REVISION: integrations-panel-v1-detach-sync loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -370,6 +373,8 @@ interface IntegrationsPanelProps {
   onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
   /** Called after attaching integration, to create integration block on canvas if needed */
   onIntegrationAttached?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  /** Called after detaching integration, to remove integration block + edge from canvas */
+  onIntegrationDetached?: (provider: IntegrationProvider) => void;
 }
 
 export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
@@ -378,6 +383,7 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
   onClose,
   onPolicyUpdate,
   onIntegrationAttached,
+  onIntegrationDetached,
 }) => {
   const queryClient = useQueryClient();
   const [showAttachDialog, setShowAttachDialog] = React.useState<AvailableIntegration | null>(
@@ -409,13 +415,15 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
   const detachMutation = useMutation({
     mutationFn: (provider: IntegrationProvider) =>
       detachIntegration(dashboardId, terminalId, provider),
-    onSuccess: () => {
+    onSuccess: (_data, provider) => {
       queryClient.invalidateQueries({
         queryKey: ["terminal-integrations", dashboardId, terminalId],
       });
       queryClient.invalidateQueries({
         queryKey: ["available-integrations", dashboardId, terminalId],
       });
+      // Notify parent to remove the canvas block + edge
+      onIntegrationDetached?.(provider);
     },
   });
 
@@ -431,10 +439,12 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
     const pollInterval = setInterval(() => {
       if (popup.closed) {
         clearInterval(pollInterval);
-        // Refresh available integrations after OAuth completes
-        queryClient.invalidateQueries({
-          queryKey: ["available-integrations", dashboardId, terminalId],
-        });
+        // Small delay to let the OAuth callback store the token before we refetch
+        setTimeout(() => {
+          queryClient.invalidateQueries({
+            queryKey: ["available-integrations", dashboardId, terminalId],
+          });
+        }, 1000);
       }
     }, 500);
   };

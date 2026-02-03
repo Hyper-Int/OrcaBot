@@ -38,7 +38,8 @@ const (
 	AgentGemini     = "gemini"
 	AgentCopilot    = "copilot"
 	AgentOpenCode   = "opencode"
-	AgentMoltbot    = "moltbot"
+	AgentOpenClaw   = "openclaw"
+	AgentMoltbot    = "moltbot" // legacy alias
 	AgentDroid      = "droid"
 	AgentCodex      = "codex"
 )

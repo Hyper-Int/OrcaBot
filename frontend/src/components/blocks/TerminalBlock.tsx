@@ -130,6 +130,8 @@ interface TerminalData extends Record<string, unknown> {
   onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
   /** Called after attaching integration, to create integration block on canvas if needed */
   onIntegrationAttached?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  /** Called after detaching integration, to remove integration block + edge from canvas */
+  onIntegrationDetached?: (provider: IntegrationProvider) => void;
   onDuplicate?: () => void;
 }
 
@@ -484,7 +486,7 @@ export function TerminalBlock({
     if (command.includes("opencode")) return "opencode";
     if (command.includes("copilot")) return "copilot";
     if (command.includes("droid")) return "droid";
-    if (command.includes("moltbot")) return "moltbot";
+    if (command.includes("openclaw") || command.includes("moltbot")) return "moltbot";
     const name = terminalName.toLowerCase();
     if (name.includes("claude")) return "claude";
     if (name.includes("gemini")) return "gemini";
@@ -492,7 +494,7 @@ export function TerminalBlock({
     if (name.includes("opencode")) return "opencode";
     if (name.includes("copilot")) return "copilot";
     if (name.includes("droid")) return "droid";
-    if (name.includes("moltbot")) return "moltbot";
+    if (name.includes("openclaw") || name.includes("moltbot")) return "moltbot";
     return "shell";
   }, [terminalMeta.bootCommand, terminalName]);
   const { user } = useAuthStore();
@@ -2994,6 +2996,7 @@ export function TerminalBlock({
               onClose={() => setActivePanel(null)}
               onPolicyUpdate={data.onPolicyUpdate}
               onIntegrationAttached={data.onIntegrationAttached}
+              onIntegrationDetached={data.onIntegrationDetached}
             />
           )}
         </div>
@@ -3016,8 +3019,8 @@ export function TerminalBlock({
             <img src="/icons/github.png" alt="GitHub Copilot icon" title="GitHub Copilot icon" className="w-4 h-4" />
           ) : terminalName === "Droid" ? (
             <img src="/icons/droid.png" alt="Droid icon" title="Droid icon" className="w-4 h-4" />
-          ) : terminalName === "Moltbot" ? (
-            <img src="/icons/moltbot.png" alt="Moltbot icon" title="Moltbot icon" className="w-4 h-4" />
+          ) : terminalName === "OpenClaw" || terminalName === "Moltbot" ? (
+            <img src="/icons/moltbot.png" alt="OpenClaw icon" title="OpenClaw icon" className="w-4 h-4" />
           ) : (
             <span title="Terminal icon">
               <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
@@ -3066,8 +3069,8 @@ export function TerminalBlock({
           {/* Agents, Skills, MCP Tools buttons - only shown in agentic mode */}
           {(isClaudeSession || isAgentic) && (
             <>
-              {/* Agents button - hidden for Gemini, Codex, Copilot, and Moltbot */}
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "Moltbot" && (
+              {/* Agents button - hidden for Gemini, Codex, Copilot, and OpenClaw */}
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
                 <button
                   type="button"
                   onClick={() => setShowAttachedList((prev) => !prev)}
@@ -3278,7 +3281,7 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "Moltbot" && (
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
                 <DropdownMenuItem onClick={() => setActivePanel(activePanel === "subagents" ? null : "subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
                   <span>Agents</span>
@@ -3483,8 +3486,8 @@ export function TerminalBlock({
       <img src="/icons/github.png" alt="GitHub Copilot" className="w-14 h-14" />
     ) : terminalName === "Droid" ? (
       <img src="/icons/droid.png" alt="Droid" className="w-14 h-14" />
-    ) : terminalName === "Moltbot" ? (
-      <img src="/icons/moltbot.png" alt="Moltbot" className="w-14 h-14" />
+    ) : terminalName === "OpenClaw" || terminalName === "Moltbot" ? (
+      <img src="/icons/moltbot.png" alt="OpenClaw" className="w-14 h-14" />
     ) : (
       <Terminal className="w-14 h-14 text-[var(--foreground-subtle)]" />
     );

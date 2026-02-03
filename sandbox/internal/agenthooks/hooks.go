@@ -543,12 +543,12 @@ func generateOpenCodeHooks(workspaceRoot, hooksDir string) error {
 	return nil
 }
 
-// generateMoltbotHooks creates command:stop hook for Moltbot/Clawdbot
+// generateMoltbotHooks creates command:stop hook for OpenClaw
 func generateMoltbotHooks(workspaceRoot, hooksDir string) error {
-	// Moltbot uses TypeScript hooks
+	// OpenClaw uses TypeScript hooks
 	// Uses process.env for session/pty IDs and port
-	scriptPath := filepath.Join(hooksDir, "moltbot-stop.ts")
-	script := `// Moltbot/Clawdbot command:stop hook
+	scriptPath := filepath.Join(hooksDir, "openclaw-stop.ts")
+	script := `// OpenClaw command:stop hook
 // Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
 import type { HookHandler } from '@openclaw/types';
 
@@ -568,7 +568,7 @@ const handler: HookHandler = async (event) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          agent: 'moltbot',
+          agent: 'openclaw',
           lastMessage: typeof lastMsg === 'string' ? lastMsg.slice(0, 4096) : 'Agent completed',
           reason: 'complete'
         })
@@ -583,10 +583,10 @@ export default handler;
 `
 
 	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
-		return fmt.Errorf("failed to write moltbot hook script: %w", err)
+		return fmt.Errorf("failed to write openclaw hook script: %w", err)
 	}
 
-	// Update Moltbot config - merge with existing hooks
+	// Update OpenClaw config - merge with existing hooks
 	openclawDir := filepath.Join(workspaceRoot, ".openclaw")
 	if err := os.MkdirAll(openclawDir, 0755); err != nil {
 		return err

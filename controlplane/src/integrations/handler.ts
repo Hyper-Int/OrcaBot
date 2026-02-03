@@ -1099,7 +1099,7 @@ export async function callbackGооgleDrive(
     ) VALUES (?, ?, 'google_drive', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -4225,7 +4225,7 @@ export async function callbackGithub(
     ) VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -4348,7 +4348,7 @@ export async function callbackBоx(
     ) VALUES (?, ?, 'box', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -4473,7 +4473,7 @@ export async function callbackОnedrive(
     ) VALUES (?, ?, 'onedrive', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -4904,7 +4904,7 @@ export async function callbackGmail(
     ) VALUES (?, ?, 'gmail', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -6116,7 +6116,7 @@ export async function callbackCalendar(
     ) VALUES (?, ?, 'google_calendar', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -7049,7 +7049,7 @@ export async function callbackContacts(
     ) VALUES (?, ?, 'google_contacts', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -8001,7 +8001,7 @@ export async function callbackSheets(
     ) VALUES (?, ?, 'google_sheets', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,
@@ -8699,7 +8699,7 @@ export async function callbackForms(
     ) VALUES (?, ?, 'google_forms', ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id, provider) DO UPDATE SET
       access_token = excluded.access_token,
-      refresh_token = excluded.refresh_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
       scope = excluded.scope,
       token_type = excluded.token_type,
       expires_at = excluded.expires_at,

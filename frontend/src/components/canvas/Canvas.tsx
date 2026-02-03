@@ -84,6 +84,7 @@ function itemsToNodes(
   connectorMode?: boolean,
   onPolicyUpdate?: (terminalItemId: string, provider: string, securityLevel: string) => void,
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void,
+  onIntegrationDetached?: (terminalItemId: string, provider: string) => void,
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onDuplicate?: (itemId: string) => void
 ): Node[] {
@@ -139,6 +140,10 @@ function itemsToNodes(
         onIntegrationAttached: item.type === "terminal" && onIntegrationAttached
           ? (provider: string, securityLevel: string) => onIntegrationAttached(item.id, provider, securityLevel)
           : undefined,
+        // For terminal blocks: callback to remove integration block after detaching
+        onIntegrationDetached: item.type === "terminal" && onIntegrationDetached
+          ? (provider: string) => onIntegrationDetached(item.id, provider)
+          : undefined,
         // For workspace blocks: callback when cloud storage is linked
         onStorageLinked: item.type === "workspace" && onStorageLinked
           ? (provider: "google_drive" | "onedrive" | "box" | "github") => onStorageLinked(item.id, provider)
@@ -175,6 +180,8 @@ interface CanvasProps {
   onPolicyUpdate?: (terminalItemId: string, provider: string, securityLevel: string) => void;
   /** Called when an integration is attached via IntegrationsPanel, to auto-create block */
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void;
+  /** Called when an integration is detached via IntegrationsPanel, to remove block + edge */
+  onIntegrationDetached?: (terminalItemId: string, provider: string) => void;
   /** Called when cloud storage is linked to workspace, to auto-attach to connected terminals */
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void;
   /** Called when a block wants to duplicate itself */
@@ -200,6 +207,7 @@ export function Canvas({
   extraNodes = [],
   onPolicyUpdate,
   onIntegrationAttached,
+  onIntegrationDetached,
   onStorageLinked,
   onDuplicate,
 }: CanvasProps) {
@@ -246,6 +254,7 @@ export function Canvas({
         connectorMode,
         onPolicyUpdate,
         onIntegrationAttached,
+        onIntegrationDetached,
         onStorageLinked,
         readOnly ? undefined : onDuplicate
       )
@@ -291,12 +300,13 @@ export function Canvas({
         connectorMode,
         onPolicyUpdate,
         onIntegrationAttached,
+        onIntegrationDetached,
         onStorageLinked,
         readOnly ? undefined : onDuplicate
       )
     );
     setNodes([...baseNodes, ...extraNodes]);
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onStorageLinked, onDuplicate]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));
