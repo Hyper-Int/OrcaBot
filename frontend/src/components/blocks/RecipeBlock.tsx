@@ -5,10 +5,17 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Play, Check, Circle, Loader2, AlertCircle, GitMerge, Minimize2 } from "lucide-react";
+import { Play, Check, Circle, Loader2, AlertCircle, GitMerge, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
-import { Button, Badge } from "@/components/ui";
+import {
+  Button,
+  Badge,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import type { DashboardItem } from "@/types/dashboard";
@@ -27,6 +34,7 @@ interface RecipeData extends Record<string, unknown> {
   size: { width: number; height: number };
   metadata?: { minimized?: boolean; [key: string]: unknown };
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -139,15 +147,30 @@ export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
               {isRunning ? "Running" : `${completedCount}/${steps.length}`}
             </Badge>
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={handleMinimize}
-            title="Minimize"
-            className="nodrag h-5 w-5"
-          >
-            <Minimize2 className="w-3 h-3" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">
+                  <Settings className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                  <Copy className="w-3 h-3" />
+                  <span>Duplicate</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleMinimize}
+              title="Minimize"
+              className="nodrag h-5 w-5"
+            >
+              <Minimize2 className="w-3 h-3" />
+            </Button>
+          </div>
         </div>
         {/* Steps */}
         <div className="p-3 space-y-2 flex-1 overflow-y-auto">

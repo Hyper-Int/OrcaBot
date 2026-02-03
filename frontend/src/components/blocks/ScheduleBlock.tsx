@@ -5,12 +5,18 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Play, ChevronDown, ChevronRight, Clock, Minimize2 } from "lucide-react";
+import { Play, ChevronDown, ChevronRight, Clock, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
-import { Button } from "@/components/ui/button";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
@@ -49,6 +55,7 @@ interface ScheduleData extends Record<string, unknown> {
   metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -253,6 +260,19 @@ export function ScheduleBlock({ id, data, selected }: NodeProps<ScheduleNode>) {
             <span>Schedule (Preview)</span>
           </div>
           <div className="flex items-center gap-1">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">
+                  <Settings className="w-3 h-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-36">
+                <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                  <Copy className="w-3 h-3" />
+                  <span>Duplicate</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="ghost"
               size="icon-sm"

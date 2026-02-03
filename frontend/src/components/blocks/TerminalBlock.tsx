@@ -1,7 +1,11 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: restart-menu-v1-add-restart-to-settings-dropdown
 
 "use client";
+
+const TERMINAL_BLOCK_REVISION = "restart-menu-v1-add-restart-to-settings-dropdown";
+console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { createPortal } from "react-dom";
@@ -126,6 +130,7 @@ interface TerminalData extends Record<string, unknown> {
   onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
   /** Called after attaching integration, to create integration block on canvas if needed */
   onIntegrationAttached?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  onDuplicate?: () => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
@@ -3303,6 +3308,19 @@ export function TerminalBlock({
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleReopen}
+                disabled={isCreatingSession || !session}
+                className="gap-2"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>{isCreatingSession ? "Restarting..." : "Restart"}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                <Copy className="w-3 h-3" />
+                <span>Duplicate</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

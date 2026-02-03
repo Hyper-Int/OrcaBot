@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Folder, Cloud, Github, Box, HardDrive, Loader2, Minimize2, Settings, Eye, EyeOff } from "lucide-react";
+import { Folder, Cloud, Github, Box, HardDrive, Loader2, Minimize2, Settings, Eye, EyeOff, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -118,6 +119,7 @@ interface WorkspaceData extends Record<string, unknown> {
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
   /** Called when cloud storage is linked (Drive, OneDrive, etc.) to auto-attach to connected terminals */
   onStorageLinked?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
+  onDuplicate?: () => void;
 }
 
 type WorkspaceNode = Node<WorkspaceData, "workspace">;
@@ -1166,6 +1168,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                   <Eye className="w-3 h-3" />
                 )}
                 <span>{showHiddenFiles ? "Hide hidden files" : "Show hidden files"}</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => data.onDuplicate?.()} className="flex items-center gap-2">
+                <Copy className="w-3 h-3" />
+                <span>Duplicate</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

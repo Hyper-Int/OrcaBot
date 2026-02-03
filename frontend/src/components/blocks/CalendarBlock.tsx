@@ -16,6 +16,7 @@ import {
   MapPin,
   ExternalLink,
   Minimize2,
+  Copy,
 } from "lucide-react";
 import { GoogleCalendarIcon } from "@/components/icons";
 import { BlockWrapper } from "./BlockWrapper";
@@ -26,6 +27,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -50,6 +52,7 @@ interface CalendarData extends Record<string, unknown> {
   metadata?: { minimized?: boolean; [key: string]: unknown };
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
   connectorMode?: boolean;
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
 }
@@ -350,6 +353,11 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
                 Connect Calendar
               </DropdownMenuItem>
             )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+              <Copy className="w-3 h-3" />
+              Duplicate
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
