@@ -24,7 +24,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { IntegrationEdge } from "@/components/canvas/IntegrationEdge";
+import { IntegrationEdge, EdgeLabelClickContext } from "@/components/canvas/IntegrationEdge";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
@@ -186,6 +186,8 @@ interface CanvasProps {
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void;
   /** Called when a block wants to duplicate itself */
   onDuplicate?: (itemId: string) => void;
+  /** Called when an edge label is clicked, to open policy editor */
+  onEdgeLabelClick?: (edgeId: string, provider: string) => void;
 }
 
 export function Canvas({
@@ -210,6 +212,7 @@ export function Canvas({
   onIntegrationDetached,
   onStorageLinked,
   onDuplicate,
+  onEdgeLabelClick,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
@@ -420,6 +423,7 @@ export function Canvas({
 
   return (
     <TerminalOverlayProvider value={overlayContextValue}>
+      <EdgeLabelClickContext.Provider value={onEdgeLabelClick ?? null}>
       <div
         className="w-full h-full bg-[var(--background)] relative"
         onMouseMoveCapture={handlePaneMouseMove}
@@ -510,6 +514,7 @@ export function Canvas({
           className="absolute inset-0 z-10 pointer-events-none"
         />
       </div>
+      </EdgeLabelClickContext.Provider>
     </TerminalOverlayProvider>
   );
 }

@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-panel-v1-detach-sync
-console.log(`[IntegrationsPanel] REVISION: integrations-panel-v1-detach-sync loaded at ${new Date().toISOString()}`);
+// REVISION: integrations-panel-v2-attach-refetch
+console.log(`[IntegrationsPanel] REVISION: integrations-panel-v2-attach-refetch loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -129,7 +129,7 @@ interface AttachDialogProps {
   dashboardId: string;
   terminalId: string;
   onClose: () => void;
-  onSuccess: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  onSuccess: (provider: IntegrationProvider, securityLevel: SecurityLevel) => Promise<void> | void;
 }
 
 const AttachDialog: React.FC<AttachDialogProps> = ({
@@ -146,8 +146,8 @@ const AttachDialog: React.FC<AttachDialogProps> = ({
   const attachMutation = useMutation({
     mutationFn: (data: Parameters<typeof attachIntegration>[2]) =>
       attachIntegration(dashboardId, terminalId, data),
-    onSuccess: (result) => {
-      onSuccess(integration.provider, result.securityLevel);
+    onSuccess: async (result) => {
+      await onSuccess(integration.provider, result.securityLevel);
       onClose();
     },
   });
@@ -449,13 +449,16 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
     }, 500);
   };
 
-  const handleAttachSuccess = (provider: IntegrationProvider, securityLevel: SecurityLevel) => {
-    queryClient.invalidateQueries({
-      queryKey: ["terminal-integrations", dashboardId, terminalId],
-    });
-    queryClient.invalidateQueries({
-      queryKey: ["available-integrations", dashboardId, terminalId],
-    });
+  const handleAttachSuccess = async (provider: IntegrationProvider, securityLevel: SecurityLevel) => {
+    // Await refetch so the panel shows updated data before the dialog closes
+    await Promise.all([
+      queryClient.refetchQueries({
+        queryKey: ["terminal-integrations", dashboardId, terminalId],
+      }),
+      queryClient.refetchQueries({
+        queryKey: ["available-integrations", dashboardId, terminalId],
+      }),
+    ]);
     // Notify parent to create integration block on canvas if needed
     onIntegrationAttached?.(provider, securityLevel);
   };

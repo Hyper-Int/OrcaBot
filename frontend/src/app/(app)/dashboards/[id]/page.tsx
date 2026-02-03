@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v4-integration-sync
-console.log(`[dashboard] loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v5-clickable-edge-labels
+console.log(`[dashboard] REVISION: dashboard-v5-clickable-edge-labels loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -78,11 +78,15 @@ import {
   attachIntegration,
   detachIntegration,
   listAvailableIntegrations,
+  listTerminalIntegrations,
   createReadOnlyPolicy,
   getProviderDisplayName,
   type IntegrationProvider,
+  type SecurityLevel,
+  type TerminalIntegration,
   type BrowserPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
+import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -220,6 +224,10 @@ export default function DashboardPage() {
   const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = React.useState(false);
   const [isBugReportOpen, setIsBugReportOpen] = React.useState(false);
+  const [edgePolicyEditor, setEdgePolicyEditor] = React.useState<{
+    terminalItemId: string;
+    integration: TerminalIntegration;
+  } | null>(null);
   const [metricsHidden, setMetricsHidden] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
   const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
@@ -914,6 +922,46 @@ export default function DashboardPage() {
       );
     },
     [items, setEdges]
+  );
+
+  // Handle edge label click - open policy editor for the integration on this edge
+  const handleEdgeLabelClick = React.useCallback(
+    async (edgeId: string, provider: string) => {
+      // Find the edge to determine which terminal it connects
+      const edge = edges.find((e) => e.id === edgeId);
+      if (!edge) return;
+
+      // Determine which node is the terminal (terminals are targets typically)
+      const sourceItem = items.find((i) => i.id === edge.source);
+      const targetItem = items.find((i) => i.id === edge.target);
+      const terminalItem = targetItem?.type === "terminal" ? targetItem : sourceItem?.type === "terminal" ? sourceItem : null;
+      if (!terminalItem) return;
+
+      // Look up terminal integrations from the query cache first
+      const cacheKey = ["terminal-integrations", dashboardId, terminalItem.id];
+      let integrations = queryClient.getQueryData<TerminalIntegration[]>(cacheKey);
+
+      // If not in cache, fetch from API
+      if (!integrations) {
+        try {
+          integrations = await listTerminalIntegrations(dashboardId, terminalItem.id);
+          queryClient.setQueryData(cacheKey, integrations);
+        } catch {
+          toast.error("Failed to load integration details");
+          return;
+        }
+      }
+
+      // Find the matching integration by provider
+      const integration = integrations.find((i) => i.provider === provider);
+      if (!integration) {
+        toast.error(`No ${provider} integration found on this terminal`);
+        return;
+      }
+
+      setEdgePolicyEditor({ terminalItemId: terminalItem.id, integration });
+    },
+    [edges, items, dashboardId, queryClient]
   );
 
   // Handle integration attached via IntegrationsPanel - auto-create integration block if needed
@@ -2397,6 +2445,7 @@ export default function DashboardPage() {
               onIntegrationDetached={handleIntegrationDetached}
               onStorageLinked={handleStorageLinked}
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
+              onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
             />
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}
@@ -2468,6 +2517,25 @@ export default function DashboardPage() {
         dashboardId={dashboardId}
         dashboardName={dashboard?.name || ""}
       />
+
+      {/* Edge Policy Editor Dialog (opened by clicking edge labels) */}
+      {edgePolicyEditor && (
+        <PolicyEditorDialog
+          integration={edgePolicyEditor.integration}
+          dashboardId={dashboardId}
+          terminalId={edgePolicyEditor.terminalItemId}
+          onClose={() => setEdgePolicyEditor(null)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({
+              queryKey: ["terminal-integrations", dashboardId, edgePolicyEditor.terminalItemId],
+            });
+            setEdgePolicyEditor(null);
+          }}
+          onPolicyUpdate={(provider, securityLevel) => {
+            handlePolicyUpdate(edgePolicyEditor.terminalItemId, provider, securityLevel);
+          }}
+        />
+      )}
     </div>
   );
 }
