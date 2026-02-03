@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: dashboard-v2-topprocs
+// REVISION: dashboard-v3-bugreport
 console.log(`[dashboard] loaded at ${new Date().toISOString()}`);
 
 
@@ -28,6 +28,8 @@ import {
   Clock,
   Minimize2,
   Maximize2,
+  Bug,
+  X,
 } from "lucide-react";
 import {
   GmailIcon,
@@ -59,6 +61,7 @@ import {
 } from "@/components/ui";
 import { ExportTemplateDialog } from "@/components/dialogs/ExportTemplateDialog";
 import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog";
+import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -215,6 +218,8 @@ export default function DashboardPage() {
   const [newLinkUrl, setNewLinkUrl] = React.useState("");
   const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = React.useState(false);
+  const [isBugReportOpen, setIsBugReportOpen] = React.useState(false);
+  const [metricsHidden, setMetricsHidden] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
   const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
   const hasPendingConnection = Boolean(pendingConnection);
@@ -2206,71 +2211,100 @@ export default function DashboardPage() {
           {/* Dev-only sandbox metrics display */}
           {process.env.NODE_ENV === "development" && (
             <div className="absolute right-4 top-2 z-20 pointer-events-none">
-              <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1 pointer-events-auto">
-                <Tooltip
-                  content={
-                    typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
-                      <div className="text-xs">
-                        <div className="mb-2">
-                          CPU {metricsQuery.data.systemCpuPct.toFixed(1)}% · Mem {metricsQuery.data.systemMemUsedMB.toFixed(0)}MB / {metricsQuery.data.systemMemTotalMB.toFixed(0)}MB ({metricsQuery.data.systemMemPct.toFixed(1)}%)
-                          {metricsQuery.data.revision && (
-                            <span className="block text-[9px] text-[var(--foreground-muted)] mt-1">rev: {metricsQuery.data.revision}</span>
+              <div className="flex items-center gap-1 w-fit border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-1 py-1 pointer-events-auto">
+                {/* Hide/show toggle button */}
+                <Tooltip content={metricsHidden ? "Show metrics" : "Hide metrics"} side="bottom">
+                  <button
+                    onClick={() => setMetricsHidden(!metricsHidden)}
+                    className="flex items-center justify-center w-6 h-6 rounded hover:bg-[var(--background-surface)] transition-colors"
+                  >
+                    {metricsHidden ? (
+                      <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                    ) : (
+                      <X className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                    )}
+                  </button>
+                </Tooltip>
+                {/* Metrics content - conditionally shown */}
+                {!metricsHidden && (
+                  <Tooltip
+                    content={
+                      typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
+                        <div className="text-xs">
+                          <div className="mb-2">
+                            CPU {metricsQuery.data.systemCpuPct.toFixed(1)}% · Mem {metricsQuery.data.systemMemUsedMB.toFixed(0)}MB / {metricsQuery.data.systemMemTotalMB.toFixed(0)}MB ({metricsQuery.data.systemMemPct.toFixed(1)}%)
+                            {metricsQuery.data.revision && (
+                              <span className="block text-[9px] text-[var(--foreground-muted)] mt-1">rev: {metricsQuery.data.revision}</span>
+                            )}
+                          </div>
+                          {metricsQuery.data.topProcesses?.length > 0 && (
+                            <div className="border-t border-[var(--border)] pt-2 mt-1">
+                              <div className="font-medium mb-1">Top Processes</div>
+                              <table className="text-[10px] w-full">
+                                <thead>
+                                  <tr className="text-[var(--foreground-muted)]">
+                                    <th className="text-left pr-2">Name</th>
+                                    <th className="text-right pr-2">CPU</th>
+                                    <th className="text-right pr-2">Mem</th>
+                                    <th className="text-right">Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {metricsQuery.data.topProcesses.map((proc) => (
+                                    <tr key={proc.pid}>
+                                      <td className="pr-2 truncate max-w-[100px]" title={proc.name}>{proc.name}</td>
+                                      <td className="text-right pr-2">{proc.cpuPct.toFixed(1)}%</td>
+                                      <td className="text-right pr-2">{proc.memPct.toFixed(1)}%</td>
+                                      <td className="text-right font-medium">{proc.combined.toFixed(1)}%</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           )}
                         </div>
-                        {metricsQuery.data.topProcesses?.length > 0 && (
-                          <div className="border-t border-[var(--border)] pt-2 mt-1">
-                            <div className="font-medium mb-1">Top Processes</div>
-                            <table className="text-[10px] w-full">
-                              <thead>
-                                <tr className="text-[var(--foreground-muted)]">
-                                  <th className="text-left pr-2">Name</th>
-                                  <th className="text-right pr-2">CPU</th>
-                                  <th className="text-right pr-2">Mem</th>
-                                  <th className="text-right">Total</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {metricsQuery.data.topProcesses.map((proc) => (
-                                  <tr key={proc.pid}>
-                                    <td className="pr-2 truncate max-w-[100px]" title={proc.name}>{proc.name}</td>
-                                    <td className="text-right pr-2">{proc.cpuPct.toFixed(1)}%</td>
-                                    <td className="text-right pr-2">{proc.memPct.toFixed(1)}%</td>
-                                    <td className="text-right font-medium">{proc.combined.toFixed(1)}%</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                      ) : (
+                        "Sandbox metrics unavailable"
+                      )
+                    }
+                    side="bottom"
+                  >
+                    <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
+                      <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                      <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
+                        {typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
+                          <>
+                            <span>CPU {metricsQuery.data.systemCpuPct.toFixed(1)}%</span>
+                            <span>Mem {metricsQuery.data.systemMemPct.toFixed(1)}%</span>
+                            {metricsQuery.data.topProcesses?.[0] && (
+                              <span className="text-[var(--foreground-muted)] border-l border-[var(--border)] pl-2">
+                                Top: {metricsQuery.data.topProcesses[0].name} ({metricsQuery.data.topProcesses[0].combined.toFixed(1)}%)
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span>Metrics…</span>
                         )}
                       </div>
-                    ) : (
-                      "Sandbox metrics unavailable"
-                    )
-                  }
-                  side="bottom"
-                >
-                  <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1">
-                    <Activity className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                    <div className="flex items-center gap-2 text-[10px] text-[var(--foreground-muted)]">
-                      {typeof metricsQuery.data?.systemMemTotalMB === "number" ? (
-                        <>
-                          <span>CPU {metricsQuery.data.systemCpuPct.toFixed(1)}%</span>
-                          <span>Mem {metricsQuery.data.systemMemPct.toFixed(1)}%</span>
-                          {metricsQuery.data.topProcesses?.[0] && (
-                            <span className="text-[var(--foreground-muted)] border-l border-[var(--border)] pl-2">
-                              Top: {metricsQuery.data.topProcesses[0].name} ({metricsQuery.data.topProcesses[0].combined.toFixed(1)}%)
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span>Metrics…</span>
-                      )}
                     </div>
-                  </div>
-                </Tooltip>
+                  </Tooltip>
+                )}
               </div>
             </div>
           )}
+          {/* Bug Report Button - visible in both dev and prod */}
+          <div className={`absolute right-4 z-20 ${process.env.NODE_ENV === "development" ? "top-12" : "top-2"}`}>
+            <Tooltip content="Report a bug" side="bottom">
+              <Button
+                variant="secondary"
+                size="icon-sm"
+                onClick={() => setIsBugReportOpen(true)}
+                className="h-8 w-8"
+              >
+                <Bug className="w-4 h-4" />
+              </Button>
+            </Tooltip>
+          </div>
           <ConnectionDataFlowProvider edges={edgesToRender}>
             <Canvas
               items={items}
@@ -2357,6 +2391,14 @@ export default function DashboardPage() {
         dashboardId={dashboardId}
         dashboardName={dashboard?.name || ""}
         currentUserRole={role}
+      />
+
+      {/* Bug Report Dialog */}
+      <BugReportDialog
+        open={isBugReportOpen}
+        onOpenChange={setIsBugReportOpen}
+        dashboardId={dashboardId}
+        dashboardName={dashboard?.name || ""}
       />
     </div>
   );

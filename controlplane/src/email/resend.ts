@@ -1,18 +1,26 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: bug-report-v1-attachments
 
 /**
  * Resend Email Service
  *
- * Simple email sending via Resend API for invitation emails.
+ * Email sending via Resend API for invitations and bug reports.
  */
 
 import type { Env } from '../types';
+
+export interface EmailAttachment {
+  filename: string;
+  content: string;
+  encoding?: 'base64';
+}
 
 export interface EmailOptions {
   to: string;
   subject: string;
   html: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -37,6 +45,7 @@ export async function sendEmail(env: Env, options: EmailOptions): Promise<void> 
       to: options.to,
       subject: options.subject,
       html: options.html,
+      attachments: options.attachments,
     }),
   });
 
@@ -230,6 +239,63 @@ export function buildInterestNotificationEmail(params: {
 
   <p style="margin: 24px 0 0; color: #999; font-size: 12px; text-align: center;">
     OrcaBot Admin Notification
+  </p>
+</body>
+</html>
+    `.trim(),
+  };
+}
+
+/**
+ * Build bug report email for admin notification
+ */
+export function buildBugReportEmail(params: {
+  userEmail: string;
+  userName: string;
+  notes: string;
+  dashboardId: string;
+  dashboardName: string;
+  userAgent: string;
+  url: string;
+  hasScreenshot: boolean;
+}): { subject: string; html: string } {
+  const notesSection = params.notes
+    ? `
+    <div style="margin: 16px 0; padding: 16px; background: #f5f5f5; border-radius: 8px;">
+      <p style="margin: 0 0 8px; font-size: 14px; color: #666; font-weight: 500;">Notes:</p>
+      <p style="margin: 0; font-size: 14px; white-space: pre-wrap;">${escapeHtml(params.notes)}</p>
+    </div>`
+    : '<p style="color: #666; font-style: italic;">No additional notes provided.</p>';
+
+  return {
+    subject: `[OrcaBot Bug Report] from ${params.userName}`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); padding: 32px; border-radius: 12px 12px 0 0;">
+    <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 600;">Bug Report</h1>
+  </div>
+
+  <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <table style="width: 100%; font-size: 14px; margin-bottom: 16px; border-collapse: collapse;">
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">From:</td><td style="padding: 4px 0;">${escapeHtml(params.userName)} (${escapeHtml(params.userEmail)})</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">Dashboard:</td><td style="padding: 4px 0;">${escapeHtml(params.dashboardName)} (${escapeHtml(params.dashboardId)})</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">URL:</td><td style="padding: 4px 0; word-break: break-all;">${escapeHtml(params.url)}</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">User Agent:</td><td style="padding: 4px 0; font-size: 12px; color: #888;">${escapeHtml(params.userAgent)}</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">Screenshot:</td><td style="padding: 4px 0;">${params.hasScreenshot ? '📎 Attached' : 'Not included'}</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0; vertical-align: top;">Submitted:</td><td style="padding: 4px 0;">${new Date().toISOString()}</td></tr>
+    </table>
+
+    ${notesSection}
+  </div>
+
+  <p style="margin: 24px 0 0; color: #999; font-size: 12px; text-align: center;">
+    OrcaBot Bug Report System
   </p>
 </body>
 </html>

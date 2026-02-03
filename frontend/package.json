@@ -15,6 +15,7 @@
     "workers:deploy": "node scripts/workers-deploy.mjs"
   },
   "dependencies": {
+    "modern-screenshot": "^4.4.39",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-slot": "^1.2.4",
