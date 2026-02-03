@@ -450,13 +450,16 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
   };
 
   const handleAttachSuccess = async (provider: IntegrationProvider, securityLevel: SecurityLevel) => {
-    // Await refetch so the panel shows updated data before the dialog closes
+    // Invalidate + refetch all active queries so the panel shows updated data.
+    // Using invalidateQueries with refetchType 'all' ensures even "fresh" queries refetch.
     await Promise.all([
-      queryClient.refetchQueries({
+      queryClient.invalidateQueries({
         queryKey: ["terminal-integrations", dashboardId, terminalId],
+        refetchType: "all",
       }),
-      queryClient.refetchQueries({
+      queryClient.invalidateQueries({
         queryKey: ["available-integrations", dashboardId, terminalId],
+        refetchType: "all",
       }),
     ]);
     // Notify parent to create integration block on canvas if needed

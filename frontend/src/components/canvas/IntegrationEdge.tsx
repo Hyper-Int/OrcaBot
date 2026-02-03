@@ -6,6 +6,9 @@ console.log(`[IntegrationEdge] REVISION: integration-edge-v1-clickable-labels lo
 
 "use client";
 
+// REVISION: integration-edge-v1-clickable-labels
+console.log(`[IntegrationEdge] REVISION: integration-edge-v1-clickable-labels loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import {
   BaseEdge,

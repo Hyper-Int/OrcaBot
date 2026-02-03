@@ -225,7 +225,8 @@ export default function DashboardPage() {
   const [isShareDialogOpen, setIsShareDialogOpen] = React.useState(false);
   const [isBugReportOpen, setIsBugReportOpen] = React.useState(false);
   const [edgePolicyEditor, setEdgePolicyEditor] = React.useState<{
-    terminalItemId: string;
+    terminalItemId: string; // dashboard item ID (for edge matching)
+    ptyId: string;          // pty ID (for control plane API calls)
     integration: TerminalIntegration;
   } | null>(null);
   const [metricsHidden, setMetricsHidden] = React.useState(false);
@@ -937,19 +938,28 @@ export default function DashboardPage() {
       const terminalItem = targetItem?.type === "terminal" ? targetItem : sourceItem?.type === "terminal" ? sourceItem : null;
       if (!terminalItem) return;
 
-      // Look up terminal integrations from the query cache first
-      const cacheKey = ["terminal-integrations", dashboardId, terminalItem.id];
-      let integrations = queryClient.getQueryData<TerminalIntegration[]>(cacheKey);
+      // Resolve ptyId from the active session - the control plane uses ptyId, not item ID
+      const session = sessions.find(
+        (s) => s.itemId === terminalItem.id && s.status === "active"
+      );
+      if (!session?.ptyId) {
+        toast.warning("Terminal not active. Start the terminal first.");
+        return;
+      }
+      const ptyId = session.ptyId;
 
-      // If not in cache, fetch from API
-      if (!integrations) {
-        try {
-          integrations = await listTerminalIntegrations(dashboardId, terminalItem.id);
-          queryClient.setQueryData(cacheKey, integrations);
-        } catch {
-          toast.error("Failed to load integration details");
-          return;
-        }
+      // Always fetch fresh from API - cache may be stale after recent attach/detach
+      let integrations: TerminalIntegration[];
+      try {
+        integrations = await listTerminalIntegrations(dashboardId, ptyId);
+        // Update the cache so the panel benefits too
+        queryClient.setQueryData(
+          ["terminal-integrations", dashboardId, ptyId],
+          integrations
+        );
+      } catch {
+        toast.error("Failed to load integration details");
+        return;
       }
 
       // Find the matching integration by provider
@@ -959,9 +969,9 @@ export default function DashboardPage() {
         return;
       }
 
-      setEdgePolicyEditor({ terminalItemId: terminalItem.id, integration });
+      setEdgePolicyEditor({ terminalItemId: terminalItem.id, ptyId, integration });
     },
-    [edges, items, dashboardId, queryClient]
+    [edges, items, sessions, dashboardId, queryClient]
   );
 
   // Handle integration attached via IntegrationsPanel - auto-create integration block if needed
@@ -2523,15 +2533,16 @@ export default function DashboardPage() {
         <PolicyEditorDialog
           integration={edgePolicyEditor.integration}
           dashboardId={dashboardId}
-          terminalId={edgePolicyEditor.terminalItemId}
+          terminalId={edgePolicyEditor.ptyId}
           onClose={() => setEdgePolicyEditor(null)}
           onSuccess={() => {
             queryClient.invalidateQueries({
-              queryKey: ["terminal-integrations", dashboardId, edgePolicyEditor.terminalItemId],
+              queryKey: ["terminal-integrations", dashboardId, edgePolicyEditor.ptyId],
             });
             setEdgePolicyEditor(null);
           }}
           onPolicyUpdate={(provider, securityLevel) => {
+            // Use terminalItemId (dashboard item ID) for edge matching
             handlePolicyUpdate(edgePolicyEditor.terminalItemId, provider, securityLevel);
           }}
         />
