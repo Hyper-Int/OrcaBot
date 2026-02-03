@@ -158,12 +158,13 @@ const terminalTools: BlockTool[] = [
     icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "opencode", agentic: true },
   },
-  {
-    type: "terminal",
-    label: "GitHub Copilot CLI",
-    icon: <img src="/icons/github.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "copilot", agentic: true },
-  },
+  // GitHub Copilot CLI - hidden until hooks integration is complete
+  // {
+  //   type: "terminal",
+  //   label: "GitHub Copilot CLI",
+  //   icon: <img src="/icons/github.png" alt="" className="w-4 h-4 object-contain" />,
+  //   terminalPreset: { command: "copilot", agentic: true },
+  // },
   {
     type: "terminal",
     label: "Droid",
@@ -190,7 +191,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   schedule: { width: 280, height: 220 },
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
-  browser: { width: 680, height: 480 },
+  browser: { width: 680, height: 600 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },

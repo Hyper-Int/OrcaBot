@@ -21,6 +21,7 @@ import type {
   AudioEvent,
   TtsStatusEvent,
   TalkitoNoticeEvent,
+  AgentStoppedEvent,
 } from "@/types/terminal";
 import { API } from "@/config/env";
 
@@ -61,6 +62,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
   private onPtyClosedHandlers: Set<() => void> = new Set();
   private onAudioHandlers: Set<(event: AudioEvent) => void> = new Set();
   private onTtsStatusHandlers: Set<(event: TtsStatusEvent) => void> = new Set();
+  private onAgentStoppedHandlers: Set<(event: AgentStoppedEvent) => void> = new Set();
 
   constructor(
     sessionId: string,
@@ -156,6 +158,22 @@ export class TerminalWSManager extends BaseWebSocketManager {
   }
 
   /**
+   * Send text and execute (server handles timing atomically)
+   * Returns false if input is blocked
+   */
+  sendExecute(text: string): boolean {
+    if (this.turnTaking.inputBlocked) {
+      console.warn(
+        "Input blocked:",
+        this.turnTaking.inputBlockReason
+      );
+      return false;
+    }
+
+    return this.sendJSON({ type: "execute", text });
+  }
+
+  /**
    * Get current turn-taking state
    */
   getTurnTakingState(): TurnTakingState {
@@ -224,6 +242,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
   onTtsStatus(handler: (event: TtsStatusEvent) => void): () => void {
     this.onTtsStatusHandlers.add(handler);
     return () => this.onTtsStatusHandlers.delete(handler);
+  }
+
+  /**
+   * Subscribe to agent stopped events (from native stop hooks)
+   */
+  onAgentStopped(handler: (event: AgentStoppedEvent) => void): () => void {
+    this.onAgentStoppedHandlers.add(handler);
+    return () => this.onAgentStoppedHandlers.delete(handler);
   }
 
   /**
@@ -336,6 +362,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "talkito_notice":
         this.handleTalkitoNotice(message);
         break;
+
+      case "agent_stopped":
+        this.notifyAgentStopped(message);
+        break;
     }
   }
 
@@ -423,6 +453,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
   private notifyTtsStatus(event: TtsStatusEvent): void {
     this.onTtsStatusHandlers.forEach((handler) => handler(event));
+  }
+
+  private notifyAgentStopped(event: AgentStoppedEvent): void {
+    this.onAgentStoppedHandlers.forEach((handler) => handler(event));
   }
 
   private handleTalkitoNotice(event: TalkitoNoticeEvent): void {

@@ -1456,6 +1456,11 @@ export function TerminalBlock({
     enabled: !!session && session.status === "active",
   });
 
+  // Get connection data flow context for firing output to connected blocks
+  const connectionFlow = useConnectionDataFlow();
+  const connectionFlowRef = React.useRef(connectionFlow);
+  connectionFlowRef.current = connectionFlow;
+
   // Use terminal hook for WebSocket connection
   const [terminalState, terminalActions] = useTerminal(
     {
@@ -1505,6 +1510,28 @@ export function TerminalBlock({
         }
       }, [isClaudeSession, maybeCreateBrowserBlock]),
       onAudio: handleAudioEvent,
+      onAgentStopped: React.useCallback((event: { agent: string; lastMessage: string }) => {
+        // Show toast notification when agent finishes
+        const agentName = event.agent.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+        const preview = event.lastMessage.length > 100
+          ? event.lastMessage.slice(0, 100) + "..."
+          : event.lastMessage;
+        toast.info(`${agentName} finished`, {
+          description: preview || "Task completed",
+        });
+
+        // Fire output to connected blocks (e.g., note blocks, other terminals)
+        if (connectionFlowRef.current && event.lastMessage) {
+          connectionFlowRef.current.fireOutput(id, "right-out", {
+            text: event.lastMessage,
+            execute: true,
+          });
+          connectionFlowRef.current.fireOutput(id, "bottom-out", {
+            text: event.lastMessage,
+            execute: true,
+          });
+        }
+      }, [id]),
     }
   );
 
@@ -1522,6 +1549,23 @@ export function TerminalBlock({
   React.useEffect(() => {
     wasConnectedRef.current = false;
   }, [session?.id]);
+
+  // Apply secrets when reconnecting to an existing session (e.g., page reload)
+  // Track if we've already applied secrets for this session
+  const secretsAppliedRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!session?.id || !isOwner) return;
+    // Only apply once per session ID
+    if (secretsAppliedRef.current === session.id) return;
+
+    // Mark as applied immediately to prevent duplicate calls
+    secretsAppliedRef.current = session.id;
+
+    // Apply secrets (fire and forget - errors are logged but don't block)
+    applySessionSecrets(session.id)
+      .then(() => console.log(`[TerminalBlock] Secrets applied on reconnect`))
+      .catch((e) => console.warn(`[TerminalBlock] Failed to apply secrets on reconnect:`, e));
+  }, [session?.id, isOwner]);
 
   // Computed state
   const isConnected = connectionState === "connected";
@@ -1665,15 +1709,34 @@ export function TerminalBlock({
   );
 
   // Register handlers for incoming data from connections (both left and top inputs)
-  const connectionFlow = useConnectionDataFlow();
   React.useEffect(() => {
     if (!connectionFlow) return;
 
     const handler = (payload: { text: string; execute?: boolean }) => {
+      // Default execute to true unless explicitly set to false
+      const shouldExecute = payload.execute !== false;
+      console.log("[TerminalBlock] Received input from connection", {
+        id,
+        canType,
+        text: payload.text?.slice(0, 50),
+        execute: shouldExecute,
+        terminalType,
+      });
       if (canType && payload.text) {
-        terminalActions.sendInput(payload.text);
-        if (payload.execute) {
-          terminalActions.sendInput("\r");
+        let text = payload.text;
+        // Gemini CLI special characters:
+        // - Single quotes break shell command parsing
+        // - ! triggers shell mode
+        if (terminalType === "gemini") {
+          text = text
+            .replace(/'/g, "'\\''")  // Escape single quotes for shell
+            .replace(/!/g, ".");      // Replace ! to avoid shell mode trigger
+        }
+        if (shouldExecute) {
+          // Server handles text + CR atomically
+          terminalActions.sendExecute(text);
+        } else {
+          terminalActions.sendInput(text);
         }
       }
     };
@@ -1685,7 +1748,7 @@ export function TerminalBlock({
       cleanupLeft();
       cleanupTop();
     };
-  }, [id, connectionFlow, canType, terminalActions]);
+  }, [id, connectionFlow, canType, terminalActions, terminalType]);
 
   // Handle terminal resize
   const handleTerminalResize = React.useCallback(
@@ -1772,6 +1835,14 @@ export function TerminalBlock({
       setSession(newSession);
       upsertDashboardSession(newSession);
 
+      // Apply stored secrets to the new session
+      try {
+        await applySessionSecrets(newSession.id);
+        console.log(`[TerminalBlock] Secrets applied to session`);
+      } catch (e) {
+        console.warn(`[TerminalBlock] Failed to apply secrets:`, e);
+      }
+
       // Clear terminal and show connecting message
       if (isReady) {
         terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
@@ -1830,6 +1901,15 @@ export function TerminalBlock({
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
+
+      // Apply stored secrets to the new session
+      try {
+        await applySessionSecrets(newSession.id);
+        console.log(`[TerminalBlock] Secrets applied to session`);
+      } catch (e) {
+        console.warn(`[TerminalBlock] Failed to apply secrets:`, e);
+      }
+
       // Clear the pending config restart banner since we've applied all changes
       setPendingConfigRestart(false);
     } catch (error) {

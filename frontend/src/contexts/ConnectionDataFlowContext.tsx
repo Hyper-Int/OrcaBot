@@ -64,6 +64,12 @@ export function ConnectionDataFlowProvider({
 
   const fireOutput = React.useCallback(
     (sourceNodeId: string, sourceHandle: string, payload: DataPayload) => {
+      console.log("[ConnectionDataFlow] fireOutput called", {
+        sourceNodeId,
+        sourceHandle,
+        edgeCount: edges.length,
+        payloadPreview: payload.text?.slice(0, 50),
+      });
       // Find unique target nodes (dedupe by target + handle)
       const seenTargets = new Set<string>();
 
@@ -71,6 +77,11 @@ export function ConnectionDataFlowProvider({
         if (edge.source !== sourceNodeId || edge.sourceHandle !== sourceHandle) {
           continue;
         }
+        console.log("[ConnectionDataFlow] Found matching edge", {
+          edgeId: edge.id,
+          target: edge.target,
+          targetHandle: edge.targetHandle,
+        });
 
         const targetNodeId = edge.target;
         const targetHandle = edge.targetHandle;
@@ -81,10 +92,16 @@ export function ConnectionDataFlowProvider({
         seenTargets.add(targetKey);
 
         const handler = handlersRef.current.get(targetKey);
+        console.log("[ConnectionDataFlow] Handler lookup", {
+          targetKey,
+          hasHandler: !!handler,
+          registeredHandlers: Array.from(handlersRef.current.keys()),
+        });
         if (!handler) continue;
 
         try {
           handler(payload);
+          console.log("[ConnectionDataFlow] Handler invoked successfully");
         } catch (error) {
           console.error(
             `Error in connection handler for ${targetKey}`,

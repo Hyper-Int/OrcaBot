@@ -36,7 +36,7 @@ clean:
 
 # Build Docker image
 docker-build:
-	docker build -f docker/Dockerfile -t orcabot-sandbox --build-arg TALKITO_VERSION=$$(date +%s) .
+	docker build -f docker/Dockerfile -t orcabot-sandbox .
 
 # Run Docker container locally
 docker-run: docker-build

@@ -83,15 +83,22 @@ export function scrubItemContent(
       }
 
       case 'terminal': {
-        // Terminals store { name: string, sessionId?: string, ptyId?: string }
-        // Keep name for context, clear session info
+        // Terminals store agentic properties needed to recreate the terminal type
+        // Keep: name, agentic, bootCommand (determines terminal type like claude/gemini/codex)
+        // Clear: sessionId, ptyId, subagentIds, skillIds, mcpToolIds (session-specific)
         const parsed = safeParseJson(content) as Record<string, unknown> | null;
         if (parsed && typeof parsed === 'object') {
           return JSON.stringify({
             name: parsed.name || 'Terminal',
+            agentic: parsed.agentic ?? false,
+            bootCommand: parsed.bootCommand || '',
+            // Clear user-specific attachments - will be empty on import
+            subagentIds: [],
+            skillIds: [],
+            mcpToolIds: [],
           });
         }
-        return JSON.stringify({ name: 'Terminal' });
+        return JSON.stringify({ name: 'Terminal', agentic: false, bootCommand: '' });
       }
 
       case 'recipe': {
