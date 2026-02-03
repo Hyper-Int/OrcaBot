@@ -70,14 +70,17 @@ Cloudflare (control plane)
 ├── Auth
 ├── Dashboard collaboration (Durable Objects)
 ├── Session orchestration
+├── Integration policy gateway (OAuth tokens stay here)
 └── Routing
 ↓
 Fly.io (execution plane)
-└── Sandbox (1 machine per session)
-├── Go backend
+└── Sandbox (1 machine per dashboard)
+├── Go backend (cmd/server)
+├── MCP server (integration + browser/UI tools)
+├── MCP bridge (stdio↔HTTP for Claude Code/Gemini)
 ├── Multiple PTYs (terminals)
 ├── Turn-taking controller (per PTY)
-├── Agent controller (Claude Code)
+├── Agent hooks (stop detection for all agent types)
 ├── Secrets broker (localhost:8082)
 └── /workspace filesystem
 
@@ -91,9 +94,13 @@ Fly.io (execution plane)
 - PTY ↔ WebSocket streaming
 - Turn-taking enforcement
 - Filesystem access (`/workspace`)
-- Agent execution (Claude Code)
+- Agent execution (Claude Code, Gemini, Copilot, Codex, etc.)
 - Session metadata persistence
 - Secrets broker and output redaction
+- MCP server (tool discovery + proxying to control plane gateway)
+- MCP bridge (stdio-to-HTTP translation for LLM clients)
+- Agent hook generation (stop detection for all supported agents)
+- Integration tool listing (based on attached integrations via gateway)
 
 ### Frontend (not in this repo) owns **experience**
 - Dashboard UI
@@ -312,13 +319,50 @@ curl -X POST "http://localhost:8082/broker/custom/MY_API_KEY?target=https://api.
 ```
 
 ### Coding Agent integration
-Claude Code and Codex CLI are preinstalled in the sandbox image.
-Claude runs as a CLI process inside a PTY.
+Claude Code, Gemini CLI, and Codex CLI are preinstalled in the sandbox image.
+Agents run as CLI processes inside PTYs.
+
+**Supported agents:** Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, Moltbot
 
 **Agent control signals:**
 - **Pause**: `SIGSTOP`
 - **Resume**: `SIGCONT`
 - **Stop**: Triple `SIGINT` → `SIGTERM` → `SIGKILL` (escalating)
+
+**Agent hooks:** When an agent finishes a turn, a stop hook script calls back to the sandbox
+server which broadcasts `agent_stopped` WebSocket events. Each agent type has its own hook
+configuration format — see `internal/agenthooks/hooks.go`.
+
+### MCP Server (Model Context Protocol)
+
+The sandbox exposes an HTTP-based MCP server at `/sessions/:id/mcp/*`.
+
+**Tool categories:**
+1. **Browser/UI tools** — Always available (browser_navigate, screenshot, etc.)
+2. **Integration tools** — Only available when an integration is attached to the terminal
+
+**Integration tool discovery flow:**
+1. MCP client calls `tools/list` (optionally with `?pty_id=` query param)
+2. Sandbox reads `ORCABOT_INTEGRATION_TOKEN` from PTY environment
+3. Sandbox calls `GET /internal/terminals/:ptyId/integrations` on control plane
+4. Control plane verifies PTY token, returns list of attached providers
+5. Sandbox adds tool definitions for each attached provider (gmail_*, github_*, etc.)
+
+**Integration tool call flow:**
+1. MCP client calls `tools/call` with tool name + arguments
+2. Sandbox forwards to `POST /internal/gateway/:provider/execute` with PTY token
+3. Control plane enforces policy, makes API call, filters response
+4. Sandbox wraps result in MCP content format: `{"content": [{"type": "text", "text": "..."}]}`
+
+### MCP Bridge
+
+`cmd/mcp-bridge/` is a stdio-to-HTTP bridge. LLM clients (Claude Code, Gemini) communicate
+via JSON-RPC over stdin/stdout; the bridge translates to HTTP calls.
+
+- Advertises `listChanged: true` capability
+- Background goroutine polls for tool list changes every 5s
+- Sends `notifications/tools/list_changed` when integrations are attached/detached
+- This allows LLMs to discover new tools without restarting
 
 ### Sandbox launch
 - **MVP**: Cold start is acceptable (2-5s Fly Machine spin-up)
@@ -330,29 +374,32 @@ Claude runs as a CLI process inside a PTY.
 
 sandbox/
 ├── cmd/
-│   └── server/
-│       └── main.go
+│   ├── server/
+│   │   ├── main.go          // HTTP server, route registration
+│   │   └── mcp.go           // MCP proxy handlers (tools/list, tools/call)
+│   └── mcp-bridge/
+│       └── main.go          // stdio↔HTTP bridge for Claude Code/Gemini
 ├── internal/
 │   ├── sessions/
 │   │   ├── manager.go
-│   │   ├── session.go
+│   │   ├── session.go       // PTY creation, env var injection, token storage
 │   │   └── lifecycle.go
-│   ├── sandbox/
-│   │   ├── fly.go
-│   │   ├── spec.go
-│   │   └── launcher.go
 │   ├── pty/
 │   │   ├── pty.go
-│   │   ├── session.go
-│   │   ├── hub.go
+│   │   ├── hub.go           // fan-out, broadcast, output redaction, agent state
 │   │   └── turn.go
+│   ├── mcp/
+│   │   ├── settings.go          // MCP settings generation per agent type
+│   │   ├── integration_tools.go // Tool definitions (Gmail, GitHub, Drive, Calendar)
+│   │   └── gateway_client.go    // HTTP client for control plane gateway
+│   ├── agenthooks/
+│   │   └── hooks.go         // Stop hook generation for all agent types
 │   ├── broker/
 │   │   ├── secrets_broker.go
 │   │   └── providers.go
 │   ├── ws/
 │   │   ├── handler.go
-│   │   ├── router.go
-│   │   └── protocol.go
+│   │   └── client.go
 │   ├── fs/
 │   │   └── workspace.go
 │   ├── agent/
@@ -365,94 +412,63 @@ sandbox/
 
 ## Package-by-package
 
-cmd/server/main.go
-Role:
-  Wire everything together
-  Load config
-  Start HTTP + WS server
-  Handle shutdown
-  Keep this thin.
+cmd/server/
+  Wire everything together. HTTP server, route registration, MCP proxy handlers.
+  - main.go: HTTP routes, session management, PTY endpoints
+  - mcp.go: MCP tool listing (merges browser/UI tools + integration tools) and tool call proxying
+
+cmd/mcp-bridge/
+  stdio-to-HTTP bridge for MCP. Claude Code and Gemini use stdio transport;
+  this translates JSON-RPC over stdin/stdout to HTTP calls to the sandbox MCP server.
+  - Passes PTY token for integration tool discovery
+  - Monitors for tool list changes (polls every 5s) and sends `notifications/tools/list_changed`
+    so LLMs discover newly attached integrations without restarting
+  - Uses `GEMINI_CLI_SYSTEM_SETTINGS_PATH` for durable Gemini config
 
 internal/sessions/
-Role:
-  Session lifecycle
-  Session ↔ sandbox mapping
-  Metadata persistence hooks
-  Session termination logic
-    sessions/
-    ├── manager.go      // create/destroy sessions
-    ├── session.go      // Session struct (ID, state, PTYs)
-    └── lifecycle.go    // start/stop, cleanup
-  Sessions do not manage PTYs directly — they contain them.
-
-internal/sandbox/
-Role:
-  Fly Machine lifecycle
-  Environment variables
-  Volume mounts
-  Image selection
-  This is the "execution substrate" layer.
-    sandbox/
-      ├── fly.go
-      ├── spec.go        // machine specs
-      └── launcher.go    // abstract interface (future-proof)
+  Session lifecycle. Sessions contain PTYs. PTY creation injects env vars
+  including `ORCABOT_INTEGRATION_TOKEN` for gateway auth and agent-specific
+  settings (e.g., `GEMINI_CLI_SYSTEM_SETTINGS_PATH`).
+  - manager.go: create/destroy sessions
+  - session.go: Session struct, CreatePTY with token injection, MCP settings + hook generation
 
 internal/pty/
-  This is where multiplayer complexity lives
-    pty/
-      ├── pty.go          // low-level PTY creation (os/exec, creack/pty)
-      ├── session.go      // PTYSession (1 PTY = 1 terminal)
-      ├── hub.go          // fan-out, clients, broadcast, output redaction
-      └── turn.go         // turn-taking state machine
-  This keeps:
-    PTY mechanics
-    multiplayer logic
-    turn control
+  Multiplayer terminal mechanics.
+  - pty.go: low-level PTY creation (os/exec, creack/pty)
+  - hub.go: fan-out, clients, broadcast, output redaction, agent state detection
+  - turn.go: turn-taking state machine
+
+internal/mcp/
+  MCP tool definitions and control plane gateway client.
+  - settings.go: Generates per-agent MCP config files (.mcp.json, settings.json, config.toml, etc.)
+  - integration_tools.go: Tool definitions for Gmail, GitHub, Drive, Calendar (name, description, inputSchema)
+  - gateway_client.go: HTTP client for `GET /internal/terminals/:ptyId/integrations` and
+    `POST /internal/gateway/:provider/execute` with PTY token auth
+
+internal/agenthooks/
+  Agent stop hook generation for all supported agent types.
+  Hooks call back to `POST /sessions/:id/ptys/:ptyId/agent-stopped` when an agent finishes,
+  enabling WebSocket `agent_stopped` events.
+  - Supported: Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, Moltbot
+  - Each agent has its own config format (JSON, TOML, YAML, etc.)
+  - Gemini settings use system override file to survive CLI rewrites
 
 internal/broker/
-  Role:
-    Session-local auth broker for API keys
-    Provider definitions and allowlists
-    Request forwarding with key injection
-    broker/
-      ├── secrets_broker.go  // HTTP server, request handling
-      └── providers.go       // Provider specs (URLs, headers)
+  Session-local auth broker for API keys.
+  - secrets_broker.go: HTTP server on localhost:8082, request forwarding with key injection
+  - providers.go: Provider specs (URLs, headers, allowlists)
 
 internal/ws/
-  This should:
-    Upgrade HTTP → WS
-    Authenticate user
-    Route to correct PTY hub
-    Translate frames
-
-    ws/
-      ├── handler.go
-      ├── router.go      // maps WS → PTYSession
-      └── protocol.go    // message formats
+  WebSocket handling: upgrade HTTP→WS, authenticate, route to PTY hub.
 
 internal/fs/
-  Role:
-    Read/write files under /workspace
-    Enforce path scoping
-    Provide stat/list APIs
+  Read/write files under /workspace with path scoping.
 
 internal/agent/
-  Role:
-    Launch Claude Code
-    Inject commands
-    Pause / stop / resume
-
-api/openapi.yaml
-  This gives:
-    shared contract clarity
-    frontend/backend alignment
-    future SDK potential
+  Agent lifecycle: launch, pause (SIGSTOP), resume (SIGCONT), stop (escalating signals).
 
 internal/auth/
-  WS auth
-  Role checking (viewer vs controller)
-  Session ownership
-  This avoids auth logic leaking everywhere later.
+  WS auth, role checking (viewer vs controller), session ownership.
 
 ---
 

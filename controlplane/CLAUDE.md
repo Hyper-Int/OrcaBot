@@ -12,6 +12,9 @@ It is responsible for:
 - schedules, recipes, and agent workflows
 - secrets storage and encryption
 - domain approval workflow for custom secrets
+- integration policy enforcement (Gmail, GitHub, Drive, Calendar)
+- OAuth token management (tokens never leave control plane)
+- PTY token issuance for terminal-level gateway auth
 
 It does **not** run terminals, PTYs, shells, or agents.
 
@@ -57,8 +60,10 @@ Cloudflare (this repo)
 ├── Orchestrator (workflows, recipes, schedules)
 ├── Session coordinator
 ├── Secrets management (encrypted storage)
-├── Integration adapters (Drive, GitHub, etc.)
-└── Postgres (durable state)
+├── Integration policy gateway (Gmail, GitHub, Drive, Calendar)
+├── OAuth token management (tokens never leave this layer)
+├── PTY token issuance (HMAC-SHA256 JWT per terminal)
+└── D1 database (durable state)
 ↓
 Fly.io (execution plane – separate repo)
 └── Sandbox (Go server)
@@ -81,9 +86,13 @@ Fly.io (execution plane – separate repo)
 - Session creation & teardown
 - Mapping dashboards → sandbox sessions
 - Durable orchestration state
-- Integrations (Drive, GitHub, enterprise tools)
 - Secrets storage and encryption
 - Domain approval workflow for custom secrets
+- **Integration policy enforcement** (gateway execute, rate limits, audit)
+- **OAuth token lifecycle** (connect, refresh, encrypt at rest)
+- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth)
+- **Response filtering** (policy-based filtering before LLM sees data)
+- **API execution** (Gmail, GitHub, Drive, Calendar calls — tokens stay here)
 
 ### This repo does NOT own
 - PTYs
@@ -116,7 +125,7 @@ Rules:
 
 ## Persistence model
 
-### Stored in Postgres
+### Stored in D1
 - Users
 - Dashboards
 - Dashboard items (notes, todos, layout)
@@ -125,7 +134,9 @@ Rules:
 - Workflow execution state
 - Agent profiles / templates
 - Schedules
-- Integration credentials (encrypted)
+- Integration credentials (encrypted) — `user_integrations`
+- Terminal-integration attachments — `terminal_integrations`
+- Integration policies — `integration_policies`
 - Session metadata (start/end, region, status)
 - Artifacts & summaries
 - User secrets (encrypted)
@@ -188,6 +199,49 @@ When secrets change, `autoApplySecretsToSessions()` pushes updates to all active
 - Secrets encrypted at rest using configured encryption key
 - Supports legacy plaintext migration
 - Decryption only on read for sandbox delivery
+
+---
+
+## Integration Policy Enforcement
+
+The control plane is the **sole enforcement point** for integration policies. The sandbox
+never has OAuth tokens — it sends requests to the control plane gateway, which verifies
+auth, enforces policy, makes the API call, filters the response, and returns clean data.
+
+### Architecture
+
+```
+Sandbox MCP Server
+  → POST /internal/gateway/:provider/execute
+  → Headers: Authorization: Bearer <pty_token>
+  → Body: { action: "gmail.search", args: { query: "..." } }
+```
+
+### Key Files
+- `src/integration-policies/gateway.ts` — Gateway execute endpoint, PTY token verification, response formatting
+- `src/integration-policies/handler.ts` — CRUD for terminal integrations + policies, `enforcePolicy()`
+- `src/integration-policies/response-filter.ts` — Policy-based response filtering (sender allowlist, repo filter, etc.)
+- `src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar API wrappers
+- `src/auth/pty-token.ts` — HMAC-SHA256 JWT token creation/verification
+
+### Database Tables
+- `user_integrations` — OAuth tokens (encrypted), provider, account email
+- `terminal_integrations` — Which integrations are attached to which terminals
+- `integration_policies` — Policy definitions (per-provider rules)
+
+### Security Invariants
+1. **OAuth tokens never leave control plane** — API calls are made here, not in sandbox
+2. **Policy loaded from DB** — `active_policy_id` on `terminal_integrations`, never from request
+3. **Boolean enforcement** — `enforcePolicy()` uses if/else logic only, no LLM judgment
+4. **Fail-closed** — Missing policy, expired token, unknown action → deny
+5. **Audit before response** — Every request logged via `logAuditEntry()` before returning
+6. **Context derived server-side** — Recipient, domain, etc. extracted from args in control plane
+
+### Providers
+- **Gmail**: search, get, send, archive, trash, mark_read/unread, add/remove_label
+- **GitHub**: list_repos, search_repos, search_code, get_file, list_issues, create_issue, list_prs
+- **Google Drive**: list, search, get_metadata, download, create, update
+- **Google Calendar**: list_calendars, list_events, get_event, create_event, update_event, delete_event
 
 ---
 
