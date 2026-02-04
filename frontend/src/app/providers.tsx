@@ -66,9 +66,9 @@ function AuthBootstrapper() {
         if (!isActive) return;
 
         if (response.ok) {
-          const data = (await response.json()) as { user?: User };
+          const data = (await response.json()) as { user?: User; isAdmin?: boolean };
           if (data.user) {
-            setUser(data.user);
+            setUser(data.user, data.isAdmin ?? false);
             return;
           }
         }

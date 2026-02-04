@@ -11,6 +11,7 @@ import { generateId } from "@/lib/utils";
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+  isAdmin: boolean;
   isLoading: boolean;
   isAuthResolved: boolean;
 }
@@ -34,7 +35,7 @@ interface AuthActions {
   /**
    * Set authenticated user (OAuth bootstrap)
    */
-  setUser: (user: User | null) => void;
+  setUser: (user: User | null, isAdmin?: boolean) => void;
 
   /**
    * Mark auth resolution status
@@ -64,6 +65,7 @@ export const useAuthStore = create<AuthStore>()(
       // Initial state
       user: null,
       isAuthenticated: false,
+      isAdmin: false,
       isLoading: false,
       isAuthResolved: false,
 
@@ -88,6 +90,7 @@ export const useAuthStore = create<AuthStore>()(
         set({
           user: null,
           isAuthenticated: false,
+          isAdmin: false,
           isLoading: false,
           isAuthResolved: true,
         });
@@ -97,10 +100,11 @@ export const useAuthStore = create<AuthStore>()(
         set({ isLoading: loading });
       },
 
-      setUser: (user: User | null) => {
+      setUser: (user: User | null, isAdmin?: boolean) => {
         set({
           user,
           isAuthenticated: Boolean(user),
+          isAdmin: isAdmin ?? false,
           isLoading: false,
           isAuthResolved: true,
         });
@@ -115,6 +119,7 @@ export const useAuthStore = create<AuthStore>()(
       partialize: (state) => ({
         user: state.user,
         isAuthenticated: state.isAuthenticated,
+        isAdmin: state.isAdmin,
         // Note: isAuthResolved is intentionally NOT persisted - it should be
         // computed fresh each page load to avoid race conditions with hydration
       }),

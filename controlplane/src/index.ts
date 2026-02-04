@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v2-gateway-routes
-console.log(`[controlplane] REVISION: index-v2-gateway-routes loaded at ${new Date().toISOString()}`);
+// REVISION: index-v3-admin-controls
+console.log(`[controlplane] REVISION: index-v3-admin-controls loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -39,6 +39,7 @@ import * as mcpUi from './mcp-ui/handler';
 import * as bugReports from './bug-reports/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
+import { isAdminEmail } from './auth/admin';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail } from './email/resend';
@@ -708,6 +709,20 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   }
 
   // ============================================
+  // Admin routes
+  // ============================================
+
+  // GET /admin/dashboards - List ALL dashboards (admin only)
+  if (segments[0] === 'admin' && segments[1] === 'dashboards' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (!isAdminEmail(env, auth.user!.email)) {
+      return Response.json({ error: 'E79405: Admin access required' }, { status: 403 });
+    }
+    return dashboards.listAllDashboards(env);
+  }
+
+  // ============================================
   // Dashboard routes
   // ============================================
 
@@ -745,7 +760,8 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   if (segments[0] === 'dashboards' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return dashboards.deleteDashbоard(env, segments[1], auth.user!.id);
+    const admin = isAdminEmail(env, auth.user!.email);
+    return dashboards.deleteDashbоard(env, segments[1], auth.user!.id, admin);
   }
 
   // WebSocket /dashboards/:id/ws - Real-time collaboration
@@ -1574,7 +1590,10 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return Response.json({ user: auth.user });
+    return Response.json({
+      user: auth.user,
+      isAdmin: isAdminEmail(env, auth.user!.email),
+    });
   }
 
   // DELETE /sessions/:id - Stop session
