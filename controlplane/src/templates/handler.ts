@@ -289,15 +289,16 @@ export async function createTemplate(
 }
 
 /**
- * Delete a template (author only)
+ * Delete a template (author or admin)
  * DELETE /templates/:id
  */
 export async function deleteTemplate(
   env: Env,
   userId: string,
-  templateId: string
+  templateId: string,
+  isAdmin = false
 ): Promise<Response> {
-  // Check ownership
+  // Check existence
   const template = await env.DB.prepare(
     `SELECT author_id FROM dashboard_templates WHERE id = ?`
   )
@@ -311,7 +312,8 @@ export async function deleteTemplate(
     );
   }
 
-  if (template.author_id !== userId) {
+  // Admins can delete any template; otherwise author-only
+  if (!isAdmin && template.author_id !== userId) {
     return Response.json(
       { error: 'E79804: Not authorized to delete this template' },
       { status: 403 }

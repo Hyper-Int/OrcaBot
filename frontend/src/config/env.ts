@@ -32,7 +32,6 @@ export const API = {
   cloudflare: {
     base: CLOUDFLARE_API_URL,
     dashboards: `${CLOUDFLARE_API_URL}/dashboards`,
-    adminDashboards: `${CLOUDFLARE_API_URL}/admin/dashboards`,
     recipes: `${CLOUDFLARE_API_URL}/recipes`,
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
     executions: `${CLOUDFLARE_API_URL}/executions`,

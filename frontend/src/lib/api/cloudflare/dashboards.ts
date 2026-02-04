@@ -17,10 +17,6 @@ interface DashboardsListResponse {
   dashboards: Dashboard[];
 }
 
-interface AdminDashboardsListResponse {
-  dashboards: (Dashboard & { ownerEmail: string })[];
-}
-
 interface DashboardResponse {
   dashboard: Dashboard;
   items?: DashboardItem[];
@@ -79,14 +75,6 @@ interface SessionResponse {
  */
 export async function listDashboards(): Promise<Dashboard[]> {
   const response = await apiGet<DashboardsListResponse>(API.cloudflare.dashboards);
-  return response.dashboards;
-}
-
-/**
- * List ALL dashboards (admin only)
- */
-export async function listAllDashboards(): Promise<(Dashboard & { ownerEmail: string })[]> {
-  const response = await apiGet<AdminDashboardsListResponse>(API.cloudflare.adminDashboards);
   return response.dashboards;
 }
 

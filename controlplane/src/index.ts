@@ -709,20 +709,6 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   }
 
   // ============================================
-  // Admin routes
-  // ============================================
-
-  // GET /admin/dashboards - List ALL dashboards (admin only)
-  if (segments[0] === 'admin' && segments[1] === 'dashboards' && segments.length === 2 && method === 'GET') {
-    const authError = requireAuth(auth);
-    if (authError) return authError;
-    if (!isAdminEmail(env, auth.user!.email)) {
-      return Response.json({ error: 'E79405: Admin access required' }, { status: 403 });
-    }
-    return dashboards.listAllDashboards(env);
-  }
-
-  // ============================================
   // Dashboard routes
   // ============================================
 
@@ -760,8 +746,7 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   if (segments[0] === 'dashboards' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const admin = isAdminEmail(env, auth.user!.email);
-    return dashboards.deleteDashbоard(env, segments[1], auth.user!.id, admin);
+    return dashboards.deleteDashbоard(env, segments[1], auth.user!.id);
   }
 
   // WebSocket /dashboards/:id/ws - Real-time collaboration
@@ -1017,11 +1002,12 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return templates.createTemplate(env, auth.user!.id, data);
   }
 
-  // DELETE /templates/:id - Delete template
+  // DELETE /templates/:id - Delete template (author or admin)
   if (segments[0] === 'templates' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return templates.deleteTemplate(env, auth.user!.id, segments[1]);
+    const admin = isAdminEmail(env, auth.user!.email);
+    return templates.deleteTemplate(env, auth.user!.id, segments[1], admin);
   }
 
   // ============================================

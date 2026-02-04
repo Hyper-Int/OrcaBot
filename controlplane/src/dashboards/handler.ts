@@ -5,7 +5,7 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v2-admin-delete
+// REVISION: dashboards-v1-deleteitem-snapshot
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { populateFromTemplate } from '../templates/handler';
@@ -124,24 +124,6 @@ export async function listDashbоards(
   return Response.json({ dashboards });
 }
 
-// List ALL dashboards (admin only)
-export async function listAllDashboards(
-  env: Env,
-): Promise<Response> {
-  const result = await env.DB.prepare(`
-    SELECT d.*, u.email as owner_email
-    FROM dashboards d
-    LEFT JOIN users u ON d.owner_id = u.id
-    ORDER BY d.updated_at DESC
-  `).all();
-
-  const dashboards = result.results.map((row) => ({
-    ...fоrmatDashbоard(row),
-    ownerEmail: (row.owner_email as string) || 'unknown',
-  }));
-  return Response.json({ dashboards });
-}
-
 // Get a single dashboard
 export async function getDashbоard(
   env: Env,
@@ -255,22 +237,12 @@ export async function updateDashbоard(
 export async function deleteDashbоard(
   env: Env,
   dashboardId: string,
-  userId: string,
-  isAdmin = false
+  userId: string
 ): Promise<Response> {
-  if (isAdmin) {
-    // Admin bypass: verify dashboard exists
-    const exists = await env.DB.prepare(`SELECT id FROM dashboards WHERE id = ?`)
-      .bind(dashboardId).first();
-    if (!exists) {
-      return Response.json({ error: 'E79304: Not found' }, { status: 404 });
-    }
-  } else {
-    // Check owner access
-    const role = await getDashbоardRole(env, dashboardId, userId);
-    if (!hasDashbоardRole(role, ['owner'])) {
-      return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
-    }
+  // Check owner access
+  const role = await getDashbоardRole(env, dashboardId, userId);
+  if (!hasDashbоardRole(role, ['owner'])) {
+    return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
   }
 
   // Delete dependent records that don't have ON DELETE CASCADE
