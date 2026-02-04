@@ -3,6 +3,10 @@
 
 "use client";
 
+// REVISION: tooltip-v1-portal
+const MODULE_REVISION = "tooltip-v1-portal";
+console.log(`[tooltip] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cn } from "@/lib/utils";
@@ -53,9 +57,11 @@ function Tooltip({
   return (
     <TooltipRoot delayDuration={delayDuration}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side={side} align={align}>
-        {content}
-      </TooltipContent>
+      <TooltipPrimitive.Portal>
+        <TooltipContent side={side} align={align}>
+          {content}
+        </TooltipContent>
+      </TooltipPrimitive.Portal>
     </TooltipRoot>
   );
 }

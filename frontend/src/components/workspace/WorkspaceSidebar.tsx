@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v7-snapshot-delay
-const MODULE_REVISION = "workspace-sidebar-v7-snapshot-delay";
+// REVISION: workspace-sidebar-v12-integrations-section
+const MODULE_REVISION = "workspace-sidebar-v12-integrations-section";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -24,6 +24,7 @@ import {
   Terminal,
   ChevronRight,
   ChevronDown,
+  X,
 } from "lucide-react";
 import {
   Button,
@@ -530,7 +531,11 @@ export function WorkspaceSidebar({
 
   // ── Integration connect handlers ────────────────────────────────
   const openPopup = React.useCallback((path: string, name: string) => {
-    if (!user) return;
+    console.log(`[WorkspaceSidebar] openPopup called: path=${path}, name=${name}, user=${user?.id}, dashboardId=${dashboardId}`);
+    if (!user) {
+      console.warn("[WorkspaceSidebar] openPopup: no user, aborting");
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}${path}`);
     url.searchParams.set("mode", "popup");
     if (dashboardId) url.searchParams.set("dashboard_id", dashboardId);
@@ -542,7 +547,9 @@ export function WorkspaceSidebar({
     const w = 520, h = 680;
     const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
     const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
-    window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top},noopener,noreferrer`);
+    // NOTE: Do NOT use noopener - it breaks window.opener.postMessage which is needed for OAuth callback
+    const popup = window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
+    console.log(`[WorkspaceSidebar] popup opened:`, popup ? "success" : "blocked");
   }, [dashboardId, user]);
 
   const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth"), [openPopup]);
@@ -777,41 +784,59 @@ export function WorkspaceSidebar({
 
   // OAuth popup message listeners
   React.useEffect(() => {
+    console.log(`[WorkspaceSidebar] Setting up message listener: location.origin=${window.location.origin}, apiOrigin=${apiOrigin}`);
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin && event.origin !== apiOrigin) return;
+      // Only log OAuth-related messages, ignore others like React DevTools
       const payload = event.data as { type?: string; folder?: { dashboardId?: string } };
-      if (payload?.type === "drive-auth-complete") { void loadDriveIntegration(); setDrivePickerOpen(true); return; }
-      if (payload?.type === "drive-auth-expired") { setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
+      if (typeof payload?.type === "string" && payload.type.includes("auth")) {
+        console.log(`[WorkspaceSidebar] postMessage received: origin=${event.origin}, type=${payload.type}`);
+      }
+      if (event.origin !== window.location.origin && event.origin !== apiOrigin) {
+        if (typeof payload?.type === "string" && payload.type.includes("auth")) {
+          console.warn(`[WorkspaceSidebar] Message origin mismatch: ${event.origin} not in [${window.location.origin}, ${apiOrigin}]`);
+        }
+        return;
+      }
+      if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] drive-auth-complete"); void loadDriveIntegration(); setDrivePickerOpen(true); return; }
+      if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] drive-auth-expired"); setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
       if (payload?.type === "drive-linked") {
+        console.log("[WorkspaceSidebar] drive-linked");
         setDrivePickerOpen(false); void loadDriveIntegration(); void loadDriveStatus();
         const did = payload.folder?.dashboardId || dashboardId;
         if (did) void syncGoogleDrive(did).catch(() => undefined);
         onStorageLinked?.("google_drive");
         return;
       }
-      if (payload?.type === "github-auth-complete") { void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
-      if (payload?.type === "box-auth-complete") { void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
-      if (payload?.type === "onedrive-auth-complete") { void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
+      if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] github-auth-complete"); void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
+      if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] box-auth-complete"); void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
+      if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] onedrive-auth-complete"); void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [apiOrigin, dashboardId, onStorageLinked, loadDriveIntegration, loadDriveStatus, loadGithubIntegration, loadGithubRepos, loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders]);
 
-  // BroadcastChannel for cross-tab OAuth
+  // BroadcastChannel for cross-tab OAuth (same-origin only, may not work if control plane is different origin)
   React.useEffect(() => {
     let bc: BroadcastChannel | null = null;
     try {
       bc = new BroadcastChannel("orcabot-oauth");
+      console.log("[WorkspaceSidebar] BroadcastChannel 'orcabot-oauth' created");
       bc.onmessage = (event: MessageEvent) => {
         const payload = event.data as { type?: string; dashboardId?: string };
-        if (payload?.dashboardId && payload.dashboardId !== dashboardId) return;
-        if (payload?.type === "drive-auth-complete") { void loadDriveIntegration(); setDrivePickerOpen(true); return; }
-        if (payload?.type === "drive-auth-expired") { setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
-        if (payload?.type === "github-auth-complete") { void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
-        if (payload?.type === "box-auth-complete") { void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
-        if (payload?.type === "onedrive-auth-complete") { void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
+        console.log("[WorkspaceSidebar] BroadcastChannel message:", payload?.type);
+        if (payload?.dashboardId && payload.dashboardId !== dashboardId) {
+          console.log(`[WorkspaceSidebar] BroadcastChannel dashboardId mismatch: ${payload.dashboardId} !== ${dashboardId}`);
+          return;
+        }
+        if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] BC drive-auth-complete"); void loadDriveIntegration(); setDrivePickerOpen(true); return; }
+        if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] BC drive-auth-expired"); setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
+        if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] BC github-auth-complete"); void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
+        if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] BC box-auth-complete"); void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
+        if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] BC onedrive-auth-complete"); void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
       };
-    } catch {}
+    } catch (e) {
+      console.warn("[WorkspaceSidebar] BroadcastChannel not available:", e);
+    }
     return () => { try { bc?.close(); } catch {} };
   }, [dashboardId, loadDriveIntegration, loadGithubIntegration, loadGithubRepos, loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders]);
 
@@ -944,6 +969,8 @@ export function WorkspaceSidebar({
       connected,
       linked,
       onConnect,
+      onOpenPicker,
+      onDisconnect,
       children,
     }: {
       icon: React.ReactNode;
@@ -951,8 +978,11 @@ export function WorkspaceSidebar({
       connected: boolean;
       linked: boolean;
       onConnect: () => void;
+      onOpenPicker: () => void;
+      onDisconnect: () => void;
       children?: React.ReactNode;
     }) => {
+      // Connected (linked or not): show dropdown
       if (connected) {
         return (
           <DropdownMenu>
@@ -969,17 +999,30 @@ export function WorkspaceSidebar({
               </Tooltip>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-44">
-              {children}
+              {linked ? (
+                // Linked: show full management options
+                children
+              ) : (
+                // Not linked: show link + disconnect options
+                <>
+                  <DropdownMenuItem onSelect={onOpenPicker}>Link folder</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={onDisconnect} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         );
       }
+      // Not connected: open OAuth
       return (
         <Tooltip content={`Connect ${label}`} side="bottom">
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={onConnect}
+            onClick={() => {
+              console.log(`[WorkspaceSidebar] DriveButton click (connect): ${label}`);
+              onConnect();
+            }}
             disabled={!user}
             title={`Connect ${label}`}
           >
@@ -991,6 +1034,11 @@ export function WorkspaceSidebar({
     [user]
   );
 
+  // ── Debug logging for integration states ────────────────────────
+  React.useEffect(() => {
+    console.log(`[WorkspaceSidebar] Integration states: drive=${isDriveConnected}/${isDriveLinked}, github=${isGithubConnected}/${isGithubLinked}, box=${isBoxConnected}/${isBoxLinked}, onedrive=${isOnedriveConnected}/${isOnedriveLinked}, user=${user?.id ?? "none"}, drivePortalTarget=${drivePortalTarget ? "present" : "null"}`);
+  }, [isDriveConnected, isDriveLinked, isGithubConnected, isGithubLinked, isBoxConnected, isBoxLinked, isOnedriveConnected, isOnedriveLinked, user, drivePortalTarget]);
+
   // ── Collapsed view ──────────────────────────────────────────────
   // Drive buttons JSX — rendered via portal into toolbar when target is available
   const driveButtonsJSX = (
@@ -1001,18 +1049,14 @@ export function WorkspaceSidebar({
         connected={isDriveConnected}
         linked={isDriveLinked}
         onConnect={handleDriveConnect}
+        onOpenPicker={() => setDrivePickerOpen(true)}
+        onDisconnect={handleDisconnectDrive}
       >
-        {isDriveLinked ? (
-          <>
-            <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-              Drive: {driveIntegration?.folder?.name ?? "Linked"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setDrivePickerOpen(true)}>Change folder</DropdownMenuItem>
-            <DropdownMenuItem onSelect={handleUnlinkDrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-          </>
-        ) : (
-          <DropdownMenuItem onSelect={() => setDrivePickerOpen(true)}>Link folder</DropdownMenuItem>
-        )}
+        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+          Drive: {driveIntegration?.folder?.name ?? "Linked"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setDrivePickerOpen(true)}>Change folder</DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleUnlinkDrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
         <DropdownMenuItem onSelect={handleDisconnectDrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
       </DriveButton>
 
@@ -1022,18 +1066,14 @@ export function WorkspaceSidebar({
         connected={isGithubConnected}
         linked={isGithubLinked}
         onConnect={handleGithubConnect}
+        onOpenPicker={() => setGithubPickerOpen(true)}
+        onDisconnect={handleDisconnectGithub}
       >
-        {isGithubLinked ? (
-          <>
-            <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-              Repo: {githubIntegration?.repo?.owner}/{githubIntegration?.repo?.name}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setGithubPickerOpen(true)}>Change repo</DropdownMenuItem>
-            <DropdownMenuItem onSelect={handleUnlinkGithub} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-          </>
-        ) : (
-          <DropdownMenuItem onSelect={() => setGithubPickerOpen(true)}>Link repo</DropdownMenuItem>
-        )}
+        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+          Repo: {githubIntegration?.repo?.owner}/{githubIntegration?.repo?.name}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setGithubPickerOpen(true)}>Change repo</DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleUnlinkGithub} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
         <DropdownMenuItem onSelect={handleDisconnectGithub} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
       </DriveButton>
 
@@ -1043,18 +1083,14 @@ export function WorkspaceSidebar({
         connected={isBoxConnected}
         linked={isBoxLinked}
         onConnect={handleBoxConnect}
+        onOpenPicker={() => setBoxPickerOpen(true)}
+        onDisconnect={handleDisconnectBox}
       >
-        {isBoxLinked ? (
-          <>
-            <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-              Folder: {boxIntegration?.folder?.name ?? "Linked"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setBoxPickerOpen(true)}>Change folder</DropdownMenuItem>
-            <DropdownMenuItem onSelect={handleUnlinkBox} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-          </>
-        ) : (
-          <DropdownMenuItem onSelect={() => setBoxPickerOpen(true)}>Link folder</DropdownMenuItem>
-        )}
+        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+          Folder: {boxIntegration?.folder?.name ?? "Linked"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setBoxPickerOpen(true)}>Change folder</DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleUnlinkBox} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
         <DropdownMenuItem onSelect={handleDisconnectBox} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
       </DriveButton>
 
@@ -1064,18 +1100,14 @@ export function WorkspaceSidebar({
         connected={isOnedriveConnected}
         linked={isOnedriveLinked}
         onConnect={handleOnedriveConnect}
+        onOpenPicker={() => setOnedrivePickerOpen(true)}
+        onDisconnect={handleDisconnectOnedrive}
       >
-        {isOnedriveLinked ? (
-          <>
-            <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-              Folder: {onedriveIntegration?.folder?.name ?? "Linked"}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setOnedrivePickerOpen(true)}>Change folder</DropdownMenuItem>
-            <DropdownMenuItem onSelect={handleUnlinkOnedrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-          </>
-        ) : (
-          <DropdownMenuItem onSelect={() => setOnedrivePickerOpen(true)}>Link folder</DropdownMenuItem>
-        )}
+        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
+          Folder: {onedriveIntegration?.folder?.name ?? "Linked"}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setOnedrivePickerOpen(true)}>Change folder</DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleUnlinkOnedrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
         <DropdownMenuItem onSelect={handleDisconnectOnedrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
       </DriveButton>
     </>
@@ -1174,6 +1206,192 @@ export function WorkspaceSidebar({
                 {githubSyncing ? "Syncing repo..." : "Start a terminal to see files."}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Integrations section */}
+        <div className="border-t border-[var(--border)]">
+          <div className="px-2 py-1.5">
+            <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wider mb-1">
+              Storage
+            </div>
+            <div className="space-y-1">
+              {/* Google Drive */}
+              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <div>
+                    <div className="text-[11px] font-medium text-[var(--foreground)]">Drive</div>
+                    {isDriveLinked && driveIntegration?.folder?.name && (
+                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
+                        {driveIntegration.folder.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {isDriveConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isDriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5"
+                        onClick={() => setDrivePickerOpen(true)}
+                        title={isDriveLinked ? "Change folder" : "Link folder"}
+                      >
+                        <Settings className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
+                        onClick={handleDisconnectDrive}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleDriveConnect}>
+                      Connect
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* GitHub */}
+              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <Github className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <div>
+                    <div className="text-[11px] font-medium text-[var(--foreground)]">GitHub</div>
+                    {isGithubLinked && githubIntegration?.repo && (
+                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
+                        {githubIntegration.repo.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {isGithubConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isGithubLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5"
+                        onClick={() => setGithubPickerOpen(true)}
+                        title={isGithubLinked ? "Change repo" : "Link repo"}
+                      >
+                        <Settings className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
+                        onClick={handleDisconnectGithub}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleGithubConnect}>
+                      Connect
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Box */}
+              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <Box className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <div>
+                    <div className="text-[11px] font-medium text-[var(--foreground)]">Box</div>
+                    {isBoxLinked && boxIntegration?.folder?.name && (
+                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
+                        {boxIntegration.folder.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {isBoxConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isBoxLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5"
+                        onClick={() => setBoxPickerOpen(true)}
+                        title={isBoxLinked ? "Change folder" : "Link folder"}
+                      >
+                        <Settings className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
+                        onClick={handleDisconnectBox}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleBoxConnect}>
+                      Connect
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* OneDrive */}
+              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <div>
+                    <div className="text-[11px] font-medium text-[var(--foreground)]">OneDrive</div>
+                    {isOnedriveLinked && onedriveIntegration?.folder?.name && (
+                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
+                        {onedriveIntegration.folder.name}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {isOnedriveConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isOnedriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5"
+                        onClick={() => setOnedrivePickerOpen(true)}
+                        title={isOnedriveLinked ? "Change folder" : "Link folder"}
+                      >
+                        <Settings className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
+                        onClick={handleDisconnectOnedrive}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleOnedriveConnect}>
+                      Connect
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
