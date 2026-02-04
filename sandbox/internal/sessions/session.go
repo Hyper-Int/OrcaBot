@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: flatten-workspace-v1-shared-dir
+// REVISION: session-v2-fix-hooks-in-createpty-with-token
 
 // Package sessions manages session lifecycle.
 //
@@ -37,7 +37,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "flatten-workspace-v1-shared-dir"
+const sessionRevision = "session-v2-fix-hooks-in-createpty-with-token"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -574,6 +574,18 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		userTools := s.fetchUserMCPTools()
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
+		}
+
+		// Generate agent stop hooks so we can detect when the agent finishes
+		// The hooks will call back to our localhost endpoint to trigger WebSocket events
+		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
+		}
+
+		// Gemini CLI overwrites ~/.gemini/settings.json on startup, losing our hooks
+		// and UI settings. Point it to a system override file (highest precedence).
+		if agentType == mcp.AgentTypeGemini {
+			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
 		}
 	}
 
