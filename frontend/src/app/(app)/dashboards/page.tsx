@@ -44,6 +44,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
 import {
   listDashboards,
+  listAllDashboards,
   createDashboard,
   deleteDashboard,
   listGlobalSecrets,
@@ -59,12 +60,13 @@ import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 export default function DashboardsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user, logout, isAuthenticated, isAuthResolved } = useAuthStore();
+  const { user, logout, isAuthenticated, isAuthResolved, isAdmin } = useAuthStore();
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = React.useState<Dashboard | null>(null);
+  const [adminMode, setAdminMode] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
   const [newEnvVarName, setNewEnvVarName] = React.useState("");
@@ -92,6 +94,22 @@ export default function DashboardsPage() {
     queryFn: listDashboards,
     enabled: isAuthenticated && isAuthResolved,
   });
+
+  // Fetch all dashboards (admin mode)
+  const {
+    data: allDashboards,
+    isLoading: isLoadingAll,
+    error: adminError,
+  } = useQuery({
+    queryKey: ["admin-dashboards"],
+    queryFn: listAllDashboards,
+    enabled: isAuthenticated && isAuthResolved && isAdmin && adminMode,
+  });
+
+  // Use admin dashboards when in admin mode, otherwise user's dashboards
+  const displayDashboards = adminMode && allDashboards ? allDashboards : dashboards;
+  const displayLoading = adminMode ? isLoadingAll : isLoading;
+  const displayError = adminMode ? adminError : error;
 
   // Fetch templates
   const { data: templates } = useQuery({
@@ -261,6 +279,18 @@ export default function DashboardsPage() {
             <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
           </div>
           <div className="flex items-center gap-4">
+            {isAdmin && (
+              <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
+                <Button
+                  variant={adminMode ? "danger" : "ghost"}
+                  size="sm"
+                  onClick={() => setAdminMode(!adminMode)}
+                  leftIcon={<Shield className="w-4 h-4" />}
+                >
+                  {adminMode ? "Admin" : "Admin"}
+                </Button>
+              </Tooltip>
+            )}
             <div className="flex items-center gap-2">
               <Avatar name={user?.name || "User"} size="sm" />
               <span className="text-body-sm text-[var(--foreground-muted)]">
@@ -357,16 +387,16 @@ export default function DashboardsPage() {
           {/* Your Dashboards Section */}
           <section>
             <h2 className="text-h2 text-[var(--foreground)] mb-4">
-              Your Dashboards
+              {adminMode ? "All Dashboards" : "Your Dashboards"}
             </h2>
 
-            {isLoading ? (
+            {displayLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
                   <Skeleton key={i} className="h-24" />
                 ))}
               </div>
-            ) : error ? (
+            ) : displayError ? (
               <div className="text-center py-12">
                 <p className="text-body text-[var(--status-error)]">
                   Failed to load dashboards. Please try again.
@@ -375,35 +405,42 @@ export default function DashboardsPage() {
                   variant="secondary"
                   className="mt-4"
                   onClick={() =>
-                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+                    queryClient.invalidateQueries({
+                      queryKey: [adminMode ? "admin-dashboards" : "dashboards"],
+                    })
                   }
                 >
                   Retry
                 </Button>
               </div>
-            ) : dashboards && dashboards.length > 0 ? (
+            ) : displayDashboards && displayDashboards.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {dashboards.map((dashboard) => (
+                {displayDashboards.map((dashboard) => (
                   <DashboardCard
                     key={dashboard.id}
                     dashboard={dashboard}
                     onClick={() => router.push(`/dashboards/${dashboard.id}`)}
                     onDelete={() => setDeleteTarget(dashboard)}
+                    showOwner={adminMode}
+                    ownerEmail={'ownerEmail' in dashboard ? (dashboard as Dashboard & { ownerEmail: string }).ownerEmail : undefined}
+                    alwaysShowDelete={adminMode}
                   />
                 ))}
               </div>
             ) : (
               <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
                 <p className="text-body text-[var(--foreground-muted)] mb-4">
-                  No dashboards yet. Create your first one!
+                  {adminMode ? "No dashboards found." : "No dashboards yet. Create your first one!"}
                 </p>
-                <Button
-                  variant="primary"
-                  onClick={() => setIsCreateOpen(true)}
-                  leftIcon={<Plus className="w-4 h-4" />}
-                >
-                  New Dashboard
-                </Button>
+                {!adminMode && (
+                  <Button
+                    variant="primary"
+                    onClick={() => setIsCreateOpen(true)}
+                    leftIcon={<Plus className="w-4 h-4" />}
+                  >
+                    New Dashboard
+                  </Button>
+                )}
               </div>
             )}
           </section>
@@ -764,9 +801,12 @@ interface DashboardCardProps {
   dashboard: Dashboard;
   onClick: () => void;
   onDelete: () => void;
+  showOwner?: boolean;
+  ownerEmail?: string;
+  alwaysShowDelete?: boolean;
 }
 
-function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
+function DashboardCard({ dashboard, onClick, onDelete, showOwner, ownerEmail, alwaysShowDelete }: DashboardCardProps) {
   return (
     <Card className="group cursor-pointer hover:border-[var(--border-strong)] transition-colors">
       <div onClick={onClick}>
@@ -778,13 +818,21 @@ function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
                 e.stopPropagation();
                 onDelete();
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
+              className={cn(
+                "p-1 hover:bg-[var(--background-hover)] rounded transition-all",
+                alwaysShowDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              )}
             >
               <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
             </button>
           </div>
         </CardHeader>
         <CardContent>
+          {showOwner && ownerEmail && (
+            <p className="text-caption text-[var(--foreground-muted)] mb-1">
+              Owner: {ownerEmail}
+            </p>
+          )}
           <p className="text-caption text-[var(--foreground-subtle)]">
             Updated {formatRelativeTime(dashboard.updatedAt)}
           </p>
