@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v2-integration-tokens
+// REVISION: session-v3-display-env
 
 // Package sessions manages session lifecycle.
 //
@@ -454,6 +454,11 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
+	// Set DISPLAY so CLIs that check for a graphical environment (e.g., Gemini CLI's
+	// shouldAttemptBrowserLaunch) will attempt xdg-open instead of falling back to
+	// "copy this URL" mode. The value doesn't need a real X server — our xdg-open
+	// wrapper intercepts the call and routes it to the browser block.
+	envVars["DISPLAY"] = ":0"
 
 	// Write MCP URL to a well-known file so mcp-bridge can discover it
 	// even when agents (like Codex) don't forward env vars to subprocesses
@@ -555,6 +560,8 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
 	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
+	// Set DISPLAY so CLIs that check for a graphical environment attempt xdg-open
+	envVars["DISPLAY"] = ":0"
 
 	// Inject integration token for policy gateway authentication
 	if integrationToken != "" {

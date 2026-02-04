@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hooks-v1-gemini-user-config
+// REVISION: gemini-auth-v1-persist-auth-settings
 
 package agenthooks
 
@@ -370,11 +370,13 @@ echo '{}'  # Gemini requires JSON output
 		return fmt.Errorf("failed to create orcabot dir: %w", err)
 	}
 	overridePath := filepath.Join(overrideDir, "gemini-system-settings.json")
-	return mergeGeminiHookSettings(overridePath, scriptPath)
+	return mergeGeminiHookSettings(overridePath, scriptPath, workspaceRoot)
 }
 
-// mergeGeminiHookSettings adds AfterAgent hook to existing Gemini settings without overwriting user hooks
-func mergeGeminiHookSettings(settingsPath, scriptPath string) error {
+// mergeGeminiHookSettings adds AfterAgent hook to existing Gemini settings without overwriting user hooks.
+// It also mirrors auth-related fields from ~/.gemini/settings.json into the system override,
+// so the user's chosen auth method (e.g., OAuth from "gemini login") survives CLI restarts.
+func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) error {
 	fmt.Fprintf(os.Stderr, "[DEBUG] mergeGeminiHookSettings called: settingsPath=%s scriptPath=%s\n", settingsPath, scriptPath)
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
@@ -401,6 +403,22 @@ func mergeGeminiHookSettings(settingsPath, scriptPath string) error {
 	}
 	ui["showHomeDirectoryWarning"] = false
 	settings["ui"] = ui
+
+	// Mirror auth-related fields from ~/.gemini/settings.json into the system override.
+	// When a user runs "gemini login", Gemini CLI writes the auth method to settings.json.
+	// Since Gemini CLI also overwrites settings.json on startup (potentially resetting auth),
+	// putting the auth method in the system override (highest precedence) ensures it persists.
+	geminiUserSettings := filepath.Join(workspaceRoot, ".gemini", "settings.json")
+	if geminiData, readErr := os.ReadFile(geminiUserSettings); readErr == nil {
+		var userSettings map[string]interface{}
+		if json.Unmarshal(geminiData, &userSettings) == nil {
+			for _, authKey := range []string{"selectedAuthType", "authType", "authMethod"} {
+				if val, exists := userSettings[authKey]; exists {
+					settings[authKey] = val
+				}
+			}
+		}
+	}
 
 	hooks, ok := settings["hooks"].(map[string]interface{})
 	if !ok {

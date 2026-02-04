@@ -105,6 +105,9 @@ func (c *Controller) Start() (Status, error) {
 		"-quiet",
 		"-noxdamage",
 		"-xkb",
+		// x11vnc enables clipboard sync by default: X11 CLIPBOARD/PRIMARY
+		// changes are sent to VNC clients, and CutText from clients sets
+		// X11 selections. The -xkb flag above also helps clipboard reliability.
 	)
 	vncCmd.Env = env
 

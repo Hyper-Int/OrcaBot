@@ -1,5 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: ws-connect-timeout-v1
 
 /**
  * Base WebSocket manager with connection state machine and reconnection logic
@@ -27,6 +28,10 @@ export interface WebSocketConfig {
   maxReconnectAttempts?: number;
   /** Heartbeat interval in ms (0 to disable) */
   heartbeatInterval?: number;
+  /** Per-attempt connection timeout in ms. If WebSocket doesn't open within
+   *  this window, close it and schedule a reconnect. Prevents indefinite hangs
+   *  when the server is unreachable (browser WebSocket API has no built-in timeout). */
+  connectTimeout?: number;
 }
 
 const DEFAULT_CONFIG: Required<WebSocketConfig> = {
@@ -35,6 +40,7 @@ const DEFAULT_CONFIG: Required<WebSocketConfig> = {
   reconnectMultiplier: 1.5,
   maxReconnectAttempts: 10,
   heartbeatInterval: 30000,
+  connectTimeout: 15000,
 };
 
 export type StateChangeHandler = (state: ConnectionState) => void;
@@ -48,6 +54,7 @@ export abstract class BaseWebSocketManager {
   protected reconnectAttempts = 0;
   protected reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   protected heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
+  private connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Event handlers
   protected onStateChangeHandlers: Set<StateChangeHandler> = new Set();
@@ -76,6 +83,7 @@ export abstract class BaseWebSocketManager {
       // Enable binary message handling
       this.ws.binaryType = "arraybuffer";
       this.setupEventListeners();
+      this.startConnectTimeout();
     } catch (error) {
       console.error(`[WS] Connection error:`, error);
       this.handleError(error as Error);
@@ -188,6 +196,7 @@ export abstract class BaseWebSocketManager {
 
     this.ws.onopen = () => {
       console.log(`[WS] Connected successfully`);
+      this.clearConnectTimeout();
       this.reconnectAttempts = 0;
       this.setState("connected");
       this.startHeartbeat();
@@ -196,6 +205,7 @@ export abstract class BaseWebSocketManager {
 
     this.ws.onclose = (event) => {
       console.log(`[WS] Connection closed - code: ${event.code}, reason: "${event.reason}", wasClean: ${event.wasClean}`);
+      this.clearConnectTimeout();
       this.onDisconnected();
       this.stopHeartbeat();
 
@@ -279,8 +289,29 @@ export abstract class BaseWebSocketManager {
     }
   }
 
+  private startConnectTimeout(): void {
+    this.clearConnectTimeout();
+    if (this.config.connectTimeout <= 0) return;
+    this.connectTimeoutId = setTimeout(() => {
+      this.connectTimeoutId = null;
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        console.log(`[WS] Connection attempt timed out after ${this.config.connectTimeout}ms`);
+        this.ws.close();
+        this.scheduleReconnect();
+      }
+    }, this.config.connectTimeout);
+  }
+
+  private clearConnectTimeout(): void {
+    if (this.connectTimeoutId) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = null;
+    }
+  }
+
   private clearTimers(): void {
     this.stopHeartbeat();
+    this.clearConnectTimeout();
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;

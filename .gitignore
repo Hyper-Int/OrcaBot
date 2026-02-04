@@ -4,6 +4,7 @@ Thumbs.db
 
 # Secrets - NEVER commit these
 .dev.vars
+.dev.vars.*
 .env
 .env.*
 !.env.example

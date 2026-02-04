@@ -12,8 +12,8 @@ mcp_local_port="${MCP_LOCAL_PORT:-8081}"
 controlplane_url="${CONTROLPLANE_URL:-}"
 controlplane_token="${INTERNAL_API_TOKEN:-}"
 
-echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing}" >> /tmp/orcabot-open.log
-echo "orcabot-xdg-open ${ts} url=${url} session_id=${session_id:-missing}" 1>&2
+echo "orcabot-xdg-open ${ts} invoked_as=$0 url=${url} session_id=${session_id:-missing}" >> /tmp/orcabot-open.log
+echo "orcabot-xdg-open ${ts} invoked_as=$0 url=${url} session_id=${session_id:-missing}" 1>&2
 
 if [ -z "$session_id" ]; then
   exit 0

@@ -1,10 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: restart-menu-v1-add-restart-to-settings-dropdown
+// REVISION: reconnect-liveness-v2-auto-restart-on-fail
 
 "use client";
 
-const TERMINAL_BLOCK_REVISION = "restart-menu-v1-add-restart-to-settings-dropdown";
+const TERMINAL_BLOCK_REVISION = "reconnect-liveness-v2-auto-restart-on-fail";
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -1511,6 +1511,7 @@ export function TerminalBlock({
         const cleaned = output;
 
         terminalRef.current?.write(cleaned);
+        lastPtyOutputTimeRef.current = Date.now();
         outputBufferRef.current = (outputBufferRef.current + cleaned).slice(-2000);
         if (!isClaudeSession && /Claude Code v/i.test(outputBufferRef.current)) {
           setIsClaudeSession(true);
@@ -1556,6 +1557,11 @@ export function TerminalBlock({
   React.useEffect(() => {
     wasConnectedRef.current = false;
   }, [session?.id]);
+
+  // Post-reconnect liveness watchdog refs
+  const lastPtyOutputTimeRef = React.useRef<number>(0);
+  const reconnectWatchdogRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevConnectionStateRef = React.useRef<string>("disconnected");
 
   // Apply secrets when reconnecting to an existing session (e.g., page reload)
   // Track if we've already applied secrets for this session
@@ -1958,6 +1964,12 @@ export function TerminalBlock({
     }
   }, [isConnected, session?.id]);
 
+  // Auto-restart when the connection fails or the session ends.
+  // Previously this was gated on session.status === "stopped", but after
+  // deployments the sandbox is replaced while the session is still "active"
+  // in frontend state. The WebSocket exhausts all retries (→ "failed") and
+  // the user is stuck. Now we restart on any terminal failure regardless of
+  // the session status the frontend last saw.
   React.useEffect(() => {
     if (!session || !isOwner) {
       return;
@@ -1965,13 +1977,11 @@ export function TerminalBlock({
     if (!isFailed && !isDisconnected && !ptyClosed) {
       return;
     }
-    if (session.status !== "stopped") {
-      return;
-    }
     if (isCreatingSession || autoReopenAttemptedRef.current) {
       return;
     }
     autoReopenAttemptedRef.current = true;
+    console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionStatus=${session.status}`);
     terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
     void handleReopen();
   }, [
@@ -1983,6 +1993,51 @@ export function TerminalBlock({
     isCreatingSession,
     handleReopen,
   ]);
+
+  // Post-reconnect liveness watchdog: if no PTY output arrives within 8s
+  // after a WebSocket reconnection, auto-restart the session.
+  // Only triggers on reconnect (reconnecting→connected), not initial connect.
+  React.useEffect(() => {
+    const wasReconnecting = prevConnectionStateRef.current === "reconnecting";
+    prevConnectionStateRef.current = connectionState;
+
+    // Clear any existing watchdog on state change
+    if (reconnectWatchdogRef.current) {
+      clearTimeout(reconnectWatchdogRef.current);
+      reconnectWatchdogRef.current = null;
+    }
+
+    // Only trigger when transitioning from "reconnecting" to "connected"
+    if (connectionState !== "connected" || !wasReconnecting) {
+      return;
+    }
+
+    // Only the owner can restart sessions
+    if (!isOwner || !session) {
+      return;
+    }
+
+    const reconnectTime = Date.now();
+    console.log(`[TerminalBlock] Reconnect detected, starting 8s liveness watchdog`);
+
+    reconnectWatchdogRef.current = setTimeout(() => {
+      reconnectWatchdogRef.current = null;
+      if (lastPtyOutputTimeRef.current < reconnectTime) {
+        console.log(`[TerminalBlock] Watchdog: no PTY output in 8s post-reconnect, auto-restarting`);
+        terminalRef.current?.write("\x1b[33mSession unresponsive after reconnect, restarting...\x1b[0m\r\n");
+        void handleReopen();
+      } else {
+        console.log(`[TerminalBlock] Watchdog: PTY output received, session is alive`);
+      }
+    }, 8000);
+
+    return () => {
+      if (reconnectWatchdogRef.current) {
+        clearTimeout(reconnectWatchdogRef.current);
+        reconnectWatchdogRef.current = null;
+      }
+    };
+  }, [connectionState, isOwner, session, handleReopen]);
 
   React.useEffect(() => {
     if (!isConnected) {

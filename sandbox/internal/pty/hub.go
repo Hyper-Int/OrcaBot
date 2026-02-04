@@ -1,6 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: scrollback-replay-v3-resize-after-replay
+
 package pty
 
 import (
@@ -75,7 +77,7 @@ type AgentStoppedEvent struct {
 
 // IdleTimeout is how long a hub stays alive with no connected clients.
 // After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
-const IdleTimeout = 60 * time.Second
+const IdleTimeout = 600 * time.Second
 
 // Hub manages multiple clients connected to a single PTY
 type Hub struct {
@@ -113,6 +115,11 @@ type Hub struct {
 	secretValues   []string   // Secret values to redact from output
 	secretsMu      sync.RWMutex
 	redactionTail  []byte     // Buffer to handle secrets split across chunks
+
+	// Last known terminal dimensions (updated on Resize). Used to re-issue
+	// SIGWINCH after scrollback replay so TUI apps redraw at the correct size.
+	lastCols uint16
+	lastRows uint16
 
 	// Scrollback ring buffer: stores last scrollbackMax bytes of PTY output (post-redaction).
 	// Used as fallback when agent transcript doesn't contain the text response.
@@ -412,6 +419,22 @@ func (h *Hub) SetOnStop(fn func()) {
 	h.onStop = fn
 }
 
+// IsProcessAlive checks if the PTY's underlying process is still running.
+// Returns false if the process has exited or the hub is stopped.
+func (h *Hub) IsProcessAlive() bool {
+	select {
+	case <-h.stop:
+		return false
+	default:
+	}
+	select {
+	case <-h.pty.Done():
+		return false
+	default:
+		return true
+	}
+}
+
 // ClientCount returns the number of connected clients
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
@@ -481,8 +504,12 @@ func (h *Hub) WriteAgentSilent(data []byte) (int, error) {
 	return h.pty.WriteSilent(data)
 }
 
-// Resize changes the PTY window size
+// Resize changes the PTY window size and records the dimensions for replay.
 func (h *Hub) Resize(cols, rows uint16) error {
+	h.mu.Lock()
+	h.lastCols = cols
+	h.lastRows = rows
+	h.mu.Unlock()
 	return h.pty.Resize(cols, rows)
 }
 
@@ -669,6 +696,45 @@ func (h *Hub) sendControlState(client chan HubMessage) {
 	case client <- msg:
 	default:
 	}
+
+	// Replay scrollback buffer so reconnecting clients see previous terminal output
+	// instead of a blank screen. The raw bytes include ANSI sequences so xterm.js
+	// can render them correctly. Data is already post-redaction (secrets stripped).
+	// We strip terminal query sequences (DA, DSR, CPR) that would cause xterm.js
+	// to send response strings back as PTY input — these leak as phantom keystrokes.
+	if raw := h.ScrollbackRaw(0); len(raw) > 0 {
+		raw = stripTerminalQueries(raw)
+		if len(raw) > 0 {
+			replayMsg := HubMessage{IsBinary: true, Data: raw}
+			select {
+			case client <- replayMsg:
+			default:
+			}
+		}
+
+		// Re-issue resize after replay. The replayed output may contain cursor
+		// positioning for a different terminal size, leaving TUI apps confused.
+		// A fresh SIGWINCH forces them to query dimensions and redraw correctly.
+		h.mu.RLock()
+		cols, rows := h.lastCols, h.lastRows
+		h.mu.RUnlock()
+		if cols > 0 && rows > 0 {
+			h.pty.Resize(cols, rows)
+		}
+	}
+
+	// If the PTY process is already dead, immediately notify the connecting client.
+	// This saves the client from waiting for the reconnect watchdog timeout.
+	if !h.IsProcessAlive() {
+		closedEvent := ControlEvent{Type: "pty_closed"}
+		if closedData, err := json.Marshal(closedEvent); err == nil {
+			closedMsg := HubMessage{IsBinary: false, Data: closedData}
+			select {
+			case client <- closedMsg:
+			default:
+			}
+		}
+	}
 }
 
 // broadcastControlEvent sends a control event to all clients
@@ -850,6 +916,97 @@ func (h *Hub) Scrollback(maxBytes int) string {
 	}
 
 	return stripANSI(string(out))
+}
+
+// ScrollbackRaw returns the raw PTY output from the ring buffer (with ANSI codes intact).
+// Used for replaying terminal history to reconnecting clients so xterm.js can render it.
+func (h *Hub) ScrollbackRaw(maxBytes int) []byte {
+	h.scrollbackMu.Lock()
+	defer h.scrollbackMu.Unlock()
+
+	total := h.scrollbackPos
+	if total == 0 {
+		return nil
+	}
+
+	size := total
+	if size > h.scrollbackMax {
+		size = h.scrollbackMax
+	}
+	if maxBytes > 0 && size > maxBytes {
+		size = maxBytes
+	}
+
+	out := make([]byte, size)
+	start := h.scrollbackPos - size
+	if start < 0 {
+		start = 0
+	}
+	for i := 0; i < size; i++ {
+		out[i] = h.scrollback[(start+i)%h.scrollbackMax]
+	}
+
+	return out
+}
+
+// stripTerminalQueries removes CSI sequences that request a response from the
+// terminal emulator. During scrollback replay these would cause xterm.js to
+// send response strings (e.g. DA response "\x1b[?1;2c") back into the PTY
+// where the running application interprets them as user input.
+//
+// Stripped sequences:
+//   - CSI c, CSI 0c, CSI >c, CSI >0c, CSI =c  (Device Attributes DA1/DA2/DA3)
+//   - CSI 5n                                     (Device Status Report)
+//   - CSI 6n, CSI ?6n                            (Cursor Position Report)
+//   - CSI x, CSI 0x, CSI 1x                      (Request Terminal Parameters)
+//
+// All other CSI sequences (colors, cursor movement, etc.) are preserved.
+func stripTerminalQueries(data []byte) []byte {
+	result := make([]byte, 0, len(data))
+	i := 0
+	for i < len(data) {
+		// Look for CSI start: ESC [
+		if i+1 < len(data) && data[i] == 0x1b && data[i+1] == '[' {
+			seqStart := i
+			j := i + 2
+			// Collect parameter bytes (0x30-0x3f: digits, ;, <, =, >, ?)
+			for j < len(data) && data[j] >= 0x30 && data[j] <= 0x3f {
+				j++
+			}
+			// Skip intermediate bytes (0x20-0x2f)
+			for j < len(data) && data[j] >= 0x20 && data[j] <= 0x2f {
+				j++
+			}
+			// Check final byte (0x40-0x7e)
+			if j < len(data) && data[j] >= 0x40 && data[j] <= 0x7e {
+				finalByte := data[j]
+				params := string(data[i+2 : j]) // parameter + intermediate bytes before final
+
+				isQuery := false
+				switch finalByte {
+				case 'c': // Device Attributes (DA1, DA2, DA3)
+					// All CSI...c sequences are DA queries/responses
+					isQuery = true
+				case 'n': // Device Status Report / Cursor Position Report
+					isQuery = params == "5" || params == "6" || params == "?6"
+				case 'x': // Request Terminal Parameters (DECREQTPARM)
+					isQuery = params == "" || params == "0" || params == "1"
+				}
+
+				if isQuery {
+					i = j + 1 // skip entire sequence
+					continue
+				}
+			}
+			// Not a query — keep the sequence
+			result = append(result, data[seqStart])
+			i = seqStart + 1
+			continue
+		}
+		result = append(result, data[i])
+		i++
+	}
+	return result
 }
 
 // stripANSI removes ANSI escape sequences and control characters from a string.
