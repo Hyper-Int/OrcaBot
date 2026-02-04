@@ -1656,7 +1656,12 @@ export default function DashboardPage() {
 
   const handleConnectorClick = React.useCallback(
     (nodeId: string, handleId: string, kind: "source" | "target") => {
-      if (role === "viewer" || !connectorMode) return;
+      if (role === "viewer") return;
+
+      // Auto-activate connect mode when clicking a connector outside of connect mode
+      if (!connectorMode) {
+        setConnectorMode(true);
+      }
 
       setPendingConnection((current) => {
         if (!current) {
@@ -1729,7 +1734,7 @@ export default function DashboardPage() {
         return null;
       });
     },
-    [connectorMode, role, setEdges, createEdgeMutation]
+    [connectorMode, role, setEdges, createEdgeMutation, setConnectorMode]
   );
 
   const handleCursorMove = React.useCallback(
@@ -2457,7 +2462,7 @@ export default function DashboardPage() {
               onViewportChange={(next) => {
                 viewportRef.current = next;
               }}
-              onCursorMove={connectorMode ? handleCursorMove : undefined}
+              onCursorMove={connectorMode || pendingConnection ? handleCursorMove : undefined}
               onCanvasClick={() => {
                 if (connectorMode) setConnectorMode(false);
               }}
