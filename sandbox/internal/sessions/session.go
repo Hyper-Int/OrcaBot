@@ -1,13 +1,13 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v3-display-env
+// REVISION: flatten-workspace-v1-shared-dir
 
 // Package sessions manages session lifecycle.
 //
 // A Session represents a single sandbox instance - an isolated execution environment
 // running on a Fly Machine. Each session has its own:
-//   - Workspace directory (/workspace/<session-id>)
+//   - Workspace directory (/workspace) — shared across all sessions in the VM
 //   - Set of PTYs (pseudo-terminals)
 //   - Optional coding agent (Claude Code, Codex CLI)
 //
@@ -37,7 +37,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "session-v2-integration-tokens"
+const sessionRevision = "flatten-workspace-v1-shared-dir"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -496,6 +496,7 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	}
 
 	hub := pty.NewHub(p, creatorID)
+	hub.SetWorkspaceRoot(s.workspace.Root())
 
 	// Set secret values for output redaction
 	hub.SetSecretValues(s.GetSecretValues())
@@ -582,6 +583,7 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	}
 
 	hub := pty.NewHub(p, creatorID)
+	hub.SetWorkspaceRoot(s.workspace.Root())
 	hub.SetSecretValues(s.GetSecretValues())
 
 	hub.SetOnStop(func() {

@@ -184,6 +184,8 @@ export class SandboxClient {
       body,
     });
     if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(no body)');
+      console.error(`[createPty] FAILED status=${res.status} sessionId=${sessionId} command=${JSON.stringify(command)} machineId=${machineId} body=${errorBody}`);
       throw new Error(`Failed to create PTY: ${res.status}`);
     }
     return res.json();

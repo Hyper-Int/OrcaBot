@@ -86,7 +86,8 @@ function itemsToNodes(
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void,
   onIntegrationDetached?: (terminalItemId: string, provider: string) => void,
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
-  onDuplicate?: (itemId: string) => void
+  onDuplicate?: (itemId: string) => void,
+  onTerminalCwdChange?: (itemId: string, cwd: string) => void
 ): Node[] {
   const workspaceSession =
     sessions.find((s) => s.status === "active")
@@ -150,6 +151,10 @@ function itemsToNodes(
           : undefined,
         // Duplicate this block
         onDuplicate: onDuplicate ? () => onDuplicate(item.id) : undefined,
+        // Terminal cwd change
+        onCwdChange: item.type === "terminal" && onTerminalCwdChange
+          ? (cwd: string) => onTerminalCwdChange(item.id, cwd)
+          : undefined,
       },
       style: {
         width: item.size.width,
@@ -188,6 +193,8 @@ interface CanvasProps {
   onDuplicate?: (itemId: string) => void;
   /** Called when an edge label is clicked, to open policy editor */
   onEdgeLabelClick?: (edgeId: string, provider: string) => void;
+  /** Called when a terminal's working directory changes */
+  onTerminalCwdChange?: (itemId: string, cwd: string) => void;
 }
 
 export function Canvas({
@@ -213,6 +220,7 @@ export function Canvas({
   onStorageLinked,
   onDuplicate,
   onEdgeLabelClick,
+  onTerminalCwdChange,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
@@ -259,7 +267,8 @@ export function Canvas({
         onIntegrationAttached,
         onIntegrationDetached,
         onStorageLinked,
-        readOnly ? undefined : onDuplicate
+        readOnly ? undefined : onDuplicate,
+        onTerminalCwdChange
       )
     );
     return [...baseNodes, ...extraNodes];
@@ -305,11 +314,12 @@ export function Canvas({
         onIntegrationAttached,
         onIntegrationDetached,
         onStorageLinked,
-        readOnly ? undefined : onDuplicate
+        readOnly ? undefined : onDuplicate,
+        onTerminalCwdChange
       )
     );
     setNodes([...baseNodes, ...extraNodes]);
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate, onTerminalCwdChange]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));

@@ -1,10 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: reconnect-liveness-v2-auto-restart-on-fail
 
 "use client";
 
 const TERMINAL_BLOCK_REVISION = "reconnect-liveness-v2-auto-restart-on-fail";
+
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -108,6 +108,7 @@ import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
+import { getAgentType, getAgentIconSrc } from "@/lib/agent-icons";
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -133,6 +134,7 @@ interface TerminalData extends Record<string, unknown> {
   /** Called after detaching integration, to remove integration block + edge from canvas */
   onIntegrationDetached?: (provider: IntegrationProvider) => void;
   onDuplicate?: () => void;
+  onCwdChange?: (cwd: string) => void;
 }
 
 type TerminalNode = Node<TerminalData, "terminal">;
@@ -478,25 +480,11 @@ export function TerminalBlock({
     lastFontChangeRef.current = Date.now();
   }, [baseFontSize]);
   const terminalName = terminalMeta.name;
-  const terminalType = React.useMemo(() => {
-    const command = (terminalMeta.bootCommand || "").toLowerCase();
-    if (command.includes("claude")) return "claude";
-    if (command.includes("gemini")) return "gemini";
-    if (command.includes("codex")) return "codex";
-    if (command.includes("opencode")) return "opencode";
-    if (command.includes("copilot")) return "copilot";
-    if (command.includes("droid")) return "droid";
-    if (command.includes("openclaw") || command.includes("moltbot")) return "moltbot";
-    const name = terminalName.toLowerCase();
-    if (name.includes("claude")) return "claude";
-    if (name.includes("gemini")) return "gemini";
-    if (name.includes("codex")) return "codex";
-    if (name.includes("opencode")) return "opencode";
-    if (name.includes("copilot")) return "copilot";
-    if (name.includes("droid")) return "droid";
-    if (name.includes("openclaw") || name.includes("moltbot")) return "moltbot";
-    return "shell";
-  }, [terminalMeta.bootCommand, terminalName]);
+  const terminalType = React.useMemo(
+    () => getAgentType(terminalMeta.bootCommand, terminalName),
+    [terminalMeta.bootCommand, terminalName]
+  );
+  const terminalIconSrc = React.useMemo(() => getAgentIconSrc(terminalType), [terminalType]);
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
@@ -1543,7 +1531,12 @@ export function TerminalBlock({
     }
   );
 
-  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError, ttsStatus } = terminalState;
+  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError, ttsStatus, cwd: terminalCwd } = terminalState;
+
+  // Report cwd changes to parent
+  React.useEffect(() => {
+    data.onCwdChange?.(terminalCwd);
+  }, [terminalCwd, data.onCwdChange]);
 
   // Track if we were ever connected (to distinguish initial disconnected from lost connection)
   const wasConnectedRef = React.useRef(false);
@@ -1947,11 +1940,7 @@ export function TerminalBlock({
       }, 120);
 
       terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
-      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n");
-      terminalRef.current?.write(
-        `\x1b[90mSession: ${session.sandboxSessionId}\x1b[0m\r\n`
-      );
-      terminalRef.current?.write("\r\n");
+      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n\r\n");
 
       // Control is requested separately once connected.
     }
@@ -3062,20 +3051,8 @@ export function TerminalBlock({
         {/* Header - compact, pointer-events: none to allow drag through to ReactFlow node */}
         <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)] bg-[var(--background)] shrink-0" style={{ pointerEvents: "none" }}>
         <div className="flex items-center gap-1.5" style={{ pointerEvents: "auto" }}>
-          {terminalName === "Claude Code" ? (
-            <img src="/icons/claude.ico" alt="Claude Code icon" title="Claude Code icon" className="w-4 h-4" />
-          ) : terminalName === "Gemini CLI" ? (
-            <img src="/icons/gemini.ico" alt="Gemini CLI icon" title="Gemini CLI icon" className="w-4 h-4" />
-          ) : terminalName === "Codex" ? (
-            <img src="/icons/codex.png" alt="Codex icon" title="Codex icon" className="w-4 h-4" />
-          ) : terminalName === "OpenCode" ? (
-            <img src="/icons/opencode.ico" alt="OpenCode icon" title="OpenCode icon" className="w-4 h-4" />
-          ) : terminalName === "GitHub Copilot CLI" ? (
-            <img src="/icons/github.png" alt="GitHub Copilot icon" title="GitHub Copilot icon" className="w-4 h-4" />
-          ) : terminalName === "Droid" ? (
-            <img src="/icons/droid.png" alt="Droid icon" title="Droid icon" className="w-4 h-4" />
-          ) : terminalName === "OpenClaw" || terminalName === "Moltbot" ? (
-            <img src="/icons/moltbot.png" alt="OpenClaw icon" title="OpenClaw icon" className="w-4 h-4" />
+          {terminalIconSrc ? (
+            <img src={terminalIconSrc} alt={`${terminalName} icon`} title={`${terminalName} icon`} className="w-4 h-4" />
           ) : (
             <span title="Terminal icon">
               <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
@@ -3528,21 +3505,9 @@ export function TerminalBlock({
   // Minimized view - use settings menu from dropdown if available
   // Only show when fully minimized (not during animation)
   if (isMinimized && !isAnimatingMinimize) {
-    // Determine icon based on terminal name
-    const minimizedIcon = terminalName === "Claude Code" ? (
-      <img src="/icons/claude.ico" alt="Claude Code" className="w-14 h-14" />
-    ) : terminalName === "Gemini CLI" ? (
-      <img src="/icons/gemini.ico" alt="Gemini CLI" className="w-14 h-14" />
-    ) : terminalName === "Codex" ? (
-      <img src="/icons/codex.png" alt="Codex" className="w-14 h-14" />
-    ) : terminalName === "OpenCode" ? (
-      <img src="/icons/opencode.ico" alt="OpenCode" className="w-14 h-14" />
-    ) : terminalName === "GitHub Copilot CLI" ? (
-      <img src="/icons/github.png" alt="GitHub Copilot" className="w-14 h-14" />
-    ) : terminalName === "Droid" ? (
-      <img src="/icons/droid.png" alt="Droid" className="w-14 h-14" />
-    ) : terminalName === "OpenClaw" || terminalName === "Moltbot" ? (
-      <img src="/icons/moltbot.png" alt="OpenClaw" className="w-14 h-14" />
+    // Determine icon based on terminal name using shared utility
+    const minimizedIcon = terminalIconSrc ? (
+      <img src={terminalIconSrc} alt={terminalName} className="w-14 h-14" />
     ) : (
       <Terminal className="w-14 h-14 text-[var(--foreground-subtle)]" />
     );
