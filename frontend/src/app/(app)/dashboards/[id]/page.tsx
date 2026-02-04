@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v14-smart-component-placement
-console.log(`[dashboard] REVISION: dashboard-v14-smart-component-placement loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v15-fix-move-jumpback
+console.log(`[dashboard] REVISION: dashboard-v15-fix-move-jumpback loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -1564,18 +1564,29 @@ export default function DashboardPage() {
 
   // Flush pending updates to API (debounced)
   const flushPendingUpdates = useDebouncedCallback(() => {
-    pendingUpdatesRef.current.forEach((changes, itemId) => {
+    // Snapshot and clear pending updates atomically
+    const updates = new Map(pendingUpdatesRef.current);
+    pendingUpdatesRef.current.clear();
+
+    updates.forEach((changes, itemId) => {
+      mutationsInFlightRef.current++;
       updateItemMutation.mutate(
         { itemId, changes },
         {
           onSettled: () => {
-            // Clear from pending tracking after mutation completes (success or error)
-            pendingItemIdsRef.current.delete(itemId);
+            mutationsInFlightRef.current--;
+            // Only clear pending tracking if no new updates were queued while
+            // this mutation was in-flight. Without this check, a rapid second
+            // move (A→B→C) would clear the guard after the first save (B),
+            // allowing the WebSocket echo to trigger a refetch that overwrites
+            // the optimistic position (C) with the stale saved position (B).
+            if (!pendingUpdatesRef.current.has(itemId)) {
+              pendingItemIdsRef.current.delete(itemId);
+            }
           },
         }
       );
     });
-    pendingUpdatesRef.current.clear();
   }, 500);
 
   // Create edge function for useUICommands
