@@ -286,6 +286,11 @@ func (w *Workspace) Walk(path string, fn func(path string, info FileInfo) error)
 			return err
 		}
 
+		// Skip the root directory itself — callers only want its contents
+		if walkPath == resolved {
+			return nil
+		}
+
 		info, err := d.Info()
 		if err != nil {
 			return err
