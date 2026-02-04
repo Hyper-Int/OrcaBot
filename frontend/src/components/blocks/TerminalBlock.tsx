@@ -1,10 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: reconnect-liveness-v2-auto-restart-on-fail
+// REVISION: flatten-workspace-v1-remove-session-banner
 
 "use client";
 
-const TERMINAL_BLOCK_REVISION = "reconnect-liveness-v2-auto-restart-on-fail";
+const TERMINAL_BLOCK_REVISION = "flatten-workspace-v1-remove-session-banner";
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -1947,11 +1947,7 @@ export function TerminalBlock({
       }, 120);
 
       terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
-      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n");
-      terminalRef.current?.write(
-        `\x1b[90mSession: ${session.sandboxSessionId}\x1b[0m\r\n`
-      );
-      terminalRef.current?.write("\r\n");
+      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n\r\n");
 
       // Control is requested separately once connected.
     }

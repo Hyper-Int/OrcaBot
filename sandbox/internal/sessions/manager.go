@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
@@ -75,7 +74,9 @@ func (m *Manager) BrokerPort() int {
 	return m.brokerPort
 }
 
-// Create creates a new session with a workspace directory
+// Create creates a new session with a workspace directory.
+// Now that dashboards are 1:1 with sandboxes, the workspace is the base
+// directory itself (/workspace) rather than a per-session subdirectory.
 // dashboardID is optional but required for MCP proxy functionality
 // mcpToken is a dashboard-scoped token for MCP proxy calls
 func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) {
@@ -84,13 +85,12 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 		return nil, err
 	}
 
-	// Create workspace directory for this session
-	workspacePath := filepath.Join(m.workspaceBase, sessionID)
-	if err := os.MkdirAll(workspacePath, 0755); err != nil {
+	// Ensure workspace base directory exists (shared by all sessions in this VM)
+	if err := os.MkdirAll(m.workspaceBase, 0755); err != nil {
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspacePath, m.broker, m.brokerPort)
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort)
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session
@@ -127,9 +127,7 @@ func (m *Manager) Delete(id string) error {
 		return err
 	}
 
-	// Clean up workspace directory
-	workspacePath := filepath.Join(m.workspaceBase, id)
-	os.RemoveAll(workspacePath)
+	// Workspace is the shared base directory (/workspace) — not removed on session delete.
 
 	return nil
 }
@@ -150,20 +148,15 @@ func (m *Manager) List() []*Session {
 func (m *Manager) Shutdоwn() {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
-	ids := make([]string, 0, len(m.sessions))
-	for id, session := range m.sessions {
+	for _, session := range m.sessions {
 		sessions = append(sessions, session)
-		ids = append(ids, id)
 	}
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
 	// Close all sessions
-	for i, session := range sessions {
+	for _, session := range sessions {
 		session.Clоse()
-		// Clean up workspace directory
-		workspacePath := filepath.Join(m.workspaceBase, ids[i])
-		os.RemoveAll(workspacePath)
 	}
 
 	// Stop the shared secrets broker

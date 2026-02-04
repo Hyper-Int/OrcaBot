@@ -1,13 +1,11 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-
 // REVISION: integration-edge-v1-clickable-labels
-console.log(`[IntegrationEdge] REVISION: integration-edge-v1-clickable-labels loaded at ${new Date().toISOString()}`);
 
 "use client";
 
-// REVISION: integration-edge-v1-clickable-labels
-console.log(`[IntegrationEdge] REVISION: integration-edge-v1-clickable-labels loaded at ${new Date().toISOString()}`);
+const INTEGRATION_EDGE_REVISION = "integration-edge-v1-clickable-labels";
+console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
