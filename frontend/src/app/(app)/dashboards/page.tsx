@@ -44,7 +44,6 @@ import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
 import {
   listDashboards,
-  listAllDashboards,
   createDashboard,
   deleteDashboard,
   listGlobalSecrets,
@@ -53,7 +52,7 @@ import {
   deleteGlobalSecret,
   type UserSecret,
 } from "@/lib/api/cloudflare";
-import { listTemplates } from "@/lib/api/cloudflare/templates";
+import { listTemplates, deleteTemplate } from "@/lib/api/cloudflare/templates";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 
@@ -66,6 +65,7 @@ export default function DashboardsPage() {
   const [newDashboardName, setNewDashboardName] = React.useState("");
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = React.useState<Dashboard | null>(null);
+  const [deleteTemplateTarget, setDeleteTemplateTarget] = React.useState<{ id: string; name: string } | null>(null);
   const [adminMode, setAdminMode] = React.useState(false);
   const [newSecretName, setNewSecretName] = React.useState("");
   const [newSecretValue, setNewSecretValue] = React.useState("");
@@ -94,22 +94,6 @@ export default function DashboardsPage() {
     queryFn: listDashboards,
     enabled: isAuthenticated && isAuthResolved,
   });
-
-  // Fetch all dashboards (admin mode)
-  const {
-    data: allDashboards,
-    isLoading: isLoadingAll,
-    error: adminError,
-  } = useQuery({
-    queryKey: ["admin-dashboards"],
-    queryFn: listAllDashboards,
-    enabled: isAuthenticated && isAuthResolved && isAdmin && adminMode,
-  });
-
-  // Use admin dashboards when in admin mode, otherwise user's dashboards
-  const displayDashboards = adminMode && allDashboards ? allDashboards : dashboards;
-  const displayLoading = adminMode ? isLoadingAll : isLoading;
-  const displayError = adminMode ? adminError : error;
 
   // Fetch templates
   const { data: templates } = useQuery({
@@ -163,6 +147,18 @@ export default function DashboardsPage() {
     },
     onError: (error) => {
       toast.error(`Failed to delete dashboard: ${error.message}`);
+    },
+  });
+
+  // Delete template mutation (admin)
+  const deleteTemplateMutation = useMutation({
+    mutationFn: (id: string) => deleteTemplate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      toast.success("Template deleted");
+    },
+    onError: (error) => {
+      toast.error(`Failed to delete template: ${error.message}`);
     },
   });
 
@@ -341,6 +337,7 @@ export default function DashboardsPage() {
                   setNewDashboardName(template.name);
                   setIsCreateOpen(true);
                 }}
+                onDelete={adminMode ? () => setDeleteTemplateTarget({ id: template.id, name: template.name }) : undefined}
               />
             ))}
 
@@ -387,16 +384,16 @@ export default function DashboardsPage() {
           {/* Your Dashboards Section */}
           <section>
             <h2 className="text-h2 text-[var(--foreground)] mb-4">
-              {adminMode ? "All Dashboards" : "Your Dashboards"}
+              Your Dashboards
             </h2>
 
-            {displayLoading ? (
+            {isLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {[1, 2, 3, 4].map((i) => (
                   <Skeleton key={i} className="h-24" />
                 ))}
               </div>
-            ) : displayError ? (
+            ) : error ? (
               <div className="text-center py-12">
                 <p className="text-body text-[var(--status-error)]">
                   Failed to load dashboards. Please try again.
@@ -405,42 +402,35 @@ export default function DashboardsPage() {
                   variant="secondary"
                   className="mt-4"
                   onClick={() =>
-                    queryClient.invalidateQueries({
-                      queryKey: [adminMode ? "admin-dashboards" : "dashboards"],
-                    })
+                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
                   }
                 >
                   Retry
                 </Button>
               </div>
-            ) : displayDashboards && displayDashboards.length > 0 ? (
+            ) : dashboards && dashboards.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {displayDashboards.map((dashboard) => (
+                {dashboards.map((dashboard) => (
                   <DashboardCard
                     key={dashboard.id}
                     dashboard={dashboard}
                     onClick={() => router.push(`/dashboards/${dashboard.id}`)}
                     onDelete={() => setDeleteTarget(dashboard)}
-                    showOwner={adminMode}
-                    ownerEmail={'ownerEmail' in dashboard ? (dashboard as Dashboard & { ownerEmail: string }).ownerEmail : undefined}
-                    alwaysShowDelete={adminMode}
                   />
                 ))}
               </div>
             ) : (
               <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
                 <p className="text-body text-[var(--foreground-muted)] mb-4">
-                  {adminMode ? "No dashboards found." : "No dashboards yet. Create your first one!"}
+                  No dashboards yet. Create your first one!
                 </p>
-                {!adminMode && (
-                  <Button
-                    variant="primary"
-                    onClick={() => setIsCreateOpen(true)}
-                    leftIcon={<Plus className="w-4 h-4" />}
-                  >
-                    New Dashboard
-                  </Button>
-                )}
+                <Button
+                  variant="primary"
+                  onClick={() => setIsCreateOpen(true)}
+                  leftIcon={<Plus className="w-4 h-4" />}
+                >
+                  New Dashboard
+                </Button>
               </div>
             )}
           </section>
@@ -759,6 +749,40 @@ export default function DashboardsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Template Confirmation Dialog (admin) */}
+      <Dialog
+        open={!!deleteTemplateTarget}
+        onOpenChange={(open) => !open && setDeleteTemplateTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Template</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the template "{deleteTemplateTarget?.name}"? This
+              action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteTemplateTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              isLoading={deleteTemplateMutation.isPending}
+              onClick={() => {
+                if (deleteTemplateTarget) {
+                  deleteTemplateMutation.mutate(deleteTemplateTarget.id, {
+                    onSuccess: () => setDeleteTemplateTarget(null),
+                  });
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -770,6 +794,7 @@ interface NewDashboardCardProps {
   title: string;
   description: string;
   onClick: () => void;
+  onDelete?: () => void;
 }
 
 function NewDashboardCard({
@@ -777,23 +802,37 @@ function NewDashboardCard({
   title,
   description,
   onClick,
+  onDelete,
 }: NewDashboardCardProps) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex flex-col items-center justify-center p-6 rounded-[var(--radius-card)]",
-        "bg-[var(--background-elevated)] border border-[var(--border)]",
-        "hover:bg-[var(--background-hover)] hover:border-[var(--border-strong)]",
-        "transition-colors cursor-pointer text-center"
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        className={cn(
+          "flex flex-col items-center justify-center p-6 rounded-[var(--radius-card)] w-full",
+          "bg-[var(--background-elevated)] border border-[var(--border)]",
+          "hover:bg-[var(--background-hover)] hover:border-[var(--border-strong)]",
+          "transition-colors cursor-pointer text-center"
+        )}
+      >
+        <div className="mb-3 text-[var(--foreground-muted)]">{icon}</div>
+        <h3 className="text-h4 text-[var(--foreground)] mb-1">{title}</h3>
+        <p className="text-caption text-[var(--foreground-subtle)]">
+          {description}
+        </p>
+      </button>
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
+        >
+          <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
+        </button>
       )}
-    >
-      <div className="mb-3 text-[var(--foreground-muted)]">{icon}</div>
-      <h3 className="text-h4 text-[var(--foreground)] mb-1">{title}</h3>
-      <p className="text-caption text-[var(--foreground-subtle)]">
-        {description}
-      </p>
-    </button>
+    </div>
   );
 }
 
@@ -801,12 +840,9 @@ interface DashboardCardProps {
   dashboard: Dashboard;
   onClick: () => void;
   onDelete: () => void;
-  showOwner?: boolean;
-  ownerEmail?: string;
-  alwaysShowDelete?: boolean;
 }
 
-function DashboardCard({ dashboard, onClick, onDelete, showOwner, ownerEmail, alwaysShowDelete }: DashboardCardProps) {
+function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
   return (
     <Card className="group cursor-pointer hover:border-[var(--border-strong)] transition-colors">
       <div onClick={onClick}>
@@ -818,21 +854,13 @@ function DashboardCard({ dashboard, onClick, onDelete, showOwner, ownerEmail, al
                 e.stopPropagation();
                 onDelete();
               }}
-              className={cn(
-                "p-1 hover:bg-[var(--background-hover)] rounded transition-all",
-                alwaysShowDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-              )}
+              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
             >
               <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
             </button>
           </div>
         </CardHeader>
         <CardContent>
-          {showOwner && ownerEmail && (
-            <p className="text-caption text-[var(--foreground-muted)] mb-1">
-              Owner: {ownerEmail}
-            </p>
-          )}
           <p className="text-caption text-[var(--foreground-subtle)]">
             Updated {formatRelativeTime(dashboard.updatedAt)}
           </p>
