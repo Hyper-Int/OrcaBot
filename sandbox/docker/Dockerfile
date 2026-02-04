@@ -72,8 +72,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
-RUN npm install -g @anthropic-ai/claude-code
+# Pre-warm npm cache with Claude Code dependencies (for fast user-initiated install)
+# We install then uninstall so the package is NOT distributed, but deps remain cached.
+# A lightweight wrapper script at /usr/local/bin/claude handles on-demand installation.
+RUN npm install -g @anthropic-ai/claude-code \
+    && npm uninstall -g @anthropic-ai/claude-code \
+    && printf '#!/bin/bash\necho "Installing Claude Code from npm..."\necho "By continuing, you agree to Anthropic'\''s Terms of Service."\nnpm install -g @anthropic-ai/claude-code && exec claude "$@"\n' > /usr/local/bin/claude \
+    && chmod +x /usr/local/bin/claude
 
 # Install Codex CLI (OpenAI)
 RUN npm install -g @openai/codex
