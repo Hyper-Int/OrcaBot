@@ -1580,7 +1580,7 @@ export function TerminalBlock({
   const isDisconnected = connectionState === "disconnected" && wasConnectedRef.current;
   const isAgentRunning = agentState === "running";
   const isAgentic = terminalMeta.agentic === true;
-  const supportsMcp = (isClaudeSession || isAgentic) && terminalType !== "copilot" && terminalType !== "moltbot";
+  const supportsMcp = (isClaudeSession || isAgentic) && terminalType !== "moltbot";
   const canType = isOwner && turnTaking.isController && !isAgentRunning && isConnected;
   const canInsertPrompt = canType;
   const terminalThemeSetting = terminalMeta.terminalTheme ?? "system";
@@ -3101,8 +3101,8 @@ export function TerminalBlock({
           {/* Agents, Skills, MCP Tools buttons - only shown in agentic mode */}
           {(isClaudeSession || isAgentic) && (
             <>
-              {/* Agents button - hidden for Gemini, Codex, Copilot, and OpenClaw */}
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
+              {/* Agents button - hidden for Gemini, Codex, and OpenClaw */}
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
                 <button
                   type="button"
                   onClick={() => setShowAttachedList((prev) => !prev)}
@@ -3145,7 +3145,7 @@ export function TerminalBlock({
                 <span className="text-[10px] font-medium">{attachedSkillNames.length}</span>
               </button>
 
-              {/* MCP Tools button - hidden for Copilot (no MCP config available) */}
+              {/* MCP Tools button */}
               {supportsMcp && (
                 <button
                   type="button"
@@ -3313,7 +3313,7 @@ export function TerminalBlock({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
-              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "GitHub Copilot CLI" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
+              {terminalName !== "Gemini CLI" && terminalName !== "Codex" && terminalName !== "OpenClaw" && terminalName !== "Moltbot" && (
                 <DropdownMenuItem onClick={() => setActivePanel(activePanel === "subagents" ? null : "subagents")} className="gap-2" disabled={!isClaudeSession && !isAgentic}>
                   <Bot className="w-3 h-3" />
                   <span>Agents</span>

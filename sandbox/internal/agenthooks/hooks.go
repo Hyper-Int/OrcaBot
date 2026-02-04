@@ -40,8 +40,6 @@ func GenerateHooksForAgent(workspaceRoot string, agentType mcp.AgentType, sessio
 		return generateClaudeHooks(workspaceRoot, hooksDir)
 	case mcp.AgentTypeGemini:
 		return generateGeminiHooks(workspaceRoot, hooksDir)
-	case mcp.AgentTypeCopilot:
-		return generateCopilotHooks(workspaceRoot, hooksDir)
 	case mcp.AgentTypeOpenCode:
 		return generateOpenCodeHooks(workspaceRoot, hooksDir)
 	case mcp.AgentTypeMoltbot:
@@ -483,75 +481,6 @@ func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) err
 	}
 	fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote Gemini hooks to %s\n", settingsPath)
 	return nil
-}
-
-// generateCopilotHooks creates sessionEnd hook for GitHub Copilot CLI
-// See: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/use-hooks
-func generateCopilotHooks(workspaceRoot, hooksDir string) error {
-	scriptPath := filepath.Join(hooksDir, "copilot-stop.sh")
-	script := `#!/bin/bash
-# GitHub Copilot CLI sessionEnd hook
-# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
-PORT="${MCP_LOCAL_PORT:-8081}"
-LOGFILE="/tmp/copilot-hook-debug.log"
-echo "=== Copilot hook invoked at $(date) ===" >> "$LOGFILE"
-echo "SESSION_ID: $ORCABOT_SESSION_ID, PTY_ID: $ORCABOT_PTY_ID, PORT: $PORT" >> "$LOGFILE"
-INPUT=$(cat)
-echo "Input: $INPUT" >> "$LOGFILE"
-LAST_MSG=$(echo "$INPUT" | jq -r '.context // "Session ended"' 2>/dev/null | head -c 4096)
-echo "Message: $LAST_MSG" >> "$LOGFILE"
-curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
-  -H "Content-Type: application/json" \
-  -d "{\"agent\":\"copilot\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
-`
-
-	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
-		return fmt.Errorf("failed to write copilot hook script: %w", err)
-	}
-
-	// Copilot CLI loads hooks from .github/hooks/ in the current working directory.
-	// File format: { "version": 1, "hooks": { "sessionEnd": [...] } }
-	copilotHooksDir := filepath.Join(workspaceRoot, ".github", "hooks")
-	if err := os.MkdirAll(copilotHooksDir, 0755); err != nil {
-		return err
-	}
-
-	// Use a separate file to avoid conflicts with user hooks
-	configPath := filepath.Join(copilotHooksDir, "orcabot.json")
-
-	// Read existing config or create new
-	var config map[string]interface{}
-	data, err := os.ReadFile(configPath)
-	if err == nil {
-		json.Unmarshal(data, &config)
-	}
-	if config == nil {
-		config = make(map[string]interface{})
-	}
-
-	// Check if already configured
-	if d, _ := json.Marshal(config); strings.Contains(string(d), scriptPath) {
-		return nil
-	}
-
-	// Build proper hooks format
-	config["version"] = 1
-	config["hooks"] = map[string]interface{}{
-		"sessionEnd": []interface{}{
-			map[string]interface{}{
-				"type":       "command",
-				"bash":       scriptPath,
-				"timeoutSec": 30,
-			},
-		},
-	}
-
-	data, err = json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Copilot hooks to %s\n", configPath)
-	return os.WriteFile(configPath, data, 0644)
 }
 
 // generateOpenCodeHooks is a no-op for now.

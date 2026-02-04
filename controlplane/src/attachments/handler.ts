@@ -48,7 +48,6 @@ const TERMINAL_PATHS: Record<string, { skills: string | null; agents: string | n
   gemini: { skills: "/.gemini/skills", agents: null },
   codex: { skills: "/.codex/skills", agents: null },
   opencode: { skills: "/.config/opencode/skills", agents: "/.config/opencode/agents" },
-  copilot: { skills: "/.copilot/skills", agents: null },
   droid: { skills: "/.factory/skills", agents: "/.factory/droids" },
   openclaw: { skills: "/.openclaw/skills", agents: null },
   moltbot: { skills: "/.openclaw/skills", agents: null },

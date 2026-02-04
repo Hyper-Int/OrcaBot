@@ -47,9 +47,8 @@ const (
 	AgentTypeOpenCode AgentType = "opencode"
 	AgentTypeGemini   AgentType = "gemini"
 	AgentTypeCodex    AgentType = "codex"
-	AgentTypeDroid    AgentType = "droid"
-	AgentTypeCopilot  AgentType = "copilot"
-	AgentTypeMoltbot  AgentType = "moltbot"
+	AgentTypeDroid   AgentType = "droid"
+	AgentTypeMoltbot AgentType = "moltbot"
 	AgentTypeUnknown  AgentType = ""
 )
 
@@ -70,8 +69,6 @@ func DetectAgentType(command string) AgentType {
 		return AgentTypeCodex
 	case cmd == "droid" || strings.HasPrefix(cmd, "droid "):
 		return AgentTypeDroid
-	case cmd == "gh" || strings.HasPrefix(cmd, "gh copilot") || strings.HasPrefix(cmd, "copilot "):
-		return AgentTypeCopilot
 	case cmd == "openclaw" || strings.HasPrefix(cmd, "openclaw ") ||
 		cmd == "moltbot" || strings.HasPrefix(cmd, "moltbot ") ||
 		cmd == "molt" || strings.HasPrefix(cmd, "molt ") ||
@@ -102,8 +99,6 @@ func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userToo
 		return generateCodexSettings(workspaceRoot, servers)
 	case AgentTypeDroid:
 		return generateDroidSettings(workspaceRoot, servers)
-	case AgentTypeCopilot:
-		return generateCopilotSettings(workspaceRoot, servers)
 	case AgentTypeMoltbot:
 		return generateMoltbotSettings(workspaceRoot, servers)
 	default:
@@ -138,10 +133,6 @@ func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPToo
 
 	if err := generateDroidSettings(workspaceRoot, servers); err != nil {
 		errs = append(errs, fmt.Errorf("droid: %w", err))
-	}
-
-	if err := generateCopilotSettings(workspaceRoot, servers); err != nil {
-		errs = append(errs, fmt.Errorf("copilot: %w", err))
 	}
 
 	if err := generateMoltbotSettings(workspaceRoot, servers); err != nil {
@@ -491,73 +482,6 @@ func generateDroidSettings(workspaceRoot string, servers map[string]MCPServerCon
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// CopilotConfig represents GitHub Copilot CLI's MCP configuration
-// See: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli
-type CopilotConfig struct {
-	MCPServers map[string]CopilotMCPServer `json:"mcpServers"`
-}
-
-type CopilotMCPServer struct {
-	Type    string            `json:"type"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Tools   []string          `json:"tools,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-}
-
-// generateCopilotSettings merges MCP servers into .copilot/mcp-config.json,
-// preserving existing user config fields.
-func generateCopilotSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	copilotDir := filepath.Join(workspaceRoot, ".copilot")
-	if err := os.MkdirAll(copilotDir, 0755); err != nil {
-		return err
-	}
-
-	configPath := filepath.Join(copilotDir, "mcp-config.json")
-
-	var config map[string]interface{}
-	if data, err := os.ReadFile(configPath); err == nil {
-		if err := json.Unmarshal(data, &config); err != nil {
-			config = make(map[string]interface{})
-		}
-	} else {
-		config = make(map[string]interface{})
-	}
-
-	mcpServers := make(map[string]interface{})
-	for name, server := range servers {
-		if server.Command != "" {
-			entry := map[string]interface{}{
-				"type":    "local",
-				"command": server.Command,
-				"tools":   []string{"*"},
-			}
-			if len(server.Args) > 0 {
-				entry["args"] = server.Args
-			}
-			if len(server.Env) > 0 {
-				entry["env"] = server.Env
-			}
-			mcpServers[name] = entry
-		}
-	}
-
-	if existing, ok := config["mcpServers"].(map[string]interface{}); ok {
-		for name, server := range mcpServers {
-			existing[name] = server
-		}
-	} else {
-		config["mcpServers"] = mcpServers
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(configPath, data, 0644)
-}
-
 // MoltbotConfig represents OpenClaw's MCP configuration
 type MoltbotConfig struct {
 	MCPServers map[string]MoltbotMCPServer `json:"mcpServers"`
@@ -686,9 +610,6 @@ func UpdateSettings(workspaceRoot string, newServers map[string]MCPServerConfig)
 	}
 	if err := generateDroidSettings(workspaceRoot, settings.MCPServers); err != nil {
 		errs = append(errs, fmt.Errorf("droid: %w", err))
-	}
-	if err := generateCopilotSettings(workspaceRoot, settings.MCPServers); err != nil {
-		errs = append(errs, fmt.Errorf("copilot: %w", err))
 	}
 	if err := generateMoltbotSettings(workspaceRoot, settings.MCPServers); err != nil {
 		errs = append(errs, fmt.Errorf("moltbot: %w", err))

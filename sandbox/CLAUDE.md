@@ -94,7 +94,7 @@ Fly.io (execution plane)
 - PTY ↔ WebSocket streaming
 - Turn-taking enforcement
 - Filesystem access (`/workspace`)
-- Agent execution (Claude Code, Gemini, Copilot, Codex, etc.)
+- Agent execution (Claude Code, Gemini, Codex, etc.)
 - Session metadata persistence
 - Secrets broker and output redaction
 - MCP server (tool discovery + proxying to control plane gateway)
@@ -322,7 +322,7 @@ curl -X POST "http://localhost:8082/broker/custom/MY_API_KEY?target=https://api.
 Claude Code, Gemini CLI, and Codex CLI are preinstalled in the sandbox image.
 Agents run as CLI processes inside PTYs.
 
-**Supported agents:** Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, OpenClaw
+**Supported agents:** Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
 
 **Agent control signals:**
 - **Pause**: `SIGSTOP`
@@ -449,7 +449,7 @@ internal/agenthooks/
   Agent stop hook generation for all supported agent types.
   Hooks call back to `POST /sessions/:id/ptys/:ptyId/agent-stopped` when an agent finishes,
   enabling WebSocket `agent_stopped` events.
-  - Supported: Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, OpenClaw
+  - Supported: Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
   - Each agent has its own config format (JSON, TOML, YAML, etc.)
   - Gemini settings use system override file to survive CLI rewrites
 

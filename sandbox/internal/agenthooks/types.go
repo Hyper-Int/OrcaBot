@@ -36,7 +36,6 @@ func NewAgentStoppedEvent(agent, lastMessage, reason string) AgentStoppedEvent {
 const (
 	AgentClaudeCode = "claude-code"
 	AgentGemini     = "gemini"
-	AgentCopilot    = "copilot"
 	AgentOpenCode   = "opencode"
 	AgentOpenClaw   = "openclaw"
 	AgentMoltbot    = "moltbot" // legacy alias
