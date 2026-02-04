@@ -212,6 +212,20 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
 };
 
 const PLACEMENT_GAP = 32; // gap between items when finding space
+const COLLAPSED_SIDEBAR_WIDTH = 36; // w-9 = 2.25rem ≈ 36px
+const SIDEBAR_WIDTH_KEY = "orcabot:sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 200;
+
+/** Read the current sidebar pixel width, accounting for collapsed state. */
+function getSidebarWidth(collapsed: boolean): number {
+  if (collapsed) return COLLAPSED_SIDEBAR_WIDTH;
+  try {
+    const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    return saved ? Math.max(160, Math.min(400, Number(saved))) : DEFAULT_SIDEBAR_WIDTH;
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
 
 /**
  * Find available space for a new component that doesn't overlap existing items.
@@ -219,6 +233,8 @@ const PLACEMENT_GAP = 32; // gap between items when finding space
  * 1. Try to place within the visible viewport area, scanning positions on a grid.
  * 2. If no space in viewport, place to the right of all existing items.
  * Returns a snapped position (16px grid).
+ *
+ * @param sidebarInset  Pixels of the left edge occluded by the workspace sidebar.
  */
 function findAvailableSpace(
   existingItems: Array<{ position: { x: number; y: number }; size: { width: number; height: number } }>,
@@ -226,12 +242,13 @@ function findAvailableSpace(
   viewport: { x: number; y: number; zoom: number },
   containerWidth: number,
   containerHeight: number,
+  sidebarInset: number,
 ): { x: number; y: number } {
   // Convert viewport to flow coordinates (visible area)
   const zoom = viewport.zoom || 1;
-  const viewLeft = -viewport.x / zoom;
+  const viewLeft = (-viewport.x + sidebarInset) / zoom; // shift right past sidebar
   const viewTop = -viewport.y / zoom;
-  const viewWidth = containerWidth / zoom;
+  const viewWidth = (containerWidth - sidebarInset) / zoom;
   const viewHeight = containerHeight / zoom;
 
   // Check if a candidate position overlaps any existing item
@@ -532,6 +549,7 @@ export default function DashboardPage() {
       const container = canvasContainerRef.current;
       const containerWidth = container?.clientWidth ?? 1200;
       const containerHeight = container?.clientHeight ?? 800;
+      const sidebarInset = getSidebarWidth(sidebarCollapsed);
 
       return findAvailableSpace(
         items,
@@ -539,9 +557,10 @@ export default function DashboardPage() {
         viewportRef.current,
         containerWidth,
         containerHeight,
+        sidebarInset,
       );
     },
-    [items],
+    [items, sidebarCollapsed],
   );
 
   // Pan/zoom so a newly-placed block is visible
@@ -560,11 +579,13 @@ export default function DashboardPage() {
         const container = canvasContainerRef.current;
         const containerWidth = container?.clientWidth ?? 1200;
         const containerHeight = container?.clientHeight ?? 800;
+        const sidebarInset = getSidebarWidth(sidebarCollapsed);
 
-        // Visible area in flow coordinates
-        const viewLeft = -vp.x / zoom;
+        // Visible area in flow coordinates (shifted right past sidebar)
+        const usableWidth = containerWidth - sidebarInset;
+        const viewLeft = (-vp.x + sidebarInset) / zoom;
         const viewTop = -vp.y / zoom;
-        const viewRight = viewLeft + containerWidth / zoom;
+        const viewRight = viewLeft + usableWidth / zoom;
         const viewBottom = viewTop + containerHeight / zoom;
 
         const blockRight = position.x + size.width;
@@ -593,14 +614,37 @@ export default function DashboardPage() {
           maxY = Math.max(maxY, item.position.y + item.size.height);
         }
 
-        // fitBounds zooms and pans to fit the given rectangle
-        instance.fitBounds(
-          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
-          { padding: 0.12, duration: 300 },
-        );
+        // Check whether the bounding box fits at the current zoom
+        const boundsWidth = maxX - minX + margin * 2;
+        const boundsHeight = maxY - minY + margin * 2;
+        const fitsAtCurrentZoom =
+          boundsWidth * zoom <= usableWidth && boundsHeight * zoom <= containerHeight;
+
+        if (fitsAtCurrentZoom) {
+          // Everything fits at the current zoom — just pan (no zoom change)
+          const centerX = (minX + maxX) / 2;
+          const centerY = (minY + maxY) / 2;
+          // setCenter centers the viewport on the given flow coordinate at the given zoom
+          // Offset the center rightward by half the sidebar inset so the visible
+          // center (not the DOM center) is used.
+          const offsetX = sidebarInset / 2 / zoom;
+          instance.setCenter(centerX + offsetX, centerY, { zoom, duration: 300 });
+        } else {
+          // Need to zoom out — compute the maximum zoom that fits, capped at current
+          const neededZoom = Math.min(
+            usableWidth / boundsWidth,
+            containerHeight / boundsHeight,
+            zoom, // never zoom in
+          );
+          const clampedZoom = Math.max(0.1, neededZoom);
+          const centerX = (minX + maxX) / 2;
+          const centerY = (minY + maxY) / 2;
+          const offsetX = sidebarInset / 2 / clampedZoom;
+          instance.setCenter(centerX + offsetX, centerY, { zoom: clampedZoom, duration: 300 });
+        }
       });
     },
-    [items],
+    [items, sidebarCollapsed],
   );
 
   // Create item mutation

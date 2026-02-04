@@ -493,13 +493,14 @@ export function Canvas({
           className="bg-[var(--background)]"
         />
 
-        {/* Zoom controls - bottom left */}
+        {/* Zoom controls - bottom right, left of minimap */}
         <Controls
-          position="bottom-left"
+          position="bottom-right"
           showZoom
           showFitView
           showInteractive={false}
           className="canvas-controls"
+          style={{ right: 210 }}
         />
 
         {/* Minimap - bottom right */}
