@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v2-expose-instance
-console.log(`[canvas] REVISION: canvas-v2-expose-instance loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v3-defer-rebuild-during-drag
+console.log(`[canvas] REVISION: canvas-v3-defer-rebuild-during-drag loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -287,15 +287,18 @@ export function Canvas({
   // Track previous item IDs to detect new items
   const prevItemIdsRef = React.useRef<Set<string>>(new Set(items.map(i => i._stableKey || i.id)));
 
-  // Update nodes when items or sessions change from server
-  React.useEffect(() => {
+  // Track whether a drag is in progress to prevent node rebuilds mid-drag
+  const isDraggingRef = React.useRef(false);
+  const pendingNodeRebuildRef = React.useRef(false);
+
+  // Rebuild nodes from items - extracted so it can be called from effect and drag-stop
+  const rebuildNodes = React.useCallback(() => {
     // Detect new items and bring them to front
     const currentIds = new Set(items.map(i => i._stableKey || i.id));
     const prevIds = prevItemIdsRef.current;
     items.forEach(item => {
       const nodeId = item._stableKey || item.id;
       if (!prevIds.has(nodeId)) {
-        // This is a new item - bring it to front
         bringToFront(nodeId);
       }
     });
@@ -326,6 +329,16 @@ export function Canvas({
     );
     setNodes([...baseNodes, ...extraNodes]);
   }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate, onTerminalCwdChange]);
+
+  // Update nodes when items or sessions change from server
+  // Deferred during active drag to prevent mid-drag position jumps
+  React.useEffect(() => {
+    if (isDraggingRef.current) {
+      pendingNodeRebuildRef.current = true;
+      return;
+    }
+    rebuildNodes();
+  }, [rebuildNodes]);
 
   React.useEffect(() => {
     setNodes((current) => applyZIndex(current));
@@ -372,6 +385,7 @@ export function Canvas({
 
   const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
+      isDraggingRef.current = true;
       bringToFront(node.id);
     },
     [bringToFront]
@@ -380,17 +394,25 @@ export function Canvas({
   // Handle node drag END - sync to server only when drag stops
   const handleNodeDragStop: OnNodeDrag = React.useCallback(
     (_event, node) => {
+      isDraggingRef.current = false;
+
       if (onItemChange && node.position) {
         // Use itemId (real ID) for API calls, not node.id (which may be stable key)
         const itemId = (node.data as { itemId?: string })?.itemId || node.id;
         onItemChange(itemId, { position: node.position });
       }
 
+      // Flush any node rebuilds that were deferred during the drag
+      if (pendingNodeRebuildRef.current) {
+        pendingNodeRebuildRef.current = false;
+        rebuildNodes();
+      }
+
       if (node.type === "terminal") {
         terminalRefs.current.get(node.id)?.fit();
       }
     },
-    [onItemChange]
+    [onItemChange, rebuildNodes]
   );
 
   // Handle node deletion

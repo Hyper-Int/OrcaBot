@@ -3,7 +3,7 @@
 
 "use client";
 
-const TERMINAL_BLOCK_REVISION = "reconnect-liveness-v2-auto-restart-on-fail";
+const TERMINAL_BLOCK_REVISION = "tts-v1-enable-gemini";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -3333,8 +3333,8 @@ export function TerminalBlock({
                 <Plug className="w-3 h-3" />
                 <span>Integrations</span>
               </DropdownMenuItem>
-              {/* TTS Voice - only for Claude Code and Codex */}
-              {(terminalType === "claude" || terminalType === "codex") && (
+              {/* TTS Voice - for Claude Code, Codex, and Gemini */}
+              {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setActivePanel(activePanel === "tts-voice" ? null : "tts-voice")} className="gap-2">
