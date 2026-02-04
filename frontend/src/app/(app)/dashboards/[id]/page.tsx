@@ -167,13 +167,6 @@ const terminalTools: BlockTool[] = [
   //   icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
   //   terminalPreset: { command: "opencode", agentic: true },
   // },
-  // GitHub Copilot CLI - temporarily hidden until hooks integration is complete
-  // {
-  //   type: "terminal",
-  //   label: "GitHub Copilot CLI",
-  //   icon: <img src="/icons/github.png" alt="" className="w-4 h-4 object-contain" />,
-  //   terminalPreset: { command: "copilot", agentic: true },
-  // },
   // Droid - temporarily hidden until stable release
   // {
   //   type: "terminal",
@@ -185,7 +178,7 @@ const terminalTools: BlockTool[] = [
     type: "terminal",
     label: "OpenClaw",
     icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "openclaw", agentic: true },
+    terminalPreset: { command: "openclaw tui", agentic: true },
   },
   {
     type: "terminal",

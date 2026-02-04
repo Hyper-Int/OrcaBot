@@ -76,9 +76,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # We install then uninstall so the package is NOT distributed, but deps remain cached.
 # A lightweight wrapper script at /usr/local/bin/claude handles on-demand installation.
 RUN npm install -g @anthropic-ai/claude-code \
-    && npm uninstall -g @anthropic-ai/claude-code \
-    && printf '#!/bin/bash\necho "Installing Claude Code from npm..."\necho "By continuing, you agree to Anthropic'\''s Terms of Service."\nnpm install -g @anthropic-ai/claude-code && exec claude "$@"\n' > /usr/local/bin/claude \
-    && chmod +x /usr/local/bin/claude
+    && npm uninstall -g @anthropic-ai/claude-code
+COPY docker/claude-wrapper.sh /usr/local/bin/claude
+RUN chmod +x /usr/local/bin/claude
 
 # Install Codex CLI (OpenAI)
 RUN npm install -g @openai/codex
@@ -89,10 +89,6 @@ RUN npm install -g @google/gemini-cli
 # Install OpenCode CLI and move to shared location
 RUN curl -fsSL https://opencode.ai/install | bash \
     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
-
-# Install GitHub Copilot CLI (no MCP configuration available)
-RUN curl -fsSL https://gh.io/copilot-install | bash \
-    && if [ -x /root/.local/bin/copilot ]; then mv /root/.local/bin/copilot /usr/local/bin/copilot; fi
 
 # Install Droid CLI (Factory)
 RUN curl -fsSL https://app.factory.ai/cli | sh \

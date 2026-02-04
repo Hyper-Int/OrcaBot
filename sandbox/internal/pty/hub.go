@@ -74,7 +74,7 @@ type CwdEvent struct {
 
 // AgentStoppedEvent is broadcast when an agentic coder finishes its turn.
 // This event is triggered by native stop hooks from Claude Code, Gemini CLI,
-// GitHub Copilot CLI, OpenCode, OpenClaw, Droid, and Codex CLI.
+// OpenCode, OpenClaw, Droid, and Codex CLI.
 type AgentStoppedEvent struct {
 	Type        string `json:"type"`        // always "agent_stopped"
 	Agent       string `json:"agent"`       // claude-code, gemini, codex, etc.

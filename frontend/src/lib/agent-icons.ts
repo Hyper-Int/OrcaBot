@@ -12,7 +12,6 @@ export type AgentType =
   | "gemini"
   | "codex"
   | "opencode"
-  | "copilot"
   | "droid"
   | "moltbot"
   | "shell";
@@ -22,7 +21,6 @@ const BOOT_COMMAND_MAP: Record<string, AgentType> = {
   gemini: "gemini",
   codex: "codex",
   opencode: "opencode",
-  copilot: "copilot",
   droid: "droid",
   openclaw: "moltbot",
   moltbot: "moltbot",
@@ -33,7 +31,6 @@ const NAME_MAP: Record<string, AgentType> = {
   "Gemini CLI": "gemini",
   Codex: "codex",
   OpenCode: "opencode",
-  "GitHub Copilot CLI": "copilot",
   Droid: "droid",
   OpenClaw: "moltbot",
   Moltbot: "moltbot",
@@ -57,7 +54,6 @@ const ICON_SRC_MAP: Record<AgentType, string | null> = {
   gemini: "/icons/gemini.ico",
   codex: "/icons/codex.png",
   opencode: "/icons/opencode.ico",
-  copilot: "/icons/github.png",
   droid: "/icons/droid.png",
   moltbot: "/icons/moltbot.png",
   shell: null,
@@ -73,7 +69,6 @@ const DISPLAY_NAME_MAP: Record<AgentType, string> = {
   gemini: "Gemini CLI",
   codex: "Codex",
   opencode: "OpenCode",
-  copilot: "GitHub Copilot CLI",
   droid: "Droid",
   moltbot: "OpenClaw",
   shell: "Terminal",

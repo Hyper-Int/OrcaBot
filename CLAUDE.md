@@ -158,10 +158,10 @@ LLM (in sandbox PTY)
 - `sandbox/internal/mcp/gateway_client.go` — Client for control plane gateway calls
 
 ### Agent Hooks
-When an LLM agent (Claude, Gemini, Copilot, etc.) finishes a turn, stop hooks notify the
+When an LLM agent (Claude, Gemini, etc.) finishes a turn, stop hooks notify the
 sandbox so it can broadcast `agent_stopped` WebSocket events to all connected clients.
 - Hook scripts: `sandbox/internal/agenthooks/hooks.go`
-- Supported agents: Claude Code, Gemini CLI, GitHub Copilot, OpenCode, Codex, Droid, OpenClaw
+- Supported agents: Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
 - Settings files generated per-agent (`.claude/settings.json`, `.gemini/settings.json`, etc.)
 
 ## Key Subsystems
