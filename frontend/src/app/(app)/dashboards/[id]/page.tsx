@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v13-fix-delete-ghost-reappear
-console.log(`[dashboard] REVISION: dashboard-v13-fix-delete-ghost-reappear loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v14-smart-component-placement
+console.log(`[dashboard] REVISION: dashboard-v14-smart-component-placement loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -211,6 +211,83 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   forms: { width: 280, height: 280 },
 };
 
+const PLACEMENT_GAP = 32; // gap between items when finding space
+
+/**
+ * Find available space for a new component that doesn't overlap existing items.
+ * Strategy:
+ * 1. Try to place within the visible viewport area, scanning positions on a grid.
+ * 2. If no space in viewport, place to the right of all existing items.
+ * Returns a snapped position (16px grid).
+ */
+function findAvailableSpace(
+  existingItems: Array<{ position: { x: number; y: number }; size: { width: number; height: number } }>,
+  newSize: { width: number; height: number },
+  viewport: { x: number; y: number; zoom: number },
+  containerWidth: number,
+  containerHeight: number,
+): { x: number; y: number } {
+  // Convert viewport to flow coordinates (visible area)
+  const zoom = viewport.zoom || 1;
+  const viewLeft = -viewport.x / zoom;
+  const viewTop = -viewport.y / zoom;
+  const viewWidth = containerWidth / zoom;
+  const viewHeight = containerHeight / zoom;
+
+  // Check if a candidate position overlaps any existing item
+  function overlaps(cx: number, cy: number): boolean {
+    for (const item of existingItems) {
+      const ax = item.position.x;
+      const ay = item.position.y;
+      const aw = item.size.width;
+      const ah = item.size.height;
+
+      if (
+        cx < ax + aw + PLACEMENT_GAP &&
+        cx + newSize.width + PLACEMENT_GAP > ax &&
+        cy < ay + ah + PLACEMENT_GAP &&
+        cy + newSize.height + PLACEMENT_GAP > ay
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Snap to 16px grid
+  const snap = (v: number) => Math.round(v / 16) * 16;
+
+  // 1. Try to place within the visible viewport with some margin
+  const margin = 48;
+  const stepX = Math.max(64, snap(newSize.width / 2));
+  const stepY = Math.max(64, snap(newSize.height / 2));
+
+  for (let y = snap(viewTop + margin); y + newSize.height < viewTop + viewHeight - margin; y += stepY) {
+    for (let x = snap(viewLeft + margin); x + newSize.width < viewLeft + viewWidth - margin; x += stepX) {
+      if (!overlaps(x, y)) {
+        return { x, y };
+      }
+    }
+  }
+
+  // 2. No space in viewport — place to the right of all existing items
+  if (existingItems.length === 0) {
+    return { x: snap(viewLeft + margin), y: snap(viewTop + margin) };
+  }
+
+  let maxRight = -Infinity;
+  let topAtMaxRight = 0;
+  for (const item of existingItems) {
+    const right = item.position.x + item.size.width;
+    if (right > maxRight) {
+      maxRight = right;
+      topAtMaxRight = item.position.y;
+    }
+  }
+
+  return { x: snap(maxRight + PLACEMENT_GAP * 2), y: snap(topAtMaxRight) };
+}
+
 export default function DashboardPage() {
   const params = useParams();
   const router = useRouter();
@@ -253,6 +330,7 @@ export default function DashboardPage() {
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
   const viewportRef = React.useRef({ x: 0, y: 0, zoom: 1 });
+  const reactFlowInstanceRef = React.useRef<import("@xyflow/react").ReactFlowInstance | null>(null);
   const browserOpenHandlerRef = React.useRef<(url: string) => void>(() => {});
   const pendingBrowserUrlRef = React.useRef<string | null>(null);
   // Ref for UI command execution (updated after useUICommands hook)
@@ -448,6 +526,83 @@ export default function DashboardPage() {
       stopDashboardBrowser(dashboardId).catch(() => {});
     };
   }, [dashboardId, isAuthenticated, isAuthResolved]);
+
+  // Compute a non-overlapping position for a new block and ensure it's visible
+  const computePlacement = React.useCallback(
+    (newSize: { width: number; height: number }) => {
+      const container = canvasContainerRef.current;
+      const containerWidth = container?.clientWidth ?? 1200;
+      const containerHeight = container?.clientHeight ?? 800;
+
+      return findAvailableSpace(
+        items,
+        newSize,
+        viewportRef.current,
+        containerWidth,
+        containerHeight,
+      );
+    },
+    [items],
+  );
+
+  // Pan/zoom so a newly-placed block is visible
+  const ensureVisible = React.useCallback(
+    (position: { x: number; y: number }, size: { width: number; height: number }) => {
+      // Defer to next frame so the optimistic node is rendered into the flow
+      requestAnimationFrame(() => {
+        const instance = reactFlowInstanceRef.current;
+        if (!instance) {
+          console.warn("[ensureVisible] no ReactFlow instance");
+          return;
+        }
+
+        const vp = viewportRef.current;
+        const zoom = vp.zoom || 1;
+        const container = canvasContainerRef.current;
+        const containerWidth = container?.clientWidth ?? 1200;
+        const containerHeight = container?.clientHeight ?? 800;
+
+        // Visible area in flow coordinates
+        const viewLeft = -vp.x / zoom;
+        const viewTop = -vp.y / zoom;
+        const viewRight = viewLeft + containerWidth / zoom;
+        const viewBottom = viewTop + containerHeight / zoom;
+
+        const blockRight = position.x + size.width;
+        const blockBottom = position.y + size.height;
+        const margin = 48;
+
+        // Check if the block is already fully within the visible area
+        if (
+          position.x >= viewLeft + margin &&
+          position.y >= viewTop + margin &&
+          blockRight <= viewRight - margin &&
+          blockBottom <= viewBottom - margin
+        ) {
+          return; // already visible
+        }
+
+        // Compute bounding box of all existing items + the new block
+        let minX = position.x;
+        let minY = position.y;
+        let maxX = blockRight;
+        let maxY = blockBottom;
+        for (const item of items) {
+          minX = Math.min(minX, item.position.x);
+          minY = Math.min(minY, item.position.y);
+          maxX = Math.max(maxX, item.position.x + item.size.width);
+          maxY = Math.max(maxY, item.position.y + item.size.height);
+        }
+
+        // fitBounds zooms and pans to fit the given rectangle
+        instance.fitBounds(
+          { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+          { padding: 0.12, duration: 300 },
+        );
+      });
+    },
+    [items],
+  );
 
   // Create item mutation
   const createItemMutation = useMutation({
@@ -1109,13 +1264,14 @@ export default function DashboardPage() {
             data: { securityLevel, provider },
           },
         ]);
+        ensureVisible(newPosition, blockSize);
         toast.success(`Created ${getProviderDisplayName(provider as IntegrationProvider)} block`);
       } catch (err) {
         console.warn("Failed to create integration block:", err);
         toast.error("Failed to create integration block");
       }
     },
-    [items, edges, dashboardId, setEdges, createItemMutation]
+    [items, edges, dashboardId, setEdges, createItemMutation, ensureVisible]
   );
 
   // Handle storage linked to workspace - auto-attach to all terminals in the dashboard
@@ -1507,46 +1663,54 @@ export default function DashboardPage() {
       });
     }
 
+    const size = defaultSizes[tool.type] || { width: 200, height: 120 };
+    const position = computePlacement(size);
     createItemMutation.mutate({
       type: tool.type,
       content,
-      position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
-      size: defaultSizes[tool.type] || { width: 200, height: 120 },
+      position,
+      size,
     });
+    ensureVisible(position, size);
   };
 
   const handleCreateBrowserBlock = React.useCallback(
     (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
       if (!url) return;
+      const size = defaultSizes.browser;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
-        : { x: 140 + Math.random() * 200, y: 140 + Math.random() * 200 };
+        : computePlacement(size);
       createItemMutation.mutate({
         type: "browser",
         content: url,
         position,
-        size: defaultSizes.browser,
+        size,
         sourceId,
         sourceHandle: "right-out",
         targetHandle: "left-in",
       });
+      ensureVisible(position, size);
     },
-    [createItemMutation]
+    [createItemMutation, computePlacement, ensureVisible]
   );
 
   const handleDuplicate = React.useCallback(
     (itemId: string) => {
       const item = items.find((i) => i.id === itemId);
       if (!item) return;
+      const size = { ...item.size };
+      const position = computePlacement(size);
       createItemMutation.mutate({
         type: item.type,
         content: item.content,
-        position: { x: item.position.x + 30, y: item.position.y + 30 },
-        size: { ...item.size },
+        position,
+        size,
         metadata: item.metadata ? { ...item.metadata, minimized: false } : undefined,
       });
+      ensureVisible(position, size);
     },
-    [items, createItemMutation]
+    [items, createItemMutation, computePlacement, ensureVisible]
   );
 
   const handleBrowserOpen = React.useCallback(
@@ -1604,12 +1768,15 @@ export default function DashboardPage() {
     e.preventDefault();
     if (newLinkUrl.trim()) {
       setConnectorMode(false);
+      const size = defaultSizes.link;
+      const position = computePlacement(size);
       createItemMutation.mutate({
         type: "link",
         content: newLinkUrl.trim(),
-        position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
-        size: defaultSizes.link,
+        position,
+        size,
       });
+      ensureVisible(position, size);
       setNewLinkUrl("");
       setIsAddLinkOpen(false);
     }
@@ -2242,7 +2409,7 @@ export default function DashboardPage() {
         {/* Canvas with cursor tracking */}
         <main
           ref={canvasContainerRef}
-          className="flex-1 relative"
+          className="flex-1 relative isolate"
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         >
@@ -2478,6 +2645,7 @@ export default function DashboardPage() {
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
               onTerminalCwdChange={handleTerminalCwdChange}
+              reactFlowRef={reactFlowInstanceRef}
             />
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}

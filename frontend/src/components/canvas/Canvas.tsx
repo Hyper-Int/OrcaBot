@@ -3,6 +3,9 @@
 
 "use client";
 
+// REVISION: canvas-v2-expose-instance
+console.log(`[canvas] REVISION: canvas-v2-expose-instance loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import {
   ReactFlow,
@@ -195,6 +198,8 @@ interface CanvasProps {
   onEdgeLabelClick?: (edgeId: string, provider: string) => void;
   /** Called when a terminal's working directory changes */
   onTerminalCwdChange?: (itemId: string, cwd: string) => void;
+  /** Ref populated with the ReactFlow instance for programmatic viewport control */
+  reactFlowRef?: React.MutableRefObject<ReactFlowInstance | null>;
 }
 
 export function Canvas({
@@ -221,6 +226,7 @@ export function Canvas({
   onDuplicate,
   onEdgeLabelClick,
   onTerminalCwdChange,
+  reactFlowRef,
 }: CanvasProps) {
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
@@ -409,10 +415,11 @@ export function Canvas({
 
   const handleInit = React.useCallback((instance: ReactFlowInstance) => {
     instanceRef.current = instance;
+    if (reactFlowRef) reactFlowRef.current = instance;
     const nextViewport = instance.getViewport();
     setViewport(nextViewport);
     onViewportChange?.(nextViewport);
-  }, [onViewportChange]);
+  }, [onViewportChange, reactFlowRef]);
 
   const handlePaneMouseMove = React.useCallback(
     (event: React.MouseEvent) => {
