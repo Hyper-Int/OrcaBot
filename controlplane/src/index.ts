@@ -962,6 +962,13 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return integrationPolicies.getDashboardAuditLog(env, segments[1], auth.user!.id, limit, offset);
   }
 
+  // GET /dashboards/:id/workspace-snapshot - Get cached workspace file listing from R2
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'workspace-snapshot' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.getWorkspaceSnapshot(env, segments[1], auth.user!.id);
+  }
+
   // ============================================
   // Template routes
   // ============================================

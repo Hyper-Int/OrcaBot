@@ -5,8 +5,11 @@
  * Dashboard API Handlers
  */
 
+// REVISION: dashboards-v1-deleteitem-snapshot
+
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { populateFromTemplate } from '../templates/handler';
+import type { EnvWithDriveCache } from '../storage/drive-cache';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -385,6 +388,24 @@ export async function deleteItem(
   const role = await getDashbоardRole(env, dashboardId, userId);
   if (!hasDashbоardRole(role, ['owner', 'editor'])) {
     return Response.json({ error: 'E79303: Not found or no edit access' }, { status: 404 });
+  }
+
+  // Stop any active sessions for this item before deleting
+  // (CASCADE DELETE would orphan sandbox resources otherwise)
+  try {
+    const activeSessions = await env.DB.prepare(`
+      SELECT id FROM sessions
+      WHERE item_id = ? AND dashboard_id = ? AND status IN ('creating', 'active')
+    `).bind(itemId, dashboardId).all<{ id: string }>();
+
+    if (activeSessions.results.length > 0) {
+      const { stоpSessiоn } = await import('../sessions/handler');
+      for (const session of activeSessions.results) {
+        await stоpSessiоn(env as EnvWithDriveCache, session.id, userId);
+      }
+    }
+  } catch {
+    // Best-effort — don't block item deletion if session cleanup fails
   }
 
   const edgeRows = await env.DB.prepare(`

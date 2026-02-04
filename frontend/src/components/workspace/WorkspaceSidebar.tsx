@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v5-live-cwd-tracking
-const MODULE_REVISION = "workspace-sidebar-v5-live-cwd-tracking";
+// REVISION: workspace-sidebar-v7-snapshot-delay
+const MODULE_REVISION = "workspace-sidebar-v7-snapshot-delay";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -78,6 +78,7 @@ import {
   type OnedriveSyncStatus,
 } from "@/lib/api/cloudflare";
 import type { SessionFileEntry } from "@/lib/api/cloudflare";
+import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
@@ -115,7 +116,7 @@ function setLastLoadTime(dashboardId: string, timestamp: number): void {
 
 // localStorage key for sidebar width
 const SIDEBAR_WIDTH_KEY = "orcabot:sidebar-width";
-const DEFAULT_WIDTH = 200;
+const DEFAULT_WIDTH = 168;
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
 
@@ -374,6 +375,24 @@ export function WorkspaceSidebar({
     },
     []
   );
+
+  const buildSnapshotPreviewEntries = React.useCallback((files: SessionFileEntry[]) => {
+    const entryMap: Record<string, SessionFileEntry[]> = {};
+    for (const file of files) {
+      const parent = file.path.split("/").slice(0, -1).join("/") || "/";
+      if (!entryMap[parent]) entryMap[parent] = [];
+      entryMap[parent].push(file);
+    }
+    // Sort each directory's entries (dirs first, then alphabetical)
+    for (const key of Object.keys(entryMap)) {
+      entryMap[key].sort((a, b) => {
+        if (a.is_dir && !b.is_dir) return -1;
+        if (!a.is_dir && b.is_dir) return 1;
+        return a.name.localeCompare(b.name);
+      });
+    }
+    return entryMap;
+  }, []);
 
   const togglePath = React.useCallback(
     (path: string) => {
@@ -657,19 +676,24 @@ export function WorkspaceSidebar({
   // Load files when sessionId changes
   React.useEffect(() => {
     setExpandedPaths(new Set(["/"]));
-    setFileEntries({});
     setFileError(null);
-    if (sessionId) loadFiles("/");
+    if (sessionId) {
+      // New session: clear entries and load fresh from live sandbox
+      setFileEntries({});
+      loadFiles("/");
+    } else {
+      // Session gone: reset preview cooldown so snapshot loads immediately
+      previewFetchRef.current = 0;
+    }
   }, [sessionId, loadFiles]);
 
-  // Preview entries from cloud manifests when no session
+  // Preview entries from cloud manifests + workspace snapshot when no session
   React.useEffect(() => {
     if (sessionId || !dashboardId) return;
     const canFetchDrive = driveIntegration?.connected && driveStatus?.status !== "syncing_cache";
     const canFetchGithub = githubIntegration?.connected && githubStatus?.status !== "syncing_cache";
     const canFetchBox = boxIntegration?.connected && boxStatus?.status !== "syncing_cache";
     const canFetchOnedrive = onedriveIntegration?.connected && onedriveStatus?.status !== "syncing_cache";
-    if (!canFetchDrive && !canFetchGithub && !canFetchBox && !canFetchOnedrive) return;
     const now = Date.now();
     if (now - previewFetchRef.current < 10000) return;
     previewFetchRef.current = now;
@@ -677,6 +701,12 @@ export function WorkspaceSidebar({
     const run = async () => {
       const combined: Record<string, SessionFileEntry[]> = {};
       try {
+        // Always try workspace snapshot (cached file listing from last session)
+        const snapshot = await getWorkspaceSnapshot(dashboardId);
+        if (snapshot?.files) {
+          mergePreviewEntries(combined, buildSnapshotPreviewEntries(snapshot.files));
+        }
+
         if (canFetchDrive) {
           const r = await getGoogleDriveManifest(dashboardId);
           if (r.manifest) mergePreviewEntries(combined, buildDrivePreviewEntries(r.manifest));
@@ -701,10 +731,14 @@ export function WorkspaceSidebar({
         setFileError(error instanceof Error ? error.message : "Failed to load preview");
       }
     };
-    void run();
-    return () => { isActive = false; };
+    // Delay slightly to allow backend to finish saving workspace snapshot
+    // after session deletion (deleteItem → stopSession → captureSnapshot)
+    const timer = setTimeout(() => {
+      if (isActive) void run();
+    }, 1500);
+    return () => { isActive = false; clearTimeout(timer); };
   }, [
-    buildDrivePreviewEntries, dashboardId,
+    buildDrivePreviewEntries, buildSnapshotPreviewEntries, dashboardId,
     driveIntegration?.connected, driveStatus?.status, driveSyncing,
     githubIntegration?.connected, githubStatus?.status, githubSyncing,
     boxIntegration?.connected, boxStatus?.status, boxSyncing,
@@ -1135,7 +1169,7 @@ export function WorkspaceSidebar({
               {renderAgentIndicators("/")}
             </div>
             {showFiles && renderFileTree("/", 0)}
-            {!sessionId && (
+            {!sessionId && !showFiles && (
               <div className="px-2 py-2 text-[10px] text-[var(--foreground-muted)]">
                 {githubSyncing ? "Syncing repo..." : "Start a terminal to see files."}
               </div>

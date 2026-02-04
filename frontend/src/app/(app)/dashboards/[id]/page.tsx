@@ -319,7 +319,6 @@ export default function DashboardPage() {
   const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
   const [toolbarBlocksCollapsed, setToolbarBlocksCollapsed] = React.useState(false);
   const [toolbarGoogleCollapsed, setToolbarGoogleCollapsed] = React.useState(false);
-  const [toolbarDriveCollapsed, setToolbarDriveCollapsed] = React.useState(false);
   const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
 
   // Workspace sidebar state
@@ -2413,23 +2412,11 @@ export default function DashboardPage() {
           onMouseMove={handleCanvasMouseMove}
           onMouseLeave={handleCanvasMouseLeave}
         >
-          <div className="absolute left-4 top-2 z-20 pointer-events-none">
+          <div className="absolute left-[10px] top-2 z-20 pointer-events-none">
             <div className="flex items-center gap-2 pointer-events-auto">
               {/* Storage / drive buttons */}
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
-                <Tooltip content={toolbarDriveCollapsed ? "Expand storage" : "Collapse storage"} side="bottom">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => setToolbarDriveCollapsed((prev) => !prev)}
-                    className="mr-1"
-                  >
-                    {toolbarDriveCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
-                  </Button>
-                </Tooltip>
-                {!toolbarDriveCollapsed && (
-                  <div ref={setDrivePortalEl} className="flex items-center gap-1" />
-                )}
+                <div ref={setDrivePortalEl} className="flex items-center gap-1" />
               </div>
 
               {/* Agents section */}

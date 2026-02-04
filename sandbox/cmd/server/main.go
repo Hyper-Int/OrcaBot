@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v2-pty-token-injection
+// REVISION: main-v3-recursive-file-listing
 
 package main
 
@@ -27,7 +27,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v2-pty-token-injection"
+const mainRevision = "main-v3-recursive-file-listing"
 
 func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
@@ -553,6 +553,24 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "/"
+	}
+
+	recursive := r.URL.Query().Get("recursive") == "true"
+
+	if recursive {
+		// Walk the full tree for snapshot/cache use cases
+		var entries []fs.FileInfo
+		err := session.Wоrkspace().Walk(path, func(_ string, info fs.FileInfo) error {
+			entries = append(entries, info)
+			return nil
+		})
+		if err != nil {
+			writeFSErrоr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"files": entries})
+		return
 	}
 
 	entries, err := session.Wоrkspace().List(path)

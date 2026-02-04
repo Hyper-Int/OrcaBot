@@ -1,6 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: sessions-v2-snapshot-cleanup
+const sessionsRevision = "sessions-v2-snapshot-cleanup";
+console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
+
 /**
  * Session Coordination Handlers
  *
@@ -9,7 +13,7 @@
  */
 
 import type { Session, DashboardItem } from '../types';
-import type { EnvWithDriveCache } from '../storage/drive-cache';
+import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
@@ -175,6 +179,49 @@ function driveManifestKey(dashboardId: string): string {
 
 function mirrorManifestKey(provider: string, dashboardId: string): string {
   return `mirror/${provider}/${dashboardId}/manifest.json`;
+}
+
+function workspaceSnapshotKey(dashboardId: string): string {
+  return `workspace/${dashboardId}/snapshot.json`;
+}
+
+/**
+ * Capture a recursive file listing from the sandbox and store in R2.
+ * Best-effort — failures are silently ignored since the sandbox may be shutting down.
+ */
+async function captureWorkspaceSnapshot(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string
+): Promise<void> {
+  try {
+    const res = await sandboxFetch(
+      env,
+      `/sessions/${sandboxSessionId}/files?path=/&recursive=true`,
+      { machineId: sandboxMachineId || undefined, timeoutMs: 15_000 }
+    );
+    if (!res.ok) return;
+
+    const data = await res.json() as { files?: unknown[] };
+    if (!data.files || data.files.length === 0) return;
+
+    const snapshot = {
+      version: 1,
+      dashboardId,
+      capturedAt: new Date().toISOString(),
+      fileCount: data.files.length,
+      files: data.files,
+    };
+
+    await env.DRIVE_CACHE.put(
+      workspaceSnapshotKey(dashboardId),
+      JSON.stringify(snapshot),
+      { httpMetadata: { contentType: 'application/json' } }
+    );
+  } catch {
+    // Best-effort — sandbox may be shutting down
+  }
 }
 
 async function triggerDriveMirrorSync(
@@ -943,6 +990,14 @@ export async function stоpSessiоn(
     `).bind(session.dashboard_id, sessionId).first<{ count: number }>();
 
     if (!otherSessions || otherSessions.count === 0) {
+      // Capture workspace file listing before destroying the sandbox
+      await captureWorkspaceSnapshot(
+        env,
+        session.dashboard_id as string,
+        session.sandbox_session_id as string,
+        session.sandbox_machine_id as string
+      );
+
       await sandbox.deleteSession(session.sandbox_session_id as string, session.sandbox_machine_id as string);
       await env.DB.prepare(`
         DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
@@ -981,6 +1036,42 @@ export async function stоpSessiоn(
   }));
 
   return new Response(null, { status: 204 });
+}
+
+/**
+ * Get cached workspace file listing from R2.
+ * Returns the snapshot if available, 404 otherwise.
+ */
+export async function getWorkspaceSnapshot(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string
+): Promise<Response> {
+  // Verify user has access to this dashboard
+  const member = await env.DB.prepare(`
+    SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, userId).first<{ role: string }>();
+
+  if (!member) {
+    return Response.json({ error: 'E79740: Dashboard not found or no access' }, { status: 404 });
+  }
+
+  let object: R2ObjectBody | null;
+  try {
+    object = await env.DRIVE_CACHE.get(workspaceSnapshotKey(dashboardId));
+  } catch (error) {
+    if (isDesktopFeatureDisabledError(error)) {
+      return Response.json({ error: 'E79741: No workspace snapshot available (desktop mode)' }, { status: 404 });
+    }
+    throw error;
+  }
+  if (!object) {
+    return Response.json({ error: 'E79741: No workspace snapshot available' }, { status: 404 });
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  return new Response(object.body, { headers });
 }
 
 // Apply stored secrets to a session as environment variables
