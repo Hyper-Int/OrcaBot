@@ -24,6 +24,8 @@ export interface UseTerminalState {
   error: Error | null;
   /** TTS status from talkito (live updates, no restart needed) */
   ttsStatus: TtsStatusEvent | null;
+  /** Current working directory (relative to workspace root, e.g. "/" or "/test") */
+  cwd: string;
 }
 
 export interface UseTerminalActions {
@@ -86,6 +88,7 @@ export function useTerminal(
   const [ptyClosed, setPtyClosed] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
   const [ttsStatus, setTtsStatus] = React.useState<TtsStatusEvent | null>(null);
+  const [cwd, setCwd] = React.useState<string>("/");
 
   // Store callbacks in ref to avoid re-subscribing
   const callbacksRef = React.useRef(callbacks);
@@ -160,6 +163,11 @@ export function useTerminal(
       callbacksRef.current?.onAgentStopped?.(event);
     });
 
+    // Subscribe to cwd changes (from PTY process directory changes)
+    const unsubCwd = manager.onCwdChange((newCwd) => {
+      setCwd(newCwd);
+    });
+
     // Connect
     manager.connect();
 
@@ -175,6 +183,7 @@ export function useTerminal(
         { name: 'audio', fn: unsubAudio },
         { name: 'ttsStatus', fn: unsubTtsStatus },
         { name: 'agentStopped', fn: unsubAgentStopped },
+        { name: 'cwd', fn: unsubCwd },
       ];
 
       for (const { name, fn } of cleanups) {
@@ -242,6 +251,7 @@ export function useTerminal(
     ptyClosed,
     error,
     ttsStatus,
+    cwd,
   };
 
   const actions: UseTerminalActions = {

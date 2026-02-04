@@ -4,6 +4,7 @@
 package pty
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -88,6 +89,12 @@ func filterSensitiveEnv(environ []string) []string {
 	return filtered
 }
 
+// needsShell returns true if the command contains shell metacharacters
+// that require interpretation by a shell (quotes, &&, pipes, variables, etc.).
+func needsShell(command string) bool {
+	return strings.ContainsAny(command, "'\"$|&;(){}><`\\!")
+}
+
 // NewWithCommandEnv creates a new PTY with extra environment variables.
 // If command is empty, DefaultShell() is used.
 // SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
@@ -98,13 +105,20 @@ func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv m
 // NewWithCommandEnvID creates a new PTY with a pre-generated ID and extra environment variables.
 // If ptyID is empty, a new ID will be generated.
 // If command is empty, DefaultShell() is used.
+// Commands containing shell syntax (quotes, &&, pipes, $VAR) are run via "bash -c".
 // SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
 func NewWithCommandEnvID(ptyID string, command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		parts = []string{DefaultShell()}
+	command = strings.TrimSpace(command)
+	var cmd *exec.Cmd
+	if command == "" {
+		cmd = exec.Command(DefaultShell())
+	} else if needsShell(command) {
+		// Run through shell to handle quotes, &&, pipes, variable expansion, etc.
+		cmd = exec.Command(DefaultShell(), "-c", command)
+	} else {
+		parts := strings.Fields(command)
+		cmd = exec.Command(parts[0], parts[1:]...)
 	}
-	cmd := exec.Command(parts[0], parts[1:]...)
 	// Filter out sensitive environment variables before passing to PTY
 	env := append(filterSensitiveEnv(os.Environ()), "TERM=xterm-256color")
 	for key, value := range extraEnv {
@@ -229,6 +243,21 @@ func (p *PTY) Resize(cols, rows uint16) error {
 		Cols: cols,
 		Rows: rows,
 	})
+}
+
+// Cwd returns the current working directory of the PTY process by reading /proc/<PID>/cwd.
+// Returns empty string if the process is not running or cwd cannot be determined.
+func (p *PTY) Cwd() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.cmd.Process == nil {
+		return ""
+	}
+	path, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", p.cmd.Process.Pid))
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // Signal sends a signal to the PTY process

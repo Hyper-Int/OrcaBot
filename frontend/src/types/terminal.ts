@@ -118,6 +118,7 @@ export interface ControlStateEvent {
   controller: string;
   requests: string[];
   agent_state?: "running" | "paused" | "stopped";
+  cwd?: string;
 }
 
 /**
@@ -230,6 +231,15 @@ export interface AgentStoppedEvent {
 }
 
 /**
+ * Cwd changed event (server -> client)
+ * Sent when the PTY process changes its working directory
+ */
+export interface CwdChangedEvent {
+  type: "cwd_changed";
+  cwd: string; // relative to workspace root
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -244,4 +254,5 @@ export type IncomingControlEvent =
   | AudioEvent
   | TtsStatusEvent
   | TalkitoNoticeEvent
-  | AgentStoppedEvent;
+  | AgentStoppedEvent
+  | CwdChangedEvent;

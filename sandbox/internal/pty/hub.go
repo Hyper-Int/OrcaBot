@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: scrollback-replay-v3-resize-after-replay
+// REVISION: hub-v4-cwd-tracking
 
 package pty
 
@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,6 +36,7 @@ type ControlEvent struct {
 	From       string   `json:"from,omitempty"`
 	To         string   `json:"to,omitempty"`
 	Requests   []string `json:"requests,omitempty"`
+	Cwd        string   `json:"cwd,omitempty"`         // current working directory (relative to workspace root)
 }
 
 // AudioEvent represents an audio playback event to broadcast
@@ -62,6 +64,12 @@ type TalkitoNoticeEvent struct {
 	Level    string `json:"level"`             // "info", "warning", "error"
 	Message  string `json:"message"`           // the log message
 	Category string `json:"category,omitempty"` // e.g. "tts"
+}
+
+// CwdEvent is broadcast when the PTY process changes its working directory.
+type CwdEvent struct {
+	Type string `json:"type"` // always "cwd_changed"
+	Cwd  string `json:"cwd"`  // current working directory (relative to workspace root)
 }
 
 // AgentStoppedEvent is broadcast when an agentic coder finishes its turn.
@@ -127,6 +135,10 @@ type Hub struct {
 	scrollback    []byte
 	scrollbackPos int // write position in ring buffer
 	scrollbackMax int // capacity (default 64KB)
+
+	// cwd tracking: workspace root is stripped to give relative paths
+	workspaceRoot string // set by session on creation, e.g. "/workspace/abc123"
+	lastCwd       string // last known cwd (relative to workspace root)
 }
 
 // NewHub creates a new Hub for the given PTY.
@@ -167,8 +179,15 @@ func (h *Hub) Run() {
 	// Start reading from PTY
 	go h.readLооp()
 
+	// Periodic cwd polling
+	cwdTicker := time.NewTicker(2 * time.Second)
+	defer cwdTicker.Stop()
+
 	for {
 		select {
+		case <-cwdTicker.C:
+			h.checkAndBroadcastCwd()
+
 		case info := <-h.register:
 			h.mu.Lock()
 			// Cancel idle timer if a client connects
@@ -680,11 +699,28 @@ func (h *Hub) sendControlState(client chan HubMessage) {
 	agentState := h.agentState
 	h.mu.RUnlock()
 
+	// Read current cwd for initial state
+	cwd := h.pty.Cwd()
+	h.mu.RLock()
+	root := h.workspaceRoot
+	h.mu.RUnlock()
+	if root != "" && strings.HasPrefix(cwd, root) {
+		cwd = cwd[len(root):]
+		if cwd == "" {
+			cwd = "/"
+		}
+	}
+	// Update lastCwd
+	h.mu.Lock()
+	h.lastCwd = cwd
+	h.mu.Unlock()
+
 	event := ControlEvent{
 		Type:       "control_state",
 		Controller: h.Cоntrоller(),
 		Requests:   h.turn.PendingRequests(),
 		AgentState: agentState,
+		Cwd:        cwd,
 	}
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -759,6 +795,54 @@ func (h *Hub) broadcastControl(data []byte) {
 		default:
 		}
 	}
+}
+
+// SetWorkspaceRoot sets the workspace root path used to compute relative cwd paths.
+func (h *Hub) SetWorkspaceRoot(root string) {
+	h.mu.Lock()
+	h.workspaceRoot = root
+	h.mu.Unlock()
+}
+
+// checkAndBroadcastCwd reads the PTY process cwd and broadcasts if it changed.
+func (h *Hub) checkAndBroadcastCwd() {
+	absCwd := h.pty.Cwd()
+	if absCwd == "" {
+		return
+	}
+	// Strip workspace root to get a relative path
+	relCwd := absCwd
+	h.mu.RLock()
+	root := h.workspaceRoot
+	h.mu.RUnlock()
+	if root != "" && strings.HasPrefix(absCwd, root) {
+		relCwd = absCwd[len(root):]
+		if relCwd == "" {
+			relCwd = "/"
+		}
+	}
+	// Only broadcast if changed
+	h.mu.Lock()
+	if relCwd == h.lastCwd {
+		h.mu.Unlock()
+		return
+	}
+	h.lastCwd = relCwd
+	h.mu.Unlock()
+
+	event := CwdEvent{Type: "cwd_changed", Cwd: relCwd}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	h.broadcastControl(data)
+}
+
+// CurrentCwd returns the last known relative cwd.
+func (h *Hub) CurrentCwd() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.lastCwd
 }
 
 // BroadcastAudio sends an audio event to all clients

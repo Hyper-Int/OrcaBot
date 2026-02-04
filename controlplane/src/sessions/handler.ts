@@ -314,6 +314,7 @@ export async function createSessiоn(
 
   try {
     const bootCommand = parseBооtCоmmand(item.content);
+    console.log(`[createSession] itemId=${itemId} bootCommand=${JSON.stringify(bootCommand)} contentPreview=${JSON.stringify(String(item.content).slice(0, 200))}`);
     const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
     let sandboxSessionId = existingSandbox?.sandbox_session_id || '';
     let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
@@ -360,6 +361,7 @@ export async function createSessiоn(
 
     let pty: { id: string };
     try {
+      console.log(`[createSession] calling createPty: sandboxSessionId=${sandboxSessionId} userId=${userId} bootCommand=${JSON.stringify(bootCommand)} machineId=${sandboxMachineId} ptyId=${ptyId}`);
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken,

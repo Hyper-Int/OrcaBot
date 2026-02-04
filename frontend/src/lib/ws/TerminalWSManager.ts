@@ -53,6 +53,9 @@ export class TerminalWSManager extends BaseWebSocketManager {
   // TTS status (from talkito)
   private ttsStatus: TtsStatusEvent | null = null;
 
+  // Current working directory (relative to workspace root)
+  private cwd: string = "/";
+
   // Callbacks
   private onDataHandlers: Set<(data: Uint8Array) => void> = new Set();
   private onTurnTakingChangeHandlers: Set<(state: TurnTakingState) => void> =
@@ -63,6 +66,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
   private onAudioHandlers: Set<(event: AudioEvent) => void> = new Set();
   private onTtsStatusHandlers: Set<(event: TtsStatusEvent) => void> = new Set();
   private onAgentStoppedHandlers: Set<(event: AgentStoppedEvent) => void> = new Set();
+  private onCwdChangeHandlers: Set<(cwd: string) => void> = new Set();
 
   constructor(
     sessionId: string,
@@ -259,6 +263,21 @@ export class TerminalWSManager extends BaseWebSocketManager {
     return this.ttsStatus;
   }
 
+  /**
+   * Get current working directory (relative to workspace root)
+   */
+  getCwd(): string {
+    return this.cwd;
+  }
+
+  /**
+   * Subscribe to cwd changes (from PTY process directory changes)
+   */
+  onCwdChange(handler: (cwd: string) => void): () => void {
+    this.onCwdChangeHandlers.add(handler);
+    return () => this.onCwdChangeHandlers.delete(handler);
+  }
+
   // ===== Protected overrides =====
 
   protected handleBinaryMessage(data: ArrayBuffer): void {
@@ -307,6 +326,9 @@ export class TerminalWSManager extends BaseWebSocketManager {
         });
         if (message.agent_state) {
           this.updateAgentState(message.agent_state);
+        }
+        if (message.cwd) {
+          this.updateCwd(message.cwd);
         }
         break;
 
@@ -365,6 +387,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
       case "agent_stopped":
         this.notifyAgentStopped(message);
+        break;
+
+      case "cwd_changed":
+        this.updateCwd(message.cwd);
         break;
     }
   }
@@ -457,6 +483,12 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
   private notifyAgentStopped(event: AgentStoppedEvent): void {
     this.onAgentStoppedHandlers.forEach((handler) => handler(event));
+  }
+
+  private updateCwd(cwd: string): void {
+    if (cwd === this.cwd) return;
+    this.cwd = cwd;
+    this.onCwdChangeHandlers.forEach((handler) => handler(cwd));
   }
 
   private handleTalkitoNotice(event: TalkitoNoticeEvent): void {

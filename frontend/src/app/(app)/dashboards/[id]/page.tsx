@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v5-clickable-edge-labels
-console.log(`[dashboard] REVISION: dashboard-v5-clickable-edge-labels loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v13-fix-delete-ghost-reappear
+console.log(`[dashboard] REVISION: dashboard-v13-fix-delete-ghost-reappear loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -87,6 +87,7 @@ import {
   type BrowserPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
+import { WorkspaceSidebar } from "@/components/workspace";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -173,12 +174,13 @@ const terminalTools: BlockTool[] = [
   //   icon: <img src="/icons/github.png" alt="" className="w-4 h-4 object-contain" />,
   //   terminalPreset: { command: "copilot", agentic: true },
   // },
-  {
-    type: "terminal",
-    label: "Droid",
-    icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "droid", agentic: true },
-  },
+  // Droid - temporarily hidden until stable release
+  // {
+  //   type: "terminal",
+  //   label: "Droid",
+  //   icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
+  //   terminalPreset: { command: "droid", agentic: true },
+  // },
   {
     type: "terminal",
     label: "OpenClaw",
@@ -240,6 +242,13 @@ export default function DashboardPage() {
   const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
   const [toolbarBlocksCollapsed, setToolbarBlocksCollapsed] = React.useState(false);
   const [toolbarGoogleCollapsed, setToolbarGoogleCollapsed] = React.useState(false);
+  const [toolbarDriveCollapsed, setToolbarDriveCollapsed] = React.useState(false);
+  const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
+
+  // Workspace sidebar state
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
+  const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
 
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
@@ -328,11 +337,13 @@ export default function DashboardPage() {
   const recentlyCreatedItemsRef = React.useRef<Set<string>>(new Set());
   // Track number of mutations in flight (to prevent WebSocket-triggered invalidations during mutations)
   const mutationsInFlightRef = React.useRef(0);
+  // Track recently deleted item IDs (to prevent refetches from bringing them back)
+  const recentlyDeletedItemsRef = React.useRef<Set<string>>(new Set());
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
   const prevCollabSessionsRef = React.useRef<Session[]>([]);
-  const workspaceCreateRequestedRef = React.useRef(false);
+  // workspaceCreateRequestedRef removed - workspace is now a sidebar, not a canvas block
 
   // Fetch dashboard data with better caching
   const {
@@ -357,6 +368,19 @@ export default function DashboardPage() {
       return failureCount < 3;
     },
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
+    // Filter out recently deleted items from refetch results to prevent ghost reappearance
+    select: (fetchedData) => {
+      const deleted = recentlyDeletedItemsRef.current;
+      if (deleted.size === 0) return fetchedData;
+      return {
+        ...fetchedData,
+        items: fetchedData.items.filter((item: DashboardItem) => !deleted.has(item.id)),
+        sessions: fetchedData.sessions.filter((session: Session) => !deleted.has(session.itemId)),
+        edges: fetchedData.edges.filter(
+          (edge: DashboardEdge) => !deleted.has(edge.sourceItemId) && !deleted.has(edge.targetItemId)
+        ),
+      };
+    },
   });
 
   const dashboard = data?.dashboard;
@@ -364,6 +388,14 @@ export default function DashboardPage() {
   const sessions = data?.sessions ?? [];
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
+
+  // Workspace sidebar session: pick the first active session from any terminal
+  const workspaceSessionId = React.useMemo(() => {
+    const session = sessions.find((s) => s.status === "active")
+      ?? sessions.find((s) => s.status === "creating")
+      ?? sessions[0];
+    return session?.id;
+  }, [sessions]);
   // Build mapping from real IDs to stable keys for nodes that have them
   const realIdToStableKey = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -1088,7 +1120,9 @@ export default function DashboardPage() {
 
   // Handle storage linked to workspace - auto-attach to all terminals in the dashboard
   const handleStorageLinked = React.useCallback(
-    async (_workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => {
+    async (workspaceItemIdOrProvider: string, providerArg?: "google_drive" | "onedrive" | "box" | "github") => {
+      // Support both old signature (itemId, provider) and new signature (provider only)
+      const provider = providerArg ?? workspaceItemIdOrProvider as "google_drive" | "onedrive" | "box" | "github";
       console.log(`[handleStorageLinked] called for provider: ${provider}`);
       // Find all terminal items with active sessions
       // Terminals share the sandbox session with the workspace, so we attach to all active terminals
@@ -1198,6 +1232,9 @@ export default function DashboardPage() {
       // Increment mutations in-flight counter to prevent WebSocket-triggered invalidations
       mutationsInFlightRef.current++;
 
+      // Track as recently deleted to prevent refetches from bringing it back
+      recentlyDeletedItemsRef.current.add(itemId);
+
       // Always cancel in-flight queries to prevent stale data overwriting our updates
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
 
@@ -1236,9 +1273,6 @@ export default function DashboardPage() {
       return { previous, previousEdges };
     },
     onSuccess: (_data, itemId) => {
-      // Decrement mutations in-flight counter
-      mutationsInFlightRef.current--;
-
       if (!OPTIMISTIC_UPDATE_ENABLED) {
         // When optimistic updates are disabled, directly remove the item from query data
         queryClient.setQueryData(
@@ -1262,8 +1296,8 @@ export default function DashboardPage() {
       toast.success("Block deleted");
     },
     onError: (error, _itemId, context) => {
-      // Decrement mutations in-flight counter
-      mutationsInFlightRef.current--;
+      // On error, remove from recently deleted so it can reappear
+      recentlyDeletedItemsRef.current.delete(_itemId);
 
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
@@ -1272,6 +1306,16 @@ export default function DashboardPage() {
         setEdges(context.previousEdges);
       }
       toast.error(`Failed to delete block: ${error.message}`);
+    },
+    onSettled: (_data, _error, itemId) => {
+      // Decrement mutations in-flight counter (always, whether success or error)
+      mutationsInFlightRef.current--;
+
+      // Keep item in recentlyDeletedItemsRef for a grace period to prevent
+      // late-arriving WebSocket echoes or refetches from bringing it back
+      setTimeout(() => {
+        recentlyDeletedItemsRef.current.delete(itemId);
+      }, 5000);
     },
   });
 
@@ -1440,19 +1484,32 @@ export default function DashboardPage() {
     }
 
     const defaultContent = tool.type === "todo" ? "[]" : "";
-    const terminalContent = tool.type === "terminal" && tool.terminalPreset
-      ? JSON.stringify({
-          name: tool.label,
-          subagentIds: [],
-          skillIds: [],
-          agentic: tool.terminalPreset.agentic ?? false,
-          bootCommand: tool.terminalPreset.command ?? "",
-        })
-      : defaultContent;
+    // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
+    // The PTY starts in the workspace root (~), so use a relative cd.
+    const relCwd = workspaceCwd !== "/" ? workspaceCwd.replace(/^\//, "") : "";
+    let content = defaultContent;
+    if (tool.type === "terminal") {
+      const originalBoot = tool.terminalPreset?.command ?? "";
+      // Encode cwd directly into bootCommand since the backend only reads bootCommand.
+      // Sandbox detects shell metacharacters (&&, $) and runs via bash -c automatically.
+      let bootCommand = originalBoot;
+      if (relCwd) {
+        bootCommand = originalBoot
+          ? `cd "$HOME/${relCwd}" && ${originalBoot}`
+          : `cd "$HOME/${relCwd}" && exec bash`;
+      }
+      content = JSON.stringify({
+        name: tool.label,
+        subagentIds: [],
+        skillIds: [],
+        agentic: tool.terminalPreset?.agentic ?? false,
+        bootCommand,
+      });
+    }
 
     createItemMutation.mutate({
       type: tool.type,
-      content: tool.type === "terminal" && tool.terminalPreset ? terminalContent : defaultContent,
+      content,
       position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
       size: defaultSizes[tool.type] || { width: 200, height: 120 },
     });
@@ -1557,6 +1614,14 @@ export default function DashboardPage() {
       setIsAddLinkOpen(false);
     }
   };
+
+  // Terminal cwd change handler - updates live indicator positions in sidebar
+  const handleTerminalCwdChange = React.useCallback((itemId: string, cwd: string) => {
+    setTerminalCwds((prev) => {
+      if (prev[itemId] === cwd) return prev;
+      return { ...prev, [itemId]: cwd };
+    });
+  }, []);
 
   // Item change handler - debounced to prevent excessive API calls
   const handleItemChange = React.useCallback((itemId: string, changes: Partial<DashboardItem>) => {
@@ -1763,7 +1828,10 @@ export default function DashboardPage() {
 
     if (changedItemIds.size > 0 && canInvalidate) {
       const hasRemoteChanges = Array.from(changedItemIds).some(
-        (id) => !pendingItemIdsRef.current.has(id) && !recentlyCreatedItemsRef.current.has(id)
+        (id) =>
+          !pendingItemIdsRef.current.has(id) &&
+          !recentlyCreatedItemsRef.current.has(id) &&
+          !recentlyDeletedItemsRef.current.has(id)
       );
       if (hasRemoteChanges) {
         queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
@@ -1792,9 +1860,10 @@ export default function DashboardPage() {
 
   // Item delete handler
   const handleItemDelete = async (itemId: string) => {
-    // Remove from pending tracking
+    // Remove from pending update tracking (no longer needed since item is being deleted)
     pendingUpdatesRef.current.delete(itemId);
-    pendingItemIdsRef.current.delete(itemId);
+    // Note: do NOT remove from pendingItemIdsRef here — the delete mutation's
+    // recentlyDeletedItemsRef handles preventing stale refetches
 
     // Check if this is an integration block - if so, detach from any connected terminals
     const data = queryClient.getQueryData<{
@@ -1864,85 +1933,8 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, isAuthResolved, router]);
 
-  React.useEffect(() => {
-    if (!data) return;
-    if (role === "viewer") return;
-    const hasWorkspace = items.some((item) => item.type === "workspace");
-    if (hasWorkspace) {
-      workspaceCreateRequestedRef.current = false;
-      return;
-    }
-    if (workspaceCreateRequestedRef.current) return;
-
-    workspaceCreateRequestedRef.current = true;
-    const rect = canvasContainerRef.current?.getBoundingClientRect();
-    const viewport = viewportRef.current;
-    const screenX = 100;
-    const screenY = rect
-      ? Math.max(100, Math.round(rect.height - (defaultSizes.workspace.height * viewport.zoom) - 50))
-      : 520;
-    const x = Math.round((screenX - viewport.x) / viewport.zoom);
-    const y = Math.round((screenY - viewport.y) / viewport.zoom);
-    createItemMutation.mutate({
-      type: "workspace",
-      content: "",
-      position: { x, y },
-      size: defaultSizes.workspace,
-    });
-    // Note: Don't reset workspaceCreateRequestedRef on error - that would cause retry loops.
-    // If creation fails, user can refresh the page to retry.
-  }, [data, role, items, createItemMutation]);
-
-  React.useEffect(() => {
-    if (!data) return;
-    const workspaceItem = items.find((item) => item.type === "workspace");
-    if (!workspaceItem) return;
-    const terminalIds = items
-      .filter((item) => item.type === "terminal")
-      .map((item) => item.id);
-
-    const createdEdges: Array<{ sourceItemId: string; targetItemId: string }> = [];
-
-    setEdges((prev) => {
-      let changed = false;
-      const next = [...prev];
-      terminalIds.forEach((terminalId) => {
-        const alreadyLinked = prev.some(
-          (edge) =>
-            edge.source === terminalId &&
-            edge.target === workspaceItem.id &&
-            edge.sourceHandle === "bottom-out" &&
-            edge.targetHandle === "top-in"
-        );
-        if (alreadyLinked) return;
-        const edgeId = `edge-${terminalId}-${workspaceItem.id}-workspace`;
-        next.push({
-          id: edgeId,
-          source: terminalId,
-          target: workspaceItem.id,
-          sourceHandle: "bottom-out",
-          targetHandle: "top-in",
-          type: "smoothstep",
-          animated: true,
-          style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
-        });
-        changed = true;
-        if (!terminalId.startsWith("temp-") && !workspaceItem.id.startsWith("temp-")) {
-          createdEdges.push({ sourceItemId: terminalId, targetItemId: workspaceItem.id });
-        }
-      });
-      return changed ? next : prev;
-    });
-
-    createdEdges.forEach(({ sourceItemId, targetItemId }) => {
-      createEdgeMutation.mutate({
-        sourceItemId,
-        targetItemId,
-        sourceHandle: "bottom-out",
-        targetHandle: "top-in",
-      });
-    });
-  }, [data, items, setEdges, createEdgeMutation]);
+  // Workspace sidebar replaces the old canvas workspace block.
+  // Auto-creation and auto-edge effects removed in workspace-sidebar-v1.
 
   React.useEffect(() => {
     if (!connectorMode) {
@@ -2119,6 +2111,15 @@ export default function DashboardPage() {
       <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
         <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full pointer-events-auto">
           <div className="flex items-center gap-2">
+            <Tooltip content="Back to dashboards" side="bottom">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => router.push("/dashboards")}
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+            </Tooltip>
             <img
               src="/orca.png"
               alt="Orcabot"
@@ -2198,9 +2199,19 @@ export default function DashboardPage() {
               <Tooltip content="Toggle theme">
                 <ThemeToggle />
               </Tooltip>
-              <Tooltip content="Settings">
+              {/* TODO: Settings button hidden until settings panel is implemented */}
+              {/* <Tooltip content="Settings">
                 <Button variant="ghost" size="icon-sm">
                   <Settings className="w-4 h-4" />
+                </Button>
+              </Tooltip> */}
+              <Tooltip content="Report a bug">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setIsBugReportOpen(true)}
+                >
+                  <Bug className="w-4 h-4" />
                 </Button>
               </Tooltip>
             </div>
@@ -2209,7 +2220,20 @@ export default function DashboardPage() {
       </header>
 
       {/* Main content area */}
-      <div className="flex-1 flex relative">
+      <div className="flex-1 flex relative overflow-hidden">
+        {/* Workspace sidebar */}
+        <WorkspaceSidebar
+          dashboardId={dashboardId}
+          sessionId={workspaceSessionId}
+          items={items}
+          sessions={sessions}
+          onStorageLinked={(provider) => handleStorageLinked(provider)}
+          onSelectedPathChange={setWorkspaceCwd}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+          drivePortalTarget={drivePortalEl}
+          terminalCwds={terminalCwds}
+        />
         {/* Canvas with cursor tracking */}
         <main
           ref={canvasContainerRef}
@@ -2219,17 +2243,21 @@ export default function DashboardPage() {
         >
           <div className="absolute left-4 top-2 z-20 pointer-events-none">
             <div className="flex items-center gap-2 pointer-events-auto">
-              {/* Back button */}
+              {/* Storage / drive buttons */}
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
-                <Tooltip content="Back to dashboards" side="bottom">
+                <Tooltip content={toolbarDriveCollapsed ? "Expand storage" : "Collapse storage"} side="bottom">
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={() => router.push("/dashboards")}
+                    onClick={() => setToolbarDriveCollapsed((prev) => !prev)}
+                    className="mr-1"
                   >
-                    <ArrowLeft className="w-4 h-4" />
+                    {toolbarDriveCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                   </Button>
                 </Tooltip>
+                {!toolbarDriveCollapsed && (
+                  <div ref={setDrivePortalEl} className="flex items-center gap-1" />
+                )}
               </div>
 
               {/* Agents section */}
@@ -2416,19 +2444,7 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-          {/* Bug Report Button - visible in both dev and prod */}
-          <div className={`absolute right-4 z-20 ${process.env.NODE_ENV === "development" ? "top-12" : "top-2"}`}>
-            <Tooltip content="Report a bug" side="bottom">
-              <Button
-                variant="secondary"
-                size="icon-sm"
-                onClick={() => setIsBugReportOpen(true)}
-                className="h-8 w-8"
-              >
-                <Bug className="w-4 h-4" />
-              </Button>
-            </Tooltip>
-          </div>
+          {/* Bug report button moved to title bar */}
           <ConnectionDataFlowProvider edges={edgesToRender}>
             <Canvas
               items={items}
@@ -2456,6 +2472,7 @@ export default function DashboardPage() {
               onStorageLinked={handleStorageLinked}
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
+              onTerminalCwdChange={handleTerminalCwdChange}
             />
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}
