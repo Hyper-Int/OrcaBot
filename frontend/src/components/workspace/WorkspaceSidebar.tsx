@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v12-integrations-section
-const MODULE_REVISION = "workspace-sidebar-v12-integrations-section";
+// REVISION: workspace-sidebar-v14-oauth-auth-fix
+const MODULE_REVISION = "workspace-sidebar-v14-oauth-auth-fix";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -32,6 +32,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
   Tooltip,
 } from "@/components/ui";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -539,11 +541,10 @@ export function WorkspaceSidebar({
     const url = new URL(`${API.cloudflare.base}${path}`);
     url.searchParams.set("mode", "popup");
     if (dashboardId) url.searchParams.set("dashboard_id", dashboardId);
-    if (path.includes("drive")) {
-      url.searchParams.set("user_id", user.id);
-      url.searchParams.set("user_email", user.email);
-      url.searchParams.set("user_name", user.name);
-    }
+    // Always add user credentials for dev mode auth
+    url.searchParams.set("user_id", user.id);
+    url.searchParams.set("user_email", user.email);
+    url.searchParams.set("user_name", user.name);
     const w = 520, h = 680;
     const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
     const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
@@ -1158,13 +1159,190 @@ export function WorkspaceSidebar({
                 <Settings className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
+            <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuItem
                 onSelect={() => setShowHiddenFiles((prev) => !prev)}
                 className="flex items-center gap-2"
               >
                 {showHiddenFiles ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                 <span>{showHiddenFiles ? "Hide hidden files" : "Show hidden files"}</span>
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase">
+                Storage Integrations
+              </DropdownMenuLabel>
+
+              {/* Google Drive */}
+              <DropdownMenuItem
+                className="flex items-center justify-between"
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (isDriveConnected) {
+                    setDrivePickerOpen(true);
+                  } else {
+                    handleDriveConnect();
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Drive</span>
+                  {isDriveLinked && driveIntegration?.folder?.name && (
+                    <span className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[60px]">
+                      ({driveIntegration.folder.name})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {isDriveConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isDriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <button
+                        type="button"
+                        className="p-0.5 hover:bg-[var(--background-elevated)] rounded text-[var(--status-error)]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDisconnectDrive();
+                        }}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-[var(--foreground-muted)]">Connect</span>
+                  )}
+                </div>
+              </DropdownMenuItem>
+
+              {/* GitHub */}
+              <DropdownMenuItem
+                className="flex items-center justify-between"
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (isGithubConnected) {
+                    setGithubPickerOpen(true);
+                  } else {
+                    handleGithubConnect();
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Github className="w-3.5 h-3.5" />
+                  <span>GitHub</span>
+                  {isGithubLinked && githubIntegration?.repo && (
+                    <span className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[60px]">
+                      ({githubIntegration.repo.name})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {isGithubConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isGithubLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <button
+                        type="button"
+                        className="p-0.5 hover:bg-[var(--background-elevated)] rounded text-[var(--status-error)]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDisconnectGithub();
+                        }}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-[var(--foreground-muted)]">Connect</span>
+                  )}
+                </div>
+              </DropdownMenuItem>
+
+              {/* Box */}
+              <DropdownMenuItem
+                className="flex items-center justify-between"
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (isBoxConnected) {
+                    setBoxPickerOpen(true);
+                  } else {
+                    handleBoxConnect();
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Box className="w-3.5 h-3.5" />
+                  <span>Box</span>
+                  {isBoxLinked && boxIntegration?.folder?.name && (
+                    <span className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[60px]">
+                      ({boxIntegration.folder.name})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {isBoxConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isBoxLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <button
+                        type="button"
+                        className="p-0.5 hover:bg-[var(--background-elevated)] rounded text-[var(--status-error)]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDisconnectBox();
+                        }}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-[var(--foreground-muted)]">Connect</span>
+                  )}
+                </div>
+              </DropdownMenuItem>
+
+              {/* OneDrive */}
+              <DropdownMenuItem
+                className="flex items-center justify-between"
+                onSelect={(e) => {
+                  e.preventDefault();
+                  if (isOnedriveConnected) {
+                    setOnedrivePickerOpen(true);
+                  } else {
+                    handleOnedriveConnect();
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-3.5 h-3.5" />
+                  <span>OneDrive</span>
+                  {isOnedriveLinked && onedriveIntegration?.folder?.name && (
+                    <span className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[60px]">
+                      ({onedriveIntegration.folder.name})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {isOnedriveConnected ? (
+                    <>
+                      <span className={cn("w-1.5 h-1.5 rounded-full", isOnedriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+                      <button
+                        type="button"
+                        className="p-0.5 hover:bg-[var(--background-elevated)] rounded text-[var(--status-error)]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDisconnectOnedrive();
+                        }}
+                        title="Sign out"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-[10px] text-[var(--foreground-muted)]">Connect</span>
+                  )}
+                </div>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1206,192 +1384,6 @@ export function WorkspaceSidebar({
                 {githubSyncing ? "Syncing repo..." : "Start a terminal to see files."}
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Integrations section */}
-        <div className="border-t border-[var(--border)]">
-          <div className="px-2 py-1.5">
-            <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wider mb-1">
-              Storage
-            </div>
-            <div className="space-y-1">
-              {/* Google Drive */}
-              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <Cloud className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                  <div>
-                    <div className="text-[11px] font-medium text-[var(--foreground)]">Drive</div>
-                    {isDriveLinked && driveIntegration?.folder?.name && (
-                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
-                        {driveIntegration.folder.name}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  {isDriveConnected ? (
-                    <>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", isDriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5"
-                        onClick={() => setDrivePickerOpen(true)}
-                        title={isDriveLinked ? "Change folder" : "Link folder"}
-                      >
-                        <Settings className="w-3 h-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
-                        onClick={handleDisconnectDrive}
-                        title="Sign out"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleDriveConnect}>
-                      Connect
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* GitHub */}
-              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <Github className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                  <div>
-                    <div className="text-[11px] font-medium text-[var(--foreground)]">GitHub</div>
-                    {isGithubLinked && githubIntegration?.repo && (
-                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
-                        {githubIntegration.repo.name}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  {isGithubConnected ? (
-                    <>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", isGithubLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5"
-                        onClick={() => setGithubPickerOpen(true)}
-                        title={isGithubLinked ? "Change repo" : "Link repo"}
-                      >
-                        <Settings className="w-3 h-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
-                        onClick={handleDisconnectGithub}
-                        title="Sign out"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleGithubConnect}>
-                      Connect
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* Box */}
-              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <Box className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                  <div>
-                    <div className="text-[11px] font-medium text-[var(--foreground)]">Box</div>
-                    {isBoxLinked && boxIntegration?.folder?.name && (
-                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
-                        {boxIntegration.folder.name}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  {isBoxConnected ? (
-                    <>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", isBoxLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5"
-                        onClick={() => setBoxPickerOpen(true)}
-                        title={isBoxLinked ? "Change folder" : "Link folder"}
-                      >
-                        <Settings className="w-3 h-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
-                        onClick={handleDisconnectBox}
-                        title="Sign out"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleBoxConnect}>
-                      Connect
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {/* OneDrive */}
-              <div className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--background)] px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <HardDrive className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
-                  <div>
-                    <div className="text-[11px] font-medium text-[var(--foreground)]">OneDrive</div>
-                    {isOnedriveLinked && onedriveIntegration?.folder?.name && (
-                      <div className="text-[10px] text-[var(--foreground-muted)] truncate max-w-[80px]">
-                        {onedriveIntegration.folder.name}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  {isOnedriveConnected ? (
-                    <>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", isOnedriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5"
-                        onClick={() => setOnedrivePickerOpen(true)}
-                        title={isOnedriveLinked ? "Change folder" : "Link folder"}
-                      >
-                        <Settings className="w-3 h-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="h-5 w-5 text-[var(--status-error)] hover:text-[var(--status-error)]"
-                        onClick={handleDisconnectOnedrive}
-                        title="Sign out"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" size="sm" className="h-5 text-[10px] px-2" onClick={handleOnedriveConnect}>
-                      Connect
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
           </div>
         </div>
 

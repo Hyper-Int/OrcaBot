@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v15-fix-move-jumpback
-console.log(`[dashboard] REVISION: dashboard-v15-fix-move-jumpback loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v16-openclaw-onboard
+console.log(`[dashboard] REVISION: dashboard-v16-openclaw-onboard loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -178,7 +178,7 @@ const terminalTools: BlockTool[] = [
     type: "terminal",
     label: "OpenClaw",
     icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "openclaw tui", agentic: true },
+    terminalPreset: { command: "[ -f ~/.openclaw/.env ] && openclaw tui || openclaw onboard", agentic: true },
   },
   {
     type: "terminal",
