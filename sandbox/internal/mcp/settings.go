@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gemini-auth-v1-merge-settings
+// REVISION: settings-v2-robust-agent-detect
 
 // Package mcp provides MCP (Model Context Protocol) settings generation
 // for agentic coders running in the sandbox.
@@ -54,29 +54,54 @@ const (
 
 // DetectAgentType determines which agent is being launched from the command string.
 // Returns AgentTypeUnknown if no agent is detected (e.g., plain shell).
+//
+// Uses word-boundary matching so commands like "talkito codex" or "env VAR=x claude"
+// are correctly detected. A word boundary is a space or the start/end of string.
 func DetectAgentType(command string) AgentType {
 	cmd := strings.ToLower(strings.TrimSpace(command))
 
-	// Check for exact matches or command prefixes
+	// Check if command contains the agent name as a word (not substring)
+	// Order matters: check more specific names first to avoid false matches
 	switch {
-	case cmd == "claude" || strings.HasPrefix(cmd, "claude "):
-		return AgentTypeClaude
-	case cmd == "opencode" || strings.HasPrefix(cmd, "opencode "):
-		return AgentTypeOpenCode
-	case cmd == "gemini" || strings.HasPrefix(cmd, "gemini "):
-		return AgentTypeGemini
-	case cmd == "codex" || strings.HasPrefix(cmd, "codex "):
-		return AgentTypeCodex
-	case cmd == "droid" || strings.HasPrefix(cmd, "droid "):
-		return AgentTypeDroid
-	case cmd == "openclaw" || strings.HasPrefix(cmd, "openclaw ") ||
-		cmd == "moltbot" || strings.HasPrefix(cmd, "moltbot ") ||
-		cmd == "molt" || strings.HasPrefix(cmd, "molt ") ||
-		cmd == "clawdbot" || strings.HasPrefix(cmd, "clawdbot "):
+	case containsWord(cmd, "openclaw") || containsWord(cmd, "moltbot") ||
+		containsWord(cmd, "molt") || containsWord(cmd, "clawdbot"):
 		return AgentTypeMoltbot
+	case containsWord(cmd, "opencode"):
+		return AgentTypeOpenCode
+	case containsWord(cmd, "claude"):
+		return AgentTypeClaude
+	case containsWord(cmd, "gemini"):
+		return AgentTypeGemini
+	case containsWord(cmd, "codex"):
+		return AgentTypeCodex
+	case containsWord(cmd, "droid"):
+		return AgentTypeDroid
 	default:
 		return AgentTypeUnknown
 	}
+}
+
+// containsWord checks if the command contains the word as a standalone token.
+// A word is considered standalone if it's surrounded by spaces, or at the
+// start/end of the string. This prevents matching "claude" in "claudette".
+func containsWord(cmd, word string) bool {
+	idx := strings.Index(cmd, word)
+	if idx == -1 {
+		return false
+	}
+
+	// Check left boundary: must be start of string or preceded by space
+	if idx > 0 && cmd[idx-1] != ' ' {
+		return false
+	}
+
+	// Check right boundary: must be end of string or followed by space
+	endIdx := idx + len(word)
+	if endIdx < len(cmd) && cmd[endIdx] != ' ' {
+		return false
+	}
+
+	return true
 }
 
 // GenerateSettingsForAgent creates settings file for a specific agent only.

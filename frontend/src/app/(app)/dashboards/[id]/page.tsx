@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v16-openclaw-onboard
-console.log(`[dashboard] REVISION: dashboard-v16-openclaw-onboard loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v17-browser-pan-fix
+console.log(`[dashboard] REVISION: dashboard-v17-browser-pan-fix loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -194,7 +194,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   schedule: { width: 280, height: 220 },
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
-  browser: { width: 680, height: 600 },
+  browser: { width: 680, height: 480 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },
@@ -559,6 +559,7 @@ export default function DashboardPage() {
   // Pan/zoom so a newly-placed block is visible
   const ensureVisible = React.useCallback(
     (position: { x: number; y: number }, size: { width: number; height: number }) => {
+      console.log("[ensureVisible] called with position:", position, "size:", size);
       // Defer to next frame so the optimistic node is rendered into the flow
       requestAnimationFrame(() => {
         const instance = reactFlowInstanceRef.current;
@@ -585,6 +586,9 @@ export default function DashboardPage() {
         const blockBottom = position.y + size.height;
         const margin = 48;
 
+        console.log("[ensureVisible] viewport:", { viewLeft, viewTop, viewRight, viewBottom, zoom });
+        console.log("[ensureVisible] block bounds:", { x: position.x, y: position.y, blockRight, blockBottom });
+
         // Check if the block is already fully within the visible area
         if (
           position.x >= viewLeft + margin &&
@@ -592,8 +596,11 @@ export default function DashboardPage() {
           blockRight <= viewRight - margin &&
           blockBottom <= viewBottom - margin
         ) {
+          console.log("[ensureVisible] block already visible, skipping pan");
           return; // already visible
         }
+
+        console.log("[ensureVisible] block not fully visible, will pan/zoom");
 
         // Compute bounding box of all existing items + the new block
         let minX = position.x;
@@ -621,6 +628,7 @@ export default function DashboardPage() {
           // Offset the center rightward by half the sidebar inset so the visible
           // center (not the DOM center) is used.
           const offsetX = sidebarInset / 2 / zoom;
+          console.log("[ensureVisible] panning to center:", { centerX: centerX + offsetX, centerY, zoom });
           instance.setCenter(centerX + offsetX, centerY, { zoom, duration: 300 });
         } else {
           // Need to zoom out — compute the maximum zoom that fits, capped at current
@@ -633,6 +641,7 @@ export default function DashboardPage() {
           const centerX = (minX + maxX) / 2;
           const centerY = (minY + maxY) / 2;
           const offsetX = sidebarInset / 2 / clampedZoom;
+          console.log("[ensureVisible] zooming out to:", { centerX: centerX + offsetX, centerY, zoom: clampedZoom });
           instance.setCenter(centerX + offsetX, centerY, { zoom: clampedZoom, duration: 300 });
         }
       });
