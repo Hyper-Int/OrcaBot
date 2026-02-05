@@ -11,7 +11,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { type NodeProps, type Node, useReactFlow } from "@xyflow/react";
 import {
-  Terminal,
+  SquareTerminal,
   Bot,
   Pause,
   Play,
@@ -3055,7 +3055,7 @@ export function TerminalBlock({
             <img src={terminalIconSrc} alt={`${terminalName} icon`} title={`${terminalName} icon`} className="w-4 h-4" />
           ) : (
             <span title="Terminal icon">
-              <Terminal className="w-4 h-4 text-[var(--foreground-muted)]" />
+              <SquareTerminal className="w-4 h-4 text-[var(--foreground-muted)]" />
             </span>
           )}
           <span className="text-[16px] font-medium text-[var(--foreground)]" title={terminalName}>
@@ -3509,7 +3509,7 @@ export function TerminalBlock({
     const minimizedIcon = terminalIconSrc ? (
       <img src={terminalIconSrc} alt={terminalName} className="w-14 h-14" />
     ) : (
-      <Terminal className="w-14 h-14 text-[var(--foreground-subtle)]" />
+      <SquareTerminal className="w-14 h-14 text-[var(--foreground-subtle)]" />
     );
 
     return (

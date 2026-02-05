@@ -21,7 +21,7 @@ import {
   EyeOff,
   PanelLeftClose,
   PanelLeftOpen,
-  Terminal,
+  SquareTerminal,
   ChevronRight,
   ChevronDown,
   X,
@@ -870,7 +870,7 @@ export function WorkspaceSidebar({
                 {agent.iconSrc ? (
                   <img src={agent.iconSrc} alt={agent.name} className="w-3.5 h-3.5 object-contain" />
                 ) : (
-                  <Terminal className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
+                  <SquareTerminal className="w-3.5 h-3.5 text-[var(--foreground-muted)]" />
                 )}
                 <span
                   className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-[var(--background)] ${

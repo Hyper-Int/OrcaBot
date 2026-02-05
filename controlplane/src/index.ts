@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v3-admin-controls
-console.log(`[controlplane] REVISION: index-v3-admin-controls loaded at ${new Date().toISOString()}`);
+// REVISION: index-v4-waituntil-email
+console.log(`[controlplane] REVISION: index-v4-waituntil-email loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -359,7 +359,7 @@ async function getSessiоnWithAccess(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
     const envWithDb = ensureDb(env);
     const envWithBindings = ensureDriveCache(envWithDb);
     const origin = request.headers.get('Origin');
@@ -384,7 +384,7 @@ export default {
     }
 
     try {
-      const response = await handleRequest(request, envWithBindings);
+      const response = await handleRequest(request, envWithBindings, ctx);
       return cоrsRespоnse(response, origin, allowedOrigins);
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
@@ -417,7 +417,7 @@ export default {
   },
 };
 
-async function handleRequest(request: Request, env: EnvWithBindings): Promise<Response> {
+async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -1003,26 +1003,25 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     };
     const response = await templates.createTemplate(env, auth.user!.id, data);
 
-    // Send review notification email to admin (fire-and-forget)
+    // Send review notification email to admin via waitUntil so it survives after response
     if (response.ok) {
-      try {
-        const cloned = response.clone();
-        const body = await cloned.json() as { template: { itemCount: number } };
-        const reviewEmail = buildTemplateReviewEmail({
-          templateName: data.name,
-          authorName: auth.user!.name || 'Unknown',
-          authorEmail: auth.user!.email,
-          category: data.category || 'custom',
-          itemCount: body.template.itemCount,
-        });
-        sendEmail(env, {
-          to: 'rob.d.macrae@gmail.com',
-          subject: reviewEmail.subject,
-          html: reviewEmail.html,
-        }).catch((err) => console.error('Failed to send template review email:', err));
-      } catch (err) {
-        console.error('Failed to build template review email:', err);
-      }
+      const cloned = response.clone();
+      ctx.waitUntil(
+        cloned.json().then((body: any) => {
+          const reviewEmail = buildTemplateReviewEmail({
+            templateName: data.name,
+            authorName: auth.user!.name || 'Unknown',
+            authorEmail: auth.user!.email,
+            category: data.category || 'custom',
+            itemCount: body.template.itemCount,
+          });
+          return sendEmail(env, {
+            to: 'rob.d.macrae@gmail.com',
+            subject: reviewEmail.subject,
+            html: reviewEmail.html,
+          });
+        }).catch((err) => console.error('Failed to send template review email:', err))
+      );
     }
 
     return response;

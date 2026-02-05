@@ -16,7 +16,7 @@ import {
   StickyNote,
   CheckSquare,
   Globe,
-  Terminal,
+  SquareTerminal,
   Users,
   Settings,
   Share2,
@@ -183,7 +183,7 @@ const terminalTools: BlockTool[] = [
   {
     type: "terminal",
     label: "Terminal",
-    icon: <Terminal className="w-4 h-4" />,
+    icon: <SquareTerminal className="w-4 h-4" />,
   },
 ];
 
