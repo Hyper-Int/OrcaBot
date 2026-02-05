@@ -223,6 +223,7 @@ export interface TemplateItem {
   placeholderId: string;
   type: DashboardItemType;
   content: string;
+  metadata?: Record<string, unknown>;
   position: { x: number; y: number };
   size: { width: number; height: number };
 }
