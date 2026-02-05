@@ -5,7 +5,7 @@
  * Scrubs sensitive data from dashboard items before template export.
  *
  * Scrubbing rules by item type:
- * - note: Clear text content, keep color
+ * - note: Clear text content (color preserved in metadata)
  * - todo: Clear item text, keep structure (item count, completed states)
  * - terminal: Keep name only, clear sessionId/ptyId
  * - link: Keep URL and title (assumed public)
@@ -49,16 +49,9 @@ export function scrubItemContent(
   try {
     switch (type) {
       case 'note': {
-        // Notes store { text: string, color: string }
-        // Clear text but keep color for visual layout
-        const parsed = safeParseJson(content) as Record<string, unknown> | null;
-        if (parsed && typeof parsed === 'object') {
-          return JSON.stringify({
-            text: '',
-            color: parsed.color || 'yellow',
-          });
-        }
-        return JSON.stringify({ text: '', color: 'yellow' });
+        // Notes store plain text in content; color is in metadata (handled separately)
+        // Just clear the content
+        return '';
       }
 
       case 'todo': {

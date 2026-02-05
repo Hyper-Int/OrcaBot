@@ -39,6 +39,7 @@ export interface TemplateItem {
   placeholderId: string;
   type: DashboardItemType;
   content: string;
+  metadata?: Record<string, unknown>;
   position: { x: number; y: number };
   size: { width: number; height: number };
 }
@@ -242,7 +243,12 @@ export async function createTemplate(
     const placeholderId = `item_${index}`;
     idToPlaceholder.set(row.id as string, placeholderId);
 
-    templateItems.push({
+    // Parse metadata if present (stored as JSON string in DB)
+    const rawMetadata = row.metadata
+      ? (typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata) as Record<string, unknown>
+      : undefined;
+
+    const item: TemplateItem = {
       placeholderId,
       type: row.type as DashboardItemType,
       content: scrubItemContent(
@@ -257,7 +263,14 @@ export async function createTemplate(
         width: row.width as number,
         height: row.height as number,
       },
-    });
+    };
+
+    // Preserve metadata for visual properties (e.g. note color, font size, minimized state)
+    if (rawMetadata) {
+      item.metadata = rawMetadata;
+    }
+
+    templateItems.push(item);
   });
 
   // 4. Remap edge IDs
@@ -438,8 +451,8 @@ export async function populateFromTemplate(
     await env.DB.prepare(
       `
       INSERT INTO dashboard_items
-      (id, dashboard_id, type, content, position_x, position_y, width, height, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
     )
       .bind(
@@ -451,6 +464,7 @@ export async function populateFromTemplate(
         item.position.y,
         item.size.width,
         item.size.height,
+        item.metadata ? JSON.stringify(item.metadata) : null,
         now,
         now
       )
