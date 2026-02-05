@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v11-sanitize-errors-devgate
-console.log(`[integration-gateway] REVISION: gateway-v11-sanitize-errors-devgate loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v12-sync-config
+console.log(`[integration-gateway] REVISION: gateway-v12-sync-config loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -706,6 +706,37 @@ export async function handleGatewayExecute(
       allowed: true,
       decision: 'allowed',
       filteredResponse: null,
+      policyId,
+      policyVersion,
+    } as GatewayExecuteResponse);
+  }
+
+  // 8b. Drive sync config: return the dashboard's selected folder from DB.
+  // No external API call needed — just a DB lookup.
+  if (provider === 'google_drive' && body.action === 'drive.sync_config') {
+    const mirror = await env.DB.prepare(`
+      SELECT folder_id, folder_name FROM drive_mirrors WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ folder_id: string; folder_name: string }>();
+
+    await logAuditEntry(env, {
+      terminalIntegrationId: ti.id,
+      terminalId,
+      dashboardId,
+      userId,
+      provider,
+      action: body.action,
+      policyId,
+      policyVersion,
+      decision: 'allowed',
+    });
+
+    return Response.json({
+      allowed: true,
+      decision: 'allowed' as const,
+      filteredResponse: {
+        folderId: mirror?.folder_id || '',
+        folderName: mirror?.folder_name || '',
+      },
       policyId,
       policyVersion,
     } as GatewayExecuteResponse);
