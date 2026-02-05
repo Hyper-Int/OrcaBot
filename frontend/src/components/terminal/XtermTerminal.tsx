@@ -17,6 +17,7 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
       onData,
       onResize,
       onReady,
+      onPaste,
       disabled = false,
       fontSize = 14,
       theme,
@@ -33,20 +34,23 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
       onData,
       onResize,
       onReady,
+      onPaste,
       disabled,
     });
 
     React.useEffect(() => {
-      callbacksRef.current = { onData, onResize, onReady, disabled };
+      callbacksRef.current = { onData, onResize, onReady, onPaste, disabled };
       if (terminalRef.current) {
         terminalRef.current.options.disableStdin = disabled;
       }
-    }, [onData, onResize, onReady, disabled]);
+    }, [onData, onResize, onReady, onPaste, disabled]);
 
     React.useEffect(() => {
       let mounted = true;
       let disposeData: { dispose: () => void } | null = null;
       let disposed = false;
+      let pasteHandler: ((e: ClipboardEvent) => void) | null = null;
+      let pasteTarget: HTMLElement | null = null;
 
       async function initTerminal() {
         if (!containerRef.current) return;
@@ -86,6 +90,24 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
             }
           });
 
+          // Intercept paste events to detect API keys before they reach the terminal.
+          // Attach directly to xterm's internal textarea — the element where all paste
+          // events originate — using capture phase so we fire before xterm's own handler
+          // (which calls stopPropagation).
+          pasteTarget = terminal.textarea ?? containerRef.current;
+          pasteHandler = (e: ClipboardEvent) => {
+            const { onPaste: onPasteCb, disabled: isDisabled } = callbacksRef.current;
+            if (isDisabled || !onPasteCb) return;
+            const text = e.clipboardData?.getData("text");
+            if (!text) return;
+            const allow = onPasteCb(text);
+            if (!allow) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          };
+          pasteTarget?.addEventListener("paste", pasteHandler, true);
+
           if (callbacksRef.current.onResize) {
             callbacksRef.current.onResize(terminal.cols, terminal.rows);
           }
@@ -107,6 +129,9 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
         mounted = false;
         disposed = true;
         disposeData?.dispose();
+        if (pasteHandler && pasteTarget) {
+          pasteTarget.removeEventListener("paste", pasteHandler, true);
+        }
         terminalRef.current?.dispose();
         terminalRef.current = null;
         fitAddonRef.current = null;

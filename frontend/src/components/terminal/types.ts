@@ -35,6 +35,8 @@ export interface TerminalProps {
   onResize?: (cols: number, rows: number) => void;
   /** Called when the terminal is ready */
   onReady?: () => void;
+  /** Called when user pastes text. Return false to block the paste. */
+  onPaste?: (text: string) => boolean;
   /** Whether the terminal is disabled (no input) */
   disabled?: boolean;
   /** Font size in pixels */

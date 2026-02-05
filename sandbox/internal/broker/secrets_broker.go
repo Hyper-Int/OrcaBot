@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// REVISION: broker-v2-fix-gemini-baseurl
+const brokerRevision = "broker-v2-fix-gemini-baseurl"
+
+func init() {
+	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
+}
+
 // ProviderConfig holds runtime configuration for a specific provider.
 type ProviderConfig struct {
 	Name          string // Provider name (e.g., "anthropic") or "custom/SECRET_NAME"
@@ -208,10 +215,14 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Build target URL
+		// Build target URL, stripping any "key" query parameter since the broker
+		// injects auth via headers. SDKs (e.g., Google GenAI) may send the
+		// placeholder API key as ?key=..., which would cause upstream rejection.
+		query := r.URL.Query()
+		query.Del("key")
 		targetURL = config.TargetBaseURL + pathRemainder
-		if r.URL.RawQuery != "" {
-			targetURL += "?" + r.URL.RawQuery
+		if encoded := query.Encode(); encoded != "" {
+			targetURL += "?" + encoded
 		}
 
 		headerName = config.HeaderName

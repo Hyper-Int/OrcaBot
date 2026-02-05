@@ -3,7 +3,8 @@
 
 "use client";
 
-const TERMINAL_BLOCK_REVISION = "tts-v1-enable-gemini";
+// REVISION: paste-secret-detect-v1-warn-on-key-paste
+const TERMINAL_BLOCK_REVISION = "paste-secret-detect-v1-warn-on-key-paste";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -443,6 +444,92 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
   return { name: "Terminal", subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
 }
 
+// --- Paste secret detection ---
+
+/** Known API key prefixes (Tier 1 — near-zero false positives) */
+const KNOWN_KEY_PREFIXES = [
+  // OpenAI
+  "sk-proj-", "sk-svcacct-", "sk-None-",
+  // Anthropic
+  "sk-ant-",
+  // Google / Gemini
+  "AIzaSy",
+  // GitHub
+  "ghp_", "gho_", "ghs_", "github_pat_",
+  // AWS
+  "AKIA",
+  // xAI
+  "xai-",
+  // OpenRouter
+  "sk-or-",
+  // Stripe / webhooks
+  "whsec_", "pk_live_", "sk_live_", "rk_live_", "pk_test_", "sk_test_",
+  // Slack
+  "xoxb-", "xoxp-", "xoxe-",
+  // Vercel
+  "vercel_",
+  // Supabase
+  "sbp_",
+  // JWT (base64-encoded JSON)
+  "eyJhbGci",
+];
+
+/** Env var assignment patterns (Tier 2) */
+const SECRET_ASSIGNMENT_RE =
+  /(?:^|\s)(?:export\s+)?(\w*(?:_KEY|_TOKEN|_SECRET|_API_KEY|_PASSWORD|_CREDENTIAL|_AUTH)\s*=\s*\S+)/i;
+
+/** Shannon entropy of a string */
+function shannonEntropy(s: string): number {
+  const freq: Record<string, number> = {};
+  for (const c of s) freq[c] = (freq[c] || 0) + 1;
+  const len = s.length;
+  let entropy = 0;
+  for (const count of Object.values(freq)) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+/** Check character class diversity (needs upper + lower + digit) */
+function hasCharDiversity(s: string): boolean {
+  return /[a-z]/.test(s) && /[A-Z]/.test(s) && /[0-9]/.test(s);
+}
+
+/** Detect if pasted text looks like it contains an API key or secret. */
+function detectPastedSecret(text: string): { suspicious: boolean; reason: string } {
+  const trimmed = text.trim();
+
+  // Tier 1: Known key prefixes
+  for (const prefix of KNOWN_KEY_PREFIXES) {
+    if (trimmed.includes(prefix)) {
+      return { suspicious: true, reason: "Recognized API key format" };
+    }
+  }
+
+  // Tier 2: export VAR_KEY=value patterns
+  if (SECRET_ASSIGNMENT_RE.test(trimmed)) {
+    return { suspicious: true, reason: "Looks like a secret being set as an environment variable" };
+  }
+
+  // Tier 3: High-entropy strings (unknown key formats)
+  // Split on whitespace and common delimiters, check each token
+  const tokens = trimmed.split(/[\s='"`;]+/);
+  for (const token of tokens) {
+    if (token.length < 20) continue;
+    // Skip URLs, file paths, and common non-secret patterns
+    if (/^https?:\/\//.test(token)) continue;
+    if (token.startsWith("/") || token.startsWith("./")) continue;
+    if (token.startsWith("--")) continue; // CLI flags
+    if (!hasCharDiversity(token)) continue;
+    if (shannonEntropy(token) > 3.5) {
+      return { suspicious: true, reason: "High-entropy string that may be a secret" };
+    }
+  }
+
+  return { suspicious: false, reason: "" };
+}
+
 export function TerminalBlock({
   id,
   data,
@@ -509,6 +596,8 @@ export function TerminalBlock({
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   // Track if MCP tools, skills, or agents have changed since session started
   const [pendingConfigRestart, setPendingConfigRestart] = React.useState(false);
+  // Paste secret detection: holds intercepted paste data when it looks suspicious
+  const [pasteWarning, setPasteWarning] = React.useState<{ text: string; reason: string } | null>(null);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
@@ -1712,6 +1801,22 @@ export function TerminalBlock({
       terminalActions.sendInput(inputData);
     },
     [canType, terminalActions]
+  );
+
+  // Intercept paste events to warn about potential API key exposure
+  const handlePaste = React.useCallback(
+    (text: string): boolean => {
+      if (localStorage.getItem("orcabot:dismiss-paste-secret-warning") === "true") {
+        return true; // User opted out of warnings
+      }
+      const check = detectPastedSecret(text);
+      if (check.suspicious) {
+        setPasteWarning({ text, reason: check.reason });
+        return false; // Block the paste, show warning dialog
+      }
+      return true; // Allow normal paste
+    },
+    []
   );
 
   // Register handlers for incoming data from connections (both left and top inputs)
@@ -3405,6 +3510,7 @@ export function TerminalBlock({
             onData={handleTerminalData}
             onResize={handleTerminalResize}
             onReady={handleTerminalReady}
+            onPaste={handlePaste}
             disabled={!canType}
             fontSize={fontSize}
             theme={terminalTheme}
@@ -3763,6 +3869,81 @@ export function TerminalBlock({
               disabled={approveDomainMutation.isPending}
             >
               Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste Secret Warning Dialog */}
+      <Dialog
+        open={!!pasteWarning}
+        onOpenChange={(open) => {
+          if (!open) setPasteWarning(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[var(--status-warning)]">
+              <Key className="w-5 h-5" />
+              Possible API Key Detected
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                <p>
+                  {pasteWarning?.reason}. Pasting secrets directly into the terminal
+                  exposes them to AI agents and other viewers.
+                </p>
+
+                <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-3 font-mono text-xs break-all max-h-20 overflow-y-auto text-[var(--foreground-muted)]">
+                  {pasteWarning?.text.slice(0, 120)}{pasteWarning && pasteWarning.text.length > 120 ? "..." : ""}
+                </div>
+
+                <div className="rounded border border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/10 p-3">
+                  <p className="text-[var(--foreground)]">
+                    Use the <strong>Secrets panel</strong> instead — it protects keys from
+                    being read by AI agents or seen by other users.
+                  </p>
+                </div>
+              </div>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    id="dismiss-paste-warning"
+                    className="rounded border-[var(--border)] accent-[var(--accent-primary)]"
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        localStorage.setItem("orcabot:dismiss-paste-secret-warning", "true");
+                      } else {
+                        localStorage.removeItem("orcabot:dismiss-paste-secret-warning");
+                      }
+                    }}
+                  />
+                  <span className="text-[var(--foreground-muted)]">Don&apos;t warn me again</span>
+                </label>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPasteWarning(null);
+                setActivePanel("secrets");
+              }}
+            >
+              <Key className="w-4 h-4 mr-1.5" />
+              Open Secrets Panel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (pasteWarning) {
+                  terminalActions.sendInput(pasteWarning.text);
+                }
+                setPasteWarning(null);
+              }}
+            >
+              Paste Anyway
             </Button>
           </DialogFooter>
         </DialogContent>

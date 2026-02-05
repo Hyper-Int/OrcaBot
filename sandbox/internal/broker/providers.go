@@ -3,6 +3,7 @@
 
 // Package broker implements a session-local auth broker that injects API keys
 // into outbound requests, preventing LLMs from accessing secrets directly.
+// REVISION: broker-v2-fix-gemini-baseurl
 package broker
 
 import "fmt"
@@ -50,7 +51,7 @@ var Providers = map[string]ProviderSpec{
 		TargetBaseURL: "https://generativelanguage.googleapis.com",
 		HeaderName:    "x-goog-api-key",
 		HeaderFormat:  "%s",
-		BrokerEnvKey:  "GEMINI_BASE_URL",
+		BrokerEnvKey:  "GOOGLE_GEMINI_BASE_URL",
 		Category:      "agent",
 	},
 
