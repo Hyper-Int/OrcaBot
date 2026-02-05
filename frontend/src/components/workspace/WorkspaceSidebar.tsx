@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v15-card-style-integrations
-const MODULE_REVISION = "workspace-sidebar-v15-card-style-integrations";
+// REVISION: workspace-sidebar-v16-stale-session-fix
+const MODULE_REVISION = "workspace-sidebar-v16-stale-session-fix";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -684,6 +684,7 @@ export function WorkspaceSidebar({
 
   // Load files when sessionId changes
   React.useEffect(() => {
+    console.log(`[WorkspaceSidebar] sessionId changed to: ${sessionId ?? "undefined"}`);
     setExpandedPaths(new Set(["/"]));
     setFileError(null);
     if (sessionId) {
