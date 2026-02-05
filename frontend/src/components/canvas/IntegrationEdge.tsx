@@ -3,7 +3,7 @@
 
 "use client";
 
-const INTEGRATION_EDGE_REVISION = "integration-edge-v1-clickable-labels";
+const INTEGRATION_EDGE_REVISION = "integration-edge-v4-connector-mode";
 console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -13,6 +13,7 @@ import {
   getSmoothStepPath,
   type EdgeProps,
 } from "@xyflow/react";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 
@@ -28,6 +29,20 @@ export interface IntegrationEdgeData {
 export const EdgeLabelClickContext = React.createContext<
   ((edgeId: string, provider: string) => void) | null
 >(null);
+
+/**
+ * Context for edge delete handlers.
+ * Provided by Canvas, consumed by IntegrationEdge.
+ */
+export const EdgeDeleteContext = React.createContext<
+  ((edgeId: string) => void) | null
+>(null);
+
+/**
+ * Context for connector mode state.
+ * When true, delete buttons are shown on all edges.
+ */
+export const EdgeConnectorModeContext = React.createContext<boolean>(false);
 
 export function IntegrationEdge({
   id,
@@ -45,6 +60,10 @@ export function IntegrationEdge({
   const securityLevel = edgeData?.securityLevel;
   const provider = edgeData?.provider;
   const onLabelClick = React.useContext(EdgeLabelClickContext);
+  const onDelete = React.useContext(EdgeDeleteContext);
+  const connectorMode = React.useContext(EdgeConnectorModeContext);
+  const [hovered, setHovered] = React.useState(false);
+  const showDelete = hovered || connectorMode;
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -90,34 +109,81 @@ export function IntegrationEdge({
     [onLabelClick, id, provider]
   );
 
+  const handleDelete = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (onDelete) {
+        onDelete(id);
+      }
+    },
+    [onDelete, id]
+  );
+
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
-      {badgeStyle && (
-        <EdgeLabelRenderer>
-          <div
-            style={{
-              position: "absolute",
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-              pointerEvents: "all",
-            }}
-            className="nodrag nopan"
-          >
-            <div
-              className={cn(
-                "px-2 py-0.5 rounded-full border text-[9px] font-medium transition-colors",
-                "bg-[var(--background)] shadow-sm",
-                onLabelClick ? "cursor-pointer" : "",
-                badgeStyle.bg
-              )}
-              onClick={handleClick}
-              title={onLabelClick ? "Click to edit policy" : undefined}
-            >
-              {badgeStyle.label}
-            </div>
+      {/* Invisible wider path for easier hover detection.
+          pointer-events:all overrides React Flow's visibleStroke default
+          so the transparent stroke still captures mouse events. */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={24}
+        style={{ pointerEvents: "all" }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke: showDelete ? "var(--accent-primary)" : style?.stroke,
+        }}
+      />
+      <EdgeLabelRenderer>
+        <div
+          style={{
+            position: "absolute",
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            pointerEvents: "all",
+          }}
+          className="nodrag nopan"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <div className="flex items-center gap-1">
+            {badgeStyle && (
+              <div
+                className={cn(
+                  "px-2 py-0.5 rounded-full border text-[9px] font-medium transition-colors",
+                  "bg-[var(--background)] shadow-sm",
+                  onLabelClick ? "cursor-pointer" : "",
+                  badgeStyle.bg
+                )}
+                onClick={handleClick}
+                title={onLabelClick ? "Click to edit policy" : undefined}
+              >
+                {badgeStyle.label}
+              </div>
+            )}
+            {onDelete && (
+              <button
+                onClick={handleDelete}
+                className={cn(
+                  "flex items-center justify-center rounded-full transition-all",
+                  showDelete
+                    ? "w-5 h-5 opacity-100 bg-[var(--background)] border border-red-500/50 shadow-sm text-red-500 hover:bg-red-500/20 cursor-pointer"
+                    : "w-5 h-5 opacity-0 pointer-events-none"
+                )}
+                title="Delete connection"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
-        </EdgeLabelRenderer>
-      )}
+        </div>
+      </EdgeLabelRenderer>
     </>
   );
 }
