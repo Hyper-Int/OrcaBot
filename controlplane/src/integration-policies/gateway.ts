@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v11-clean-plaintext-urls
-console.log(`[integration-gateway] REVISION: gateway-v11-clean-plaintext-urls loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v11-sanitize-errors-devgate
+console.log(`[integration-gateway] REVISION: gateway-v11-sanitize-errors-devgate loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -709,6 +709,11 @@ export async function handleGatewayExecute(
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
 
+    // Log full error internally for debugging
+    console.error(`[gateway] API error for ${provider}/${body.action}:`, errorMessage);
+
+    const isDev = env.DEV_AUTH_ENABLED === 'true';
+
     await logAuditEntry(env, {
       terminalIntegrationId: ti.id,
       terminalId,
@@ -719,11 +724,13 @@ export async function handleGatewayExecute(
       policyId,
       policyVersion,
       decision: 'denied',
-      denialReason: `API error: ${errorMessage}`,
+      // In dev mode, keep full error for debugging; in prod, sanitize
+      denialReason: isDev ? `API error: ${errorMessage}` : `API error (see server logs for details)`,
     });
 
+    // In dev mode, return the full error for debugging; in prod, don't leak API details
     return Response.json(
-      { error: 'API_ERROR', reason: errorMessage },
+      { error: 'API_ERROR', reason: isDev ? errorMessage : 'Action failed - please try again or contact support' },
       { status: 502 }
     );
   }
