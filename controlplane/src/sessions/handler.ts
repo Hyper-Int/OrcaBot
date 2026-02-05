@@ -58,7 +58,7 @@ function parseBооtCоmmand(content: unknown): string {
     if (parsed.ttsProvider && parsed.ttsProvider !== 'none' && bootCommand) {
       const provider = parsed.ttsProvider;
       const voice = parsed.ttsVoice || '';
-      // talkito --disable-mcp --tts-provider {provider} --tts-voice {voice} --orcabot --asr-provider off --log-file .talkito.log {command}
+      // talkito --disable-mcp --tts-provider {provider} --tts-voice {voice} --orcabot --asr-provider off {command}
       const talkitoArgs = [
         'talkito',
         '--disable-mcp',
@@ -66,7 +66,6 @@ function parseBооtCоmmand(content: unknown): string {
         ...(voice ? ['--tts-voice', voice] : []),
         '--orcabot',
         '--asr-provider', 'off',
-        '--log-file', '.talkito.log',
         bootCommand,
       ];
       return talkitoArgs.join(' ');
