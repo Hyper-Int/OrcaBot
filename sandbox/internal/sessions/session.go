@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v2-fix-hooks-in-createpty-with-token
+// REVISION: session-v3-generate-all-agent-settings
 
 // Package sessions manages session lifecycle.
 //
@@ -37,7 +37,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "session-v2-fix-hooks-in-createpty-with-token"
+const sessionRevision = "session-v3-generate-all-agent-settings"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -468,17 +468,18 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		os.WriteFile(mcpURLFile, []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
 	}
 
-	// Generate MCP settings file only for the specific agent being launched
-	// This allows agents to discover the orcabot MCP server and user's MCP tools
-	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
-		userTools := s.fetchUserMCPTools()
-		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
-			// Log but don't fail - settings generation is not critical for PTY creation
-			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
-		}
+	// Generate MCP settings for ALL supported agents so users can run any agent
+	// manually in shell terminals (e.g., type "codex" in a bash terminal).
+	// Previously we only generated settings for the specific agent command,
+	// which broke MCP for agents launched manually.
+	userTools := s.fetchUserMCPTools()
+	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings: %v\n", err)
+	}
 
-		// Generate agent stop hooks so we can detect when the agent finishes
-		// The hooks will call back to our localhost endpoint to trigger WebSocket events
+	// Generate agent stop hooks only for the specific agent being launched
+	// (hooks are agent-specific and should only be created when needed)
+	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
 		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
