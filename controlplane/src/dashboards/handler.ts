@@ -190,8 +190,10 @@ export async function createDashbоard(
   `).bind(id, userId, now).run();
 
   // If templateId provided, populate dashboard from template
+  let templateViewport: { x: number; y: number; zoom: number } | undefined;
   if (data.templateId) {
-    await populateFromTemplate(env, id, data.templateId);
+    const result = await populateFromTemplate(env, id, data.templateId);
+    templateViewport = result?.viewport;
   }
 
   const dashboard: Dashboard = {
@@ -202,7 +204,10 @@ export async function createDashbоard(
     updatedAt: now,
   };
 
-  return Response.json({ dashboard }, { status: 201 });
+  return Response.json({
+    dashboard,
+    ...(templateViewport && { viewport: templateViewport }),
+  }, { status: 201 });
 }
 
 // Update a dashboard

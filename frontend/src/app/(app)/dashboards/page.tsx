@@ -19,6 +19,9 @@ import {
   AlertCircle,
   Shield,
   Settings,
+  CheckCircle,
+  XCircle,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,7 +55,7 @@ import {
   deleteGlobalSecret,
   type UserSecret,
 } from "@/lib/api/cloudflare";
-import { listTemplates, deleteTemplate } from "@/lib/api/cloudflare/templates";
+import { listTemplates, deleteTemplate, approveTemplate } from "@/lib/api/cloudflare/templates";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 
@@ -124,12 +127,19 @@ export default function DashboardsPage() {
   const createMutation = useMutation({
     mutationFn: ({ name, templateId }: { name: string; templateId?: string }) =>
       createDashboard(name, templateId),
-    onSuccess: (dashboard) => {
+    onSuccess: ({ dashboard, viewport }) => {
       queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       toast.success("Dashboard created");
       setIsCreateOpen(false);
       setNewDashboardName("");
       setSelectedTemplateId(undefined);
+      // Stash template viewport so the dashboard page can restore it on load
+      if (viewport) {
+        sessionStorage.setItem(
+          `template-viewport-${dashboard.id}`,
+          JSON.stringify(viewport)
+        );
+      }
       router.push(`/dashboards/${dashboard.id}`);
     },
     onError: (error) => {
@@ -159,6 +169,19 @@ export default function DashboardsPage() {
     },
     onError: (error) => {
       toast.error(`Failed to delete template: ${error.message}`);
+    },
+  });
+
+  // Approve/reject template mutation (admin)
+  const approveTemplateMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: 'approved' | 'rejected' }) =>
+      approveTemplate(id, status),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["templates"] });
+      toast.success(variables.status === 'approved' ? "Template approved" : "Template rejected");
+    },
+    onError: (error) => {
+      toast.error(`Failed to update template: ${error.message}`);
     },
   });
 
@@ -323,8 +346,8 @@ export default function DashboardsPage() {
               }}
             />
 
-            {/* Templates from API */}
-            {templates?.slice(0, 7).map((template) => (
+            {/* Templates from API (admins see all, non-admins capped at 7) */}
+            {(adminMode ? templates : templates?.slice(0, 7))?.map((template) => (
               <NewDashboardCard
                 key={template.id}
                 icon={getCategoryIcon(template.category)}
@@ -332,12 +355,19 @@ export default function DashboardsPage() {
                 description={
                   template.description || `${template.itemCount} blocks`
                 }
+                status={adminMode ? template.status : undefined}
                 onClick={() => {
                   setSelectedTemplateId(template.id);
                   setNewDashboardName(template.name);
                   setIsCreateOpen(true);
                 }}
                 onDelete={adminMode ? () => setDeleteTemplateTarget({ id: template.id, name: template.name }) : undefined}
+                onApprove={adminMode && template.status === 'pending_review'
+                  ? () => approveTemplateMutation.mutate({ id: template.id, status: 'approved' })
+                  : undefined}
+                onReject={adminMode && template.status !== 'rejected'
+                  ? () => approveTemplateMutation.mutate({ id: template.id, status: 'rejected' })
+                  : undefined}
               />
             ))}
 
@@ -795,6 +825,9 @@ interface NewDashboardCardProps {
   description: string;
   onClick: () => void;
   onDelete?: () => void;
+  onApprove?: () => void;
+  onReject?: () => void;
+  status?: string;
 }
 
 function NewDashboardCard({
@@ -803,6 +836,9 @@ function NewDashboardCard({
   description,
   onClick,
   onDelete,
+  onApprove,
+  onReject,
+  status,
 }: NewDashboardCardProps) {
   return (
     <div className="relative group">
@@ -812,7 +848,9 @@ function NewDashboardCard({
           "flex flex-col items-center justify-center p-6 rounded-[var(--radius-card)] w-full",
           "bg-[var(--background-elevated)] border border-[var(--border)]",
           "hover:bg-[var(--background-hover)] hover:border-[var(--border-strong)]",
-          "transition-colors cursor-pointer text-center"
+          "transition-colors cursor-pointer text-center",
+          status === 'pending_review' && "border-[var(--status-warning)]/40",
+          status === 'rejected' && "border-[var(--status-error)]/40 opacity-60"
         )}
       >
         <div className="mb-3 text-[var(--foreground-muted)]">{icon}</div>
@@ -820,18 +858,47 @@ function NewDashboardCard({
         <p className="text-caption text-[var(--foreground-subtle)]">
           {description}
         </p>
+        {status === 'pending_review' && (
+          <span className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--status-warning)]/20 text-[var(--status-warning)] text-xs font-medium">
+            <Clock className="w-3 h-3" />
+            Pending Review
+          </span>
+        )}
+        {status === 'rejected' && (
+          <span className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--status-error)]/20 text-[var(--status-error)] text-xs font-medium">
+            <XCircle className="w-3 h-3" />
+            Rejected
+          </span>
+        )}
       </button>
-      {onDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
-        >
-          <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
-        </button>
-      )}
+      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+        {onApprove && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onApprove(); }}
+            className="p-1 hover:bg-[var(--background-hover)] rounded"
+            title="Approve template"
+          >
+            <CheckCircle className="w-4 h-4 text-[var(--status-success)]" />
+          </button>
+        )}
+        {onReject && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onReject(); }}
+            className="p-1 hover:bg-[var(--background-hover)] rounded"
+            title="Reject template"
+          >
+            <XCircle className="w-4 h-4 text-[var(--status-warning)]" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="p-1 hover:bg-[var(--background-hover)] rounded"
+          >
+            <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

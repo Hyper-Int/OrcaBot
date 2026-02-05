@@ -247,6 +247,57 @@ export function buildInterestNotificationEmail(params: {
 }
 
 /**
+ * Build notification email for admin when a template is submitted for review
+ */
+export function buildTemplateReviewEmail(params: {
+  templateName: string;
+  authorName: string;
+  authorEmail: string;
+  category: string;
+  itemCount: number;
+}): { subject: string; html: string } {
+  return {
+    subject: `[OrcaBot] Template submitted for review: "${params.templateName}"`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 32px; border-radius: 12px 12px 0 0;">
+    <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 600;">Template Review Required</h1>
+  </div>
+
+  <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <p style="margin: 0 0 16px; font-size: 16px;">
+      A new template has been submitted for review:
+    </p>
+
+    <table style="width: 100%; font-size: 14px; margin-bottom: 16px; border-collapse: collapse;">
+      <tr><td style="color: #666; padding: 4px 8px 4px 0;">Template:</td><td style="padding: 4px 0; font-weight: 500;">${escapeHtml(params.templateName)}</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0;">Author:</td><td style="padding: 4px 0;">${escapeHtml(params.authorName)} (${escapeHtml(params.authorEmail)})</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0;">Category:</td><td style="padding: 4px 0;">${escapeHtml(params.category)}</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0;">Items:</td><td style="padding: 4px 0;">${params.itemCount} blocks</td></tr>
+      <tr><td style="color: #666; padding: 4px 8px 4px 0;">Submitted:</td><td style="padding: 4px 0;">${new Date().toISOString()}</td></tr>
+    </table>
+
+    <p style="margin: 16px 0 0; color: #666; font-size: 14px;">
+      Log in and enable admin mode to approve or reject this template.
+    </p>
+  </div>
+
+  <p style="margin: 24px 0 0; color: #999; font-size: 12px; text-align: center;">
+    OrcaBot Admin Notification
+  </p>
+</body>
+</html>
+    `.trim(),
+  };
+}
+
+/**
  * Build bug report email for admin notification
  */
 export function buildBugReportEmail(params: {

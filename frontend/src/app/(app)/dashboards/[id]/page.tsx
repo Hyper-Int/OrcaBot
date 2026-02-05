@@ -476,6 +476,38 @@ export default function DashboardPage() {
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
 
+  // Restore template viewport if this dashboard was just created from a template.
+  // Uses requestAnimationFrame retry since ReactFlow instance may not be ready
+  // on the first render after data loads.
+  const templateViewportApplied = React.useRef(false);
+  React.useEffect(() => {
+    if (templateViewportApplied.current || !data) return;
+    const key = `template-viewport-${dashboardId}`;
+    const raw = sessionStorage.getItem(key);
+    if (!raw) {
+      templateViewportApplied.current = true;
+      return;
+    }
+    const tryApply = () => {
+      if (templateViewportApplied.current) return;
+      const instance = reactFlowInstanceRef.current;
+      if (!instance) {
+        requestAnimationFrame(tryApply);
+        return;
+      }
+      sessionStorage.removeItem(key);
+      templateViewportApplied.current = true;
+      try {
+        const vp = JSON.parse(raw) as { x: number; y: number; zoom: number };
+        instance.setViewport(vp, { duration: 0 });
+        viewportRef.current = vp;
+      } catch {
+        // ignore malformed viewport
+      }
+    };
+    tryApply();
+  }, [data, dashboardId]);
+
   // Workspace sidebar session: pick the first active session from any terminal
   const workspaceSessionId = React.useMemo(() => {
     const session = sessions.find((s) => s.status === "active")
@@ -2769,6 +2801,7 @@ export default function DashboardPage() {
         onOpenChange={setIsExportDialogOpen}
         dashboardId={dashboardId}
         dashboardName={dashboard?.name || ""}
+        viewport={reactFlowInstanceRef.current?.getViewport()}
       />
 
       {/* Share Dashboard Dialog */}

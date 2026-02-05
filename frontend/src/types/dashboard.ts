@@ -251,6 +251,7 @@ export interface DashboardTemplate {
   itemCount: number;
   isFeatured: boolean;
   useCount: number;
+  status?: 'pending_review' | 'approved' | 'rejected';
   createdAt: string;
   updatedAt: string;
 }
@@ -261,4 +262,5 @@ export interface DashboardTemplate {
 export interface DashboardTemplateWithData extends DashboardTemplate {
   items: TemplateItem[];
   edges: TemplateEdge[];
+  viewport?: { x: number; y: number; zoom: number };
 }

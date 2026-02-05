@@ -23,6 +23,7 @@ interface DashboardResponse {
   sessions?: Session[];
   edges?: DashboardEdge[];
   role?: DashboardRole;
+  viewport?: { x: number; y: number; zoom: number };
 }
 
 interface DashboardCreateRequest {
@@ -106,12 +107,12 @@ export async function getDashboard(id: string): Promise<{
 export async function createDashboard(
   name: string,
   templateId?: string
-): Promise<Dashboard> {
+): Promise<{ dashboard: Dashboard; viewport?: { x: number; y: number; zoom: number } }> {
   const response = await apiPost<DashboardResponse>(API.cloudflare.dashboards, {
     name,
     templateId,
   } as DashboardCreateRequest);
-  return response.dashboard;
+  return { dashboard: response.dashboard, viewport: response.viewport };
 }
 
 /**

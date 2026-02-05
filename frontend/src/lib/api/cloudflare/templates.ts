@@ -34,6 +34,7 @@ interface TemplateCreateRequest {
   name: string;
   description?: string;
   category?: TemplateCategory;
+  viewport?: { x: number; y: number; zoom: number };
 }
 
 // ===== Templates API =====
@@ -85,4 +86,17 @@ export async function createTemplate(data: TemplateCreateRequest): Promise<{
  */
 export async function deleteTemplate(id: string): Promise<void> {
   await apiDelete<void>(`${API.cloudflare.templates}/${id}`);
+}
+
+/**
+ * Approve or reject a template (admin only)
+ */
+export async function approveTemplate(
+  id: string,
+  status: 'approved' | 'rejected'
+): Promise<{ template: { id: string; status: string } }> {
+  return apiPost<{ template: { id: string; status: string } }>(
+    `${API.cloudflare.templates}/${id}/approve`,
+    { status }
+  );
 }

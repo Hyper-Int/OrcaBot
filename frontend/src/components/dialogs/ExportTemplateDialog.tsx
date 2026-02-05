@@ -26,6 +26,7 @@ interface ExportTemplateDialogProps {
   onOpenChange: (open: boolean) => void;
   dashboardId: string;
   dashboardName: string;
+  viewport?: { x: number; y: number; zoom: number };
 }
 
 const CATEGORIES: { value: TemplateCategory; label: string }[] = [
@@ -40,6 +41,7 @@ export function ExportTemplateDialog({
   onOpenChange,
   dashboardId,
   dashboardName,
+  viewport,
 }: ExportTemplateDialogProps) {
   const [name, setName] = React.useState(dashboardName);
   const [description, setDescription] = React.useState("");
@@ -61,9 +63,10 @@ export function ExportTemplateDialog({
         name,
         description,
         category,
+        viewport,
       }),
     onSuccess: (result) => {
-      toast.success(`Template "${result.name}" exported successfully`);
+      toast.success(`Template "${result.name}" submitted for review. It will be visible to everyone once approved (usually within 24 hours).`);
       onOpenChange(false);
     },
     onError: (error) => {
@@ -89,8 +92,8 @@ export function ExportTemplateDialog({
           <DialogHeader>
             <DialogTitle>Export as Template</DialogTitle>
             <DialogDescription>
-              Share this dashboard layout with others. Private content will be
-              scrubbed.
+              Submit this dashboard layout for review. Once approved, it will
+              be available to all users. Private content will be scrubbed.
             </DialogDescription>
           </DialogHeader>
 
@@ -171,7 +174,7 @@ export function ExportTemplateDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={mutation.isPending || !name.trim()}>
-              {mutation.isPending ? "Exporting..." : "Export Template"}
+              {mutation.isPending ? "Submitting..." : "Submit for Review"}
             </Button>
           </DialogFooter>
         </form>

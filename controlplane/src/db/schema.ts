@@ -628,9 +628,11 @@ CREATE TABLE IF NOT EXISTS dashboard_templates (
   author_name TEXT NOT NULL DEFAULT '',
   items_json TEXT NOT NULL DEFAULT '[]',
   edges_json TEXT NOT NULL DEFAULT '[]',
+  viewport_json TEXT,
   item_count INTEGER NOT NULL DEFAULT 0,
   is_featured INTEGER NOT NULL DEFAULT 0,
   use_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('pending_review', 'approved', 'rejected')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -815,6 +817,34 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active
         ON terminal_integrations(terminal_id, provider)
         WHERE deleted_at IS NULL
+    `).run();
+  } catch {
+    // Index already exists.
+  }
+
+  // Add viewport_json column to dashboard_templates for saving view position/zoom
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_templates ADD COLUMN viewport_json TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add status column to dashboard_templates for approval workflow
+  // Default 'approved' so existing templates remain visible
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_templates ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Index for status column (must come after ALTER TABLE that adds it)
+  try {
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_templates_status ON dashboard_templates(status)
     `).run();
   } catch {
     // Index already exists.
