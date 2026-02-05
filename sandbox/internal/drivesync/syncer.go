@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drivesync-syncer-v5-folder-scoping
+// REVISION: drivesync-syncer-v6-mount-path-fix
 
 package drivesync
 
@@ -21,7 +21,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const syncerRevision = "drivesync-syncer-v5-folder-scoping"
+const syncerRevision = "drivesync-syncer-v6-mount-path-fix"
 
 func init() {
 	log.Printf("[drivesync-syncer] REVISION: %s loaded at %s", syncerRevision, time.Now().Format(time.RFC3339))
@@ -129,7 +129,13 @@ func (s *Syncer) run() {
 
 	log.Printf("[drivesync] starting sync, mount=%s", s.mountPath)
 
-	// Create mount directory
+	// Load sync config first — this may adjust mountPath to include folder name
+	if err := s.loadSyncConfig(); err != nil {
+		log.Printf("[drivesync] failed to load sync config: %v", err)
+		// Continue without folder scoping
+	}
+
+	// Create mount directory (after loadSyncConfig which may update mountPath)
 	if err := os.MkdirAll(s.mountPath, 0755); err != nil {
 		log.Printf("[drivesync] failed to create mount dir: %v", err)
 		s.emitError("", fmt.Sprintf("failed to create mount directory: %v", err))
@@ -196,6 +202,12 @@ func (s *Syncer) cleanup() {
 		log.Printf("[drivesync] failed to remove mount dir: %v", err)
 	}
 
+	// Try to remove the parent /workspace/drive/ directory if it's now empty
+	driveDir := filepath.Join(s.workspaceRoot, mountDirName)
+	if driveDir != s.mountPath {
+		_ = os.Remove(driveDir) // only succeeds if empty, which is fine
+	}
+
 	// Remove state file
 	if err := s.state.Delete(); err != nil && !os.IsNotExist(err) {
 		log.Printf("[drivesync] failed to delete state file: %v", err)
@@ -213,11 +225,8 @@ func (s *Syncer) initialSync() error {
 	log.Printf("[drivesync] starting initial sync")
 	s.emit(SyncEvent{Type: "drive_sync", Status: "syncing", Direction: "download"})
 
-	// Get the root folder ID from the control plane (user's selected folder)
-	if err := s.loadSyncConfig(); err != nil {
-		log.Printf("[drivesync] failed to load sync config: %v", err)
-		// Continue without folder scoping — will sync everything (not ideal but functional)
-	}
+	// Note: loadSyncConfig() is called in run() before initialSync() —
+	// rootFolderID and mountPath are already set.
 
 	// Get the changes start token for future incremental polls
 	startToken, err := s.getChangesStartToken()
@@ -1056,6 +1065,8 @@ func (s *Syncer) getChangesStartToken() (string, error) {
 
 // loadSyncConfig fetches the user's selected Drive folder from the control plane.
 // This scopes all sync operations to the selected folder and its descendants.
+// It also adjusts mountPath to include the folder name (e.g. /workspace/drive/MyFolder)
+// so the local path matches what the manifest-based sync uses.
 func (s *Syncer) loadSyncConfig() error {
 	resp, err := s.gatewayExecute("drive.sync_config", map[string]interface{}{})
 	if err != nil {
@@ -1071,8 +1082,31 @@ func (s *Syncer) loadSyncConfig() error {
 	}
 
 	s.rootFolderID = folderID
+
+	// Adjust mount path to include folder name so it matches the manifest sync path
+	// (e.g. /workspace/drive/MyFolder instead of /workspace/drive/)
+	if folderName != "" {
+		safeName := sanitizeFolderName(folderName)
+		s.mountPath = filepath.Join(s.workspaceRoot, mountDirName, safeName)
+		s.state = NewSyncState(s.mountPath, s.workspaceRoot)
+		log.Printf("[drivesync] mount path adjusted to %s", s.mountPath)
+	}
+
 	log.Printf("[drivesync] scoped to folder: %s (id=%s)", folderName, folderID)
 	return nil
+}
+
+// sanitizeFolderName cleans a folder name for use as a local directory name.
+// Matches the control plane's sanitizePathSegment logic.
+func sanitizeFolderName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "Drive"
+	}
+	// Replace path separators with dashes (same as control plane)
+	trimmed = strings.ReplaceAll(trimmed, "/", "-")
+	trimmed = strings.ReplaceAll(trimmed, "\\", "-")
+	return trimmed
 }
 
 // isInSyncScope checks whether a file or folder belongs within the synced folder tree.
