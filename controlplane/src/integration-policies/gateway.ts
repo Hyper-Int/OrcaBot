@@ -262,9 +262,9 @@ async function checkRateLimit(
     }));
 
     if (!res.ok) {
-      // Fail open on error
-      console.error(`[gateway] Rate limit check failed: ${res.status}`);
-      return { allowed: true };
+      // Fail closed on error - deny requests when rate limiter is unavailable
+      console.error(`[gateway] Rate limit check failed (failing closed): ${res.status}`);
+      return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
     }
 
     const result = await res.json() as { allowed: boolean; remaining?: number };
@@ -275,8 +275,9 @@ async function checkRateLimit(
       };
     }
   } catch (err) {
-    // Fail open on error
-    console.error(`[gateway] Rate limit check error:`, err);
+    // Fail closed on error - deny requests when rate limiter is unavailable
+    console.error(`[gateway] Rate limit check error (failing closed):`, err);
+    return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
   }
 
   return { allowed: true };
