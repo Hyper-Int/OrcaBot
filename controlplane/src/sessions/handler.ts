@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v3-sql-table-whitelist
-const sessionsRevision = "sessions-v3-sql-table-whitelist";
+// REVISION: sessions-v4-pty-cleanup-on-stop
+const sessionsRevision = "sessions-v4-pty-cleanup-on-stop";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1022,6 +1022,10 @@ export async function stоpSessiоn(
       await env.DB.prepare(`
         DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
       `).bind(session.dashboard_id).run();
+    } else if (session.pty_id) {
+      // Other sessions still active — only delete this session's PTY
+      // (kills the PTY process and its children: talkito, claude, gemini, codex, etc.)
+      await sandbox.deletePty(session.sandbox_session_id as string, session.pty_id as string);
     }
   } catch {
     // Ignore errors - sandbox might already be gone
