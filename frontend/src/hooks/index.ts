@@ -7,3 +7,4 @@ export { useTerminal, shouldBlockInput, getTerminalStatus, type UseTerminalOptio
 export { useTerminalAudio } from "./useTerminalAudio";
 export { useDebouncedCallback } from "./useDebounce";
 export { useUICommands } from "./useUICommands";
+export { useUndoRedo } from "./useUndoRedo";

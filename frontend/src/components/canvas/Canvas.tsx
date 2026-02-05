@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v5-connector-mode-delete
-console.log(`[canvas] REVISION: canvas-v5-connector-mode-delete loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v7-batch-delete
+console.log(`[canvas] REVISION: canvas-v7-batch-delete loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -173,6 +173,8 @@ interface CanvasProps {
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void;
   onItemCreate?: (item: Omit<DashboardItem, "id" | "createdAt" | "updatedAt">) => void;
   onItemDelete?: (itemId: string) => void;
+  /** Called when multiple items are deleted at once (e.g. multi-select delete) */
+  onItemsDelete?: (itemIds: string[]) => void;
   onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
   onCursorMove?: (point: { x: number; y: number }) => void;
@@ -198,6 +200,10 @@ interface CanvasProps {
   onEdgeLabelClick?: (edgeId: string, provider: string) => void;
   /** Called when an edge delete button is clicked */
   onEdgeDelete?: (edgeId: string) => void;
+  /** Called when a drag completes, with before/after positions for undo */
+  onDragComplete?: (itemId: string, before: { x: number; y: number }, after: { x: number; y: number }) => void;
+  /** Called when a resize completes, with before/after position+size for undo */
+  onResizeComplete?: (itemId: string, before: { position: { x: number; y: number }; size: { width: number; height: number } }, after: { position: { x: number; y: number }; size: { width: number; height: number } }) => void;
   /** Called when a terminal's working directory changes */
   onTerminalCwdChange?: (itemId: string, cwd: string) => void;
   /** Ref populated with the ReactFlow instance for programmatic viewport control */
@@ -210,6 +216,7 @@ export function Canvas({
   onItemChange,
   onItemCreate,
   onItemDelete,
+  onItemsDelete,
   onCreateBrowserBlock,
   onViewportChange,
   onCursorMove,
@@ -228,6 +235,8 @@ export function Canvas({
   onDuplicate,
   onEdgeLabelClick,
   onEdgeDelete,
+  onDragComplete,
+  onResizeComplete,
   onTerminalCwdChange,
   reactFlowRef,
 }: CanvasProps) {
@@ -293,6 +302,11 @@ export function Canvas({
   // Track whether a drag is in progress to prevent node rebuilds mid-drag
   const isDraggingRef = React.useRef(false);
   const pendingNodeRebuildRef = React.useRef(false);
+
+  // Track drag start position for undo
+  const dragStartPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+  // Track resize start state for undo
+  const resizeStartRef = React.useRef<{ itemId: string; position: { x: number; y: number }; size: { width: number; height: number } } | null>(null);
 
   // Rebuild nodes from items - extracted so it can be called from effect and drag-stop
   const rebuildNodes = React.useCallback(() => {
@@ -360,36 +374,67 @@ export function Canvas({
 
       // Check for dimension changes (from NodeResizer)
       changes.forEach((change) => {
-        if (change.type === "dimensions" && change.resizing === false && onItemChange) {
-          // Resize ended - sync to server
-          const node = nodes.find((n) => n.id === change.id);
-          if (node && change.dimensions) {
-            // Use itemId (real ID) for API calls, not node.id (which may be stable key)
-            const itemId = (node.data as { itemId?: string })?.itemId || node.id;
-            // When resizing from top/left edges, position also changes
-            // Include both size and position to keep the correct corner anchored
-            onItemChange(itemId, {
-              position: node.position,
-              size: {
-                width: Math.round(change.dimensions.width),
-                height: Math.round(change.dimensions.height),
-              },
-            });
+        if (change.type === "dimensions") {
+          // Capture resize start state for undo on first resize event
+          if (change.resizing === true && !resizeStartRef.current) {
+            const node = nodes.find((n) => n.id === change.id);
+            if (node) {
+              const itemId = (node.data as { itemId?: string })?.itemId || node.id;
+              resizeStartRef.current = {
+                itemId,
+                position: { ...node.position },
+                size: {
+                  width: Math.round(node.measured?.width ?? node.width ?? 200),
+                  height: Math.round(node.measured?.height ?? node.height ?? 120),
+                },
+              };
+            }
           }
 
-          if (node?.type === "terminal") {
-            terminalRefs.current.get(node.id)?.fit();
+          if (change.resizing === false && onItemChange) {
+            // Resize ended - sync to server
+            const node = nodes.find((n) => n.id === change.id);
+            if (node && change.dimensions) {
+              // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+              const itemId = (node.data as { itemId?: string })?.itemId || node.id;
+              const afterSize = {
+                width: Math.round(change.dimensions.width),
+                height: Math.round(change.dimensions.height),
+              };
+              // When resizing from top/left edges, position also changes
+              // Include both size and position to keep the correct corner anchored
+              onItemChange(itemId, {
+                position: node.position,
+                size: afterSize,
+              });
+
+              // Notify parent of completed resize for undo recording
+              if (onResizeComplete && resizeStartRef.current && resizeStartRef.current.itemId === itemId) {
+                onResizeComplete(
+                  itemId,
+                  { position: resizeStartRef.current.position, size: resizeStartRef.current.size },
+                  { position: { ...node.position }, size: afterSize }
+                );
+              }
+            }
+            resizeStartRef.current = null;
+
+            if (node?.type === "terminal") {
+              terminalRefs.current.get(node.id)?.fit();
+            }
           }
         }
       });
     },
-    [onNodesChange, onItemChange, nodes, bringToFront]
+    [onNodesChange, onItemChange, onResizeComplete, nodes, bringToFront]
   );
 
   const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = true;
       bringToFront(node.id);
+      // Capture position before drag for undo
+      dragStartPositionRef.current = node.position ? { ...node.position } : null;
     },
     [bringToFront]
   );
@@ -403,7 +448,17 @@ export function Canvas({
         // Use itemId (real ID) for API calls, not node.id (which may be stable key)
         const itemId = (node.data as { itemId?: string })?.itemId || node.id;
         onItemChange(itemId, { position: node.position });
+
+        // Notify parent of completed drag for undo recording
+        if (onDragComplete && dragStartPositionRef.current) {
+          const before = dragStartPositionRef.current;
+          const after = { x: node.position.x, y: node.position.y };
+          if (before.x !== after.x || before.y !== after.y) {
+            onDragComplete(itemId, before, after);
+          }
+        }
       }
+      dragStartPositionRef.current = null;
 
       // Flush any node rebuilds that were deferred during the drag
       if (pendingNodeRebuildRef.current) {
@@ -415,21 +470,25 @@ export function Canvas({
         terminalRefs.current.get(node.id)?.fit();
       }
     },
-    [onItemChange, rebuildNodes]
+    [onItemChange, onDragComplete, rebuildNodes]
   );
 
   // Handle node deletion
   const handleNodesDelete = React.useCallback(
     (deletedNodes: Node[]) => {
-      if (onItemDelete) {
-        // Use itemId (real ID) for API calls, not node.id (which may be stable key)
-        deletedNodes.forEach((node) => {
-          const itemId = (node.data as { itemId?: string })?.itemId || node.id;
-          onItemDelete(itemId);
-        });
+      // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+      const itemIds = deletedNodes.map((node) =>
+        (node.data as { itemId?: string })?.itemId || node.id
+      );
+
+      // Multi-select delete: call batch callback if available
+      if (itemIds.length > 1 && onItemsDelete) {
+        onItemsDelete(itemIds);
+      } else if (onItemDelete) {
+        itemIds.forEach((id) => onItemDelete(id));
       }
     },
-    [onItemDelete]
+    [onItemDelete, onItemsDelete]
   );
 
   React.useLayoutEffect(() => {
