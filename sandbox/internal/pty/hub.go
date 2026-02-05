@@ -890,6 +890,12 @@ func (h *Hub) BroadcastAgentStopped(event AgentStoppedEvent) {
 	h.broadcastControl(data)
 }
 
+// BroadcastRawJSON sends pre-marshaled JSON data as a control event to all clients.
+// Used by external systems (e.g., Drive sync) that manage their own event types.
+func (h *Hub) BroadcastRawJSON(data []byte) {
+	h.broadcastControl(data)
+}
+
 // SetSecretValues updates the list of secret values to redact from output.
 // Values shorter than 8 characters are ignored to prevent false positives.
 func (h *Hub) SetSecretValues(values []string) {

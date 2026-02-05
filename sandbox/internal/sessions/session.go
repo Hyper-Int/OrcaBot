@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v3-generate-all-agent-settings
+// REVISION: session-v4-drivesync
 
 // Package sessions manages session lifecycle.
 //
@@ -31,13 +31,14 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agenthooks"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drivesync"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "session-v3-generate-all-agent-settings"
+const sessionRevision = "session-v4-drivesync"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -98,6 +99,16 @@ type Session struct {
 	// REVISION: integration-tokens-v1-storage
 	integrationTokens   map[string]string // ptyID -> JWT token
 	integrationTokensMu sync.RWMutex
+
+	// Drive sync: per-dashboard bidirectional sync with Google Drive
+	// REVISION: drivesync-v1
+	driveSyncer       *drivesync.Syncer
+	driveSyncRefCount int // number of terminals with Drive attached
+	driveSyncMu       sync.Mutex
+
+	// Per-PTY integration tracking: used to detect attach/detach of Drive
+	knownProviders   map[string]map[string]bool // ptyID -> set of provider names
+	knownProvidersMu sync.Mutex
 }
 
 // NewSession creates a new session with workspace at the given root.
@@ -113,6 +124,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		brokerPort:        brokerPort,
 		secrets:           make(map[string]string),
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
+		knownProviders:    make(map[string]map[string]bool),
 	}
 
 	// Wire up broker callback to notify control plane of pending domain approvals
@@ -718,6 +730,10 @@ func (s *Session) DeletePTY(id string) error {
 	s.mu.Unlock()
 
 	info.Hub.Stop()
+
+	// Notify that this PTY's integrations are gone (triggers Drive sync detach if needed)
+	s.NotifyIntegrations(id, nil, "")
+
 	return nil
 }
 
@@ -746,7 +762,116 @@ func (s *Session) Clоse() error {
 		s.browser.Stop()
 	}
 
+	// Stop Drive sync if running
+	s.driveSyncMu.Lock()
+	if s.driveSyncer != nil {
+		s.driveSyncer.Stop()
+		s.driveSyncer = nil
+		s.driveSyncRefCount = 0
+	}
+	s.driveSyncMu.Unlock()
+
 	return nil
+}
+
+// ============================================
+// Drive Sync Management
+// ============================================
+
+// OnDriveIntegrationAttached starts or increments the Drive sync reference count.
+// Called when a terminal attaches a Google Drive integration.
+// The ptyToken is used for gateway authentication.
+func (s *Session) OnDriveIntegrationAttached(ptyToken string) {
+	s.driveSyncMu.Lock()
+	defer s.driveSyncMu.Unlock()
+
+	s.driveSyncRefCount++
+	log.Printf("[session] Drive integration attached (refCount=%d)", s.driveSyncRefCount)
+
+	if s.driveSyncer != nil {
+		// Already running, just bump the ref count
+		return
+	}
+
+	// Create a gateway client for the syncer
+	gateway := mcp.NewGatewayClient()
+
+	// Create event callback that broadcasts to all connected hubs
+	onEvent := func(event drivesync.SyncEvent) {
+		s.broadcastDriveSyncEvent(event)
+	}
+
+	syncer := drivesync.New(s.workspace.Root(), gateway, ptyToken, onEvent)
+	s.driveSyncer = syncer
+	syncer.Start()
+
+	log.Printf("[session] Drive sync started")
+}
+
+// OnDriveIntegrationDetached decrements the Drive sync reference count.
+// When the count reaches zero, sync is stopped and /workspace/drive/ is removed.
+func (s *Session) OnDriveIntegrationDetached() {
+	s.driveSyncMu.Lock()
+	defer s.driveSyncMu.Unlock()
+
+	if s.driveSyncRefCount > 0 {
+		s.driveSyncRefCount--
+	}
+	log.Printf("[session] Drive integration detached (refCount=%d)", s.driveSyncRefCount)
+
+	if s.driveSyncRefCount == 0 && s.driveSyncer != nil {
+		s.driveSyncer.Stop()
+		s.driveSyncer = nil
+		log.Printf("[session] Drive sync stopped and cleaned up")
+	}
+}
+
+// broadcastDriveSyncEvent sends a drive_sync event to all connected PTY hubs.
+func (s *Session) broadcastDriveSyncEvent(event drivesync.SyncEvent) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("[session] failed to marshal drive sync event: %v", err)
+		return
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, info := range s.ptys {
+		info.Hub.BroadcastRawJSON(data)
+	}
+}
+
+// NotifyIntegrations is called by the MCP server when it fetches the current
+// list of integrations for a PTY. It compares with the previously known set
+// and triggers Drive sync attach/detach as needed.
+func (s *Session) NotifyIntegrations(ptyID string, providers []string, ptyToken string) {
+	s.knownProvidersMu.Lock()
+	defer s.knownProvidersMu.Unlock()
+
+	prev := s.knownProviders[ptyID]
+	if prev == nil {
+		prev = make(map[string]bool)
+	}
+
+	curr := make(map[string]bool)
+	for _, p := range providers {
+		curr[p] = true
+	}
+
+	// Detect newly attached Drive
+	if curr["google_drive"] && !prev["google_drive"] {
+		log.Printf("[session] Drive integration attached via PTY %s", ptyID)
+		go s.OnDriveIntegrationAttached(ptyToken)
+	}
+
+	// Detect detached Drive
+	if !curr["google_drive"] && prev["google_drive"] {
+		log.Printf("[session] Drive integration detached via PTY %s", ptyID)
+		go s.OnDriveIntegrationDetached()
+	}
+
+	s.knownProviders[ptyID] = curr
 }
 
 // StartAgent creates and starts an agent in this session

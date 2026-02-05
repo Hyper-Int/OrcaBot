@@ -625,6 +625,9 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'drive.delete': 'canDelete',
     'drive.move': 'canMove',
     'drive.share': 'canShare',
+    'drive.sync_list': 'canRead',
+    'drive.changes_start_token': 'canRead',
+    'drive.changes_list': 'canRead',
   },
   onedrive: {
     'onedrive.read': 'canRead',
