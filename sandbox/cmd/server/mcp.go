@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-integration-v9-mcp-content-format
+// REVISION: mcp-integration-v10-drivesync-notify
 
 package main
 
@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-integration-v9-mcp-content-format loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-integration-v10-drivesync-notify loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // browserToolToAction maps browser MCP tool names to gateway action names
@@ -147,11 +147,13 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[mcp-tools] ListTools: integrations response is nil")
 			} else {
 				log.Printf("[mcp-tools] ListTools: got %d integrations from gateway", len(integrations.Integrations))
+				var activeProviders []string
 				for i, integration := range integrations.Integrations {
 					log.Printf("[mcp-tools] ListTools: integration[%d] provider=%s activePolicyId=%q",
 						i, integration.Provider, integration.ActivePolicyID)
 					// Only add tools if there's an active policy
 					if integration.ActivePolicyID != "" {
+						activeProviders = append(activeProviders, integration.Provider)
 						if integration.Provider == "browser" {
 							// Browser tools are handled locally but still gated by attachment
 							for _, tool := range s.handleBrowserMCPTools() {
@@ -171,6 +173,10 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
+
+				// Notify session of current integrations for Drive sync management.
+				// This detects attach/detach of google_drive and triggers sync start/stop.
+				session.NotifyIntegrations(ptyID, activeProviders, storedToken)
 			}
 		} else {
 			log.Printf("[mcp-tools] ListTools: skipping integration tools (tokenValid=false)")

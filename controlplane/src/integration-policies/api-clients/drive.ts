@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drive-client-v2-binary-base64
-console.log(`[drive-client] REVISION: drive-client-v2-binary-base64 loaded at ${new Date().toISOString()}`);
+// REVISION: drive-client-v3-sync-changes-api
+console.log(`[drive-client] REVISION: drive-client-v3-sync-changes-api loaded at ${new Date().toISOString()}`);
 
 /**
  * Google Drive API Client
@@ -55,6 +55,12 @@ export async function executeDriveAction(
       return deleteFile(args, accessToken);
     case 'drive.share':
       return shareFile(args, accessToken);
+    case 'drive.sync_list':
+      return syncListFiles(args, accessToken);
+    case 'drive.changes_start_token':
+      return getChangesStartToken(accessToken);
+    case 'drive.changes_list':
+      return listChanges(args, accessToken);
     default:
       throw new Error(`Unknown Drive action: ${action}`);
   }
@@ -342,4 +348,124 @@ async function shareFile(
   });
 
   return response.json();
+}
+
+// ============================================
+// Sync-specific actions (for Drive bidirectional sync)
+// ============================================
+
+/**
+ * List all files with sync-relevant metadata (auto-paginates).
+ * Used for initial sync to get a full inventory of Drive files.
+ */
+async function syncListFiles(
+  args: Record<string, unknown>,
+  accessToken: string
+): Promise<{ files: DriveFile[]; totalSize: number }> {
+  const folderId = args.folderId as string || undefined;
+  const allFiles: DriveFile[] = [];
+  let pageToken: string | undefined;
+  let totalSize = 0;
+
+  const queryParts: string[] = ['trashed = false'];
+  if (folderId) {
+    queryParts.push(`'${folderId}' in parents`);
+  }
+
+  do {
+    const params = new URLSearchParams({
+      pageSize: '1000',
+      fields: 'files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,createdTime),nextPageToken',
+      q: queryParts.join(' and '),
+    });
+
+    if (pageToken) {
+      params.set('pageToken', pageToken);
+    }
+
+    const response = await driveFetch(`/files?${params}`, accessToken);
+    const data = await response.json() as DriveFileList & { files: Array<DriveFile & { md5Checksum?: string }> };
+
+    for (const file of data.files) {
+      allFiles.push(file);
+      if (file.size) {
+        totalSize += parseInt(file.size, 10);
+      }
+    }
+
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return { files: allFiles, totalSize };
+}
+
+/**
+ * Get the start page token for the Changes API.
+ * This token represents the current state — subsequent calls to
+ * listChanges with this token will return only changes after this point.
+ */
+async function getChangesStartToken(
+  accessToken: string
+): Promise<{ startPageToken: string }> {
+  const response = await driveFetch('/changes/startPageToken', accessToken);
+  return response.json() as Promise<{ startPageToken: string }>;
+}
+
+interface DriveChange {
+  kind: string;
+  type: string;
+  changeType: string;
+  time: string;
+  removed: boolean;
+  fileId: string;
+  file?: DriveFile & { md5Checksum?: string; trashed?: boolean };
+}
+
+interface ChangesListResponse {
+  kind: string;
+  newStartPageToken?: string;
+  nextPageToken?: string;
+  changes: DriveChange[];
+}
+
+/**
+ * List changes since a given page token.
+ * Returns changed files and a new token for the next poll.
+ * Auto-paginates through all available changes.
+ */
+async function listChanges(
+  args: Record<string, unknown>,
+  accessToken: string
+): Promise<{ changes: DriveChange[]; newStartPageToken: string }> {
+  const initialPageToken = args.pageToken as string;
+  if (!initialPageToken) {
+    throw new Error('pageToken is required');
+  }
+
+  const allChanges: DriveChange[] = [];
+  let pageToken: string | undefined = initialPageToken;
+  let newStartPageToken = '';
+
+  do {
+    const params = new URLSearchParams({
+      pageToken: pageToken,
+      pageSize: '1000',
+      fields: 'changes(fileId,removed,file(id,name,mimeType,parents,size,modifiedTime,md5Checksum,trashed)),newStartPageToken,nextPageToken',
+      spaces: 'drive',
+      includeRemoved: 'true',
+    });
+
+    const response = await driveFetch(`/changes?${params}`, accessToken);
+    const data = await response.json() as ChangesListResponse;
+
+    allChanges.push(...data.changes);
+
+    if (data.newStartPageToken) {
+      newStartPageToken = data.newStartPageToken;
+    }
+
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return { changes: allChanges, newStartPageToken };
 }
