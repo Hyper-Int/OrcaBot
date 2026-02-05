@@ -3883,16 +3883,20 @@ export function TerminalBlock({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-[var(--status-warning)]">
-              <Key className="w-5 h-5" />
-              Possible API Key Detected
-            </DialogTitle>
+            <div className="flex gap-3">
+              <div className="flex-1 space-y-2">
+                <DialogTitle className="flex items-center gap-2 text-[var(--status-warning)]">
+                  Possible API Key Detected
+                </DialogTitle>
+                <p className="text-sm text-[var(--foreground-muted)]">
+                  {pasteWarning?.reason}. Pasting secrets directly into the terminal
+                  exposes them to AI agents and prompt hacks.
+                </p>
+              </div>
+              <img src="/orca_mad.png" alt="" className="w-20 h-20 flex-shrink-0" />
+            </div>
             <DialogDescription asChild>
               <div className="space-y-3 text-sm">
-                <p>
-                  {pasteWarning?.reason}. Pasting secrets directly into the terminal
-                  exposes them to AI agents and other viewers.
-                </p>
 
                 <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] p-3 font-mono text-xs break-all max-h-20 overflow-y-auto text-[var(--foreground-muted)]">
                   {pasteWarning?.text.slice(0, 120)}{pasteWarning && pasteWarning.text.length > 120 ? "..." : ""}
@@ -3904,9 +3908,8 @@ export function TerminalBlock({
                     being read by AI agents or seen by other users.
                   </p>
                 </div>
-              </div>
 
-                <label className="flex items-center gap-2 cursor-pointer select-none">
+                <label className="flex items-center gap-2 cursor-pointer select-none pb-2">
                   <input
                     type="checkbox"
                     id="dismiss-paste-warning"
@@ -3921,6 +3924,7 @@ export function TerminalBlock({
                   />
                   <span className="text-[var(--foreground-muted)]">Don&apos;t warn me again</span>
                 </label>
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
