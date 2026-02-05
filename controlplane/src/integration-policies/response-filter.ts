@@ -348,11 +348,11 @@ function filterDriveResponse(
     return { data: response, filtered: false };
   }
 
-  // Filter list/search responses
-  if (action.includes('list') || action.includes('search')) {
-    // Handle Google Drive API response format { files: [...], nextPageToken: ... }
+  // Filter list/search/sync_list responses
+  if (action.includes('list') || action.includes('search') || action === 'drive.sync_list') {
+    // Handle Google Drive API response format { files: [...], ... }
     if (response && typeof response === 'object' && 'files' in response) {
-      const listResponse = response as { files: DriveFile[]; nextPageToken?: string };
+      const listResponse = response as { files: DriveFile[]; nextPageToken?: string; totalSize?: number };
       const result = filterDriveFiles(listResponse.files || [], policy);
       return {
         data: {
@@ -366,6 +366,28 @@ function filterDriveResponse(
 
     if (Array.isArray(response)) {
       return filterDriveFiles(response as DriveFile[], policy);
+    }
+  }
+
+  // Filter changes_list responses — each change has a nested file object
+  if (action === 'drive.changes_list') {
+    if (response && typeof response === 'object' && 'changes' in response) {
+      const changesResponse = response as { changes: Array<{ fileId: string; removed: boolean; file?: DriveFile }>; newStartPageToken: string };
+      const originalCount = changesResponse.changes.length;
+      const filteredChanges = changesResponse.changes.filter(change => {
+        if (change.removed || !change.file) return true; // Pass through removals
+        const result = filterDriveFiles([change.file], policy);
+        return result.data.length > 0;
+      });
+      const removedCount = originalCount - filteredChanges.length;
+      return {
+        data: {
+          ...changesResponse,
+          changes: filteredChanges,
+        },
+        filtered: removedCount > 0,
+        removedCount,
+      };
     }
   }
 

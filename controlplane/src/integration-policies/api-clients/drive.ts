@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drive-client-v4-binary-upload-fix
-console.log(`[drive-client] REVISION: drive-client-v4-binary-upload-fix loaded at ${new Date().toISOString()}`);
+// REVISION: drive-client-v5-recursive-sync-list
+console.log(`[drive-client] REVISION: drive-client-v5-recursive-sync-list loaded at ${new Date().toISOString()}`);
 
 /**
  * Google Drive API Client
@@ -381,20 +381,22 @@ async function syncListFiles(
   accessToken: string
 ): Promise<{ files: DriveFile[]; totalSize: number }> {
   const folderId = args.folderId as string || undefined;
+
+  if (folderId) {
+    // Recursive listing: BFS through the folder tree to get ALL descendants
+    return syncListFilesRecursive(folderId, accessToken);
+  }
+
+  // No folder scoping — list everything (original behavior)
   const allFiles: DriveFile[] = [];
   let pageToken: string | undefined;
   let totalSize = 0;
-
-  const queryParts: string[] = ['trashed = false'];
-  if (folderId) {
-    queryParts.push(`'${folderId}' in parents`);
-  }
 
   do {
     const params = new URLSearchParams({
       pageSize: '1000',
       fields: 'files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,createdTime),nextPageToken',
-      q: queryParts.join(' and '),
+      q: 'trashed = false',
     });
 
     if (pageToken) {
@@ -413,6 +415,55 @@ async function syncListFiles(
 
     pageToken = data.nextPageToken;
   } while (pageToken);
+
+  return { files: allFiles, totalSize };
+}
+
+/**
+ * Recursively list all files and folders within a given Drive folder.
+ * Uses BFS: lists direct children of each folder, and for any child
+ * that is itself a folder, queues it for further listing.
+ */
+async function syncListFilesRecursive(
+  rootFolderId: string,
+  accessToken: string
+): Promise<{ files: DriveFile[]; totalSize: number }> {
+  const allFiles: DriveFile[] = [];
+  let totalSize = 0;
+  const foldersToProcess = [rootFolderId];
+
+  while (foldersToProcess.length > 0) {
+    const currentFolderId = foldersToProcess.shift()!;
+    let pageToken: string | undefined;
+
+    do {
+      const params = new URLSearchParams({
+        pageSize: '1000',
+        fields: 'files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,createdTime),nextPageToken',
+        q: `'${currentFolderId}' in parents and trashed = false`,
+      });
+
+      if (pageToken) {
+        params.set('pageToken', pageToken);
+      }
+
+      const response = await driveFetch(`/files?${params}`, accessToken);
+      const data = await response.json() as DriveFileList & { files: Array<DriveFile & { md5Checksum?: string }> };
+
+      for (const file of data.files) {
+        allFiles.push(file);
+        if (file.size) {
+          totalSize += parseInt(file.size, 10);
+        }
+        // Queue subfolders for recursive listing
+        if (file.mimeType === 'application/vnd.google-apps.folder') {
+          foldersToProcess.push(file.id);
+        }
+      }
+
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+  }
 
   return { files: allFiles, totalSize };
 }

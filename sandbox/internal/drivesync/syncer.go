@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drivesync-syncer-v4-folder-ordering
+// REVISION: drivesync-syncer-v5-folder-scoping
 
 package drivesync
 
@@ -21,7 +21,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const syncerRevision = "drivesync-syncer-v4-folder-ordering"
+const syncerRevision = "drivesync-syncer-v5-folder-scoping"
 
 func init() {
 	log.Printf("[drivesync-syncer] REVISION: %s loaded at %s", syncerRevision, time.Now().Format(time.RFC3339))
@@ -63,6 +63,10 @@ type Syncer struct {
 	backoffMu    sync.Mutex
 	backoffUntil time.Time
 	backoffLevel int // 0=none, 1=5s, 2=10s, 3=20s, 4=60s
+
+	// Root folder ID: the user-selected Drive folder to sync.
+	// All sync operations are scoped to this folder and its descendants.
+	rootFolderID string
 
 	// Folder ID → relative path mapping (built during initial sync)
 	folderMapMu     sync.RWMutex
@@ -209,6 +213,12 @@ func (s *Syncer) initialSync() error {
 	log.Printf("[drivesync] starting initial sync")
 	s.emit(SyncEvent{Type: "drive_sync", Status: "syncing", Direction: "download"})
 
+	// Get the root folder ID from the control plane (user's selected folder)
+	if err := s.loadSyncConfig(); err != nil {
+		log.Printf("[drivesync] failed to load sync config: %v", err)
+		// Continue without folder scoping — will sync everything (not ideal but functional)
+	}
+
 	// Get the changes start token for future incremental polls
 	startToken, err := s.getChangesStartToken()
 	if err != nil {
@@ -342,6 +352,9 @@ func (s *Syncer) handleLocalCreateOrUpdate(event FileEvent) {
 		if folderErr != nil {
 			log.Printf("[drivesync] failed to ensure Drive folder for %s: %v", parentDir, folderErr)
 		}
+	} else if s.rootFolderID != "" {
+		// Root-level file → parent is the user's selected Drive folder
+		folderID = s.rootFolderID
 	}
 
 	if existing != nil && existing.DriveFileID != "" {
@@ -562,6 +575,12 @@ func (s *Syncer) processChange(change map[string]interface{}) {
 	}
 
 	parents := extractStringArrayFromMap(fileData, "parents")
+
+	// Skip files outside the synced folder tree
+	if !s.isInSyncScope(parents) {
+		return
+	}
+
 	driveFile := &driveFileInfo{
 		ID:           fileID,
 		Name:         name,
@@ -699,6 +718,11 @@ func (s *Syncer) processFolderChange(change map[string]interface{}) {
 
 	if trashed {
 		s.handleFolderDelete(fileID)
+		return
+	}
+
+	// Skip folders outside the synced folder tree
+	if !s.isInSyncScope(parents) {
 		return
 	}
 
@@ -972,6 +996,9 @@ func (s *Syncer) ensureDriveFolder(relDir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+	} else if s.rootFolderID != "" {
+		// Top-level folder → parent is the user's selected Drive folder
+		parentID = s.rootFolderID
 	}
 
 	// Create the folder on Drive
@@ -1027,8 +1054,58 @@ func (s *Syncer) getChangesStartToken() (string, error) {
 	return extractStringField(resp, "startPageToken"), nil
 }
 
+// loadSyncConfig fetches the user's selected Drive folder from the control plane.
+// This scopes all sync operations to the selected folder and its descendants.
+func (s *Syncer) loadSyncConfig() error {
+	resp, err := s.gatewayExecute("drive.sync_config", map[string]interface{}{})
+	if err != nil {
+		return fmt.Errorf("sync config request failed: %w", err)
+	}
+
+	folderID := extractStringField(resp, "folderId")
+	folderName := extractStringField(resp, "folderName")
+
+	if folderID == "" {
+		log.Printf("[drivesync] no root folder configured — syncing entire Drive")
+		return nil
+	}
+
+	s.rootFolderID = folderID
+	log.Printf("[drivesync] scoped to folder: %s (id=%s)", folderName, folderID)
+	return nil
+}
+
+// isInSyncScope checks whether a file or folder belongs within the synced folder tree.
+// Returns true if the item's parent is either the root folder or a known subfolder.
+// When no root folder is set (full Drive sync), all items are in scope.
+func (s *Syncer) isInSyncScope(parents []string) bool {
+	if s.rootFolderID == "" {
+		return true // No folder scoping — everything is in scope
+	}
+	if len(parents) == 0 {
+		return false // No parent info — can't determine scope
+	}
+
+	parent := parents[0]
+
+	// Direct child of the synced root folder
+	if parent == s.rootFolderID {
+		return true
+	}
+
+	// Child of a known subfolder within the tree
+	s.folderMapMu.RLock()
+	_, known := s.folderMap[parent]
+	s.folderMapMu.RUnlock()
+	return known
+}
+
 func (s *Syncer) listAllDriveFiles() ([]*driveFileInfo, error) {
-	resp, err := s.gatewayExecute("drive.sync_list", map[string]interface{}{})
+	args := map[string]interface{}{}
+	if s.rootFolderID != "" {
+		args["folderId"] = s.rootFolderID
+	}
+	resp, err := s.gatewayExecute("drive.sync_list", args)
 	if err != nil {
 		return nil, err
 	}

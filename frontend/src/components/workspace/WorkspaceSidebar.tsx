@@ -962,155 +962,104 @@ export function WorkspaceSidebar({
   const rootEntries = fileEntries["/"] || [];
   const showFiles = rootEntries.length > 0;
 
-  // ── Drive button helper ─────────────────────────────────────────
-  const DriveButton = React.useCallback(
-    ({
-      icon,
-      label,
-      connected,
-      linked,
-      onConnect,
-      onOpenPicker,
-      onDisconnect,
-      children,
-    }: {
-      icon: React.ReactNode;
-      label: string;
-      connected: boolean;
-      linked: boolean;
-      onConnect: () => void;
-      onOpenPicker: () => void;
-      onDisconnect: () => void;
-      children?: React.ReactNode;
-    }) => {
-      // Connected (linked or not): show dropdown
-      if (connected) {
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Tooltip content={label} side="bottom">
-                <Button
-                  variant={linked ? "secondary" : "ghost"}
-                  size="icon-sm"
-                  disabled={!user}
-                  title={label}
-                >
-                  {icon}
-                </Button>
-              </Tooltip>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-44">
-              {linked ? (
-                // Linked: show full management options
-                children
-              ) : (
-                // Not linked: show link + disconnect options
-                <>
-                  <DropdownMenuItem onSelect={onOpenPicker}>Link folder</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={onDisconnect} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        );
-      }
-      // Not connected: open OAuth
-      return (
-        <Tooltip content={`Connect ${label}`} side="bottom">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => {
-              console.log(`[WorkspaceSidebar] DriveButton click (connect): ${label}`);
-              onConnect();
-            }}
-            disabled={!user}
-            title={`Connect ${label}`}
-          >
-            {icon}
-          </Button>
-        </Tooltip>
-      );
-    },
-    [user]
-  );
-
   // ── Debug logging for integration states ────────────────────────
   React.useEffect(() => {
     console.log(`[WorkspaceSidebar] Integration states: drive=${isDriveConnected}/${isDriveLinked}, github=${isGithubConnected}/${isGithubLinked}, box=${isBoxConnected}/${isBoxLinked}, onedrive=${isOnedriveConnected}/${isOnedriveLinked}, user=${user?.id ?? "none"}, drivePortalTarget=${drivePortalTarget ? "present" : "null"}`);
   }, [isDriveConnected, isDriveLinked, isGithubConnected, isGithubLinked, isBoxConnected, isBoxLinked, isOnedriveConnected, isOnedriveLinked, user, drivePortalTarget]);
 
   // ── Collapsed view ──────────────────────────────────────────────
-  // Drive buttons JSX — rendered via portal into toolbar when target is available
+  // Drive buttons JSX — rendered via portal into toolbar when target is available.
+  // Uses the same pattern as the settings panel Storage Integrations:
+  // click → connect (if not connected) or open picker (if connected).
   const driveButtonsJSX = (
     <>
-      <DriveButton
-        icon={<Cloud className="w-3.5 h-3.5" />}
-        label="Drive"
-        connected={isDriveConnected}
-        linked={isDriveLinked}
-        onConnect={handleDriveConnect}
-        onOpenPicker={() => setDrivePickerOpen(true)}
-        onDisconnect={handleDisconnectDrive}
-      >
-        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-          Drive: {driveIntegration?.folder?.name ?? "Linked"}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setDrivePickerOpen(true)}>Change folder</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleUnlinkDrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleDisconnectDrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
-      </DriveButton>
+      <Tooltip content={isDriveLinked ? `Drive: ${driveIntegration?.folder?.name ?? "Linked"}` : isDriveConnected ? "Drive: Link folder" : "Connect Drive"} side="bottom">
+        <Button
+          variant={isDriveLinked ? "secondary" : "ghost"}
+          size="icon-sm"
+          disabled={!user}
+          onClick={() => {
+            if (isDriveConnected) {
+              setDrivePickerOpen(true);
+            } else {
+              handleDriveConnect();
+            }
+          }}
+        >
+          <div className="relative">
+            <Cloud className="w-3.5 h-3.5" />
+            {isDriveConnected && (
+              <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full", isDriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+            )}
+          </div>
+        </Button>
+      </Tooltip>
 
-      <DriveButton
-        icon={<Github className="w-3.5 h-3.5" />}
-        label="GitHub"
-        connected={isGithubConnected}
-        linked={isGithubLinked}
-        onConnect={handleGithubConnect}
-        onOpenPicker={() => setGithubPickerOpen(true)}
-        onDisconnect={handleDisconnectGithub}
-      >
-        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-          Repo: {githubIntegration?.repo?.owner}/{githubIntegration?.repo?.name}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setGithubPickerOpen(true)}>Change repo</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleUnlinkGithub} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleDisconnectGithub} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
-      </DriveButton>
+      <Tooltip content={isGithubLinked ? `GitHub: ${githubIntegration?.repo?.name ?? "Linked"}` : isGithubConnected ? "GitHub: Link repo" : "Connect GitHub"} side="bottom">
+        <Button
+          variant={isGithubLinked ? "secondary" : "ghost"}
+          size="icon-sm"
+          disabled={!user}
+          onClick={() => {
+            if (isGithubConnected) {
+              setGithubPickerOpen(true);
+            } else {
+              handleGithubConnect();
+            }
+          }}
+        >
+          <div className="relative">
+            <Github className="w-3.5 h-3.5" />
+            {isGithubConnected && (
+              <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full", isGithubLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+            )}
+          </div>
+        </Button>
+      </Tooltip>
 
-      <DriveButton
-        icon={<Box className="w-3.5 h-3.5" />}
-        label="Box"
-        connected={isBoxConnected}
-        linked={isBoxLinked}
-        onConnect={handleBoxConnect}
-        onOpenPicker={() => setBoxPickerOpen(true)}
-        onDisconnect={handleDisconnectBox}
-      >
-        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-          Folder: {boxIntegration?.folder?.name ?? "Linked"}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setBoxPickerOpen(true)}>Change folder</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleUnlinkBox} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleDisconnectBox} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
-      </DriveButton>
+      <Tooltip content={isBoxLinked ? `Box: ${boxIntegration?.folder?.name ?? "Linked"}` : isBoxConnected ? "Box: Link folder" : "Connect Box"} side="bottom">
+        <Button
+          variant={isBoxLinked ? "secondary" : "ghost"}
+          size="icon-sm"
+          disabled={!user}
+          onClick={() => {
+            if (isBoxConnected) {
+              setBoxPickerOpen(true);
+            } else {
+              handleBoxConnect();
+            }
+          }}
+        >
+          <div className="relative">
+            <Box className="w-3.5 h-3.5" />
+            {isBoxConnected && (
+              <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full", isBoxLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+            )}
+          </div>
+        </Button>
+      </Tooltip>
 
-      <DriveButton
-        icon={<HardDrive className="w-3.5 h-3.5" />}
-        label="OneDrive"
-        connected={isOnedriveConnected}
-        linked={isOnedriveLinked}
-        onConnect={handleOnedriveConnect}
-        onOpenPicker={() => setOnedrivePickerOpen(true)}
-        onDisconnect={handleDisconnectOnedrive}
-      >
-        <DropdownMenuItem disabled className="text-[10px] text-[var(--foreground-muted)]">
-          Folder: {onedriveIntegration?.folder?.name ?? "Linked"}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setOnedrivePickerOpen(true)}>Change folder</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleUnlinkOnedrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Unlink</DropdownMenuItem>
-        <DropdownMenuItem onSelect={handleDisconnectOnedrive} className="text-[var(--status-error)] focus:text-[var(--status-error)]">Sign out</DropdownMenuItem>
-      </DriveButton>
+      <Tooltip content={isOnedriveLinked ? `OneDrive: ${onedriveIntegration?.folder?.name ?? "Linked"}` : isOnedriveConnected ? "OneDrive: Link folder" : "Connect OneDrive"} side="bottom">
+        <Button
+          variant={isOnedriveLinked ? "secondary" : "ghost"}
+          size="icon-sm"
+          disabled={!user}
+          onClick={() => {
+            if (isOnedriveConnected) {
+              setOnedrivePickerOpen(true);
+            } else {
+              handleOnedriveConnect();
+            }
+          }}
+        >
+          <div className="relative">
+            <HardDrive className="w-3.5 h-3.5" />
+            {isOnedriveConnected && (
+              <span className={cn("absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full", isOnedriveLinked ? "bg-[var(--status-success)]" : "bg-yellow-500")} />
+            )}
+          </div>
+        </Button>
+      </Tooltip>
     </>
   );
 

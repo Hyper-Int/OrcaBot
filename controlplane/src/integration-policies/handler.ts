@@ -628,6 +628,7 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'drive.sync_list': 'canRead',
     'drive.changes_start_token': 'canRead',
     'drive.changes_list': 'canRead',
+    'drive.sync_config': 'canRead',
   },
   onedrive: {
     'onedrive.read': 'canRead',
