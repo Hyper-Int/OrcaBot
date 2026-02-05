@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drivesync-syncer-v1-initial
+// REVISION: drivesync-syncer-v4-folder-ordering
 
 package drivesync
 
@@ -21,7 +21,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const syncerRevision = "drivesync-syncer-v1-initial"
+const syncerRevision = "drivesync-syncer-v4-folder-ordering"
 
 func init() {
 	log.Printf("[drivesync-syncer] REVISION: %s loaded at %s", syncerRevision, time.Now().Format(time.RFC3339))
@@ -47,11 +47,14 @@ type Syncer struct {
 	mountPath     string // e.g. /workspace/drive/
 	workspaceRoot string
 	gateway       *mcp.GatewayClient
-	ptyToken      string // for gateway auth
 	state         *SyncState
 	watcher       *Watcher
 	onEvent       EventCallback
 	pollInterval  time.Duration
+
+	// PTY token for gateway auth — updated when new PTYs attach Drive
+	tokenMu  sync.RWMutex
+	ptyToken string
 
 	stop    chan struct{}
 	stopped chan struct{}
@@ -60,6 +63,12 @@ type Syncer struct {
 	backoffMu    sync.Mutex
 	backoffUntil time.Time
 	backoffLevel int // 0=none, 1=5s, 2=10s, 3=20s, 4=60s
+
+	// Folder ID → relative path mapping (built during initial sync)
+	folderMapMu     sync.RWMutex
+	folderMap       map[string]string
+	folderNames     map[string]string // folder ID → name (for re-resolution)
+	folderParentIDs map[string]string // folder ID → parent folder ID
 }
 
 const (
@@ -80,7 +89,19 @@ func New(workspaceRoot string, gateway *mcp.GatewayClient, ptyToken string, onEv
 		pollInterval:  defaultPollInterval,
 		stop:          make(chan struct{}),
 		stopped:       make(chan struct{}),
+		folderMap:       make(map[string]string),
+		folderNames:     make(map[string]string),
+		folderParentIDs: make(map[string]string),
 	}
+}
+
+// UpdateToken replaces the PTY token used for gateway authentication.
+// Called when a new PTY attaches Drive while sync is already running.
+func (s *Syncer) UpdateToken(token string) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.ptyToken = token
+	log.Printf("[drivesync] updated PTY token for gateway auth")
 }
 
 // Start begins the sync process: initial pull, then watch + poll loops.
@@ -194,10 +215,19 @@ func (s *Syncer) initialSync() error {
 		return fmt.Errorf("failed to get changes start token: %w", err)
 	}
 
-	// List all files from Drive (policy-filtered by gateway)
-	files, err := s.listAllDriveFiles()
+	// List all items from Drive (policy-filtered by gateway)
+	allItems, err := s.listAllDriveFiles()
 	if err != nil {
 		return fmt.Errorf("failed to list drive files: %w", err)
+	}
+
+	// Build folder hierarchy mapping and separate files from folders
+	s.buildFolderMapping(allItems)
+	var files []*driveFileInfo
+	for _, item := range allItems {
+		if item.MimeType != "application/vnd.google-apps.folder" {
+			files = append(files, item)
+		}
 	}
 
 	log.Printf("[drivesync] found %d files in Drive", len(files))
@@ -276,8 +306,12 @@ func (s *Syncer) handleLocalCreateOrUpdate(event FileEvent) {
 		return
 	}
 
-	// Check total sync size limit
-	if s.state.WouldExceedLimit(info.Size()) {
+	// Check total sync size limit (subtract existing file size for updates)
+	additionalSize := info.Size()
+	if existing != nil {
+		additionalSize -= existing.Size
+	}
+	if additionalSize > 0 && s.state.WouldExceedLimit(additionalSize) {
 		log.Printf("[drivesync] skipping %s: would exceed sync limit", event.RelPath)
 		s.emitError(event.RelPath, "sync size limit exceeded")
 		return
@@ -299,11 +333,15 @@ func (s *Syncer) handleLocalCreateOrUpdate(event FileEvent) {
 	// Determine if we need base64 encoding for binary files
 	contentStr, isBinary := encodeContent(content, mimeType)
 
-	// Determine folder ID for the file's parent directory
+	// Determine (or create) folder ID for the file's parent directory
 	parentDir := filepath.Dir(event.RelPath)
 	folderID := ""
-	if parentDir != "." {
-		folderID = s.state.GetFolderID(parentDir)
+	if parentDir != "." && parentDir != "" {
+		var folderErr error
+		folderID, folderErr = s.ensureDriveFolder(parentDir)
+		if folderErr != nil {
+			log.Printf("[drivesync] failed to ensure Drive folder for %s: %v", parentDir, folderErr)
+		}
 	}
 
 	if existing != nil && existing.DriveFileID != "" {
@@ -312,6 +350,9 @@ func (s *Syncer) handleLocalCreateOrUpdate(event FileEvent) {
 			"fileId":   existing.DriveFileID,
 			"content":  contentStr,
 			"mimeType": mimeType,
+		}
+		if isBinary {
+			args["encoding"] = "base64"
 		}
 		resp, err := s.gatewayExecute("drive.update", args)
 		if err != nil {
@@ -378,6 +419,9 @@ func (s *Syncer) handleLocalDelete(event FileEvent) {
 	// Don't delete Google Docs from Drive
 	if existing.IsGoogleDoc {
 		s.state.RemoveFile(event.RelPath)
+		if err := s.state.Save(); err != nil {
+			log.Printf("[drivesync] failed to save state after removing Google Doc: %v", err)
+		}
 		return
 	}
 
@@ -431,6 +475,13 @@ func (s *Syncer) pollRemoteChanges() {
 		log.Printf("[drivesync] processing %d remote changes", len(changes))
 	}
 
+	// Separate folder and file changes. Folders are collected first:
+	// processFolderChange stores metadata, then resolveFolderPaths
+	// computes correct paths using the complete parent/child tree.
+	// This prevents mis-placement when a child change arrives before
+	// its parent in the same batch.
+	var folderChanges []map[string]interface{}
+	var fileChanges []map[string]interface{}
 	for _, change := range changes {
 		select {
 		case <-s.stop:
@@ -443,6 +494,29 @@ func (s *Syncer) pollRemoteChanges() {
 			continue
 		}
 
+		if fileData, ok := changeMap["file"].(map[string]interface{}); ok {
+			if mt, _ := fileData["mimeType"].(string); mt == "application/vnd.google-apps.folder" {
+				folderChanges = append(folderChanges, changeMap)
+				continue
+			}
+		}
+		fileChanges = append(fileChanges, changeMap)
+	}
+
+	// Process folder metadata, then resolve all paths at once
+	for _, changeMap := range folderChanges {
+		s.processFolderChange(changeMap)
+	}
+	if len(folderChanges) > 0 {
+		s.resolveFolderPaths()
+	}
+
+	for _, changeMap := range fileChanges {
+		select {
+		case <-s.stop:
+			return
+		default:
+		}
 		s.processChange(changeMap)
 	}
 
@@ -461,12 +535,10 @@ func (s *Syncer) processChange(change map[string]interface{}) {
 	removed, _ := change["removed"].(bool)
 
 	if removed {
-		// File was deleted in Drive — find and remove locally
 		s.handleRemoteDelete(fileID)
 		return
 	}
 
-	// File was created or modified
 	fileData, ok := change["file"].(map[string]interface{})
 	if !ok {
 		return
@@ -484,22 +556,12 @@ func (s *Syncer) processChange(change map[string]interface{}) {
 		return
 	}
 
-	// Skip Google Drive folders — we track them but don't create local dirs for them yet
+	// Folders are handled in the first pass (processFolderChange)
 	if mimeType == "application/vnd.google-apps.folder" {
 		return
 	}
 
-	// Find existing local file by Drive ID
-	relPath := s.findLocalPathByDriveID(fileID)
-
-	// Check if file changed since our last sync
-	if relPath != "" {
-		existing := s.state.GetFile(relPath)
-		if existing != nil && existing.Checksum == md5 && md5 != "" {
-			return // No change
-		}
-	}
-
+	parents := extractStringArrayFromMap(fileData, "parents")
 	driveFile := &driveFileInfo{
 		ID:           fileID,
 		Name:         name,
@@ -507,15 +569,35 @@ func (s *Syncer) processChange(change map[string]interface{}) {
 		ModifiedTime: modifiedTime,
 		Size:         sizeStr,
 		MD5Checksum:  md5,
+		Parents:      parents,
 	}
 
+	// Find existing local file by Drive ID
+	relPath := s.findLocalPathByDriveID(fileID)
+
 	if relPath != "" {
-		// File exists locally — check for conflict
+		// Check for rename/move first
+		expectedName := name
+		if strings.HasPrefix(mimeType, "application/vnd.google-apps") {
+			expectedName = googleDocLocalName(name, mimeType)
+		}
+		newRelPath := s.resolveFilePath(expectedName, parents)
+
+		if newRelPath != relPath {
+			s.handleRemoteFileRename(relPath, newRelPath, driveFile)
+			relPath = newRelPath
+		}
+
+		// Check if content changed (by checksum)
 		existing := s.state.GetFile(relPath)
+		if existing != nil && existing.Checksum == md5 && md5 != "" {
+			return // No content change
+		}
+
+		// Check for conflict (local also modified since last sync)
 		if existing != nil {
 			localInfo, err := os.Stat(filepath.Join(s.mountPath, relPath))
 			if err == nil && localInfo.ModTime().After(existing.LocalModTime) {
-				// Local file was also modified — conflict
 				s.handleConflict(relPath, driveFile)
 				return
 			}
@@ -566,12 +648,361 @@ func (s *Syncer) handleConflict(relPath string, driveFile *driveFileInfo) {
 	conflictPath := base + ".local-conflict" + ext
 	conflictAbs := filepath.Join(s.mountPath, conflictPath)
 
+	// Suppress watcher events for the rename. Without this, the Rename
+	// event triggers handleLocalDelete → drive.delete, which would
+	// delete the Drive file and violate the "Drive wins" resolution.
+	if s.watcher != nil {
+		s.watcher.MarkDownloading(relPath)
+		s.watcher.MarkDownloading(conflictPath)
+		defer s.watcher.UnmarkDownloading(conflictPath)
+	}
+
 	if err := os.Rename(absPath, conflictAbs); err != nil {
 		log.Printf("[drivesync] failed to rename conflict file: %v", err)
 	}
 
+	// Release relPath before downloadFileUpdate, which has its own mark/unmark
+	if s.watcher != nil {
+		s.watcher.UnmarkDownloading(relPath)
+	}
+
 	// Download the remote version (Drive wins)
 	s.downloadFileUpdate(relPath, driveFile)
+}
+
+// ============================================
+// Folder Change Handling (Changes API)
+// ============================================
+
+// processFolderChange stores folder metadata from a Changes API event.
+// Actual path resolution and filesystem operations are deferred to
+// resolveFolderPaths(), which runs after all folder changes in a batch
+// are collected — this prevents ordering issues where a child arrives
+// before its parent.
+func (s *Syncer) processFolderChange(change map[string]interface{}) {
+	fileID, _ := change["fileId"].(string)
+	removed, _ := change["removed"].(bool)
+
+	if removed {
+		s.handleFolderDelete(fileID)
+		return
+	}
+
+	fileData, ok := change["file"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	name, _ := fileData["name"].(string)
+	trashed, _ := fileData["trashed"].(bool)
+	parents := extractStringArrayFromMap(fileData, "parents")
+
+	if trashed {
+		s.handleFolderDelete(fileID)
+		return
+	}
+
+	// Store metadata; resolveFolderPaths() handles path resolution
+	s.folderMapMu.Lock()
+	s.folderNames[fileID] = name
+	if len(parents) > 0 {
+		s.folderParentIDs[fileID] = parents[0]
+	} else {
+		delete(s.folderParentIDs, fileID)
+	}
+	s.folderMapMu.Unlock()
+}
+
+// resolveFolderPaths re-resolves all folder paths from stored name/parent
+// metadata. This handles out-of-order parent/child changes: the full tree
+// of folder names and parent IDs is available, so resolution always produces
+// correct paths regardless of the order changes were received.
+func (s *Syncer) resolveFolderPaths() {
+	s.folderMapMu.Lock()
+	defer s.folderMapMu.Unlock()
+
+	// Resolve all paths from stored metadata
+	resolved := make(map[string]string)
+	var resolve func(id string) string
+	resolve = func(id string) string {
+		if path, ok := resolved[id]; ok {
+			return path
+		}
+		name, ok := s.folderNames[id]
+		if !ok {
+			return "" // Unknown folder (root or outside scope)
+		}
+		parentPath := ""
+		if parentID, ok := s.folderParentIDs[id]; ok {
+			parentPath = resolve(parentID)
+		}
+		var path string
+		if parentPath != "" {
+			path = filepath.Join(parentPath, name)
+		} else {
+			path = name
+		}
+		resolved[id] = path
+		return path
+	}
+
+	for id := range s.folderNames {
+		resolve(id)
+	}
+
+	// Apply changes: create new folders, rename moved ones
+	for id, newPath := range resolved {
+		oldPath, exists := s.folderMap[id]
+		if !exists {
+			// New folder — create locally
+			s.folderMap[id] = newPath
+			s.state.SetFolder(newPath, id)
+			absPath := filepath.Join(s.mountPath, newPath)
+			if err := os.MkdirAll(absPath, 0755); err != nil {
+				log.Printf("[drivesync] failed to create folder %s: %v", newPath, err)
+			}
+			log.Printf("[drivesync] created folder from remote: %s", newPath)
+		} else if oldPath != newPath {
+			// Path changed — rename locally (only update mapping on success)
+			if s.renameFolderLocked(oldPath, newPath) {
+				s.folderMap[id] = newPath
+				// renameFolderLocked already updated state and child mappings
+			}
+			// If rename failed, keep old path until next poll
+		}
+	}
+
+	if err := s.state.Save(); err != nil {
+		log.Printf("[drivesync] failed to save state after folder resolution: %v", err)
+	}
+}
+
+// handleFolderDelete removes a folder and all its contents locally.
+func (s *Syncer) handleFolderDelete(folderID string) {
+	s.folderMapMu.Lock()
+	oldPath, exists := s.folderMap[folderID]
+	if !exists {
+		// Clean up metadata even if path mapping is gone
+		delete(s.folderNames, folderID)
+		delete(s.folderParentIDs, folderID)
+		s.folderMapMu.Unlock()
+		return
+	}
+	delete(s.folderMap, folderID)
+	delete(s.folderNames, folderID)
+	delete(s.folderParentIDs, folderID)
+
+	// Also remove child folders from the mapping and metadata
+	prefix := oldPath + "/"
+	for id, path := range s.folderMap {
+		if strings.HasPrefix(path, prefix) {
+			delete(s.folderMap, id)
+			delete(s.folderNames, id)
+			delete(s.folderParentIDs, id)
+		}
+	}
+	s.folderMapMu.Unlock()
+
+	// Suppress watcher events for files in this folder
+	allFiles := s.state.AllFiles()
+	var affectedPaths []string
+	for relPath := range allFiles {
+		if strings.HasPrefix(relPath, prefix) {
+			affectedPaths = append(affectedPaths, relPath)
+			if s.watcher != nil {
+				s.watcher.MarkDownloading(relPath)
+			}
+		}
+	}
+
+	// Remove files from state
+	for _, relPath := range affectedPaths {
+		s.state.RemoveFile(relPath)
+	}
+
+	// Remove folder entries from state
+	allFolders := s.state.AllFolders()
+	for path := range allFolders {
+		if path == oldPath || strings.HasPrefix(path, prefix) {
+			s.state.RemoveFolder(path)
+		}
+	}
+
+	// Remove local directory
+	absPath := filepath.Join(s.mountPath, oldPath)
+	if err := os.RemoveAll(absPath); err != nil {
+		log.Printf("[drivesync] failed to remove folder %s: %v", oldPath, err)
+	}
+
+	// Unmark files
+	for _, relPath := range affectedPaths {
+		if s.watcher != nil {
+			s.watcher.UnmarkDownloading(relPath)
+		}
+	}
+
+	if err := s.state.Save(); err != nil {
+		log.Printf("[drivesync] failed to save state after folder delete: %v", err)
+	}
+	log.Printf("[drivesync] removed folder from remote delete: %s", oldPath)
+}
+
+// renameFolderLocked renames a local folder and updates all affected state.
+// Must be called with folderMapMu held.
+func (s *Syncer) renameFolderLocked(oldPath, newPath string) bool {
+	oldAbs := filepath.Join(s.mountPath, oldPath)
+	newAbs := filepath.Join(s.mountPath, newPath)
+
+	// Suppress watcher events for the rename
+	if s.watcher != nil {
+		s.watcher.MarkDownloading(oldPath)
+		s.watcher.MarkDownloading(newPath)
+		defer s.watcher.UnmarkDownloading(oldPath)
+		defer s.watcher.UnmarkDownloading(newPath)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(newAbs), 0755); err != nil {
+		log.Printf("[drivesync] failed to create parent for folder rename: %v", err)
+	}
+
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		log.Printf("[drivesync] failed to rename folder %s → %s: %v", oldPath, newPath, err)
+		return false
+	}
+
+	// Update child folder mappings
+	oldPrefix := oldPath + "/"
+	for id, path := range s.folderMap {
+		if strings.HasPrefix(path, oldPrefix) {
+			newSubPath := newPath + path[len(oldPath):]
+			s.folderMap[id] = newSubPath
+		}
+	}
+
+	// Update folder state entries
+	allFolders := s.state.AllFolders()
+	for path, id := range allFolders {
+		if path == oldPath || strings.HasPrefix(path, oldPrefix) {
+			s.state.RemoveFolder(path)
+			newSubPath := newPath + path[len(oldPath):]
+			s.state.SetFolder(newSubPath, id)
+		}
+	}
+
+	// Update file state entries
+	allFiles := s.state.AllFiles()
+	for relPath, file := range allFiles {
+		if strings.HasPrefix(relPath, oldPrefix) {
+			newRelPath := newPath + relPath[len(oldPath):]
+			s.state.RemoveFile(relPath)
+			file.LocalPath = newRelPath
+			s.state.SetFile(newRelPath, file)
+		}
+	}
+
+	log.Printf("[drivesync] renamed folder: %s → %s", oldPath, newPath)
+	return true
+}
+
+// ============================================
+// Remote File Rename/Move
+// ============================================
+
+// handleRemoteFileRename renames a local file when Drive reports a name/parent change.
+func (s *Syncer) handleRemoteFileRename(oldRelPath, newRelPath string, df *driveFileInfo) {
+	if s.watcher != nil {
+		s.watcher.MarkDownloading(oldRelPath)
+		s.watcher.MarkDownloading(newRelPath)
+		defer s.watcher.UnmarkDownloading(oldRelPath)
+		defer s.watcher.UnmarkDownloading(newRelPath)
+	}
+
+	oldAbs := filepath.Join(s.mountPath, oldRelPath)
+	newAbs := filepath.Join(s.mountPath, newRelPath)
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(newAbs), 0755); err != nil {
+		log.Printf("[drivesync] failed to create dir for rename: %v", err)
+	}
+
+	if err := os.Rename(oldAbs, newAbs); err != nil {
+		log.Printf("[drivesync] failed to rename %s → %s: %v", oldRelPath, newRelPath, err)
+		// On failure, clean up old state; processChange will re-download at new path
+		s.state.RemoveFile(oldRelPath)
+		return
+	}
+
+	// Update state: move tracking from old to new path
+	existing := s.state.GetFile(oldRelPath)
+	if existing != nil {
+		s.state.RemoveFile(oldRelPath)
+		existing.LocalPath = newRelPath
+		s.state.SetFile(newRelPath, existing)
+	}
+
+	if err := s.state.Save(); err != nil {
+		log.Printf("[drivesync] failed to save state after rename: %v", err)
+	}
+
+	log.Printf("[drivesync] renamed: %s → %s (remote rename)", oldRelPath, newRelPath)
+}
+
+// ============================================
+// Drive Folder Creation (Local → Drive)
+// ============================================
+
+// ensureDriveFolder ensures a Drive folder exists for the given relative directory path.
+// Creates parent folders recursively on Drive if needed. Returns the Drive folder ID.
+func (s *Syncer) ensureDriveFolder(relDir string) (string, error) {
+	if relDir == "." || relDir == "" {
+		return "", nil
+	}
+
+	// Check if we already have this folder
+	if id := s.state.GetFolderID(relDir); id != "" {
+		return id, nil
+	}
+
+	// Ensure parent exists first (recursive)
+	parentDir := filepath.Dir(relDir)
+	parentID := ""
+	if parentDir != "." && parentDir != "" {
+		var err error
+		parentID, err = s.ensureDriveFolder(parentDir)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Create the folder on Drive
+	folderName := filepath.Base(relDir)
+	args := map[string]interface{}{
+		"name":     folderName,
+		"content":  "",
+		"mimeType": "application/vnd.google-apps.folder",
+	}
+	if parentID != "" {
+		args["folderId"] = parentID
+	}
+
+	resp, err := s.gatewayExecute("drive.create", args)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Drive folder %s: %w", relDir, err)
+	}
+
+	folderID := extractStringField(resp, "id")
+	if folderID == "" {
+		return "", fmt.Errorf("no folder ID in response for %s", relDir)
+	}
+
+	// Update mapping
+	s.folderMapMu.Lock()
+	s.folderMap[folderID] = relDir
+	s.folderMapMu.Unlock()
+	s.state.SetFolder(relDir, folderID)
+
+	log.Printf("[drivesync] created Drive folder: %s (id=%s)", relDir, folderID)
+	return folderID, nil
 }
 
 // ============================================
@@ -603,7 +1034,7 @@ func (s *Syncer) listAllDriveFiles() ([]*driveFileInfo, error) {
 	}
 
 	filesRaw := extractArrayField(resp, "files")
-	var files []*driveFileInfo
+	var items []*driveFileInfo
 
 	for _, f := range filesRaw {
 		fm, ok := f.(map[string]interface{})
@@ -618,17 +1049,13 @@ func (s *Syncer) listAllDriveFiles() ([]*driveFileInfo, error) {
 			ModifiedTime: extractString(fm, "modifiedTime"),
 			Size:         extractString(fm, "size"),
 			MD5Checksum:  extractString(fm, "md5Checksum"),
+			Parents:      extractStringArrayFromMap(fm, "parents"),
 		}
 
-		// Skip folders (we handle them separately)
-		if df.MimeType == "application/vnd.google-apps.folder" {
-			continue
-		}
-
-		files = append(files, df)
+		items = append(items, df)
 	}
 
-	return files, nil
+	return items, nil
 }
 
 func (s *Syncer) downloadFile(df *driveFileInfo) error {
@@ -640,7 +1067,15 @@ func (s *Syncer) downloadFile(df *driveFileInfo) error {
 	if fileSize > DefaultMaxFileSize {
 		return fmt.Errorf("file too large: %d bytes", fileSize)
 	}
-	if s.state.WouldExceedLimit(fileSize) {
+	// Account for already-tracked file size (e.g. after restart, state
+	// is loaded but files are re-downloaded during initial sync).
+	downloadAdditional := fileSize
+	if existingPath := s.findLocalPathByDriveID(df.ID); existingPath != "" {
+		if existing := s.state.GetFile(existingPath); existing != nil {
+			downloadAdditional -= existing.Size
+		}
+	}
+	if downloadAdditional > 0 && s.state.WouldExceedLimit(downloadAdditional) {
 		return fmt.Errorf("sync size limit would be exceeded")
 	}
 
@@ -652,7 +1087,7 @@ func (s *Syncer) downloadFile(df *driveFileInfo) error {
 		localName = googleDocLocalName(df.Name, df.MimeType)
 	}
 
-	relPath := localName // Root-level for now; TODO: folder mapping
+	relPath := s.resolveFilePath(localName, df.Parents)
 
 	s.emit(SyncEvent{Type: "drive_sync", Status: "syncing", Direction: "download", File: relPath})
 
@@ -751,7 +1186,13 @@ func (s *Syncer) downloadFileUpdate(relPath string, df *driveFileInfo) {
 
 	var data []byte
 	if encoding == "base64" {
-		data, _ = base64.StdEncoding.DecodeString(content)
+		var decodeErr error
+		data, decodeErr = base64.StdEncoding.DecodeString(content)
+		if decodeErr != nil {
+			log.Printf("[drivesync] base64 decode error for %s: %v", relPath, decodeErr)
+			s.emitError(relPath, fmt.Sprintf("base64 decode error: %v", decodeErr))
+			return
+		}
 	} else {
 		data = []byte(content)
 	}
@@ -794,7 +1235,11 @@ func (s *Syncer) gatewayExecute(action string, args map[string]interface{}) (jso
 		Args:   args,
 	}
 
-	resp, err := s.gateway.Execute("google_drive", s.ptyToken, req)
+	s.tokenMu.RLock()
+	token := s.ptyToken
+	s.tokenMu.RUnlock()
+
+	resp, err := s.gateway.Execute("google_drive", token, req)
 	if err != nil {
 		return nil, fmt.Errorf("gateway error: %w", err)
 	}
@@ -973,4 +1418,100 @@ func extractArrayField(raw json.RawMessage, field string) []interface{} {
 		return nil
 	}
 	return arr
+}
+
+func extractStringArrayFromMap(m map[string]interface{}, field string) []string {
+	arr, ok := m[field].([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// buildFolderMapping builds a mapping from Drive folder IDs to relative local paths.
+// It also stores the mapping in the sync state and creates local directories.
+func (s *Syncer) buildFolderMapping(allItems []*driveFileInfo) {
+	// Collect folders and store metadata for incremental re-resolution
+	folders := make(map[string]*driveFileInfo)
+	names := make(map[string]string)
+	parentIDs := make(map[string]string)
+	for _, item := range allItems {
+		if item.MimeType == "application/vnd.google-apps.folder" {
+			folders[item.ID] = item
+			names[item.ID] = item.Name
+			if len(item.Parents) > 0 {
+				parentIDs[item.ID] = item.Parents[0]
+			}
+		}
+	}
+
+	mapping := make(map[string]string) // folder ID → relative path
+
+	var resolve func(id string) string
+	resolve = func(id string) string {
+		if path, ok := mapping[id]; ok {
+			return path
+		}
+		folder, ok := folders[id]
+		if !ok {
+			return "" // Unknown folder (root or outside scope)
+		}
+		parentPath := ""
+		if len(folder.Parents) > 0 {
+			parentPath = resolve(folder.Parents[0])
+		}
+		var path string
+		if parentPath != "" {
+			path = filepath.Join(parentPath, folder.Name)
+		} else {
+			path = folder.Name
+		}
+		mapping[id] = path
+		return path
+	}
+
+	// Resolve all folders
+	for id := range folders {
+		resolve(id)
+	}
+
+	// Store mapping, metadata, and create local directories
+	s.folderMapMu.Lock()
+	s.folderMap = mapping
+	s.folderNames = names
+	s.folderParentIDs = parentIDs
+	s.folderMapMu.Unlock()
+
+	for id, relPath := range mapping {
+		s.state.SetFolder(relPath, id)
+		absPath := filepath.Join(s.mountPath, relPath)
+		if err := os.MkdirAll(absPath, 0755); err != nil {
+			log.Printf("[drivesync] failed to create folder %s: %v", relPath, err)
+		}
+	}
+
+	log.Printf("[drivesync] built folder mapping: %d folders", len(mapping))
+}
+
+// resolveFilePath determines the local relative path for a Drive file
+// by looking up its parent folder in the folder mapping.
+func (s *Syncer) resolveFilePath(localName string, parents []string) string {
+	if len(parents) == 0 {
+		return localName
+	}
+
+	s.folderMapMu.RLock()
+	parentPath := s.folderMap[parents[0]]
+	s.folderMapMu.RUnlock()
+
+	if parentPath != "" {
+		return filepath.Join(parentPath, localName)
+	}
+	return localName
 }

@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v4-drivesync
+// REVISION: session-v5-drivesync-bugfixes
 
 // Package sessions manages session lifecycle.
 //
@@ -38,7 +38,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "session-v4-drivesync"
+const sessionRevision = "session-v5-drivesync-bugfixes"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -789,7 +789,8 @@ func (s *Session) OnDriveIntegrationAttached(ptyToken string) {
 	log.Printf("[session] Drive integration attached (refCount=%d)", s.driveSyncRefCount)
 
 	if s.driveSyncer != nil {
-		// Already running, just bump the ref count
+		// Already running — update the token so we don't use a stale one
+		s.driveSyncer.UpdateToken(ptyToken)
 		return
 	}
 

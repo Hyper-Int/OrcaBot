@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drive-client-v3-sync-changes-api
-console.log(`[drive-client] REVISION: drive-client-v3-sync-changes-api loaded at ${new Date().toISOString()}`);
+// REVISION: drive-client-v4-binary-upload-fix
+console.log(`[drive-client] REVISION: drive-client-v4-binary-upload-fix loaded at ${new Date().toISOString()}`);
 
 /**
  * Google Drive API Client
@@ -214,6 +214,42 @@ function getExportMimeType(googleMimeType: string): string {
   return exportTypes[googleMimeType] || 'text/plain';
 }
 
+/**
+ * Build a multipart/related body as Uint8Array for binary-safe uploads.
+ * When encoding is 'base64', decodes the content from base64 to raw bytes.
+ */
+function buildMultipartBody(
+  boundary: string,
+  metadata: Record<string, unknown>,
+  mimeType: string,
+  content: string,
+  encoding?: string
+): Uint8Array {
+  const encoder = new TextEncoder();
+  const metadataSection = encoder.encode(
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`
+  );
+
+  let contentBytes: Uint8Array;
+  if (encoding === 'base64') {
+    const binaryString = atob(content);
+    contentBytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      contentBytes[i] = binaryString.charCodeAt(i);
+    }
+  } else {
+    contentBytes = encoder.encode(content);
+  }
+
+  const closingBoundary = encoder.encode(`\r\n--${boundary}--`);
+
+  const body = new Uint8Array(metadataSection.length + contentBytes.length + closingBoundary.length);
+  body.set(metadataSection, 0);
+  body.set(contentBytes, metadataSection.length);
+  body.set(closingBoundary, metadataSection.length + contentBytes.length);
+  return body;
+}
+
 async function createFile(
   args: Record<string, unknown>,
   accessToken: string
@@ -222,6 +258,7 @@ async function createFile(
   const content = args.content as string || '';
   const mimeType = args.mimeType as string || 'text/plain';
   const folderId = args.folderId as string || undefined;
+  const encoding = args.encoding as string || undefined;
 
   if (!name) {
     throw new Error('name is required');
@@ -232,19 +269,9 @@ async function createFile(
     metadata.parents = [folderId];
   }
 
-  // Use multipart upload
+  // Build multipart upload body as Uint8Array for binary safety
   const boundary = 'orcabot_boundary_' + crypto.randomUUID();
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    `Content-Type: ${mimeType}`,
-    '',
-    content,
-    `--${boundary}--`,
-  ].join('\r\n');
+  const body = buildMultipartBody(boundary, metadata, mimeType, content, encoding);
 
   const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink', {
     method: 'POST',
@@ -268,7 +295,8 @@ async function updateFile(
   accessToken: string
 ): Promise<DriveFile> {
   const fileId = args.fileId as string;
-  const content = args.content as string;
+  const content = args.content as string || '';
+  const encoding = args.encoding as string || undefined;
   if (!fileId) {
     throw new Error('fileId is required');
   }
@@ -276,22 +304,12 @@ async function updateFile(
   const name = args.name as string || undefined;
   const mimeType = args.mimeType as string || 'text/plain';
 
-  // Use multipart upload for content update
+  // Build multipart upload body as Uint8Array for binary safety
   const boundary = 'orcabot_boundary_' + crypto.randomUUID();
   const metadata: Record<string, unknown> = {};
   if (name) metadata.name = name;
 
-  const body = [
-    `--${boundary}`,
-    'Content-Type: application/json; charset=UTF-8',
-    '',
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    `Content-Type: ${mimeType}`,
-    '',
-    content || '',
-    `--${boundary}--`,
-  ].join('\r\n');
+  const body = buildMultipartBody(boundary, metadata, mimeType, content, encoding);
 
   const response = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,webViewLink`, {
     method: 'PATCH',

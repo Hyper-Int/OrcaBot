@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drivesync-state-v1-initial
+// REVISION: drivesync-state-v2-remove-folder
 
 // Package drivesync implements bidirectional sync between /workspace/drive/ and Google Drive.
 // All Drive API calls go through the control plane gateway — OAuth tokens never leave the
@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const stateRevision = "drivesync-state-v1-initial"
+const stateRevision = "drivesync-state-v2-remove-folder"
 
 func init() {
 	log.Printf("[drivesync-state] REVISION: %s loaded at %s", stateRevision, time.Now().Format(time.RFC3339))
@@ -226,6 +226,13 @@ func (s *SyncState) AllFiles() map[string]*SyncedFile {
 		result[k] = &copy
 	}
 	return result
+}
+
+// RemoveFolder removes a folder from the sync state.
+func (s *SyncState) RemoveFolder(relPath string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Folders, relPath)
 }
 
 // AllFolders returns a snapshot of all tracked folders.
