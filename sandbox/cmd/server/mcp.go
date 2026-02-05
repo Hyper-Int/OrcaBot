@@ -108,7 +108,9 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Collect all tools - gated by integration attachment (no edge = no tool)
-	var allTools []interface{}
+	// IMPORTANT: Use empty slice (not nil) so JSON encodes as [] not null.
+	// MCP clients (Gemini) validate that "tools" is an array.
+	allTools := make([]interface{}, 0)
 
 	// Validate caller's integration token to prevent cross-PTY impersonation.
 	// For tool listing, missing token just means no integration tools (soft fail).

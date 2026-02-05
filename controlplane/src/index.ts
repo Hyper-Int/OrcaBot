@@ -42,7 +42,7 @@ import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
-import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail } from './email/resend';
+import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
 // Export Durable Objects
@@ -974,12 +974,13 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
   // Template routes
   // ============================================
 
-  // GET /templates - List templates
+  // GET /templates - List templates (admins see all, non-admins see approved only)
   if (segments[0] === 'templates' && segments.length === 1 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
     const category = url.searchParams.get('category') || undefined;
-    return templates.listTemplates(env, category);
+    const admin = isAdminEmail(env, auth.user!.email);
+    return templates.listTemplates(env, category, admin);
   }
 
   // GET /templates/:id - Get template with data
@@ -989,7 +990,7 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
     return templates.getTemplate(env, segments[1]);
   }
 
-  // POST /templates - Create template from dashboard
+  // POST /templates - Create template from dashboard (starts as pending_review)
   if (segments[0] === 'templates' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
@@ -998,8 +999,47 @@ async function handleRequest(request: Request, env: EnvWithBindings): Promise<Re
       name: string;
       description?: string;
       category?: string;
+      viewport?: { x: number; y: number; zoom: number };
     };
-    return templates.createTemplate(env, auth.user!.id, data);
+    const response = await templates.createTemplate(env, auth.user!.id, data);
+
+    // Send review notification email to admin (fire-and-forget)
+    if (response.ok) {
+      try {
+        const cloned = response.clone();
+        const body = await cloned.json() as { template: { itemCount: number } };
+        const reviewEmail = buildTemplateReviewEmail({
+          templateName: data.name,
+          authorName: auth.user!.name || 'Unknown',
+          authorEmail: auth.user!.email,
+          category: data.category || 'custom',
+          itemCount: body.template.itemCount,
+        });
+        sendEmail(env, {
+          to: 'rob.d.macrae@gmail.com',
+          subject: reviewEmail.subject,
+          html: reviewEmail.html,
+        }).catch((err) => console.error('Failed to send template review email:', err));
+      } catch (err) {
+        console.error('Failed to build template review email:', err);
+      }
+    }
+
+    return response;
+  }
+
+  // POST /templates/:id/approve - Approve or reject template (admin only)
+  if (segments[0] === 'templates' && segments.length === 3 && segments[2] === 'approve' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (!isAdminEmail(env, auth.user!.email)) {
+      return Response.json(
+        { error: 'E79807: Admin access required' },
+        { status: 403 }
+      );
+    }
+    const { status: newStatus } = await request.json() as { status: 'approved' | 'rejected' };
+    return templates.approveTemplate(env, segments[1], newStatus);
   }
 
   // DELETE /templates/:id - Delete template (author or admin)

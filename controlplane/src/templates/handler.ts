@@ -13,6 +13,26 @@ import type { Env } from '../types';
 import { scrubItemContent, type DashboardItemType } from './scrubber';
 
 /**
+ * Ensure the status and viewport_json columns exist on dashboard_templates.
+ * Runs once per worker lifetime via the migrated flag.
+ */
+let migrated = false;
+async function ensureTemplateColumns(env: Env): Promise<void> {
+  if (migrated) return;
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE dashboard_templates ADD COLUMN viewport_json TEXT`
+    ).run();
+  } catch { /* already exists */ }
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE dashboard_templates ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'`
+    ).run();
+  } catch { /* already exists */ }
+  migrated = true;
+}
+
+/**
  * Template item stored in items_json
  */
 export interface TemplateItem {
@@ -47,6 +67,7 @@ export interface DashboardTemplate {
   itemCount: number;
   isFeatured: boolean;
   useCount: number;
+  status: 'pending_review' | 'approved' | 'rejected';
   createdAt: string;
   updatedAt: string;
 }
@@ -57,6 +78,7 @@ export interface DashboardTemplate {
 export interface DashboardTemplateWithData extends DashboardTemplate {
   items: TemplateItem[];
   edges: TemplateEdge[];
+  viewport?: { x: number; y: number; zoom: number };
 }
 
 function generateId(): string {
@@ -78,6 +100,7 @@ function formatTemplate(row: Record<string, unknown>): DashboardTemplate {
     itemCount: row.item_count as number,
     isFeatured: (row.is_featured as number) === 1,
     useCount: row.use_count as number,
+    status: (row.status as DashboardTemplate['status']) || 'approved',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -90,10 +113,14 @@ function formatTemplateWithData(
   row: Record<string, unknown>
 ): DashboardTemplateWithData {
   const base = formatTemplate(row);
+  const viewport = row.viewport_json
+    ? JSON.parse(row.viewport_json as string)
+    : undefined;
   return {
     ...base,
     items: JSON.parse((row.items_json as string) || '[]'),
     edges: JSON.parse((row.edges_json as string) || '[]'),
+    ...(viewport && { viewport }),
   };
 }
 
@@ -103,19 +130,27 @@ function formatTemplateWithData(
  */
 export async function listTemplates(
   env: Env,
-  category?: string
+  category?: string,
+  isAdmin = false
 ): Promise<Response> {
-  let query = `
-    SELECT id, name, description, category, preview_image_url,
-           author_id, author_name, item_count, is_featured, use_count,
-           created_at, updated_at
-    FROM dashboard_templates
-  `;
+  await ensureTemplateColumns(env);
+
+  let query = `SELECT * FROM dashboard_templates`;
+  const conditions: string[] = [];
   const bindings: string[] = [];
 
+  // Non-admins only see approved templates
+  if (!isAdmin) {
+    conditions.push("status = 'approved'");
+  }
+
   if (category && category !== 'all') {
-    query += ' WHERE category = ?';
+    conditions.push('category = ?');
     bindings.push(category);
+  }
+
+  if (conditions.length > 0) {
+    query += ' WHERE ' + conditions.join(' AND ');
   }
 
   query += ' ORDER BY is_featured DESC, use_count DESC, created_at DESC';
@@ -164,8 +199,11 @@ export async function createTemplate(
     name: string;
     description?: string;
     category?: string;
+    viewport?: { x: number; y: number; zoom: number };
   }
 ): Promise<Response> {
+  await ensureTemplateColumns(env);
+
   // 1. Verify user has access to dashboard
   const access = await env.DB.prepare(
     `
@@ -247,7 +285,7 @@ export async function createTemplate(
     ? data.category
     : 'custom';
 
-  // 7. Insert template
+  // 7. Insert template (ensureTemplateColumns guarantees status + viewport_json exist)
   const templateId = generateId();
   const now = new Date().toISOString();
 
@@ -255,8 +293,8 @@ export async function createTemplate(
     `
     INSERT INTO dashboard_templates
     (id, name, description, category, author_id, author_name,
-     items_json, edges_json, item_count, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     items_json, edges_json, viewport_json, item_count, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -268,7 +306,9 @@ export async function createTemplate(
       user?.name || 'Unknown',
       JSON.stringify(templateItems),
       JSON.stringify(templateEdges),
+      data.viewport ? JSON.stringify(data.viewport) : null,
       templateItems.length,
+      'pending_review',
       now,
       now
     )
@@ -282,6 +322,7 @@ export async function createTemplate(
         description: data.description || '',
         category,
         itemCount: templateItems.length,
+        status: 'pending_review',
       },
     },
     { status: 201 }
@@ -328,6 +369,44 @@ export async function deleteTemplate(
 }
 
 /**
+ * Approve or reject a template (admin only)
+ * POST /templates/:id/approve
+ */
+export async function approveTemplate(
+  env: Env,
+  templateId: string,
+  newStatus: 'approved' | 'rejected'
+): Promise<Response> {
+  if (newStatus !== 'approved' && newStatus !== 'rejected') {
+    return Response.json(
+      { error: 'E79805: Invalid status. Must be "approved" or "rejected"' },
+      { status: 400 }
+    );
+  }
+
+  const template = await env.DB.prepare(
+    `SELECT id, name FROM dashboard_templates WHERE id = ?`
+  )
+    .bind(templateId)
+    .first<{ id: string; name: string }>();
+
+  if (!template) {
+    return Response.json(
+      { error: 'E79806: Template not found' },
+      { status: 404 }
+    );
+  }
+
+  await env.DB.prepare(
+    `UPDATE dashboard_templates SET status = ?, updated_at = ? WHERE id = ?`
+  )
+    .bind(newStatus, new Date().toISOString(), templateId)
+    .run();
+
+  return Response.json({ template: { id: templateId, status: newStatus } });
+}
+
+/**
  * Populate a dashboard from a template
  * Called internally when creating a dashboard with templateId
  */
@@ -335,12 +414,12 @@ export async function populateFromTemplate(
   env: Env,
   dashboardId: string,
   templateId: string
-): Promise<void> {
+): Promise<{ viewport?: { x: number; y: number; zoom: number } } | undefined> {
   const template = await env.DB.prepare(
-    `SELECT items_json, edges_json FROM dashboard_templates WHERE id = ?`
+    `SELECT items_json, edges_json, viewport_json FROM dashboard_templates WHERE id = ?`
   )
     .bind(templateId)
-    .first<{ items_json: string; edges_json: string }>();
+    .first<{ items_json: string; edges_json: string; viewport_json: string | null }>();
 
   if (!template) return;
 
@@ -411,4 +490,9 @@ export async function populateFromTemplate(
   )
     .bind(templateId)
     .run();
+
+  const viewport = template.viewport_json
+    ? JSON.parse(template.viewport_json)
+    : undefined;
+  return { viewport };
 }

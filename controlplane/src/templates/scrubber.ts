@@ -12,7 +12,7 @@
  * - browser: Keep URL (assumed public)
  * - workspace: Keep as-is (no sensitive data)
  * - recipe: Clear step configs that may contain env vars/secrets
- * - prompt: Clear prompt text (may contain user instructions/data)
+ * - prompt: Keep as-is (prompt text defines template behavior)
  * - schedule: Keep cron pattern, clear name and event trigger
  */
 
@@ -154,15 +154,8 @@ export function scrubItemContent(
       }
 
       case 'prompt': {
-        // Prompts store { prompt: string, ... }
-        // Clear prompt text which may contain user instructions/data
-        const parsed = safeParseJson(content) as Record<string, unknown> | null;
-        if (parsed && typeof parsed === 'object') {
-          return JSON.stringify({
-            prompt: '', // Clear user prompt
-          });
-        }
-        return JSON.stringify({ prompt: '' });
+        // Prompts are intentionally kept — they define the template's behavior
+        return content;
       }
 
       case 'schedule': {
