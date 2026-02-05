@@ -212,6 +212,7 @@ const FONT_SIZE_PRESETS = {
 type FontSizeSetting = keyof typeof FONT_SIZE_PRESETS;
 
 // TTS provider configurations
+// envKey can be a single key or comma-separated list for providers requiring multiple credentials
 const TTS_PROVIDERS: Record<string, { label: string; envKey: string | null; voices: string[] }> = {
   none: { label: "None", envKey: null, voices: [] },
   openai: {
@@ -231,18 +232,8 @@ const TTS_PROVIDERS: Record<string, { label: string; envKey: string | null; voic
   },
   azure: {
     label: "Azure",
-    envKey: "AZURE_SPEECH_KEY",
+    envKey: "AZURE_SPEECH_KEY, AZURE_SPEECH_REGION",
     voices: ["en-US-AriaNeural", "en-US-GuyNeural", "en-US-JennyNeural", "en-GB-LibbyNeural", "en-GB-RyanNeural"],
-  },
-  gcloud: {
-    label: "Google Cloud",
-    envKey: "GOOGLE_APPLICATION_CREDENTIALS",
-    voices: ["en-US-Standard-A", "en-US-Standard-B", "en-US-Standard-C", "en-US-Standard-D", "en-US-Wavenet-A", "en-US-Wavenet-B"],
-  },
-  aws: {
-    label: "AWS Polly",
-    envKey: "AWS_ACCESS_KEY_ID",
-    voices: ["Joanna", "Matthew", "Ivy", "Kendra", "Kimberly", "Salli", "Joey", "Justin", "Amy", "Brian", "Emma"],
   },
 };
 

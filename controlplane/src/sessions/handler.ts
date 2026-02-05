@@ -42,6 +42,35 @@ interface TerminalContent {
   ttsVoice?: string;
 }
 
+// ElevenLabs voice name to ID mapping
+// API requires voice IDs, but UI shows friendly names
+const ELEVENLABS_VOICE_IDS: Record<string, string> = {
+  'Rachel': '21m00Tcm4TlvDq8ikWAM',
+  'Domi': 'AZnzlk1XvdvUeBnXmlld',
+  'Bella': 'EXAVITQu4vr4xnSDxMaL',
+  'Antoni': 'ErXwobaYiN019PkySvjV',
+  'Elli': 'MF3mGyEYCl7XYWbV9V6O',
+  'Josh': 'TxGEqnHWrfWFTfGW9XjX',
+  'Arnold': 'VR6AewLTigWG4xSOukaG',
+  'Adam': 'pNInz6obpgDQGcFmaJgB',
+  'Sam': 'yoZ06aMxZJJ28mfd3POQ',
+};
+
+// Deepgram voice name to model mapping
+// API requires full model names like "aura-asteria-en", UI shows friendly names
+const DEEPGRAM_VOICE_MODELS: Record<string, string> = {
+  'asteria': 'aura-asteria-en',
+  'luna': 'aura-luna-en',
+  'stella': 'aura-stella-en',
+  'athena': 'aura-athena-en',
+  'hera': 'aura-hera-en',
+  'orion': 'aura-orion-en',
+  'arcas': 'aura-arcas-en',
+  'perseus': 'aura-perseus-en',
+  'angus': 'aura-angus-en',
+  'orpheus': 'aura-orpheus-en',
+};
+
 function parseBооtCоmmand(content: unknown): string {
   if (typeof content !== 'string') {
     return '';
@@ -57,7 +86,18 @@ function parseBооtCоmmand(content: unknown): string {
     // If TTS is enabled, wrap the command with talkito
     if (parsed.ttsProvider && parsed.ttsProvider !== 'none' && bootCommand) {
       const provider = parsed.ttsProvider;
-      const voice = parsed.ttsVoice || '';
+      let voice = parsed.ttsVoice || '';
+
+      // Map ElevenLabs voice names to IDs (API requires IDs, not names)
+      if (provider === 'elevenlabs' && voice && ELEVENLABS_VOICE_IDS[voice]) {
+        voice = ELEVENLABS_VOICE_IDS[voice];
+      }
+
+      // Map Deepgram voice names to full model names (API requires "aura-{name}-en" format)
+      if (provider === 'deepgram' && voice && DEEPGRAM_VOICE_MODELS[voice]) {
+        voice = DEEPGRAM_VOICE_MODELS[voice];
+      }
+
       // talkito --disable-mcp --tts-provider {provider} --tts-voice {voice} --orcabot --asr-provider off {command}
       const talkitoArgs = [
         'talkito',
