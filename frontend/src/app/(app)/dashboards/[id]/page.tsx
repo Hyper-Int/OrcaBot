@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v17-browser-pan-fix
-console.log(`[dashboard] REVISION: dashboard-v17-browser-pan-fix loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v19-fix-edge-delete
+console.log(`[dashboard] REVISION: dashboard-v19-fix-edge-delete loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -116,7 +116,7 @@ const toFlowEdge = (edge: DashboardEdge): Edge => ({
   target: edge.targetItemId,
   sourceHandle: edge.sourceHandle,
   targetHandle: edge.targetHandle,
-  type: "smoothstep",
+  type: "integration",
   animated: true,
   style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
 });
@@ -868,8 +868,23 @@ export default function DashboardPage() {
       targetItemId: string;
       sourceHandle?: string;
       targetHandle?: string;
-    }) => createEdge(dashboardId, edge),
-    onSuccess: (createdEdge) => {
+      _tempEdgeId?: string;
+    }) => {
+      const { _tempEdgeId, ...payload } = edge;
+      return createEdge(dashboardId, payload);
+    },
+    onSuccess: (createdEdge, variables) => {
+      // Replace temp edge with real server edge (swap temp ID → real ID)
+      if (variables._tempEdgeId) {
+        setEdges((prev) =>
+          prev.map((e) =>
+            e.id === variables._tempEdgeId
+              ? { ...e, ...toFlowEdge(createdEdge), data: e.data }
+              : e
+          )
+        );
+      }
+
       queryClient.setQueryData(
         ["dashboard", dashboardId],
         (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
@@ -888,7 +903,11 @@ export default function DashboardPage() {
       // Auto-attach integration when edge connects integration block to terminal
       handleIntegrationEdge(createdEdge, "attach");
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      // Remove temp edge on failure
+      if (variables._tempEdgeId) {
+        setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
+      }
       toast.error(`Failed to save connection: ${error.message}`);
     },
   });
@@ -1629,29 +1648,34 @@ export default function DashboardPage() {
       }>(["dashboard", dashboardId]);
       const edgeToDelete = data?.edges?.find((e) => e.id === edgeId);
 
-      await deleteEdge(dashboardId, edgeId);
-      // Update local state
+      // Remove from local state immediately (optimistic)
       setEdges((prev) => prev.filter((e) => e.id !== edgeId));
-      queryClient.setQueryData(
-        ["dashboard", dashboardId],
-        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
-          if (!oldData) return oldData;
-          return {
-            ...oldData,
-            edges: oldData.edges.filter((e) => e.id !== edgeId),
-          };
-        }
-      );
 
-      // Auto-detach integration when edge between integration and terminal is removed
+      // Only call server API if the edge exists in query data (has a real server ID)
       if (edgeToDelete) {
+        try {
+          await deleteEdge(dashboardId, edgeId);
+        } catch (err) {
+          console.warn("Failed to delete edge from server:", err);
+        }
+        queryClient.setQueryData(
+          ["dashboard", dashboardId],
+          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+            if (!oldData) return oldData;
+            return {
+              ...oldData,
+              edges: oldData.edges.filter((e) => e.id !== edgeId),
+            };
+          }
+        );
+        // Auto-detach integration when edge between integration and terminal is removed
         handleIntegrationEdge(
           { id: edgeToDelete.id, sourceItemId: edgeToDelete.sourceItemId, targetItemId: edgeToDelete.targetItemId },
           "detach"
         );
       }
     },
-    [dashboardId, queryClient, handleIntegrationEdge]
+    [dashboardId, queryClient, handleIntegrationEdge, setEdges]
   );
 
   // Callback to send UI command results back to DashboardDO for broadcast
@@ -1940,7 +1964,7 @@ export default function DashboardPage() {
               target: target.nodeId,
               sourceHandle: source.handleId,
               targetHandle: target.handleId,
-              type: "smoothstep",
+              type: "integration",
               animated: true,
               style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
             },
@@ -1952,6 +1976,7 @@ export default function DashboardPage() {
           targetItemId: target.nodeId,
           sourceHandle: source.handleId,
           targetHandle: target.handleId,
+          _tempEdgeId: edgeId,
         });
 
         return null;
@@ -2688,6 +2713,7 @@ export default function DashboardPage() {
               onStorageLinked={handleStorageLinked}
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
+              onEdgeDelete={role === "viewer" ? undefined : deleteEdgeFn}
               onTerminalCwdChange={handleTerminalCwdChange}
               reactFlowRef={reactFlowInstanceRef}
             />

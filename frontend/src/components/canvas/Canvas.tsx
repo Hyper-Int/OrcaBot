@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v3-defer-rebuild-during-drag
-console.log(`[canvas] REVISION: canvas-v3-defer-rebuild-during-drag loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v5-connector-mode-delete
+console.log(`[canvas] REVISION: canvas-v5-connector-mode-delete loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -27,7 +27,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { IntegrationEdge, EdgeLabelClickContext } from "@/components/canvas/IntegrationEdge";
+import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext } from "@/components/canvas/IntegrationEdge";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
@@ -196,6 +196,8 @@ interface CanvasProps {
   onDuplicate?: (itemId: string) => void;
   /** Called when an edge label is clicked, to open policy editor */
   onEdgeLabelClick?: (edgeId: string, provider: string) => void;
+  /** Called when an edge delete button is clicked */
+  onEdgeDelete?: (edgeId: string) => void;
   /** Called when a terminal's working directory changes */
   onTerminalCwdChange?: (itemId: string, cwd: string) => void;
   /** Ref populated with the ReactFlow instance for programmatic viewport control */
@@ -225,6 +227,7 @@ export function Canvas({
   onStorageLinked,
   onDuplicate,
   onEdgeLabelClick,
+  onEdgeDelete,
   onTerminalCwdChange,
   reactFlowRef,
 }: CanvasProps) {
@@ -462,6 +465,8 @@ export function Canvas({
 
   return (
     <TerminalOverlayProvider value={overlayContextValue}>
+      <EdgeConnectorModeContext.Provider value={connectorMode}>
+      <EdgeDeleteContext.Provider value={onEdgeDelete ?? null}>
       <EdgeLabelClickContext.Provider value={onEdgeLabelClick ?? null}>
       <div
         className="w-full h-full bg-[var(--background)] relative"
@@ -555,6 +560,8 @@ export function Canvas({
         />
       </div>
       </EdgeLabelClickContext.Provider>
+      </EdgeDeleteContext.Provider>
+      </EdgeConnectorModeContext.Provider>
     </TerminalOverlayProvider>
   );
 }
