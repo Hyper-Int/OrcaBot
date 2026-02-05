@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v2-snapshot-cleanup
-const sessionsRevision = "sessions-v2-snapshot-cleanup";
+// REVISION: sessions-v3-sql-table-whitelist
+const sessionsRevision = "sessions-v3-sql-table-whitelist";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -18,6 +18,19 @@ import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
+
+// Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
+// SECURITY: Never interpolate provider names directly into SQL - always use this map
+const MIRROR_TABLES: Record<string, string> = {
+  github: 'github_mirrors',
+  box: 'box_mirrors',
+  onedrive: 'onedrive_mirrors',
+  drive: 'drive_mirrors',
+};
+
+function getMirrorTableName(provider: string): string | null {
+  return MIRROR_TABLES[provider] ?? null;
+}
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -276,8 +289,15 @@ async function triggerMirrorSync(
     return;
   }
 
+  // SECURITY: Use whitelist to get table name - never interpolate provider directly
+  const tableName = getMirrorTableName(provider);
+  if (!tableName) {
+    console.error(`[sessions] Invalid mirror provider: ${provider}`);
+    return;
+  }
+
   await env.DB.prepare(`
-    UPDATE ${provider}_mirrors
+    UPDATE ${tableName}
     SET status = 'syncing_workspace', sync_error = null, updated_at = datetime('now')
     WHERE dashboard_id = ?
   `).bind(dashboardId).run();

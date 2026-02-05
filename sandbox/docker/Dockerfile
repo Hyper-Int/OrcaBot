@@ -132,8 +132,9 @@ RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio /usr/local/bin/chromium-
     && if [ -x /usr/bin/chromium ]; then mv /usr/bin/chromium /usr/bin/chromium.real; fi \
     && ln -sf /usr/local/bin/chromium-wrapper /usr/bin/chromium
 
-# Create workspace directory
-RUN mkdir -p /workspace && chmod 777 /workspace
+# Create workspace directory with restrictive permissions
+# NOTE: 755 instead of 777 to prevent cross-session data leakage
+RUN mkdir -p /workspace && chmod 755 /workspace
 
 # Create non-root user for sandbox operations
 RUN useradd -m -s /bin/bash sandbox \
@@ -155,8 +156,13 @@ WORKDIR /workspace
 # Expose HTTP/WebSocket port
 EXPOSE 8080
 
+# Health check for container orchestration
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://127.0.0.1:8080/health || exit 1
+
 # Run as root (needed for PTY creation and process management)
 # The sandbox user is used for spawned shell processes, not the server itself
+# NOTE: Consider using capability-based approach (CAP_SYS_PTRACE, CAP_SETUID) in future
 USER root
 
 # Start the Go server

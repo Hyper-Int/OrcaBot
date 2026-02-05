@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v12-oauth-refresh
-console.log(`[integration-gateway] REVISION: gateway-v12-oauth-refresh loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v11-sanitize-errors-devgate
+console.log(`[integration-gateway] REVISION: gateway-v11-sanitize-errors-devgate loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -262,9 +262,9 @@ async function checkRateLimit(
     }));
 
     if (!res.ok) {
-      // Fail open on error
-      console.error(`[gateway] Rate limit check failed: ${res.status}`);
-      return { allowed: true };
+      // Fail closed on error - deny requests when rate limiter is unavailable
+      console.error(`[gateway] Rate limit check failed (failing closed): ${res.status}`);
+      return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
     }
 
     const result = await res.json() as { allowed: boolean; remaining?: number };
@@ -275,8 +275,9 @@ async function checkRateLimit(
       };
     }
   } catch (err) {
-    // Fail open on error
-    console.error(`[gateway] Rate limit check error:`, err);
+    // Fail closed on error - deny requests when rate limiter is unavailable
+    console.error(`[gateway] Rate limit check error (failing closed):`, err);
+    return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
   }
 
   return { allowed: true };
@@ -803,6 +804,11 @@ export async function handleGatewayExecute(
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
 
+    // Log full error internally for debugging
+    console.error(`[gateway] API error for ${provider}/${body.action}:`, errorMessage);
+
+    const isDev = env.DEV_AUTH_ENABLED === 'true';
+
     await logAuditEntry(env, {
       terminalIntegrationId: ti.id,
       terminalId,
@@ -813,11 +819,13 @@ export async function handleGatewayExecute(
       policyId,
       policyVersion,
       decision: 'denied',
-      denialReason: `API error: ${errorMessage}`,
+      // In dev mode, keep full error for debugging; in prod, sanitize
+      denialReason: isDev ? `API error: ${errorMessage}` : `API error (see server logs for details)`,
     });
 
+    // In dev mode, return the full error for debugging; in prod, don't leak API details
     return Response.json(
-      { error: 'API_ERROR', reason: errorMessage },
+      { error: 'API_ERROR', reason: isDev ? errorMessage : 'Action failed - please try again or contact support' },
       { status: 502 }
     );
   }
