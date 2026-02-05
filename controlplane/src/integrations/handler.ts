@@ -247,6 +247,21 @@ async function cleanupIntegration(
   }
 
   await env.DB.prepare(`DELETE FROM ${mirrorTable} WHERE user_id = ?`).bind(userId).run();
+
+  // Soft-delete terminal_integrations that reference this user's integrations for this provider
+  // so sandboxes detect detach and clean up synced files
+  const userIntegrations = await env.DB.prepare(`
+    SELECT id FROM user_integrations WHERE user_id = ? AND provider = ?
+  `).bind(userId, provider).all<{ id: string }>();
+
+  for (const ui of userIntegrations.results || []) {
+    await env.DB.prepare(`
+      UPDATE terminal_integrations
+      SET deleted_at = datetime('now'), updated_at = datetime('now')
+      WHERE user_integration_id = ? AND deleted_at IS NULL
+    `).bind(ui.id).run();
+  }
+
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = ?`).bind(userId, provider).run();
 }
 
@@ -3149,6 +3164,14 @@ export async function unlinkGооgleDriveFоlder(
   await env.DB.prepare(`
     DELETE FROM drive_mirrors WHERE dashboard_id = ? AND user_id = ?
   `).bind(dashboardId, auth.user!.id).run();
+
+  // Soft-delete terminal_integrations for google_drive on this dashboard
+  // so the sandbox detects detach and cleans up /workspace/drive/
+  await env.DB.prepare(`
+    UPDATE terminal_integrations
+    SET deleted_at = datetime('now'), updated_at = datetime('now')
+    WHERE dashboard_id = ? AND provider = 'google_drive' AND deleted_at IS NULL
+  `).bind(dashboardId).run();
 
   return Response.json({ ok: true });
 }
