@@ -1,6 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: browser-clipboard-v3-remove-panel
+// REVISION: browser-v4-fix-minimize-hooks
 
 "use client";
 
@@ -120,6 +120,91 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
 
   const dashboardId = data.dashboardId;
 
+  // All hooks must be called before any early return to satisfy React's rules of hooks
+  React.useEffect(() => {
+    if (isMinimized) return; // Skip browser lifecycle when minimized
+    if (!dashboardId) {
+      setStatus("error");
+      setErrorMessage("Missing dashboard id.");
+      return;
+    }
+
+    let cancelled = false;
+    setStatus("starting");
+    setErrorMessage(null);
+
+    retainBrowser(dashboardId)
+      .catch((err) => {
+        if (!cancelled) {
+          const message = err instanceof ApiError && err.message
+            ? err.message
+            : "Failed to start browser.";
+          setErrorMessage(message);
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        let attempts = 0;
+        const poll = async () => {
+          attempts += 1;
+          if (attempts % 6 === 0) {
+            startDashboardBrowser(dashboardId).catch(() => {});
+          }
+          const statusResponse = await getDashboardBrowserStatus(dashboardId);
+          if (cancelled) return;
+          if (statusResponse?.running && statusResponse?.ready !== false) {
+            setStatus("running");
+            setErrorMessage(null);
+            return;
+          }
+          if (attempts >= 40) {
+            setStatus("error");
+            setErrorMessage("Browser failed to start.");
+            return;
+          }
+          setTimeout(poll, 500);
+        };
+        void poll();
+      });
+
+    return () => {
+      cancelled = true;
+      releaseBrowser(dashboardId);
+    };
+  }, [dashboardId, isMinimized]);
+
+  React.useEffect(() => {
+    if (!dashboardId || status !== "running") {
+      return;
+    }
+    const url = typeof data.content === "string" ? data.content.trim() : "";
+    if (!url || url === lastOpenedRef.current) {
+      return;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return;
+    }
+    lastOpenedRef.current = url;
+    openDashboardBrowser(dashboardId, url).catch(() => {});
+  }, [dashboardId, status, data.content]);
+
+  const browserUrl = React.useMemo(() => {
+    if (!dashboardId) return "";
+    const baseUrl = `${API.cloudflare.dashboards}/${dashboardId}/browser/`;
+    const params = new URLSearchParams({
+      autoconnect: "1",
+      resize: "scale",
+      show_dot: "true",
+      path: `dashboards/${dashboardId}/browser/websockify`,
+    });
+    if (DEV_MODE_ENABLED && user) {
+      params.set("user_id", user.id);
+      params.set("user_email", user.email);
+      params.set("user_name", user.name);
+    }
+    return `${baseUrl}?${params.toString()}`;
+  }, [dashboardId, user]);
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <span title="Browser icon">
@@ -194,89 +279,6 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       />
     );
   }
-
-  React.useEffect(() => {
-    if (!dashboardId) {
-      setStatus("error");
-      setErrorMessage("Missing dashboard id.");
-      return;
-    }
-
-    let cancelled = false;
-    setStatus("starting");
-    setErrorMessage(null);
-
-    retainBrowser(dashboardId)
-      .catch((err) => {
-        if (!cancelled) {
-          const message = err instanceof ApiError && err.message
-            ? err.message
-            : "Failed to start browser.";
-          setErrorMessage(message);
-        }
-      })
-      .finally(() => {
-        if (cancelled) return;
-        let attempts = 0;
-        const poll = async () => {
-          attempts += 1;
-          if (attempts % 6 === 0) {
-            startDashboardBrowser(dashboardId).catch(() => {});
-          }
-          const statusResponse = await getDashboardBrowserStatus(dashboardId);
-          if (cancelled) return;
-          if (statusResponse?.running && statusResponse?.ready !== false) {
-            setStatus("running");
-            setErrorMessage(null);
-            return;
-          }
-          if (attempts >= 40) {
-            setStatus("error");
-            setErrorMessage("Browser failed to start.");
-            return;
-          }
-          setTimeout(poll, 500);
-        };
-        void poll();
-      });
-
-    return () => {
-      cancelled = true;
-      releaseBrowser(dashboardId);
-    };
-  }, [dashboardId]);
-
-  React.useEffect(() => {
-    if (!dashboardId || status !== "running") {
-      return;
-    }
-    const url = typeof data.content === "string" ? data.content.trim() : "";
-    if (!url || url === lastOpenedRef.current) {
-      return;
-    }
-    if (!/^https?:\/\//i.test(url)) {
-      return;
-    }
-    lastOpenedRef.current = url;
-    openDashboardBrowser(dashboardId, url).catch(() => {});
-  }, [dashboardId, status, data.content]);
-
-  const browserUrl = React.useMemo(() => {
-    if (!dashboardId) return "";
-    const baseUrl = `${API.cloudflare.dashboards}/${dashboardId}/browser/`;
-    const params = new URLSearchParams({
-      autoconnect: "1",
-      resize: "scale",
-      show_dot: "true",
-      path: `dashboards/${dashboardId}/browser/websockify`,
-    });
-    if (DEV_MODE_ENABLED && user) {
-      params.set("user_id", user.id);
-      params.set("user_email", user.email);
-      params.set("user_name", user.name);
-    }
-    return `${baseUrl}?${params.toString()}`;
-  }, [dashboardId, user]);
 
   return (
     <BlockWrapper
