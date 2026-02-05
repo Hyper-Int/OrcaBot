@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v14-oauth-auth-fix
-const MODULE_REVISION = "workspace-sidebar-v14-oauth-auth-fix";
+// REVISION: sidebar-layout-v15-flex-positioning
+const MODULE_REVISION = "sidebar-layout-v15-flex-positioning";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -1117,7 +1117,7 @@ export function WorkspaceSidebar({
   if (collapsed) {
     return (
       <>
-        <div className="flex flex-col items-center w-9 border-r border-[var(--border)] bg-[var(--background)] absolute left-0 top-[55px] bottom-0 z-10 shadow-sm">
+        <div className="flex flex-col items-center w-9 border-r border-[var(--border)] bg-[var(--background)] h-full z-10 shadow-sm shrink-0">
           <Tooltip content="Expand workspace" side="right">
             <Button
               variant="ghost"
@@ -1144,7 +1144,7 @@ export function WorkspaceSidebar({
   return (
     <>
       <div
-        className="flex flex-col border-r border-[var(--border)] bg-[var(--background)] absolute left-0 top-[55px] bottom-0 z-10 select-none shadow-lg"
+        className="flex flex-col border-r border-[var(--border)] bg-[var(--background)] h-full z-10 select-none shadow-lg shrink-0"
         style={{ width: `${width}px` }}
       >
         {/* Header */}
