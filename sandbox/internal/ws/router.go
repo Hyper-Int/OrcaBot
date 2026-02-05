@@ -119,7 +119,8 @@ func (r *Router) HandleWebSocket(w http.ResponseWriter, req *http.Request) {
 
 	client := NewClientWithUser(conn, ptyInfo.Hub, userID)
 	if client == nil {
-		// Hub already stopped
+		// Hub already stopped - close the orphaned connection to prevent leak
+		conn.Close()
 		return
 	}
 	go client.ReadPump()
@@ -151,7 +152,8 @@ func (r *Router) HandleAgentWebSocket(w http.ResponseWriter, req *http.Request) 
 
 	client := NewClientWithUser(conn, agent.Hub(), userID)
 	if client == nil {
-		// Hub already stopped
+		// Hub already stopped - close the orphaned connection to prevent leak
+		conn.Close()
 		return
 	}
 	go client.ReadPump()
