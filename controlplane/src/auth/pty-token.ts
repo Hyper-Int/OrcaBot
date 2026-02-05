@@ -173,6 +173,14 @@ export async function verifyPtyToken(
       return null;
     }
 
+    // Check iat (issued-at) with clock skew tolerance
+    // Reject tokens issued too far in the future (clock skew attack prevention)
+    const CLOCK_SKEW_TOLERANCE = 60; // 60 seconds
+    if (payload.iat && payload.iat > now + CLOCK_SKEW_TOLERANCE) {
+      console.warn(`[pty-token] Rejecting token with future iat: ${payload.iat} > ${now + CLOCK_SKEW_TOLERANCE}`);
+      return null;
+    }
+
     return payload;
   } catch {
     return null;
