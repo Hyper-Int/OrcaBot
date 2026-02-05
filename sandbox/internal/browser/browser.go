@@ -1,6 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-v2-clean-stale-locks
 package browser
 
 import (
@@ -39,6 +40,12 @@ type Controller struct {
 	running   bool
 	ready     bool
 	processes []*exec.Cmd
+}
+
+const browserRevision = "browser-v2-clean-stale-locks"
+
+func init() {
+	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
 }
 
 var displayCounter uint32 = 90
@@ -87,6 +94,12 @@ func (c *Controller) Start() (Status, error) {
 	userDataDir := filepath.Join(c.workspace, ".browser")
 	if err := os.MkdirAll(userDataDir, 0o755); err != nil {
 		return Status{}, err
+	}
+
+	// Clean stale Chromium profile lock files left by previous container runs.
+	// These persist on the Docker volume and cause "profile in use" errors.
+	for _, lockFile := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		_ = os.Remove(filepath.Join(userDataDir, lockFile))
 	}
 
 	displayVar := fmt.Sprintf(":%d", display)
