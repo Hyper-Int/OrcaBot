@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: paste-secret-detect-v1-warn-on-key-paste
-const TERMINAL_BLOCK_REVISION = "paste-secret-detect-v1-warn-on-key-paste";
+// REVISION: session-cleanup-v1-fix-stale-session-id
+const TERMINAL_BLOCK_REVISION = "session-cleanup-v1-fix-stale-session-id";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -665,6 +665,30 @@ export function TerminalBlock({
             sessions: hasSession
               ? sessions.map((entry) => (entry.id === nextSession.id ? nextSession : entry))
               : [...sessions, nextSession],
+          };
+        }
+      );
+    },
+    [data.dashboardId, queryClient]
+  );
+
+  // Mark a session as stopped in the dashboard query data
+  // This prevents the WorkspaceSidebar from polling a stale session ID
+  const markSessionStopped = React.useCallback(
+    (sessionId: string) => {
+      if (!data.dashboardId) return;
+      queryClient.setQueryData(
+        ["dashboard", data.dashboardId],
+        (oldData:
+          | { sessions: Session[]; [key: string]: unknown }
+          | undefined) => {
+          if (!oldData) return oldData;
+          const sessions = Array.isArray(oldData.sessions) ? oldData.sessions : [];
+          return {
+            ...oldData,
+            sessions: sessions.map((entry) =>
+              entry.id === sessionId ? { ...entry, status: "stopped" as const } : entry
+            ),
           };
         }
       );
@@ -1982,6 +2006,8 @@ export function TerminalBlock({
       // Stop the old session if it exists
       if (session) {
         console.log(`[TerminalBlock] Stopping old session ${session.id}...`);
+        // Mark session as stopped in query data FIRST to prevent stale polling
+        markSessionStopped(session.id);
         try {
           await stopSession(session.id);
         } catch (e) {
@@ -2023,7 +2049,7 @@ export function TerminalBlock({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [data.dashboardId, isReady, session, id, stopSession, upsertDashboardSession]);
+  }, [data.dashboardId, isReady, session, id, stopSession, markSessionStopped, upsertDashboardSession]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {
