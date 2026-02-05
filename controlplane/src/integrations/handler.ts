@@ -1,6 +1,10 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: integrations-v1-sql-table-whitelist
+const integrationsRevision = "integrations-v1-sql-table-whitelist";
+console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
+
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import type { AuthContext } from '../auth/middleware';
 import { requireAuth } from '../auth/middleware';
@@ -64,6 +68,20 @@ const DRIVE_AUTO_SYNC_LIMIT_BYTES = 1024 * 1024 * 1024;
 const DRIVE_MANIFEST_VERSION = 1;
 const DRIVE_UPLOAD_BUFFER_LIMIT_BYTES = 25 * 1024 * 1024;
 const DRIVE_UPLOAD_PART_BYTES = 8 * 1024 * 1024;
+
+// Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
+// SECURITY: Never interpolate provider names directly into SQL - always use this map
+const MIRROR_TABLES: Record<string, string> = {
+  github: 'github_mirrors',
+  box: 'box_mirrors',
+  onedrive: 'onedrive_mirrors',
+  drive: 'drive_mirrors',
+  google_drive: 'drive_mirrors', // Alias for google_drive provider
+};
+
+function getMirrorTableName(provider: string): string | null {
+  return MIRROR_TABLES[provider] ?? null;
+}
 
 interface DriveFileEntry {
   id: string;
@@ -192,7 +210,12 @@ async function cleanupIntegration(
   provider: IntegrationProvider,
   userId: string
 ): Promise<void> {
-  const mirrorTable = provider === 'google_drive' ? 'drive_mirrors' : `${provider}_mirrors`;
+  // SECURITY: Use whitelist to get table name - never interpolate provider directly
+  const mirrorTable = getMirrorTableName(provider);
+  if (!mirrorTable) {
+    console.error(`[integrations] Invalid mirror provider: ${provider}`);
+    return;
+  }
   const mirrors = await env.DB.prepare(`
     SELECT dashboard_id FROM ${mirrorTable} WHERE user_id = ?
   `).bind(userId).all<{ dashboard_id: string }>();
@@ -3208,6 +3231,13 @@ async function startSandboxMirrorSync(
   sandboxMachineId: string,
   folderName: string
 ) {
+  // SECURITY: Validate provider against whitelist before any database operations
+  const tableName = getMirrorTableName(provider);
+  if (!tableName) {
+    console.error(`[integrations] Invalid mirror provider: ${provider}`);
+    return;
+  }
+
   try {
     const res = await sandboxFetch(env, `/sessions/${sandboxSessionId}/mirror/sync`, {
       method: 'POST',
@@ -3226,7 +3256,7 @@ async function startSandboxMirrorSync(
     }
   } catch {
     await env.DB.prepare(`
-      UPDATE ${provider}_mirrors
+      UPDATE ${tableName}
       SET sync_error = 'Failed to start sandbox sync', status = 'error', updated_at = datetime('now')
       WHERE dashboard_id = ?
     `).bind(dashboardId).run();
@@ -4072,11 +4102,13 @@ export async function updateMirrоrSyncPrоgressInternal(
   if (!data.provider || !data.dashboardId) {
     return Response.json({ error: 'E79906: provider and dashboardId are required' }, { status: 400 });
   }
-  if (!['github', 'box', 'onedrive'].includes(data.provider)) {
+
+  // SECURITY: Use whitelist to get table name - never interpolate provider directly
+  const table = getMirrorTableName(data.provider);
+  if (!table) {
     return Response.json({ error: 'E79907: invalid provider' }, { status: 400 });
   }
 
-  const table = `${data.provider}_mirrors`;
   const status = data.status || 'syncing_workspace';
   const syncError = data.syncError ?? null;
   const files = data.workspaceSyncedFiles ?? 0;
