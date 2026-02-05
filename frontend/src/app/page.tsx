@@ -16,7 +16,7 @@ export default function Home() {
     if (!isAuthResolved) {
       return;
     }
-    router.push(isAuthenticated ? "/dashboards" : "/login");
+    router.push(isAuthenticated ? "/dashboards" : "/splash");
   }, [isAuthenticated, isAuthResolved, router]);
 
   // Show loading state while redirecting
