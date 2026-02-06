@@ -64,6 +64,7 @@ import {
 import { ExportTemplateDialog } from "@/components/dialogs/ExportTemplateDialog";
 import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog";
 import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
+import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -3108,6 +3109,9 @@ export default function DashboardPage() {
         dashboardName={dashboard?.name || ""}
         currentUserRole={role}
       />
+
+      {/* Onboarding Slideshow */}
+      <OnboardingDialog />
 
       {/* Bug Report Dialog */}
       <BugReportDialog
