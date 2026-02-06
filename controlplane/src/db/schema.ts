@@ -647,6 +647,7 @@ CREATE INDEX IF NOT EXISTS idx_templates_author ON dashboard_templates(author_id
 CREATE TABLE IF NOT EXISTS terminal_integrations (
   id TEXT PRIMARY KEY,
   terminal_id TEXT NOT NULL,
+  item_id TEXT,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK (provider IN ('gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'google_drive', 'onedrive', 'box', 'github', 'browser')),
@@ -662,6 +663,7 @@ CREATE TABLE IF NOT EXISTS terminal_integrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id);
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id);
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id);
 
@@ -848,6 +850,36 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     `).run();
   } catch {
     // Index already exists.
+  }
+
+  // Add item_id column to terminal_integrations for cross-session integration persistence.
+  // terminal_id (PTY ID) changes on every session, but item_id (dashboard item ID) is stable.
+  try {
+    await db.prepare(`
+      ALTER TABLE terminal_integrations ADD COLUMN item_id TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)
+    `).run();
+  } catch {
+    // Index already exists.
+  }
+
+  // Backfill item_id from sessions table for existing terminal_integrations
+  try {
+    await db.prepare(`
+      UPDATE terminal_integrations SET item_id = (
+        SELECT s.item_id FROM sessions s WHERE s.pty_id = terminal_integrations.terminal_id
+        ORDER BY s.created_at DESC LIMIT 1
+      ) WHERE item_id IS NULL
+    `).run();
+  } catch {
+    // Backfill may fail if sessions are already cleaned up - not critical.
   }
 }
 

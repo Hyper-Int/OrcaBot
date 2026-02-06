@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v7-drive-write-enforce
-console.log(`[integration-handler] REVISION: handler-v7-drive-write-enforce loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v8-integration-persistence
+console.log(`[integration-handler] REVISION: handler-v8-integration-persistence loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -1060,6 +1060,7 @@ function formatTerminalIntegration(row: Record<string, unknown>): TerminalIntegr
   return {
     id: row.id as string,
     terminalId: row.terminal_id as string,
+    itemId: (row.item_id as string) ?? null,
     dashboardId: row.dashboard_id as string,
     userId: row.user_id as string,
     provider: row.provider as IntegrationProvider,
@@ -1371,16 +1372,24 @@ export async function attachIntegration(
   const terminalIntegrationId = generateId('ti');
   const policyId = generateId('pol');
 
+  // Look up the stable item_id for this terminal (PTY ID -> session -> item_id)
+  // This enables integration persistence across session boundaries.
+  const sessionForItem = await env.DB.prepare(
+    `SELECT item_id FROM sessions WHERE pty_id = ? ORDER BY created_at DESC LIMIT 1`
+  ).bind(terminalId).first<{ item_id: string }>();
+  const itemId = sessionForItem?.item_id ?? null;
+
   // Build batch of statements for atomic execution
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
       INSERT INTO terminal_integrations
-        (id, terminal_id, dashboard_id, user_id, provider, user_integration_id,
+        (id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id,
          active_policy_id, account_email, account_label, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       terminalIntegrationId,
       terminalId,
+      itemId,
       dashboardId,
       userId,
       provider,

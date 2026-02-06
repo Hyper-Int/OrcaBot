@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v5-working-dir-support
-const sessionsRevision = "sessions-v5-working-dir-support";
+// REVISION: sessions-v6-integration-persistence
+const sessionsRevision = "sessions-v6-integration-persistence";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -525,6 +525,26 @@ export async function createSessiоn(
     await env.DB.prepare(`
       UPDATE sessions SET sandbox_session_id = ?, sandbox_machine_id = ?, pty_id = ?, status = 'active' WHERE id = ?
     `).bind(sandboxSessionId, sandboxMachineId, pty.id, id).run();
+
+    // Migrate terminal integrations from previous session(s) to the new PTY ID.
+    // Integrations are keyed by terminal_id (PTY ID) which changes each session,
+    // but item_id (dashboard item ID) is stable. This ensures integrations + policies
+    // persist across session boundaries for the same terminal block.
+    try {
+      const migrated = await env.DB.prepare(`
+        UPDATE terminal_integrations
+        SET terminal_id = ?, updated_at = datetime('now')
+        WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+          AND terminal_id != ?
+      `).bind(pty.id, itemId, dashboardId, pty.id).run();
+
+      if (migrated.meta.changes > 0) {
+        console.log(`[createSession] Migrated ${migrated.meta.changes} integration(s) for item=${itemId} to ptyId=${pty.id}`);
+      }
+    } catch (err) {
+      // Non-fatal: if migration fails, integrations will need to be re-attached manually.
+      console.error('[createSession] Failed to migrate integrations:', err);
+    }
 
     // Auto-apply dashboard secrets to the new session
     try {
