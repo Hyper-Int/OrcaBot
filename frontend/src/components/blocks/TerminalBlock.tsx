@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: working-dir-v2-menu-reorder
+// REVISION: working-dir-v4-path-validation
 const TERMINAL_BLOCK_REVISION = "working-dir-v1-add-setting";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
@@ -103,6 +103,7 @@ import {
   deleteMcpTool,
   listMcpTools,
   type UserMcpTool,
+  listSessionFiles,
 } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
@@ -594,6 +595,9 @@ export function TerminalBlock({
   const [pendingConfigRestart, setPendingConfigRestart] = React.useState(false);
   // Paste secret detection: holds intercepted paste data when it looks suspicious
   const [pasteWarning, setPasteWarning] = React.useState<{ text: string; reason: string } | null>(null);
+  // Working directory validation error
+  const [workingDirError, setWorkingDirError] = React.useState<string | null>(null);
+  const [isValidatingWorkingDir, setIsValidatingWorkingDir] = React.useState(false);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
@@ -747,6 +751,8 @@ export function TerminalBlock({
     autoControlRequestedRef.current = false;
     // Reset pending config restart when session changes (new session picks up current config)
     setPendingConfigRestart(false);
+    // Reset working directory validation error
+    setWorkingDirError(null);
   }, [session?.id]);
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
@@ -3188,9 +3194,12 @@ export function TerminalBlock({
                     Path (relative to workspace)
                   </label>
                   <Input
-                    value={terminalMeta.workingDir || ""}
+                    value={terminalMeta.workingDir || (terminalCwd ? terminalCwd.replace(/^\/workspace\/?/, "") : "")}
                     onChange={(e) => {
-                      const newWorkingDir = e.target.value;
+                      // Strip leading slashes to ensure relative path
+                      const newWorkingDir = e.target.value.replace(/^\/+/, "");
+                      // Clear any previous error when user starts typing
+                      setWorkingDirError(null);
                       data.onItemChange?.({
                         content: JSON.stringify({
                           name: terminalMeta.name,
@@ -3210,14 +3219,44 @@ export function TerminalBlock({
                         setPendingConfigRestart(true);
                       }
                     }}
+                    onBlur={async (e) => {
+                      const path = e.target.value.replace(/^\/+/, "");
+                      // Only validate if we have a session and a non-empty path
+                      if (!session?.id || !path) {
+                        setWorkingDirError(null);
+                        return;
+                      }
+                      setIsValidatingWorkingDir(true);
+                      try {
+                        // Try to list files in the directory to verify it exists
+                        await listSessionFiles(session.id, path);
+                        setWorkingDirError(null);
+                      } catch {
+                        setWorkingDirError(`Directory "${path}" does not exist`);
+                      } finally {
+                        setIsValidatingWorkingDir(false);
+                      }
+                    }}
                     placeholder="e.g., github/myproject"
-                    className="h-7 text-xs"
+                    className={cn("h-7 text-xs", workingDirError && "border-[var(--status-error)]")}
                   />
+                  {isValidatingWorkingDir && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-[var(--foreground-muted)]">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span>Checking path...</span>
+                    </div>
+                  )}
+                  {workingDirError && !isValidatingWorkingDir && (
+                    <div className="flex items-center gap-1.5 text-[10px] text-[var(--status-error)]">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>{workingDirError}</span>
+                    </div>
+                  )}
                 </div>
                 <div className="text-[10px] text-[var(--foreground-muted)]">
                   Leave empty to start in workspace root. Path must exist.
                 </div>
-                {session && (
+                {session && !workingDirError && (
                   <div className="pt-2 border-t border-[var(--border)]">
                     <div className="flex items-center gap-1.5 text-[10px] text-[var(--status-warning)]">
                       <AlertCircle className="w-3 h-3" />

@@ -442,12 +442,17 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
 // If workingDir is provided, the PTY starts in that subdirectory of the workspace.
+// REVISION: working-dir-v2-fix-agent-detection
 func (s *Session) CreatePTY(creatorID string, command string, workingDir string) (*PTYInfo, error) {
 	// Pre-generate PTY ID so we can include it in environment variables
 	ptyID, err := id.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
 	}
+
+	// Detect agent type BEFORE modifying command with cd prefix
+	// This ensures hooks are still generated correctly
+	agentType := mcp.DetectAgentType(command)
 
 	// Compute and validate working directory
 	actualWorkDir := s.workspace.Root()
@@ -458,7 +463,7 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		}
 		// For agent commands, prefix with cd to ensure correct working directory
 		// This fixes agents like Codex that don't respect inherited PTY cwd
-		if command != "" && mcp.DetectAgentType(command) != mcp.AgentTypeUnknown {
+		if command != "" && agentType != mcp.AgentTypeUnknown {
 			command = fmt.Sprintf("cd %q && %s", actualWorkDir, command)
 		}
 	}
@@ -506,7 +511,8 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 
 	// Generate agent stop hooks only for the specific agent being launched
 	// (hooks are agent-specific and should only be created when needed)
-	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
+	// Use pre-computed agentType (detected before cd prefix was added to command)
+	if agentType != mcp.AgentTypeUnknown {
 		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
@@ -552,10 +558,16 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 
 // resolveWorkingDir validates and resolves a working directory path.
 // Returns the full path within the workspace, or an error if invalid.
+// REVISION: working-dir-v2-strip-leading-slash
 func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
+	// Strip leading slashes to be lenient with user input (e.g., "/test" -> "test")
+	workingDir = strings.TrimLeft(workingDir, "/")
+	if workingDir == "" {
+		return s.workspace.Root(), nil
+	}
 	// Security: validate path is within workspace (no traversal attacks)
 	cleaned := filepath.Clean(workingDir)
-	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+	if strings.HasPrefix(cleaned, "..") {
 		return "", fmt.Errorf("invalid working directory: must be relative path within workspace")
 	}
 	actualWorkDir := filepath.Join(s.workspace.Root(), cleaned)
@@ -574,7 +586,7 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 }
 
 // CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
-// REVISION: working-dir-v1-createptywithtoken
+// REVISION: working-dir-v2-fix-agent-detection
 // If ptyID is provided, it will be used instead of generating a new one.
 // If integrationToken is provided, it will be stored and injected into the PTY environment.
 func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken, workingDir string) (*PTYInfo, error) {
@@ -587,6 +599,10 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		}
 	}
 
+	// Detect agent type BEFORE modifying command with cd prefix
+	// This ensures MCP settings and hooks are still generated correctly
+	agentType := mcp.DetectAgentType(command)
+
 	// Compute and validate working directory
 	actualWorkDir := s.workspace.Root()
 	if workingDir != "" {
@@ -596,7 +612,7 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		}
 		// For agent commands, prefix with cd to ensure correct working directory
 		// This fixes agents like Codex that don't respect inherited PTY cwd
-		if command != "" && mcp.DetectAgentType(command) != mcp.AgentTypeUnknown {
+		if command != "" && agentType != mcp.AgentTypeUnknown {
 			command = fmt.Sprintf("cd %q && %s", actualWorkDir, command)
 		}
 	}
@@ -635,7 +651,8 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	}
 
 	// Generate MCP settings file only for the specific agent being launched
-	if agentType := mcp.DetectAgentType(command); agentType != mcp.AgentTypeUnknown {
+	// Use pre-computed agentType (detected before cd prefix was added to command)
+	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
