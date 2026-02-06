@@ -663,7 +663,6 @@ CREATE TABLE IF NOT EXISTS terminal_integrations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id);
-CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id);
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id);
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id);
 
