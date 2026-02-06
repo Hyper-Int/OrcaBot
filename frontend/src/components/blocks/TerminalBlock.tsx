@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: working-dir-v4-path-validation
-const TERMINAL_BLOCK_REVISION = "working-dir-v1-add-setting";
+// REVISION: secrets-panel-v1-white-bg-prepopulate
+const TERMINAL_BLOCK_REVISION = "secrets-panel-v1-white-bg-prepopulate";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -113,7 +113,15 @@ import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
-import { getAgentType, getAgentIconSrc } from "@/lib/agent-icons";
+import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
+
+/** Default API key name to pre-populate for each agentic coder */
+const AGENT_DEFAULT_API_KEY: Partial<Record<AgentType, string>> = {
+  claude: "ANTHROPIC_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  codex: "OPENAI_API_KEY",
+  opencode: "OPENAI_API_KEY",
+};
 
 interface TerminalData extends Record<string, unknown> {
   content: string; // Session ID or terminal name
@@ -590,6 +598,7 @@ export function TerminalBlock({
   const [secretsSectionExpanded, setSecretsSectionExpanded] = React.useState(true);
   const [envVarsSectionExpanded, setEnvVarsSectionExpanded] = React.useState(true);
   const secretValueInputRef = React.useRef<HTMLInputElement>(null);
+  const hasPrePopulatedSecretRef = React.useRef(false);
   const [pendingSecretApply, setPendingSecretApply] = React.useState<{ name: string; value: string } | null>(null);
   // Track if MCP tools, skills, or agents have changed since session started
   const [pendingConfigRestart, setPendingConfigRestart] = React.useState(false);
@@ -965,6 +974,22 @@ export function TerminalBlock({
   // Split into secrets (brokered) and env vars (non-brokered)
   const savedSecrets = allSecrets.filter(s => s.type === 'secret' || !s.type); // Default to secret for backwards compat
   const savedEnvVars = allSecrets.filter(s => s.type === 'env_var');
+
+  // Pre-populate secret name field on first secrets panel open for agentic coders
+  React.useEffect(() => {
+    if (activePanel !== "secrets") return;
+    if (hasPrePopulatedSecretRef.current) return;
+    hasPrePopulatedSecretRef.current = true;
+    const defaultKey = AGENT_DEFAULT_API_KEY[terminalType];
+    if (!defaultKey) return;
+    // Only pre-populate if the key doesn't already exist
+    const alreadyExists = savedSecrets.some(s => s.name === defaultKey);
+    if (!alreadyExists && !newSecretName) {
+      setNewSecretName(defaultKey);
+      // Focus the value input since the name is already filled
+      setTimeout(() => secretValueInputRef.current?.focus(), 50);
+    }
+  }, [activePanel, terminalType, savedSecrets, newSecretName]);
 
   // Helper to detect secret-like names for warning
   const looksLikeSecret = (name: string): boolean => {
@@ -2577,7 +2602,7 @@ export function TerminalBlock({
                           placeholder="NAME"
                           value={newSecretName}
                           onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                          className="h-6 text-xs flex-1 nodrag font-mono"
+                          className="h-6 text-xs flex-1 nodrag font-mono bg-white"
                           autoComplete="off"
                           data-form-type="other"
                         />
@@ -2588,7 +2613,7 @@ export function TerminalBlock({
                           placeholder="Value"
                           value={newSecretValue}
                           onChange={(e) => setNewSecretValue(e.target.value)}
-                          className="h-6 text-xs flex-1 nodrag"
+                          className="h-6 text-xs flex-1 nodrag bg-white"
                           autoComplete="off"
                           data-form-type="other"
                           data-lpignore="true"
@@ -2732,7 +2757,7 @@ export function TerminalBlock({
                           placeholder="NAME"
                           value={newEnvVarName}
                           onChange={(e) => setNewEnvVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                          className="h-6 text-xs flex-1 nodrag font-mono"
+                          className="h-6 text-xs flex-1 nodrag font-mono bg-white"
                           autoComplete="off"
                           data-form-type="other"
                         />
@@ -2742,7 +2767,7 @@ export function TerminalBlock({
                           placeholder="Value"
                           value={newEnvVarValue}
                           onChange={(e) => setNewEnvVarValue(e.target.value)}
-                          className="h-6 text-xs flex-1 nodrag"
+                          className="h-6 text-xs flex-1 nodrag bg-white"
                           autoComplete="off"
                           data-form-type="other"
                           data-lpignore="true"
