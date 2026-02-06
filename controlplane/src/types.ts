@@ -864,6 +864,7 @@ export type AnyPolicy =
 export interface TerminalIntegration {
   id: string;
   terminalId: string;
+  itemId: string | null;
   dashboardId: string;
   userId: string;
   provider: IntegrationProvider;
