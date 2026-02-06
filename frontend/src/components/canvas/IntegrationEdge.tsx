@@ -3,7 +3,7 @@
 
 "use client";
 
-const INTEGRATION_EDGE_REVISION = "integration-edge-v4-connector-mode";
+const INTEGRATION_EDGE_REVISION = "integration-edge-v5-orphan-guard";
 console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -118,6 +118,11 @@ export function IntegrationEdge({
     },
     [onDelete, id]
   );
+
+  // Guard: if source/target node is missing, coordinates are NaN — don't render
+  if (isNaN(sourceX) || isNaN(sourceY) || isNaN(targetX) || isNaN(targetY)) {
+    return null;
+  }
 
   return (
     <>

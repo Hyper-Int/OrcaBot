@@ -5,7 +5,7 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v1-deleteitem-snapshot
+// REVISION: dashboards-v2-explicit-edge-delete
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { populateFromTemplate } from '../templates/handler';
@@ -417,6 +417,15 @@ export async function deleteItem(
     SELECT id FROM dashboard_edges
     WHERE dashboard_id = ? AND (source_item_id = ? OR target_item_id = ?)
   `).bind(dashboardId, itemId, itemId).all<{ id: string }>();
+
+  // Explicitly delete edges before deleting the item.
+  // ON DELETE CASCADE may not work in D1 unless PRAGMA foreign_keys=ON is set per-connection.
+  if (edgeRows.results.length > 0) {
+    await env.DB.prepare(`
+      DELETE FROM dashboard_edges
+      WHERE dashboard_id = ? AND (source_item_id = ? OR target_item_id = ?)
+    `).bind(dashboardId, itemId, itemId).run();
+  }
 
   await env.DB.prepare(`
     DELETE FROM dashboard_items WHERE id = ? AND dashboard_id = ?
