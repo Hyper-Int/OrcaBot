@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v21-batch-delete
-console.log(`[dashboard] REVISION: dashboard-v21-batch-delete loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v22-fix-orphaned-edges
+console.log(`[dashboard] REVISION: dashboard-v22-fix-orphaned-edges loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -1578,8 +1578,12 @@ export default function DashboardPage() {
         }
       );
 
+      // Filter by both real ID and stable key since React Flow edges may use stable keys
+      const stableKey = realIdToStableKey.get(itemId);
+      const idsToRemove = new Set([itemId]);
+      if (stableKey) idsToRemove.add(stableKey);
       setEdges((prev) =>
-        prev.filter((edge) => edge.source !== itemId && edge.target !== itemId)
+        prev.filter((edge) => !idsToRemove.has(edge.source) && !idsToRemove.has(edge.target))
       );
 
       return { previous, previousEdges };
@@ -1601,8 +1605,11 @@ export default function DashboardPage() {
             };
           }
         );
+        const stableKey = realIdToStableKey.get(itemId);
+        const idsToRemove = new Set([itemId]);
+        if (stableKey) idsToRemove.add(stableKey);
         setEdges((prev) =>
-          prev.filter((edge) => edge.source !== itemId && edge.target !== itemId)
+          prev.filter((edge) => !idsToRemove.has(edge.source) && !idsToRemove.has(edge.target))
         );
       }
       toast.success("Block deleted");
@@ -2250,11 +2257,17 @@ export default function DashboardPage() {
     }
 
     if (removedItemIds.length > 0) {
+      // Build expanded set including stable keys for removed items
+      const removedIdSet = new Set(removedItemIds);
+      for (const id of removedItemIds) {
+        const stableKey = realIdToStableKey.get(id);
+        if (stableKey) removedIdSet.add(stableKey);
+      }
       setEdges((prev) =>
         prev.filter(
           (edge) =>
-            !removedItemIds.includes(edge.source) &&
-            !removedItemIds.includes(edge.target)
+            !removedIdSet.has(edge.source) &&
+            !removedIdSet.has(edge.target)
         )
       );
       queryClient.setQueryData(
@@ -2330,7 +2343,7 @@ export default function DashboardPage() {
     // Note: do NOT remove from pendingItemIdsRef here — the delete mutation's
     // recentlyDeletedItemsRef handles preventing stale refetches
 
-    // Check if this is an integration block - if so, detach from any connected terminals
+    // Capture data BEFORE mutation modifies query cache (for undo + detach)
     const data = queryClient.getQueryData<{
       dashboard: Dashboard;
       items: DashboardItem[];
@@ -2338,52 +2351,6 @@ export default function DashboardPage() {
       edges: DashboardEdge[];
       role: string;
     }>(["dashboard", dashboardId]);
-
-    if (data) {
-      const itemToDelete = data.items.find((i) => i.id === itemId);
-      if (itemToDelete && isIntegrationBlockType(itemToDelete.type)) {
-        const provider = getProviderForBlockType(itemToDelete.type);
-        if (provider) {
-          // Find all edges connecting this integration to terminals
-          const connectedEdges = data.edges.filter(
-            (e) => e.sourceItemId === itemId || e.targetItemId === itemId
-          );
-
-          // Await all detach operations before deleting the block
-          const detachPromises: Promise<void>[] = [];
-          for (const edge of connectedEdges) {
-            const otherItemId = edge.sourceItemId === itemId ? edge.targetItemId : edge.sourceItemId;
-            const otherItem = data.items.find((i) => i.id === otherItemId);
-
-            if (otherItem?.type === "terminal") {
-              // Find the terminal's session
-              const session = data.sessions.find(
-                (s) => s.itemId === otherItem.id && s.status === "active"
-              );
-              if (session?.ptyId) {
-                detachPromises.push(
-                  detachIntegration(dashboardId, session.ptyId, provider)
-                    .then(() => {
-                      queryClient.invalidateQueries({
-                        queryKey: ["terminal-integrations", dashboardId, session.ptyId],
-                      });
-                      queryClient.invalidateQueries({
-                        queryKey: ["available-integrations", dashboardId, session.ptyId],
-                      });
-                    })
-                    .catch((err) => {
-                      console.warn(`Failed to auto-detach ${provider}:`, err);
-                    })
-                );
-              }
-            }
-          }
-
-          // Wait for all detach operations to complete
-          await Promise.all(detachPromises);
-        }
-      }
-    }
 
     // Record undo entry for non-terminal, non-integration blocks BEFORE deletion
     if (data) {
@@ -2406,7 +2373,48 @@ export default function DashboardPage() {
       }
     }
 
+    // Fire mutation FIRST so edges are removed from query cache + React Flow state
+    // immediately (onMutate runs synchronously), preventing the edge sync effect
+    // from re-adding edges during the async detach operations below.
     deleteItemMutation.mutate(itemId);
+
+    // Fire-and-forget: detach integrations from connected terminals
+    if (data) {
+      const itemToDelete = data.items.find((i) => i.id === itemId);
+      if (itemToDelete && isIntegrationBlockType(itemToDelete.type)) {
+        const provider = getProviderForBlockType(itemToDelete.type);
+        if (provider) {
+          const connectedEdges = data.edges.filter(
+            (e) => e.sourceItemId === itemId || e.targetItemId === itemId
+          );
+
+          for (const edge of connectedEdges) {
+            const otherItemId = edge.sourceItemId === itemId ? edge.targetItemId : edge.sourceItemId;
+            const otherItem = data.items.find((i) => i.id === otherItemId);
+
+            if (otherItem?.type === "terminal") {
+              const session = data.sessions.find(
+                (s) => s.itemId === otherItem.id && s.status === "active"
+              );
+              if (session?.ptyId) {
+                detachIntegration(dashboardId, session.ptyId, provider)
+                  .then(() => {
+                    queryClient.invalidateQueries({
+                      queryKey: ["terminal-integrations", dashboardId, session.ptyId],
+                    });
+                    queryClient.invalidateQueries({
+                      queryKey: ["available-integrations", dashboardId, session.ptyId],
+                    });
+                  })
+                  .catch((err) => {
+                    console.warn(`Failed to auto-detach ${provider}:`, err);
+                  });
+              }
+            }
+          }
+        }
+      }
+    }
   };
 
   // Batch delete handler for multi-select delete (undo restores all at once)
@@ -2443,20 +2451,35 @@ export default function DashboardPage() {
   }, [connectorMode]);
 
   React.useEffect(() => {
-    if (!edgesFromDataFlow.length) return;
+    // Build set of valid node IDs (real IDs and stable keys) for orphan detection
+    const currentNodeIds = new Set(items.map(item => item._stableKey || item.id));
     setEdges((prev) => {
+      const dataFlowIds = new Set(edgesFromDataFlow.map((edge) => edge.id));
       const existingIds = new Set(prev.map((edge) => edge.id));
       let changed = false;
-      const next = [...prev];
-      edgesFromDataFlow.forEach((edge) => {
+      const next: typeof prev = [];
+
+      // Keep existing edges, but remove orphaned ones (source/target node missing)
+      for (const edge of prev) {
+        if (!currentNodeIds.has(edge.source) || !currentNodeIds.has(edge.target)) {
+          // Edge references a node that no longer exists — remove it
+          changed = true;
+          continue;
+        }
+        next.push(edge);
+      }
+
+      // Add new edges from data flow that aren't already in local state
+      for (const edge of edgesFromDataFlow) {
         if (!existingIds.has(edge.id)) {
           next.push(edge);
           changed = true;
         }
-      });
+      }
+
       return changed ? next : prev;
     });
-  }, [edgesFromDataFlow, setEdges]);
+  }, [edgesFromDataFlow, setEdges, items]);
 
   React.useEffect(() => {
     if (!pendingConnection) {
