@@ -1,6 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: browser-v4-fix-minimize-hooks
+// REVISION: browser-v5-vnc-perf-params
 
 "use client";
 
@@ -195,6 +195,11 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       autoconnect: "1",
       resize: "scale",
       show_dot: "true",
+      quality: "6",
+      compression: "3",
+      logging: "warn",
+      reconnect: "true",
+      reconnect_delay: "3000",
       path: `dashboards/${dashboardId}/browser/websockify`,
     });
     if (DEV_MODE_ENABLED && user) {
