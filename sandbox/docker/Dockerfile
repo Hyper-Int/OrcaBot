@@ -62,10 +62,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     xvfb \
     x11vnc \
-    novnc \
     websockify \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
+
+# Install noVNC 1.6.0 from GitHub (Debian bookworm ships 1.3.0 which has
+# console logging in the Tight decoder path, forcing -notight on x11vnc
+# and degrading VNC to Raw encoding ~2.7MB/frame vs ~100-300KB with Tight)
+RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \
+    | tar -xz -C /tmp \
+    && rm -rf /usr/share/novnc \
+    && mv /tmp/noVNC-1.6.0 /usr/share/novnc \
+    && ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
 # Install Node.js 22 (required by OpenClaw)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \

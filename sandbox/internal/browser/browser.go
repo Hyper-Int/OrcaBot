@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v2-clean-stale-locks
+// REVISION: browser-v3-vnc-perf
 package browser
 
 import (
@@ -42,7 +42,7 @@ type Controller struct {
 	processes []*exec.Cmd
 }
 
-const browserRevision = "browser-v2-clean-stale-locks"
+const browserRevision = "browser-v3-vnc-perf"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -118,9 +118,13 @@ func (c *Controller) Start() (Status, error) {
 		"-quiet",
 		"-noxdamage",
 		"-xkb",
+		"-threads",
 		// x11vnc enables clipboard sync by default: X11 CLIPBOARD/PRIMARY
 		// changes are sent to VNC clients, and CutText from clients sets
 		// X11 selections. The -xkb flag above also helps clipboard reliability.
+		// Tight encoding is enabled (default) — noVNC 1.6.0 fixed the
+		// console logging issue that was present in 1.3.0 (Debian bookworm).
+		// -threads enables multi-threaded encoding for better frame rates.
 	)
 	vncCmd.Env = env
 
@@ -142,6 +146,11 @@ func (c *Controller) Start() (Status, error) {
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-gpu",
+		"--disable-background-networking",
+		"--disable-renderer-backgrounding",
+		"--disable-sync",
+		"--disable-component-update",
+		"--autoplay-policy=no-user-gesture-required",
 		"--remote-debugging-address=127.0.0.1",
 		"--remote-debugging-port="+strconv.Itoa(debugPort),
 		"--user-data-dir="+userDataDir,

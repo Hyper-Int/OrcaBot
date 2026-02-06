@@ -72,6 +72,10 @@ database_id = "7d6525ac-8867-4e8a-8f02-0ec3dfa288a2"
 [triggers]
 crons = ["* * * * *"]  # Every minute: health checks + schedule processing
 
+[[r2_buckets]]
+binding = "DRIVE_CACHE"
+bucket_name = "orcabot-drive-cache"
+
 # For local development
 [dev]
 port = 8787
