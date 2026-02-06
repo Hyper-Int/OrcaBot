@@ -147,6 +147,7 @@ export class SandboxClient {
   }
 
   // PTY management
+  // REVISION: working-dir-v1-createpty
   async createPty(
     sessionId: string,
     creatorId?: string,
@@ -158,9 +159,11 @@ export class SandboxClient {
       // PTY token for integration policy gateway calls
       // This token is bound to this specific PTY (terminal_id)
       integrationToken?: string;
+      // Relative path within workspace to start in
+      workingDir?: string;
     }
   ): Promise<SandboxPty> {
-    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken);
+    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir);
     const body = shouldSendBody
       ? JSON.stringify({
           creator_id: creatorId,
@@ -169,6 +172,8 @@ export class SandboxClient {
           pty_id: options?.ptyId,
           // Integration token bound to this PTY
           integration_token: options?.integrationToken,
+          // Working directory relative to workspace root
+          working_dir: options?.workingDir,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());

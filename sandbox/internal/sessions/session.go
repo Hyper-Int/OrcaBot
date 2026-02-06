@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v5-drivesync-bugfixes
+// REVISION: session-v6-working-dir-support
 
 // Package sessions manages session lifecycle.
 //
@@ -38,7 +38,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const sessionRevision = "session-v5-drivesync-bugfixes"
+const sessionRevision = "session-v6-working-dir-support"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -441,11 +441,26 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 // CreatePTY creates a new PTY in this session.
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
-func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) {
+// If workingDir is provided, the PTY starts in that subdirectory of the workspace.
+func (s *Session) CreatePTY(creatorID string, command string, workingDir string) (*PTYInfo, error) {
 	// Pre-generate PTY ID so we can include it in environment variables
 	ptyID, err := id.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
+	}
+
+	// Compute and validate working directory
+	actualWorkDir := s.workspace.Root()
+	if workingDir != "" {
+		actualWorkDir, err = s.resolveWorkingDir(workingDir)
+		if err != nil {
+			return nil, err
+		}
+		// For agent commands, prefix with cd to ensure correct working directory
+		// This fixes agents like Codex that don't respect inherited PTY cwd
+		if command != "" && mcp.DetectAgentType(command) != mcp.AgentTypeUnknown {
+			command = fmt.Sprintf("cd %q && %s", actualWorkDir, command)
+		}
 	}
 
 	envVars := loadEnvFile(filepath.Join(s.workspace.Root(), ".env"))
@@ -503,7 +518,7 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 		}
 	}
 
-	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, s.workspace.Root(), envVars)
+	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
 	if err != nil {
 		return nil, err
 	}
@@ -535,17 +550,54 @@ func (s *Session) CreatePTY(creatorID string, command string) (*PTYInfo, error) 
 	return info, nil
 }
 
+// resolveWorkingDir validates and resolves a working directory path.
+// Returns the full path within the workspace, or an error if invalid.
+func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
+	// Security: validate path is within workspace (no traversal attacks)
+	cleaned := filepath.Clean(workingDir)
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid working directory: must be relative path within workspace")
+	}
+	actualWorkDir := filepath.Join(s.workspace.Root(), cleaned)
+	// Verify directory exists
+	info, err := os.Stat(actualWorkDir)
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("working directory does not exist: %s", workingDir)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to stat working directory: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working directory is not a directory: %s", workingDir)
+	}
+	return actualWorkDir, nil
+}
+
 // CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
-// REVISION: integration-tokens-v1-createpty
+// REVISION: working-dir-v1-createptywithtoken
 // If ptyID is provided, it will be used instead of generating a new one.
 // If integrationToken is provided, it will be stored and injected into the PTY environment.
-func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken string) (*PTYInfo, error) {
+func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken, workingDir string) (*PTYInfo, error) {
 	// Use provided ID or generate new one
 	var err error
 	if ptyID == "" {
 		ptyID, err = id.New()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
+		}
+	}
+
+	// Compute and validate working directory
+	actualWorkDir := s.workspace.Root()
+	if workingDir != "" {
+		actualWorkDir, err = s.resolveWorkingDir(workingDir)
+		if err != nil {
+			return nil, err
+		}
+		// For agent commands, prefix with cd to ensure correct working directory
+		// This fixes agents like Codex that don't respect inherited PTY cwd
+		if command != "" && mcp.DetectAgentType(command) != mcp.AgentTypeUnknown {
+			command = fmt.Sprintf("cd %q && %s", actualWorkDir, command)
 		}
 	}
 
@@ -602,7 +654,7 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		}
 	}
 
-	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, s.workspace.Root(), envVars)
+	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
 	if err != nil {
 		return nil, err
 	}

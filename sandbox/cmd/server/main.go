@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v3-recursive-file-listing
+// REVISION: main-v4-working-dir-support
 
 package main
 
@@ -27,7 +27,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v3-recursive-file-listing"
+const mainRevision = "main-v4-working-dir-support"
 
 func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
@@ -349,7 +349,7 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// REVISION: integration-tokens-v1-handler
+// REVISION: working-dir-v1-handler
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -362,18 +362,19 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		Command          string `json:"command"`
 		PtyID            string `json:"pty_id"`            // Control plane can provide pre-generated ID
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
+		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
 	}
 
-	// Use CreatePTYWithToken if pty_id or integration_token is provided
+	// Use CreatePTYWithToken if pty_id or integration_token or working_dir is provided
 	var ptyInfo *sessions.PTYInfo
 	var err error
-	if req.PtyID != "" || req.IntegrationToken != "" {
-		ptyInfo, err = session.CreatePTYWithToken(req.CreatorID, req.Command, req.PtyID, req.IntegrationToken)
+	if req.PtyID != "" || req.IntegrationToken != "" || req.WorkingDir != "" {
+		ptyInfo, err = session.CreatePTYWithToken(req.CreatorID, req.Command, req.PtyID, req.IntegrationToken, req.WorkingDir)
 	} else {
-		ptyInfo, err = session.CreatePTY(req.CreatorID, req.Command)
+		ptyInfo, err = session.CreatePTY(req.CreatorID, req.Command, "")
 	}
 
 	if err != nil {
