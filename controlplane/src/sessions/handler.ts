@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v4-pty-cleanup-on-stop
-const sessionsRevision = "sessions-v4-pty-cleanup-on-stop";
+// REVISION: sessions-v5-working-dir-support
+const sessionsRevision = "sessions-v5-working-dir-support";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -40,6 +40,12 @@ interface TerminalContent {
   bootCommand?: string;
   ttsProvider?: string;
   ttsVoice?: string;
+  workingDir?: string;
+}
+
+interface ParsedTerminalConfig {
+  bootCommand: string;
+  workingDir?: string;
 }
 
 // ElevenLabs voice name to ID mapping
@@ -71,17 +77,18 @@ const DEEPGRAM_VOICE_MODELS: Record<string, string> = {
   'orpheus': 'aura-orpheus-en',
 };
 
-function parseBооtCоmmand(content: unknown): string {
+function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
   if (typeof content !== 'string') {
-    return '';
+    return { bootCommand: '' };
   }
   const trimmed = content.trim();
   if (!trimmed.startsWith('{')) {
-    return '';
+    return { bootCommand: '' };
   }
   try {
     const parsed = JSON.parse(trimmed) as TerminalContent;
-    const bootCommand = typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+    let bootCommand = typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+    const workingDir = typeof parsed.workingDir === 'string' ? parsed.workingDir : undefined;
 
     // If TTS is enabled, wrap the command with talkito
     if (parsed.ttsProvider && parsed.ttsProvider !== 'none' && bootCommand) {
@@ -108,12 +115,12 @@ function parseBооtCоmmand(content: unknown): string {
         '--asr-provider', 'off',
         bootCommand,
       ];
-      return talkitoArgs.join(' ');
+      bootCommand = talkitoArgs.join(' ');
     }
 
-    return bootCommand;
+    return { bootCommand, workingDir };
   } catch {
-    return '';
+    return { bootCommand: '' };
   }
 }
 
@@ -419,8 +426,9 @@ export async function createSessiоn(
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
-    const bootCommand = parseBооtCоmmand(item.content);
-    console.log(`[createSession] itemId=${itemId} bootCommand=${JSON.stringify(bootCommand)} contentPreview=${JSON.stringify(String(item.content).slice(0, 200))}`);
+    const terminalConfig = parseTerminalConfig(item.content);
+    const { bootCommand, workingDir } = terminalConfig;
+    console.log(`[createSession] itemId=${itemId} bootCommand=${JSON.stringify(bootCommand)} workingDir=${JSON.stringify(workingDir)} contentPreview=${JSON.stringify(String(item.content).slice(0, 200))}`);
     const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
     let sandboxSessionId = existingSandbox?.sandbox_session_id || '';
     let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
@@ -467,10 +475,11 @@ export async function createSessiоn(
 
     let pty: { id: string };
     try {
-      console.log(`[createSession] calling createPty: sandboxSessionId=${sandboxSessionId} userId=${userId} bootCommand=${JSON.stringify(bootCommand)} machineId=${sandboxMachineId} ptyId=${ptyId}`);
+      console.log(`[createSession] calling createPty: sandboxSessionId=${sandboxSessionId} userId=${userId} bootCommand=${JSON.stringify(bootCommand)} workingDir=${JSON.stringify(workingDir)} machineId=${sandboxMachineId} ptyId=${ptyId}`);
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken,
+        workingDir,
       });
     } catch (err) {
       const isStaleSession = err instanceof Error && err.message.includes('404');
@@ -508,6 +517,7 @@ export async function createSessiоn(
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken: freshIntegrationToken,
+        workingDir,
       });
     }
 

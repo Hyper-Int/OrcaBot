@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: session-cleanup-v1-fix-stale-session-id
-const TERMINAL_BLOCK_REVISION = "session-cleanup-v1-fix-stale-session-id";
+// REVISION: working-dir-v2-menu-reorder
+const TERMINAL_BLOCK_REVISION = "working-dir-v1-add-setting";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -38,6 +38,9 @@ import {
   Shield,
   ShieldOff,
   Copy,
+  FolderOpen,
+  Palette,
+  Type,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -185,7 +188,7 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | "working-dir" | null;
 
 type TerminalContentState = {
   name: string;
@@ -194,6 +197,7 @@ type TerminalContentState = {
   mcpToolIds: string[];
   agentic?: boolean;
   bootCommand?: string;
+  workingDir?: string; // Relative path within workspace
   terminalTheme?: "system" | "light" | "dark";
   terminalFontSize?: "auto" | "small" | "medium" | "large" | "xlarge";
   ttsProvider?: string;
@@ -423,6 +427,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         mcpToolIds,
         agentic: parsed.agentic,
         bootCommand: parsed.bootCommand,
+        workingDir: parsed.workingDir,
         terminalTheme: parsed.terminalTheme,
         terminalFontSize: parsed.terminalFontSize,
         ttsProvider: parsed.ttsProvider,
@@ -988,6 +993,7 @@ export function TerminalBlock({
           mcpToolIds: terminalMeta.mcpToolIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -1065,6 +1071,7 @@ export function TerminalBlock({
           mcpToolIds: terminalMeta.mcpToolIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -1315,6 +1322,7 @@ export function TerminalBlock({
           mcpToolIds: terminalMeta.mcpToolIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -1342,6 +1350,7 @@ export function TerminalBlock({
           mcpToolIds: terminalMeta.mcpToolIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -1429,6 +1438,7 @@ export function TerminalBlock({
           mcpToolIds: nextIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -1455,6 +1465,7 @@ export function TerminalBlock({
           mcpToolIds: nextIds,
           agentic: terminalMeta.agentic,
           bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
           terminalTheme: terminalMeta.terminalTheme,
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
@@ -3154,6 +3165,70 @@ export function TerminalBlock({
             </div>
           )}
 
+          {/* Working Directory Panel */}
+          {activePanel === "working-dir" && (isClaudeSession || isAgentic) && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-72">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <FolderOpen className="w-3 h-3" />
+                  <span>Working Directory</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="p-3 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Path (relative to workspace)
+                  </label>
+                  <Input
+                    value={terminalMeta.workingDir || ""}
+                    onChange={(e) => {
+                      const newWorkingDir = e.target.value;
+                      data.onItemChange?.({
+                        content: JSON.stringify({
+                          name: terminalMeta.name,
+                          subagentIds: terminalMeta.subagentIds,
+                          skillIds: terminalMeta.skillIds,
+                          mcpToolIds: terminalMeta.mcpToolIds,
+                          agentic: terminalMeta.agentic,
+                          bootCommand: terminalMeta.bootCommand,
+                          workingDir: newWorkingDir || undefined,
+                          terminalTheme: terminalMeta.terminalTheme,
+                          terminalFontSize: terminalMeta.terminalFontSize,
+                          ttsProvider: terminalMeta.ttsProvider,
+                          ttsVoice: terminalMeta.ttsVoice,
+                        }),
+                      });
+                      if (session?.id) {
+                        setPendingConfigRestart(true);
+                      }
+                    }}
+                    placeholder="e.g., github/myproject"
+                    className="h-7 text-xs"
+                  />
+                </div>
+                <div className="text-[10px] text-[var(--foreground-muted)]">
+                  Leave empty to start in workspace root. Path must exist.
+                </div>
+                {session && (
+                  <div className="pt-2 border-t border-[var(--border)]">
+                    <div className="flex items-center gap-1.5 text-[10px] text-[var(--status-warning)]">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>Changes require restart to apply</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Integrations Panel */}
           {activePanel === "integrations" && session?.ptyId && (
             <IntegrationsPanel
@@ -3396,8 +3471,28 @@ export function TerminalBlock({
                 <span>Environment Variables</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleReopen}
+                disabled={isCreatingSession || !session}
+                className="gap-2"
+              >
+                <RefreshCw className="w-3 h-3" />
+                <span>{isCreatingSession ? "Restarting..." : "Restart"}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+                <Copy className="w-3 h-3" />
+                <span>Duplicate</span>
+              </DropdownMenuItem>
+              {/* Working Directory - for agentic terminals */}
+              {(isClaudeSession || isAgentic) && (
+                <DropdownMenuItem onClick={() => setActivePanel(activePanel === "working-dir" ? null : "working-dir")} className="gap-2">
+                  <FolderOpen className="w-3 h-3" />
+                  <span>Working Directory</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className="gap-2">
+                  <Palette className="w-3 h-3" />
                   <span>Theme</span>
                   <span className="ml-auto text-[10px] text-[var(--foreground-muted)] capitalize">
                     {terminalThemeSetting}
@@ -3416,6 +3511,7 @@ export function TerminalBlock({
               </DropdownMenuSub>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className="gap-2">
+                  <Type className="w-3 h-3" />
                   <span>Font Size</span>
                   <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
                     {FONT_SIZE_PRESETS[fontSizeSetting].label}
@@ -3465,19 +3561,6 @@ export function TerminalBlock({
                   </DropdownMenuItem>
                 </>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={handleReopen}
-                disabled={isCreatingSession || !session}
-                className="gap-2"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>{isCreatingSession ? "Restarting..." : "Restart"}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
-                <Copy className="w-3 h-3" />
-                <span>Duplicate</span>
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
