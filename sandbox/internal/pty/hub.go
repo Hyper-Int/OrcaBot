@@ -1,18 +1,25 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v4-cwd-tracking
+// REVISION: hub-v5-local-cpr-response
 
 package pty
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
 )
+
+const hubRevision = "hub-v5-local-cpr-response"
+
+func init() {
+	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
+}
 
 // HubMessage represents a message sent through the hub to clients.
 // IsBinary indicates whether this should be sent as a WebSocket binary frame (PTY output)
@@ -292,6 +299,15 @@ func (h *Hub) broadcast(data []byte) {
 	data = h.redactSecrets(data)
 
 	data = h.filterSuppressed(data)
+	if len(data) == 0 {
+		return
+	}
+
+	// Intercept terminal query sequences (CSI 6n, CSI 5n) and respond locally.
+	// Without this, queries require a round-trip through WebSocket to xterm.js,
+	// which in production can exceed the timeout that CLI tools (e.g. Codex)
+	// expect for cursor position responses, causing them to crash and restart.
+	data = h.interceptTerminalQueries(data)
 	if len(data) == 0 {
 		return
 	}
@@ -1037,6 +1053,76 @@ func (h *Hub) ScrollbackRaw(maxBytes int) []byte {
 	}
 
 	return out
+}
+
+// interceptTerminalQueries detects terminal query escape sequences in live PTY
+// output (e.g. CSI 6n cursor position request) and responds to them locally by
+// writing the response directly back to the PTY. This avoids a round-trip through
+// WebSocket to the frontend's xterm.js, which in production can exceed the timeout
+// that CLI tools like Codex expect for cursor position responses.
+//
+// Handled queries:
+//   - CSI 6n, CSI ?6n (Cursor Position Report) → responds with CSI row;col R
+//   - CSI 5n (Device Status Report)            → responds with CSI 0 n (OK)
+//
+// The queries are stripped from the data sent to clients to prevent duplicate
+// responses from xterm.js.
+func (h *Hub) interceptTerminalQueries(data []byte) []byte {
+	// Fast path: no ESC in data means no queries
+	if !bytes.Contains(data, []byte{0x1b}) {
+		return data
+	}
+
+	result := make([]byte, 0, len(data))
+	i := 0
+	for i < len(data) {
+		// Look for CSI start: ESC [
+		if i+1 < len(data) && data[i] == 0x1b && data[i+1] == '[' {
+			seqStart := i
+			j := i + 2
+			// Collect parameter bytes (0x30-0x3f: digits, ;, <, =, >, ?)
+			for j < len(data) && data[j] >= 0x30 && data[j] <= 0x3f {
+				j++
+			}
+			// Skip intermediate bytes (0x20-0x2f)
+			for j < len(data) && data[j] >= 0x20 && data[j] <= 0x2f {
+				j++
+			}
+			// Check final byte (0x40-0x7e)
+			if j < len(data) && data[j] >= 0x40 && data[j] <= 0x7e {
+				finalByte := data[j]
+				params := string(data[i+2 : j])
+
+				switch finalByte {
+				case 'n':
+					if params == "6" || params == "?6" {
+						// Cursor Position Report — respond with row 1, col 1
+						// (safe default; the app is typically in raw mode querying
+						// position at startup for layout calibration)
+						response := fmt.Sprintf("\x1b[1;1R")
+						go h.pty.Write([]byte(response))
+						log.Printf("[pty/hub] intercepted CSI %sn (CPR), responded locally", params)
+						i = j + 1
+						continue
+					}
+					if params == "5" {
+						// Device Status Report — respond "OK"
+						go h.pty.Write([]byte("\x1b[0n"))
+						log.Printf("[pty/hub] intercepted CSI 5n (DSR), responded locally")
+						i = j + 1
+						continue
+					}
+				}
+			}
+			// Not a handled query — keep the sequence
+			result = append(result, data[seqStart])
+			i = seqStart + 1
+			continue
+		}
+		result = append(result, data[i])
+		i++
+	}
+	return result
 }
 
 // stripTerminalQueries removes CSI sequences that request a response from the
