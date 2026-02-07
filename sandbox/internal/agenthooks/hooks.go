@@ -311,7 +311,6 @@ func mergeClaudeHookSettings(settingsPath, scriptPath string) error {
 		fmt.Fprintf(os.Stderr, "[DEBUG] MarshalIndent failed: %v\n", err)
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] Writing settings: %s\n", string(data))
 	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "[DEBUG] WriteFile failed: %v\n", err)
 		return err

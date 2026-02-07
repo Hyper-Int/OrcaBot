@@ -23,10 +23,17 @@ import {
 
 interface ASRSettingsDialogProps {
   trigger?: React.ReactNode;
+  /** Controlled open state (optional — uses internal state if not provided) */
+  open?: boolean;
+  /** Controlled open change handler */
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function ASRSettingsDialog({ trigger }: ASRSettingsDialogProps) {
-  const [open, setOpen] = React.useState(false);
+export function ASRSettingsDialog({ trigger, open: controlledOpen, onOpenChange }: ASRSettingsDialogProps) {
+  const [internalOpen, setInternalOpen] = React.useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = isControlled ? (onOpenChange ?? (() => {})) : setInternalOpen;
   const provider = useASRSettingsStore((s) => s.provider);
   const setProvider = useASRSettingsStore((s) => s.setProvider);
   const getApiKey = useASRSettingsStore((s) => s.getApiKey);
@@ -42,18 +49,20 @@ export function ASRSettingsDialog({ trigger }: ASRSettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {trigger || (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="nodrag h-6 w-6 text-white hover:text-white hover:bg-white/20"
-            title="ASR Settings"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </Button>
-        )}
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          {trigger || (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="nodrag h-6 w-6 text-white hover:text-white hover:bg-white/20"
+              title="ASR Settings"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Speech Recognition Settings</DialogTitle>

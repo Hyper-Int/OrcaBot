@@ -6,6 +6,25 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+/** Highlight special tokens like [input] within text segments */
+function highlightTokens(text: string): React.ReactNode {
+  const segments = text.split(/(\[input\])/i);
+  if (segments.length === 1) return text;
+  return segments.map((seg, i) =>
+    seg.toLowerCase() === "[input]" ? (
+      <span
+        key={i}
+        className="px-1 py-0.5 rounded text-[0.85em] font-mono font-semibold bg-violet-500/20 text-violet-600 dark:text-violet-400"
+        title="Replaced with upstream input data at runtime"
+      >
+        {seg}
+      </span>
+    ) : (
+      <React.Fragment key={i}>{seg}</React.Fragment>
+    )
+  );
+}
+
 interface CodeBlockRendererProps {
   content: string;
   className?: string;
@@ -88,7 +107,7 @@ export function CodeBlockRenderer({ content, className, placeholder }: CodeBlock
             </code>
           );
         }
-        return <span key={index}>{part.content}</span>;
+        return <span key={index}>{highlightTokens(part.content)}</span>;
       })}
     </div>
   );

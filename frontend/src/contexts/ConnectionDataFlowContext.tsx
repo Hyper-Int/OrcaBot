@@ -12,6 +12,7 @@ import type { Edge } from "@xyflow/react";
 export interface DataPayload {
   text: string;
   execute?: boolean; // Whether to auto-execute (e.g., press Enter in terminal)
+  newSession?: boolean; // Clear agent session before sending (e.g., /clear for Claude, /new for Codex)
 }
 
 type InputHandler = (payload: DataPayload) => void;
