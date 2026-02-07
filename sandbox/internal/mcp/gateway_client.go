@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-client-v2-no-context
+// REVISION: gateway-client-v4-multi-auth
 package mcp
 
 import (
@@ -15,8 +15,18 @@ import (
 )
 
 func init() {
-	log.Printf("[gateway-client] REVISION: gateway-client-v2-no-context loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[gateway-client] REVISION: gateway-client-v4-multi-auth loaded at %s", time.Now().Format(time.RFC3339))
 }
+
+// AuthType indicates how to authenticate with the control plane
+type AuthType int
+
+const (
+	// AuthTypePtyToken uses Bearer Authorization with PTY token (integration token)
+	AuthTypePtyToken AuthType = iota
+	// AuthTypeDashboardToken uses X-Dashboard-Token header
+	AuthTypeDashboardToken
+)
 
 // GatewayClient handles communication with the control plane integration gateway
 type GatewayClient struct {
@@ -142,5 +152,69 @@ func (c *GatewayClient) Execute(provider, integrationToken string, req ExecuteRe
 
 	// Return the response regardless of status code
 	// The caller should check result.Allowed and result.Error
+	return &result, nil
+}
+
+// AgentStateResponse is returned from the agent state gateway endpoints
+type AgentStateResponse struct {
+	// Success fields
+	Tasks    []map[string]interface{} `json:"tasks,omitempty"`
+	Task     map[string]interface{}   `json:"task,omitempty"`
+	Memories []map[string]interface{} `json:"memories,omitempty"`
+	Memory   map[string]interface{}   `json:"memory,omitempty"`
+	Deleted  bool                     `json:"deleted,omitempty"`
+
+	// Error fields
+	Error string `json:"error,omitempty"`
+}
+
+// ExecuteAgentState calls the agent state gateway (tasks or memory)
+// Deprecated: Use ExecuteAgentStateWithAuth instead
+func (c *GatewayClient) ExecuteAgentState(provider, integrationToken string, req ExecuteRequest) (*AgentStateResponse, error) {
+	return c.ExecuteAgentStateWithAuth(provider, integrationToken, AuthTypePtyToken, req)
+}
+
+// ExecuteAgentStateWithAuth calls the agent state gateway with specified auth type
+func (c *GatewayClient) ExecuteAgentStateWithAuth(provider, token string, authType AuthType, req ExecuteRequest) (*AgentStateResponse, error) {
+	if token == "" {
+		return nil, fmt.Errorf("no token available")
+	}
+
+	url := fmt.Sprintf("%s/internal/gateway/%s/execute", c.controlPlaneURL, provider)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set auth header based on type
+	switch authType {
+	case AuthTypePtyToken:
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	case AuthTypeDashboardToken:
+		httpReq.Header.Set("X-Dashboard-Token", token)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result AgentStateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("%s", result.Error)
+	}
+
 	return &result, nil
 }

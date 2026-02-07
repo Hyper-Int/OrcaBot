@@ -35,6 +35,9 @@ export const API = {
     recipes: `${CLOUDFLARE_API_URL}/recipes`,
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
     executions: `${CLOUDFLARE_API_URL}/executions`,
+    // Dashboard-scoped endpoints (use dynamic functions below)
+    dashboardTasks: (dashboardId: string) => `${CLOUDFLARE_API_URL}/dashboards/${dashboardId}/tasks`,
+    dashboardMemory: (dashboardId: string) => `${CLOUDFLARE_API_URL}/dashboards/${dashboardId}/memory`,
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     subagents: `${CLOUDFLARE_API_URL}/subagents`,

@@ -356,6 +356,33 @@ export class DashboardDO implements DurableObject {
       return Response.json({ success: true });
     }
 
+    // Agent State: Task updates
+    if (path === '/task' && request.method === 'POST') {
+      const task = await request.json() as import('../types').AgentTask;
+      this.broadcast({ type: 'task_create', task });
+      return Response.json({ success: true });
+    }
+
+    if (path === '/task' && request.method === 'PUT') {
+      const task = await request.json() as import('../types').AgentTask;
+      this.broadcast({ type: 'task_update', task });
+      return Response.json({ success: true });
+    }
+
+    if (path === '/task' && request.method === 'DELETE') {
+      const { taskId } = await request.json() as { taskId: string };
+      this.broadcast({ type: 'task_delete', taskId });
+      return Response.json({ success: true });
+    }
+
+    // Agent State: Memory updates
+    if (path === '/memory' && request.method === 'PUT') {
+      const data = await request.json() as { key: string; memory: import('../types').AgentMemory | null; sessionId?: string | null };
+      // Include sessionId to distinguish dashboard-wide (null) vs session-scoped memory
+      this.broadcast({ type: 'memory_update', key: data.key, memory: data.memory, sessionId: data.sessionId ?? null });
+      return Response.json({ success: true });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 

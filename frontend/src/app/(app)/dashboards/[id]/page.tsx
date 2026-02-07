@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v23-edge-labels-on-reload
-console.log(`[dashboard] REVISION: dashboard-v23-edge-labels-on-reload loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v24-edge-labels-and-tasks
+console.log(`[dashboard] REVISION: dashboard-v24-edge-labels-and-tasks loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -401,6 +401,15 @@ export default function DashboardPage() {
         toast.warning(`Domain approval required: ${message.domain}`, {
           description: `Secret "${message.secret_name}" needs permission to access this domain. Open terminal settings to approve.`,
           duration: 10000,
+        });
+      } else if (message.type === "task_create" || message.type === "task_update" || message.type === "task_delete") {
+        // Invalidate ALL task queries for this dashboard (including session-scoped)
+        // Use predicate to match ["dashboard-tasks", dashboardId, ...] regardless of sessionId
+        queryClient.invalidateQueries({
+          predicate: (query) =>
+            Array.isArray(query.queryKey) &&
+            query.queryKey[0] === "dashboard-tasks" &&
+            query.queryKey[1] === dashboardId,
         });
       }
     },

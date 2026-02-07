@@ -345,6 +345,10 @@ export type CollabMessage =
   | { type: 'session_update'; session: Session }
   | { type: 'browser_open'; url: string }
   | { type: 'pending_approval'; secret_name: string; domain: string }
+  | { type: 'task_create'; task: AgentTask }
+  | { type: 'task_update'; task: AgentTask }
+  | { type: 'task_delete'; taskId: string }
+  | { type: 'memory_update'; key: string; memory: AgentMemory | null; sessionId: string | null }
   | UICommandMessage
   | UICommandResultMessage;
 
@@ -1091,3 +1095,94 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   matrix: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   google_chat: ['canSend', 'canEditMessages', 'canDeleteMessages'],
 };
+
+// ============================================
+// Agent State: Tasks & Memory
+// ============================================
+
+export type AgentTaskStatus = 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled';
+export type AgentMemoryType = 'fact' | 'context' | 'preference' | 'summary' | 'checkpoint';
+
+export interface AgentTask {
+  id: string;
+  dashboardId: string;
+  sessionId?: string;
+  parentId?: string;
+
+  subject: string;
+  description?: string;
+  status: AgentTaskStatus;
+  priority: number;
+
+  blockedBy: string[];
+  blocks: string[];
+
+  ownerAgent?: string;
+  metadata: Record<string, unknown>;
+
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface AgentMemory {
+  id: string;
+  dashboardId: string;
+  sessionId?: string;
+
+  key: string;
+  value: unknown;  // JSON-parsed
+  memoryType: AgentMemoryType;
+  tags: string[];
+
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskInput {
+  subject: string;
+  description?: string;
+  parentId?: string;
+  priority?: number;
+  blockedBy?: string[];
+  ownerAgent?: string;
+  metadata?: Record<string, unknown>;
+  sessionId?: string;
+}
+
+export interface UpdateTaskInput {
+  subject?: string;
+  description?: string;
+  status?: AgentTaskStatus;
+  priority?: number;
+  addBlockedBy?: string[];
+  removeBlockedBy?: string[];
+  ownerAgent?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskFilters {
+  status?: AgentTaskStatus | AgentTaskStatus[];
+  sessionId?: string;
+  parentId?: string;
+  ownerAgent?: string;
+  includeCompleted?: boolean;
+}
+
+export interface SetMemoryInput {
+  key: string;
+  value: unknown;
+  memoryType?: AgentMemoryType;
+  tags?: string[];
+  expiresIn?: number;  // seconds
+  sessionId?: string;
+}
+
+export interface MemoryFilters {
+  sessionId?: string;
+  memoryType?: AgentMemoryType;
+  tags?: string[];
+  prefix?: string;
+}
