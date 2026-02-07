@@ -3,9 +3,13 @@
 
 "use client";
 
+// REVISION: prompt-newsession-input-v2-unified-settings
+const MODULE_REVISION = "prompt-newsession-input-v2-unified-settings";
+console.log(`[PromptBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { Play, MessageSquare, Minimize2, Mic, Settings, Copy } from "lucide-react";
+import { Play, MessageSquare, Minimize2, Mic, Settings, Copy, AudioLines } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
@@ -51,6 +55,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   const isMinimized = data.metadata?.minimized === true;
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
   const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const [asrSettingsOpen, setAsrSettingsOpen] = React.useState(false);
   const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
@@ -151,23 +156,32 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
     [debouncedUpdate]
   );
 
-  // Fire prompt to connected blocks (both right and bottom outputs)
-  const handleGo = React.useCallback(() => {
-    if (!content.trim()) return;
+  const newSession = data.metadata?.newSession === true;
 
-    const payload = { text: content, execute: true };
+  // Fire prompt to connected blocks (both right and bottom outputs)
+  // inputText: optional upstream text to substitute into [input] placeholders
+  const handleGo = React.useCallback((inputText?: string) => {
+    let text = content;
+    if (!text.trim()) return;
+
+    // Substitute [input] placeholders with incoming upstream text (case-insensitive)
+    if (inputText !== undefined && /\[input\]/i.test(text)) {
+      text = text.replace(/\[input\]/gi, () => inputText);
+    }
+
+    const payload = { text, execute: true, newSession };
     connectionFlow?.fireOutput(id, "right-out", payload);
     connectionFlow?.fireOutput(id, "bottom-out", payload);
-  }, [id, content, connectionFlow]);
+  }, [id, content, connectionFlow, newSession]);
 
   // Register input handlers to receive data (both left and top inputs)
   React.useEffect(() => {
     if (!connectionFlow) return;
 
-    const handler = (_payload: { text?: string; execute?: boolean }) => {
-      // Input events trigger the prompt to fire its current content to outputs,
-      // same as pressing the Go button. Content is NOT overwritten by incoming text.
-      handleGo();
+    const handler = (payload: { text?: string; execute?: boolean }) => {
+      // Input events trigger the prompt to fire its current content to outputs.
+      // If the prompt contains [input], the incoming text is substituted in.
+      handleGo(payload.text || "");
     };
 
     const cleanupLeft = connectionFlow.registerInputHandler(id, "left-in", handler);
@@ -178,6 +192,12 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
       cleanupTop();
     };
   }, [id, connectionFlow, handleGo]);
+
+  const handleNewSessionToggle = React.useCallback(() => {
+    data.onItemChange?.({
+      metadata: { ...data.metadata, newSession: !newSession },
+    });
+  }, [data, newSession]);
 
   // Handle Ctrl/Cmd+Enter to fire
   const handleKeyDown = React.useCallback(
@@ -221,22 +241,26 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
         <div
           className="flex items-center justify-between text-xs font-medium text-white dark:text-white"
         >
-          <span>Prompt</span>
+          <span title="Text prompt block — sends content to connected blocks. Use [input] as a placeholder for upstream data.">Prompt</span>
           <div className="flex items-center gap-1">
-            <ASRSettingsDialog />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5 text-white hover:text-white hover:bg-white/20" title="Settings">
+                <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5 text-white hover:text-white hover:bg-white/20" title="Prompt settings">
                   <Settings className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-36">
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={() => setAsrSettingsOpen(true)} className="gap-2">
+                  <AudioLines className="w-3 h-3" />
+                  <span>Speech Recognition</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
                   <Copy className="w-3 h-3" />
                   <span>Duplicate</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <ASRSettingsDialog open={asrSettingsOpen} onOpenChange={setAsrSettingsOpen} />
             <Button
               variant="ghost"
               size="icon-sm"
@@ -265,7 +289,8 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
               onChange={(e) => handleContentChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => setIsEditing(false)}
-              placeholder="Enter a prompt..."
+              placeholder="Enter a prompt... Use [input] for upstream data."
+              title="Prompt text. Use [input] to insert data from connected upstream blocks. Press Cmd/Ctrl+Enter to send."
               style={{
                 backgroundColor: isDark ? "black" : "white",
                 color: isDark ? "white" : "black"
@@ -285,6 +310,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
                 setIsEditing(true);
                 setTimeout(() => textareaRef.current?.focus(), 0);
               }}
+              title="Click to edit. Use [input] to insert data from connected upstream blocks."
               style={{
                 backgroundColor: isDark ? "black" : "white",
                 color: isDark ? "white" : "black"
@@ -298,7 +324,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
             >
               <CodeBlockRenderer
                 content={content}
-                placeholder="Enter a prompt..."
+                placeholder="Enter a prompt... Use [input] for upstream data."
                 className="text-sm"
               />
             </div>
@@ -332,13 +358,28 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
             </button>
           )}
 
+          {/* New session checkbox */}
+          <label
+            className="flex items-center gap-1 text-[10px] text-slate-500 dark:text-slate-400 cursor-pointer nodrag select-none"
+            title="Clear agent session before sending (/clear for Claude, /new for Codex)"
+          >
+            <input
+              type="checkbox"
+              checked={newSession}
+              onChange={handleNewSessionToggle}
+              className="w-3 h-3 rounded border-slate-300 dark:border-slate-600 accent-emerald-500"
+            />
+            New session
+          </label>
+
           {/* Go button */}
           <button
-            onClick={handleGo}
+            onClick={() => handleGo()}
             disabled={!content.trim()}
+            title="Send prompt to connected blocks (Cmd/Ctrl+Enter)"
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md",
-              "text-sm font-medium transition-colors",
+              "text-sm font-medium transition-colors nodrag",
               "bg-emerald-600 text-white hover:bg-emerald-700",
               "disabled:opacity-50 disabled:cursor-not-allowed",
               "dark:bg-emerald-500 dark:hover:bg-emerald-600"

@@ -1880,7 +1880,7 @@ export function TerminalBlock({
   React.useEffect(() => {
     if (!connectionFlow) return;
 
-    const handler = (payload: { text: string; execute?: boolean }) => {
+    const handler = (payload: { text: string; execute?: boolean; newSession?: boolean }) => {
       // Default execute to true unless explicitly set to false
       const shouldExecute = payload.execute !== false;
       console.log("[TerminalBlock] Received input from connection", {
@@ -1888,6 +1888,7 @@ export function TerminalBlock({
         canType,
         text: payload.text?.slice(0, 50),
         execute: shouldExecute,
+        newSession: payload.newSession,
         terminalType,
       });
       if (canType && payload.text) {
@@ -1900,6 +1901,41 @@ export function TerminalBlock({
             .replace(/'/g, "'\\''")  // Escape single quotes for shell
             .replace(/!/g, ".");      // Replace ! to avoid shell mode trigger
         }
+
+        // New session: send clear/new command before the prompt
+        if (payload.newSession && shouldExecute) {
+          let clearCmd = "";
+          if (terminalType === "claude") clearCmd = "/clear";
+          else if (terminalType === "codex") clearCmd = "/new";
+          else if (terminalType === "gemini") clearCmd = "/clear";
+
+          if (clearCmd) {
+            const promptText = text;
+            if (terminalType === "gemini") {
+              // Gemini CLI (Ink/React) has a bufferFastReturn with a 30ms threshold:
+              // if CR arrives within 30ms of the last keypress, it's treated as an
+              // insertable newline instead of submit. Hub.Execute's 50ms gap between
+              // text and CR isn't reliable because delivery timing varies.
+              // Fix: send text, wait 100ms (well outside 30ms window), send CR,
+              // then wait for Gemini to process before sending the prompt.
+              terminalActions.sendInput(clearCmd);
+              setTimeout(() => {
+                terminalActions.sendInput("\r");
+                setTimeout(() => {
+                  terminalActions.sendExecute(promptText);
+                }, 800);
+              }, 100);
+            } else {
+              // Claude Code and Codex use readline — Hub.Execute works fine
+              terminalActions.sendExecute(clearCmd);
+              setTimeout(() => {
+                terminalActions.sendExecute(promptText);
+              }, 800);
+            }
+            return;
+          }
+        }
+
         if (shouldExecute) {
           // Server handles text + CR atomically
           terminalActions.sendExecute(text);
