@@ -17,7 +17,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "gmail" | "calendar" | "contacts" | "sheets" | "forms";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat";
 
 /**
  * Position on the canvas

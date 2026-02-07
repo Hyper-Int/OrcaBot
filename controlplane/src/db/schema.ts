@@ -1,5 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: messaging-v3-fix-init-order
 
 /**
  * Database Schema
@@ -57,7 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -211,7 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_user ON oauth_states(user_id);
 CREATE TABLE IF NOT EXISTS user_integrations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'box', 'onedrive')),
+  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   scope TEXT,
@@ -673,7 +674,7 @@ CREATE TABLE IF NOT EXISTS terminal_integrations (
   item_id TEXT,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'google_drive', 'onedrive', 'box', 'github', 'browser')),
+  provider TEXT NOT NULL CHECK (provider IN ('gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'google_drive', 'onedrive', 'box', 'github', 'browser', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
   user_integration_id TEXT REFERENCES user_integrations(id),
   active_policy_id TEXT,
   account_email TEXT,
@@ -738,17 +739,88 @@ CREATE TABLE IF NOT EXISTS high_risk_confirmations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_high_risk_terminal_integration ON high_risk_confirmations(terminal_integration_id);
+
+-- Messaging subscriptions (inbound channel/chat bindings for messaging blocks)
+CREATE TABLE IF NOT EXISTS messaging_subscriptions (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  channel_id TEXT,
+  channel_name TEXT,
+  chat_id TEXT,
+  team_id TEXT,
+  webhook_id TEXT UNIQUE,
+  webhook_secret TEXT,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'paused', 'error')),
+  last_message_at TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_messaging_subs_dashboard ON messaging_subscriptions(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_messaging_subs_item ON messaging_subscriptions(item_id);
+CREATE INDEX IF NOT EXISTS idx_messaging_subs_webhook ON messaging_subscriptions(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_channel ON messaging_subscriptions(provider, channel_id);
+CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_team_channel ON messaging_subscriptions(provider, team_id, channel_id);
+-- Unique per block + provider + channel (allows multi-channel per block).
+-- Telegram uses chat_id instead of channel_id, but COALESCE ensures the
+-- uniqueness column is never NULL (SQLite ignores NULL in unique indexes).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_subs_active_channel
+  ON messaging_subscriptions(dashboard_id, item_id, provider, COALESCE(channel_id, chat_id))
+  WHERE status IN ('pending', 'active');
+
+-- Inbound messages (buffer for messages arriving while VM is sleeping)
+CREATE TABLE IF NOT EXISTS inbound_messages (
+  id TEXT PRIMARY KEY,
+  subscription_id TEXT NOT NULL REFERENCES messaging_subscriptions(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK (provider IN ('slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  platform_message_id TEXT NOT NULL,
+  sender_id TEXT,
+  sender_name TEXT,
+  channel_id TEXT,
+  channel_name TEXT,
+  message_text TEXT,
+  message_metadata TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('buffered', 'delivering', 'delivered', 'failed', 'expired')),
+  delivery_attempts INTEGER NOT NULL DEFAULT 0,
+  claimed_at TEXT,
+  delivered_terminals TEXT NOT NULL DEFAULT '[]',
+  delivered_at TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_messages_sub ON inbound_messages(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_inbound_messages_dashboard ON inbound_messages(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_inbound_messages_status ON inbound_messages(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_messages_dedup ON inbound_messages(subscription_id, platform_message_id);
+CREATE INDEX IF NOT EXISTS idx_inbound_messages_expires ON inbound_messages(expires_at);
 `;
 
 // Initialize the database
+const SCHEMA_REVISION = "messaging-v3-fix-init-order";
+
 export async function initializeDatabase(db: D1Database): Promise<void> {
-  // Split into individual statements and execute
+  console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
+  // Split into individual statements and execute.
+  // IMPORTANT: Run CREATE TABLE first, then ALTER TABLE migrations to add missing
+  // columns, then CREATE INDEX. On existing DBs, CREATE TABLE IF NOT EXISTS is a
+  // no-op so columns added via ALTER TABLE won't exist yet when indexes run.
   const statements = SCHEMA
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0);
 
-  for (const statement of statements) {
+  const isCreateTable = (s: string) => /CREATE\s+TABLE/i.test(s);
+  const tableStatements = statements.filter(isCreateTable);
+  const indexStatements = statements.filter(s => !isCreateTable(s));
+
+  // Phase 1: Create tables (IF NOT EXISTS — safe for existing DBs)
+  for (const statement of tableStatements) {
     await db.prepare(statement).run();
   }
 
@@ -834,6 +906,7 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   await migrateDashboardItemTypes(db);
   await migrateUserIntegrationProviders(db);
+  await migrateTerminalIntegrationProviders(db);
 
   // Add partial unique index for terminal_integrations (one provider per terminal for active rows)
   try {
@@ -906,10 +979,18 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);
+
+  // Phase 3: Create indexes (now all columns exist from ALTER TABLE migrations above)
+  for (const statement of indexStatements) {
+    await db.prepare(statement).run();
+  }
 }
 
 // All valid integration providers - add new providers here
-const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive'] as const;
+const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
+
+// All valid terminal integration providers (includes 'browser' which is not an OAuth provider)
+const TERMINAL_INTEGRATION_PROVIDERS = [...INTEGRATION_PROVIDERS, 'browser'] as const;
 
 async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
@@ -950,12 +1031,17 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `).run();
-  // Only copy columns that exist in the old table - new columns will use defaults
+  // Copy ALL columns that exist in both old and new tables to preserve data.
+  // Critical: metadata contains team_id for Slack routing, scope/token_type/expires_at
+  // are needed for OAuth refresh. Dropping these would break existing integrations.
+  const oldColumns = await db.prepare(`PRAGMA table_info(user_integrations)`).all<{ name: string }>();
+  const oldColumnNames = new Set((oldColumns.results || []).map(c => c.name));
+  const allNewColumns = ['id', 'user_id', 'provider', 'access_token', 'refresh_token', 'scope', 'token_type', 'expires_at', 'metadata', 'created_at', 'updated_at'];
+  const columnsToCopy = allNewColumns.filter(c => oldColumnNames.has(c));
+  const columnList = columnsToCopy.join(', ');
   await db.prepare(`
-    INSERT INTO user_integrations_new
-      (id, user_id, provider, access_token, refresh_token, created_at, updated_at)
-    SELECT id, user_id, provider, access_token, refresh_token, created_at, updated_at
-    FROM user_integrations
+    INSERT INTO user_integrations_new (${columnList})
+    SELECT ${columnList} FROM user_integrations
   `).run();
   await db.prepare(`DROP TABLE user_integrations`).run();
   await db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`).run();
@@ -1015,7 +1101,7 @@ async function migrateSchedulesTable(db: D1Database): Promise<void> {
 }
 
 // All valid dashboard item types - add new types here
-const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms'] as const;
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
 
 async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
@@ -1060,5 +1146,60 @@ async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   await db.prepare(`DROP TABLE dashboard_items`).run();
   await db.prepare(`ALTER TABLE dashboard_items_new RENAME TO dashboard_items`).run();
   await db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id)`).run();
+  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+}
+
+async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void> {
+  const tableInfo = await db.prepare(`
+    SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'terminal_integrations'
+  `).first<{ sql: string }>();
+
+  if (!tableInfo?.sql) {
+    return;
+  }
+
+  // Check if all required providers are present in the CHECK constraint
+  const allProvidersPresent = TERMINAL_INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
+  if (allProvidersPresent) {
+    return;
+  }
+
+  // Recreate table with updated CHECK constraint
+  const providerList = TERMINAL_INTEGRATION_PROVIDERS.map(p => `'${p}'`).join(', ');
+
+  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
+  await db.prepare(`DROP TABLE IF EXISTS terminal_integrations_new`).run();
+  await db.prepare(`
+    CREATE TABLE terminal_integrations_new (
+      id TEXT PRIMARY KEY,
+      terminal_id TEXT NOT NULL,
+      item_id TEXT,
+      dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN (${providerList})),
+      user_integration_id TEXT REFERENCES user_integrations(id),
+      active_policy_id TEXT,
+      account_email TEXT,
+      account_label TEXT,
+      deleted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_by TEXT NOT NULL REFERENCES users(id),
+      CHECK (provider = 'browser' OR user_integration_id IS NOT NULL)
+    )
+  `).run();
+  await db.prepare(`
+    INSERT INTO terminal_integrations_new
+      (id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by)
+    SELECT id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by
+    FROM terminal_integrations
+  `).run();
+  await db.prepare(`DROP TABLE terminal_integrations`).run();
+  await db.prepare(`ALTER TABLE terminal_integrations_new RENAME TO terminal_integrations`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)`).run();
+  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active ON terminal_integrations(terminal_id, provider) WHERE deleted_at IS NULL`).run();
   await db.prepare(`PRAGMA foreign_keys=ON`).run();
 }

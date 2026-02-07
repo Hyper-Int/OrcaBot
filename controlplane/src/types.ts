@@ -41,6 +41,12 @@ export interface Env {
   BOX_CLIENT_SECRET?: string;
   ONEDRIVE_CLIENT_ID?: string;
   ONEDRIVE_CLIENT_SECRET?: string;
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
+  SLACK_SIGNING_SECRET?: string;
+  DISCORD_CLIENT_ID?: string;
+  DISCORD_CLIENT_SECRET?: string;
+  DISCORD_PUBLIC_KEY?: string;
   OAUTH_REDIRECT_BASE?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
@@ -83,7 +89,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -165,7 +171,8 @@ export interface UserSecret {
 export interface UserIntegration {
   id: string;
   userId: string;
-  provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'google_contacts' | 'google_sheets' | 'google_forms' | 'box' | 'onedrive';
+  provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'google_contacts' | 'google_sheets' | 'google_forms' | 'box' | 'onedrive'
+    | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
   accessToken: string;
   refreshToken: string | null;
   scope: string | null;
@@ -537,7 +544,21 @@ export type IntegrationProvider =
   | 'onedrive'
   | 'box'
   | 'github'
-  | 'browser';
+  | 'browser'
+  | 'slack'
+  | 'discord'
+  | 'telegram'
+  | 'whatsapp'
+  | 'teams'
+  | 'matrix'
+  | 'google_chat';
+
+/** Messaging providers that support inbound/outbound messaging */
+export type MessagingProvider = 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
+
+export function isMessagingProvider(provider: IntegrationProvider): provider is MessagingProvider {
+  return ['slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'].includes(provider);
+}
 
 /**
  * Security level for integration policies
@@ -851,6 +872,70 @@ export interface BrowserPolicy extends BasePolicy {
 }
 
 /**
+ * Messaging policy configuration (shared base for all messaging providers)
+ * SECURITY: channelFilter defaults to allowlist with empty list — fail-closed by design.
+ * No messages in or out until user explicitly configures channels/chats.
+ */
+export interface MessagingPolicy extends BasePolicy {
+  // Inbound
+  canReceive: boolean;
+  channelFilter: {
+    mode: 'all' | 'allowlist';  // 'all' = no channel restriction; 'allowlist' = must specify channels
+    channelIds?: string[];
+    channelNames?: string[];
+  };
+  senderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    userIds?: string[];
+    userNames?: string[];
+  };
+  // Outbound
+  canSend: boolean;
+  sendPolicy?: {
+    allowedChannels?: string[];
+    allowedRecipients?: string[];
+    maxPerHour?: number;
+    maxMessageLength?: number;
+    requireThreadReply?: boolean;
+  };
+  canReact: boolean;
+  canEditMessages: boolean;
+  canDeleteMessages: boolean;
+  canUploadFiles: boolean;
+  canReadHistory: boolean;
+  rateLimits?: BasePolicy['rateLimits'] & {
+    messagesPerMinute?: number;
+    messagesPerHour?: number;
+  };
+}
+
+/** Slack-specific policy extensions */
+export interface SlackPolicy extends MessagingPolicy {
+  workspaceFilter?: {
+    mode: 'allowlist';
+    workspaceIds?: string[];
+  };
+}
+
+/** Discord-specific policy extensions */
+export interface DiscordPolicy extends MessagingPolicy {
+  serverFilter?: {
+    mode: 'allowlist';
+    serverIds?: string[];
+  };
+}
+
+/** Telegram-specific policy extensions */
+export interface TelegramPolicy extends MessagingPolicy {
+  chatTypeFilter?: {
+    allowPrivate: boolean;
+    allowGroup: boolean;
+    allowSupergroup: boolean;
+    allowChannel: boolean;
+  };
+}
+
+/**
  * Type-safe policy lookup by provider
  */
 export type PolicyForProvider<P extends IntegrationProvider> =
@@ -864,6 +949,13 @@ export type PolicyForProvider<P extends IntegrationProvider> =
   P extends 'box' ? BoxPolicy :
   P extends 'github' ? GitHubPolicy :
   P extends 'browser' ? BrowserPolicy :
+  P extends 'slack' ? SlackPolicy :
+  P extends 'discord' ? DiscordPolicy :
+  P extends 'telegram' ? TelegramPolicy :
+  P extends 'whatsapp' ? MessagingPolicy :
+  P extends 'teams' ? MessagingPolicy :
+  P extends 'matrix' ? MessagingPolicy :
+  P extends 'google_chat' ? MessagingPolicy :
   never;
 
 /**
@@ -879,7 +971,11 @@ export type AnyPolicy =
   | OneDrivePolicy
   | BoxPolicy
   | GitHubPolicy
-  | BrowserPolicy;
+  | BrowserPolicy
+  | MessagingPolicy
+  | SlackPolicy
+  | DiscordPolicy
+  | TelegramPolicy;
 
 /**
  * Terminal integration binding (immutable once created)
@@ -984,4 +1080,11 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   box: ['canDelete', 'canShare'],
   github: ['canPush', 'canMergePRs', 'canApprovePRs', 'canDeleteRepos'],
   browser: ['canSubmitForms', 'canExecuteJs', 'canUpload', 'canInputCredentials'],
+  slack: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  discord: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  telegram: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  whatsapp: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  teams: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  matrix: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  google_chat: ['canSend', 'canEditMessages', 'canDeleteMessages'],
 };

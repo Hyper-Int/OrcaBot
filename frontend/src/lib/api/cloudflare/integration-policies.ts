@@ -1,5 +1,6 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: messaging-v3-readonly-can-receive
 
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api/client";
 import { API } from "@/config/env";
@@ -18,7 +19,16 @@ export type IntegrationProvider =
   | "onedrive"
   | "box"
   | "github"
-  | "browser";
+  | "browser"
+  | "slack"
+  | "discord"
+  | "telegram"
+  | "whatsapp"
+  | "teams"
+  | "matrix"
+  | "google_chat";
+
+export type MessagingProvider = "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat";
 
 export type SecurityLevel = "restricted" | "elevated" | "full";
 
@@ -270,6 +280,60 @@ export interface BrowserPolicy extends BasePolicy {
   canModifyRequests: boolean;
 }
 
+/**
+ * Messaging policy (shared base for Slack, Discord, Telegram, etc.)
+ * SECURITY: channelFilter defaults to allowlist with empty list — fail-closed.
+ */
+export interface MessagingPolicy extends BasePolicy {
+  canReceive: boolean;
+  channelFilter: {
+    mode: "all" | "allowlist";
+    channelIds?: string[];
+    channelNames?: string[];
+  };
+  senderFilter?: {
+    mode: "all" | "allowlist" | "blocklist";
+    userIds?: string[];
+    userNames?: string[];
+  };
+  canSend: boolean;
+  sendPolicy?: {
+    allowedChannels?: string[];
+    allowedRecipients?: string[];
+    maxPerHour?: number;
+    maxMessageLength?: number;
+    requireThreadReply?: boolean;
+  };
+  canReact: boolean;
+  canEditMessages: boolean;
+  canDeleteMessages: boolean;
+  canUploadFiles: boolean;
+  canReadHistory: boolean;
+}
+
+export interface SlackPolicy extends MessagingPolicy {
+  workspaceFilter?: {
+    mode: "allowlist";
+    workspaceIds?: string[];
+  };
+}
+
+export interface DiscordPolicy extends MessagingPolicy {
+  serverFilter?: {
+    mode: "allowlist";
+    serverIds?: string[];
+  };
+}
+
+export interface TelegramPolicy extends MessagingPolicy {
+  chatTypeFilter?: {
+    allowPrivate: boolean;
+    allowGroup: boolean;
+    allowSupergroup: boolean;
+    allowChannel: boolean;
+  };
+}
+
 export type AnyPolicy =
   | GmailPolicy
   | CalendarPolicy
@@ -280,7 +344,11 @@ export type AnyPolicy =
   | OneDrivePolicy
   | BoxPolicy
   | GitHubPolicy
-  | BrowserPolicy;
+  | BrowserPolicy
+  | MessagingPolicy
+  | SlackPolicy
+  | DiscordPolicy
+  | TelegramPolicy;
 
 export interface AvailableIntegration {
   provider: IntegrationProvider;
@@ -365,6 +433,28 @@ export async function listTerminalIntegrations(
     `${API.cloudflare.dashboards}/${dashboardId}/terminals/${terminalId}/integrations`
   );
   return response.integrations;
+}
+
+/**
+ * Integration label for edge enrichment on reload
+ */
+export interface IntegrationLabel {
+  itemId: string;
+  provider: string;
+  securityLevel: SecurityLevel | null;
+}
+
+/**
+ * List integration labels for all edges in a dashboard.
+ * Returns {itemId, provider, securityLevel} for each active terminal integration.
+ */
+export async function listDashboardIntegrationLabels(
+  dashboardId: string
+): Promise<IntegrationLabel[]> {
+  const response = await apiGet<{ labels: IntegrationLabel[] }>(
+    `${API.cloudflare.dashboards}/${dashboardId}/integration-labels`
+  );
+  return response.labels;
 }
 
 /**
@@ -502,6 +592,13 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   box: ["canDelete", "canShare"],
   github: ["canPush", "canMergePRs", "canApprovePRs", "canDeleteRepos"],
   browser: ["canSubmitForms", "canExecuteJs", "canUpload", "canInputCredentials"],
+  slack: ["canSend", "canEditMessages", "canDeleteMessages"],
+  discord: ["canSend", "canEditMessages", "canDeleteMessages"],
+  telegram: ["canSend", "canEditMessages", "canDeleteMessages"],
+  whatsapp: ["canSend", "canEditMessages", "canDeleteMessages"],
+  teams: ["canSend", "canEditMessages", "canDeleteMessages"],
+  matrix: ["canSend", "canEditMessages", "canDeleteMessages"],
+  google_chat: ["canSend", "canEditMessages", "canDeleteMessages"],
 };
 
 /**
@@ -519,6 +616,13 @@ export function getProviderDisplayName(provider: IntegrationProvider): string {
     box: "Box",
     github: "GitHub",
     browser: "Browser",
+    slack: "Slack",
+    discord: "Discord",
+    telegram: "Telegram",
+    whatsapp: "WhatsApp",
+    teams: "Microsoft Teams",
+    matrix: "Matrix",
+    google_chat: "Google Chat",
   };
   return names[provider] || provider;
 }
@@ -538,6 +642,13 @@ export function getProviderIcon(provider: IntegrationProvider): string {
     box: "Box",
     github: "Github",
     browser: "Globe",
+    slack: "Hash",
+    discord: "Gamepad2",
+    telegram: "Send",
+    whatsapp: "Phone",
+    teams: "Users",
+    matrix: "Network",
+    google_chat: "MessageCircle",
   };
   return icons[provider] || "Plug";
 }
@@ -709,6 +820,62 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canModifyRequests: false,
       } as BrowserPolicy;
 
+    // Messaging providers — read-only: can receive and read history, but not send.
+    // channelFilter uses allowlist with empty arrays — no messages get through until
+    // the user explicitly configures channels. This is fail-closed at the channel level
+    // while correctly modeling "read-only" as "can receive, can't send" (matching how
+    // read-only works for email/calendar where you can read but not write).
+    case "slack":
+      return {
+        canReceive: true,
+        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+      } as SlackPolicy;
+
+    case "discord":
+      return {
+        canReceive: true,
+        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+      } as DiscordPolicy;
+
+    case "telegram":
+      return {
+        canReceive: true,
+        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+      } as TelegramPolicy;
+
+    case "whatsapp":
+    case "teams":
+    case "matrix":
+    case "google_chat":
+      return {
+        canReceive: true,
+        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+      } as MessagingPolicy;
+
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${provider}`);
@@ -732,6 +899,14 @@ export const BLOCK_TYPE_TO_PROVIDER: Partial<Record<string, IntegrationProvider>
   forms: "google_forms",
   browser: "browser",
   // google_drive is handled specially via workspace linking
+  // Messaging platforms
+  slack: "slack",
+  discord: "discord",
+  telegram: "telegram",
+  whatsapp: "whatsapp",
+  teams: "teams",
+  matrix: "matrix",
+  google_chat: "google_chat",
 };
 
 /**

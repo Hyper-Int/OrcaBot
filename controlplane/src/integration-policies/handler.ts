@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v8-integration-persistence
-console.log(`[integration-handler] REVISION: handler-v8-integration-persistence loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v12-dashboard-integration-labels
+console.log(`[integration-handler] REVISION: handler-v12-dashboard-integration-labels loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -90,10 +90,11 @@ function getActionCategory(provider: IntegrationProvider, action: string): Actio
   if (action.includes('delete') || action.includes('trash') || action.includes('remove')) {
     return 'deletes';
   }
-  // Write actions
+  // Write actions (edit_message and react are write-like mutations, not reads)
   if (action.includes('create') || action.includes('update') || action.includes('write') ||
       action.includes('archive') || action.includes('label') ||
-      action.includes('move') || action.includes('share')) {
+      action.includes('move') || action.includes('share') ||
+      action.includes('edit') || action.includes('react')) {
     return 'writes';
   }
   // Default to reads
@@ -269,6 +270,19 @@ export function calculateSecurityLevel(
       return 'restricted';
     }
 
+    case 'slack':
+    case 'discord':
+    case 'telegram':
+    case 'whatsapp':
+    case 'teams':
+    case 'matrix':
+    case 'google_chat': {
+      const p = policy as import('../types').MessagingPolicy;
+      if (p.canSend || p.canDeleteMessages || p.canEditMessages) return 'full';
+      if (p.canReceive || p.canReact || p.canReadHistory || p.canUploadFiles) return 'elevated';
+      return 'restricted';
+    }
+
     default: {
       // Exhaustive check
       const _exhaustive: never = provider;
@@ -407,6 +421,27 @@ export function createDefaultFullAccessPolicy(provider: IntegrationProvider): An
         canModifyRequests: false,
       } as BrowserPolicy;
 
+    case 'slack':
+    case 'discord':
+    case 'telegram':
+    case 'whatsapp':
+    case 'teams':
+    case 'matrix':
+    case 'google_chat':
+      // Messaging full-access: can send and receive on all channels
+      return {
+        canReceive: true,
+        channelFilter: { mode: 'all' },  // No channel restriction
+        senderFilter: { mode: 'all' },
+        canSend: true,
+        sendPolicy: {},
+        canReact: true,
+        canEditMessages: true,
+        canDeleteMessages: false, // Deleting still off by default — destructive
+        canUploadFiles: true,
+        canReadHistory: true,
+      } as import('../types').MessagingPolicy;
+
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${provider}`);
@@ -538,6 +573,26 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canInspectNetwork: false,
         canModifyRequests: false,
       } as BrowserPolicy;
+
+    case 'slack':
+    case 'discord':
+    case 'telegram':
+    case 'whatsapp':
+    case 'teams':
+    case 'matrix':
+    case 'google_chat':
+      // Messaging read-only: can receive and read history, but not send
+      return {
+        canReceive: true,
+        channelFilter: { mode: 'allowlist', channelIds: [], channelNames: [] },
+        senderFilter: { mode: 'all' },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+      } as import('../types').MessagingPolicy;
 
     default: {
       const _exhaustive: never = provider;
@@ -706,6 +761,57 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'browser.inspectNetwork': 'canInspectNetwork',
     'browser.modifyRequests': 'canModifyRequests',
   },
+  // Messaging providers
+  slack: {
+    'slack.list_channels': 'canReceive',   // Non-channel-targeted: lists all channels
+    'slack.read_messages': 'canReadHistory', // Channel-targeted: reads specific channel
+    'slack.send_message': 'canSend',
+    'slack.reply_thread': 'canSend',
+    'slack.react': 'canReact',
+    'slack.search': 'canReceive',           // Non-channel-targeted: global search
+    'slack.get_user_info': 'canReceive',    // Non-channel-targeted: user lookup
+    'slack.edit_message': 'canEditMessages',
+    'slack.delete_message': 'canDeleteMessages',
+  },
+  discord: {
+    'discord.list_channels': 'canReceive',  // Non-channel-targeted
+    'discord.read_messages': 'canReadHistory',
+    'discord.send_message': 'canSend',
+    'discord.reply': 'canSend',
+    'discord.react': 'canReact',
+    'discord.edit_message': 'canEditMessages',
+    'discord.delete_message': 'canDeleteMessages',
+  },
+  telegram: {
+    'telegram.send_message': 'canSend',
+    'telegram.reply': 'canSend',
+    'telegram.edit_message': 'canEditMessages',
+    'telegram.delete_message': 'canDeleteMessages',
+    'telegram.get_chat_info': 'canReceive', // Non-channel-targeted
+  },
+  whatsapp: {
+    'whatsapp.send_message': 'canSend',
+    'whatsapp.reply': 'canSend',
+    'whatsapp.read_messages': 'canReadHistory',
+  },
+  teams: {
+    'teams.list_channels': 'canReceive',    // Non-channel-targeted
+    'teams.read_messages': 'canReadHistory',
+    'teams.send_message': 'canSend',
+    'teams.reply': 'canSend',
+  },
+  matrix: {
+    'matrix.list_rooms': 'canReceive',      // Non-channel-targeted
+    'matrix.read_messages': 'canReadHistory',
+    'matrix.send_message': 'canSend',
+    'matrix.reply': 'canSend',
+  },
+  google_chat: {
+    'google_chat.list_spaces': 'canReceive', // Non-channel-targeted
+    'google_chat.read_messages': 'canReadHistory',
+    'google_chat.send_message': 'canSend',
+    'google_chat.reply': 'canSend',
+  },
 };
 
 export interface EnforcementResult {
@@ -745,6 +851,13 @@ export async function enforcePolicy(
     folderId?: string;               // Drive target folder ID
     fileName?: string;               // Drive file name (for extension check)
     mimeType?: string;               // Drive MIME type
+    channelId?: string;              // Messaging channel/chat ID
+    channelName?: string;            // Messaging channel name
+    senderId?: string;               // Messaging sender ID
+    senderName?: string;             // Messaging sender name
+    messageText?: string;            // Messaging outbound text (for maxMessageLength)
+    threadTs?: string;               // Messaging thread ID (for requireThreadReply)
+    recipientUserId?: string;        // Messaging DM recipient (for allowedRecipients)
   }
 ): Promise<EnforcementResult> {
   // 1. Map action to capability
@@ -1052,6 +1165,115 @@ export async function enforcePolicy(
     }
   }
 
+  // Messaging channel filter enforcement (applies to all messaging providers)
+  const messagingProviders = ['slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'];
+  if (messagingProviders.includes(provider) && context) {
+    const msgPolicy = policy as import('../types').MessagingPolicy;
+
+    // Channel filter enforcement: channel must be in allowlist
+    // Only applies to channel-targeted actions. Non-channel actions (canReceive = list_channels,
+    // get_user_info, search) are never filtered by channel, since they don't target a specific channel.
+    const CHANNEL_TARGETED_CAPABILITIES = new Set([
+      'canSend', 'canReadHistory', 'canReact', 'canEditMessages', 'canDeleteMessages',
+    ]);
+
+    if (msgPolicy.channelFilter && CHANNEL_TARGETED_CAPABILITIES.has(capability)) {
+      // mode: 'all' = no channel restriction — skip filter entirely
+      if (msgPolicy.channelFilter.mode === 'allowlist') {
+        const { channelIds, channelNames } = msgPolicy.channelFilter;
+        const hasChannelAllowlist = channelIds?.length || channelNames?.length;
+
+        if (hasChannelAllowlist) {
+          // Fail-closed: if action targets a channel but channelId is not in context, deny
+          if (!context.channelId) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: 'Channel allowlist is configured but no channel specified in request',
+            };
+          }
+          const channelIdAllowed = channelIds?.some(id => id === context.channelId);
+          // Normalize: strip leading '#' and lowercase for comparison.
+          // Policies may be configured with "#general" or "general"; resolved names
+          // may or may not have the prefix depending on source.
+          const normalizedCtxName = context.channelName?.replace(/^#/, '').toLowerCase();
+          const channelNameAllowed = normalizedCtxName && channelNames?.some(name =>
+            name.replace(/^#/, '').toLowerCase() === normalizedCtxName
+          );
+          if (!channelIdAllowed && !channelNameAllowed) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: `Channel ${context.channelName || context.channelId} not in allowlist`,
+            };
+          }
+        } else {
+          // Allowlist mode with no channels configured = deny all channel-targeted actions (fail-closed)
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: 'No channels configured in allowlist — add channels to policy',
+          };
+        }
+      }
+      // mode: 'all' falls through — no channel restriction
+    }
+
+    // Send policy enforcement: check allowed channels, thread reply, message length, recipients
+    if (capability === 'canSend' && msgPolicy.sendPolicy) {
+      const { allowedChannels, allowedRecipients, maxMessageLength, requireThreadReply } = msgPolicy.sendPolicy;
+
+      if (allowedChannels?.length) {
+        // Match against both channel ID and normalized channel name.
+        // Policies may specify IDs ("C1234") or names ("#general" / "general").
+        const idMatch = context.channelId && allowedChannels.includes(context.channelId);
+        const normalizedCtxName = context.channelName?.replace(/^#/, '').toLowerCase();
+        const nameMatch = normalizedCtxName && allowedChannels.some(ch =>
+          ch.replace(/^#/, '').toLowerCase() === normalizedCtxName
+        );
+        if (!idMatch && !nameMatch) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `Cannot send to channel ${context.channelName || context.channelId || '(unspecified)'}`,
+          };
+        }
+      }
+
+      // Require thread reply: agent must reply in an existing thread, not post top-level
+      if (requireThreadReply && !context.threadTs) {
+        return {
+          allowed: false,
+          decision: 'denied',
+          reason: 'Policy requires thread replies — provide a thread_ts or reply_to_message_id',
+        };
+      }
+
+      // Max message length: prevent agents from sending excessively long messages
+      if (maxMessageLength && context.messageText && context.messageText.length > maxMessageLength) {
+        return {
+          allowed: false,
+          decision: 'denied',
+          reason: `Message length ${context.messageText.length} exceeds limit of ${maxMessageLength} characters`,
+        };
+      }
+
+      // Allowed recipients: restrict DM targets (platforms that support direct recipients)
+      if (allowedRecipients?.length && context.recipientUserId) {
+        if (!allowedRecipients.includes(context.recipientUserId)) {
+          return {
+            allowed: false,
+            decision: 'denied',
+            reason: `Recipient ${context.recipientUserId} not in allowed recipients list`,
+          };
+        }
+      }
+
+      // Note: maxPerHour is enforced by checkRateLimit() in gateway.ts via
+      // sendPolicy.maxPerHour — no duplicate check needed here.
+    }
+  }
+
   // 5. All checks passed
   return { allowed: true, decision: 'allowed' };
 }
@@ -1267,6 +1489,39 @@ export async function listTerminalIntegrations(
   });
 
   return Response.json({ integrations });
+}
+
+/**
+ * List integration labels for all edges in a dashboard.
+ * Returns {itemId, provider, securityLevel} for each active terminal_integration,
+ * keyed by item_id. Used to enrich edge labels on dashboard reload.
+ */
+export async function listDashboardIntegrationLabels(
+  env: Env,
+  dashboardId: string,
+  userId: string
+): Promise<Response> {
+  const access = await ensureDashboardAccess(env, dashboardId, userId);
+  if (!access) {
+    return Response.json({ error: 'E79780: Not found or no access' }, { status: 404 });
+  }
+
+  const rows = await env.DB.prepare(`
+    SELECT ti.item_id, ti.provider, ip.security_level
+    FROM terminal_integrations ti
+    LEFT JOIN integration_policies ip ON ti.active_policy_id = ip.id
+    WHERE ti.dashboard_id = ? AND ti.deleted_at IS NULL AND ti.item_id IS NOT NULL
+  `)
+    .bind(dashboardId)
+    .all();
+
+  const labels = rows.results.map((row) => ({
+    itemId: row.item_id as string,
+    provider: row.provider as string,
+    securityLevel: (row.security_level as string) ?? null,
+  }));
+
+  return Response.json({ labels });
 }
 
 /**

@@ -43,6 +43,8 @@ import { CalendarBlock } from "@/components/blocks/CalendarBlock";
 import { ContactsBlock } from "@/components/blocks/ContactsBlock";
 import { SheetsBlock } from "@/components/blocks/SheetsBlock";
 import { FormsBlock } from "@/components/blocks/FormsBlock";
+import { SlackBlock } from "@/components/blocks/SlackBlock";
+import { MessagingPlaceholderBlock } from "@/components/blocks/MessagingPlaceholderBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -64,6 +66,13 @@ const nodeTypes: NodeTypes = {
   contacts: ContactsBlock,
   sheets: SheetsBlock,
   forms: FormsBlock,
+  slack: SlackBlock,
+  discord: MessagingPlaceholderBlock,
+  telegram: MessagingPlaceholderBlock,
+  whatsapp: MessagingPlaceholderBlock,
+  teams: MessagingPlaceholderBlock,
+  matrix: MessagingPlaceholderBlock,
+  google_chat: MessagingPlaceholderBlock,
   cursor: CursorNode,
 };
 
