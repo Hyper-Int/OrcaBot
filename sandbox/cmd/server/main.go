@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -208,6 +209,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleListPTYs)))
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.auth.RequireAuthFunc(s.requireMachine(s.handleWritePty)))
 	mux.HandleFunc("POST /sessions/{sessionId}/env", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionEnv)))
 	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionMetrics)))
 	mux.HandleFunc("GET /sessions/{sessionId}/control", s.auth.RequireAuthFunc(s.requireMachine(s.handleControlWebSocket)))
@@ -363,6 +365,7 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		PtyID            string `json:"pty_id"`            // Control plane can provide pre-generated ID
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
+		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
@@ -381,6 +384,23 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Store execution ID and register process-exit callback BEFORE responding.
+	// This ensures the callback is in place before the command can finish.
+	// REVISION: server-side-cron-v3-exec-id-at-creation
+	if req.ExecutionID != "" {
+		ptyID := ptyInfo.ID
+		execID := req.ExecutionID
+		session.SetExecutionID(ptyID, execID)
+		ptyInfo.Hub.AddOnStop(func() {
+			// Use captured execID, not a live lookup, to avoid the reuse problem
+			if eid := session.GetExecutionID(ptyID); eid == execID {
+				session.SetExecutionID(ptyID, "") // Clear to prevent duplicate from agent-stopped
+				go s.notifyExecutionPtyCompleted(execID, ptyID, "process_exit", "")
+			}
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"id": ptyInfo.ID})
@@ -441,6 +461,48 @@ func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "E79713: "+err.Error(), http.StatusNotFound)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleWritePty writes text to an existing PTY via HTTP.
+// Used by control plane for server-side automation (schedules, recipes).
+// Bypasses turn-taking — this is a system-level operation.
+// REVISION: server-side-cron-v1-write-pty
+func (s *Server) handleWritePty(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79750: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79751: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Note: No execution ID tracking here. Writes to existing PTYs are fire-and-forget
+	// from the control plane's perspective. The control plane marks the execution completed
+	// immediately after dispatching the command. Only newly created PTYs (handleCreatePTY)
+	// use execution ID tracking with process-exit callbacks.
+
+	// Write text + CR to PTY (bypasses turn-taking for system use)
+	if req.Text != "" {
+		data := []byte(req.Text + "\r")
+		if _, err := hub.WriteSystem(data); err != nil {
+			http.Error(w, "E79752: Failed to write to PTY", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -809,7 +871,73 @@ func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
 		Timestamp:   time.Now().UTC().Format(time.RFC3339),
 	})
 
+	// If this PTY has a schedule execution context, notify the control plane.
+	// Clear the execution ID after to prevent double-notification from the
+	// Hub.onStop process-exit callback.
+	// REVISION: server-side-cron-v2-agent-stopped-callback
+	if execId := session.GetExecutionID(ptyId); execId != "" {
+		session.SetExecutionID(ptyId, "")
+		go s.notifyExecutionPtyCompleted(execId, ptyId, req.Reason, req.LastMessage)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyExecutionPtyCompleted calls the control plane to report that a schedule-triggered PTY has completed.
+// Called asynchronously (goroutine) when agent_stopped fires for a PTY with execution context.
+// REVISION: server-side-cron-v1-agent-stopped-callback
+func (s *Server) notifyExecutionPtyCompleted(executionId, ptyId, reason, lastMessage string) {
+	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
+	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+
+	if controlplaneURL == "" || internalToken == "" {
+		log.Printf("[execution-callback] Cannot notify control plane: missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+		return
+	}
+
+	status := "completed"
+	switch reason {
+	case "error", "crash":
+		status = "failed"
+	case "timeout", "timed_out", "context_deadline_exceeded":
+		status = "timed_out"
+	}
+
+	payload := map[string]string{
+		"ptyId":       ptyId,
+		"status":      status,
+		"lastMessage": lastMessage,
+	}
+	if status == "failed" || status == "timed_out" {
+		payload["error"] = reason + ": " + lastMessage
+	}
+	body, _ := json.Marshal(payload)
+
+	url := controlplaneURL + "/internal/schedule-executions/" + executionId + "/pty-completed"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[execution-callback] Failed to create request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[execution-callback] Failed to notify control plane for execution %s: %v", executionId, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		log.Printf("[execution-callback] Control plane returned %d for execution %s", resp.StatusCode, executionId)
+	} else {
+		log.Printf("[execution-callback] Notified control plane: execution %s PTY %s → %s", executionId, ptyId, status)
+	}
 }
 
 // handleScrollback returns recent PTY output from the scrollback ring buffer.

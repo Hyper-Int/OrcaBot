@@ -96,7 +96,9 @@ export async function checkExecutiоnAccess(
 }
 
 /**
- * Check if user has access to a schedule (via schedule → recipe → dashboard).
+ * Check if user has access to a schedule.
+ * Edge-based schedules: check via dashboard_id.
+ * Recipe-based schedules: check via recipe → dashboard.
  */
 export async function checkSchedulеAccess(
   env: Env,
@@ -112,6 +114,17 @@ export async function checkSchedulеAccess(
     return { hasAccess: false };
   }
 
-  const { hasAccess } = await checkRecipеAccess(env, schedule.recipe_id as string, userId, requiredRole);
-  return { hasAccess, schedule: hasAccess ? schedule : undefined };
+  // Edge-based schedules: check dashboard access directly
+  if (schedule.dashboard_id && !schedule.recipe_id) {
+    const { hasAccess } = await checkDashbоardAccess(env, schedule.dashboard_id as string, userId, requiredRole);
+    return { hasAccess, schedule: hasAccess ? schedule : undefined };
+  }
+
+  // Recipe-based schedules: check via recipe → dashboard
+  if (schedule.recipe_id) {
+    const { hasAccess } = await checkRecipеAccess(env, schedule.recipe_id as string, userId, requiredRole);
+    return { hasAccess, schedule: hasAccess ? schedule : undefined };
+  }
+
+  return { hasAccess: false };
 }

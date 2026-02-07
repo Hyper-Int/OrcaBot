@@ -118,8 +118,8 @@ type Hub struct {
 	idleTimer *time.Timer
 	idleChan  chan struct{}
 
-	// onStop callback invoked when hub stops (for cleanup by owner)
-	onStop func()
+	// onStop callbacks invoked when hub stops (for cleanup by owner)
+	onStop []func()
 
 	suppressMu      sync.Mutex
 	suppressActive  bool
@@ -441,17 +441,23 @@ func (h *Hub) Stop() {
 		close(h.stop)
 		// Close the PTY (kills process, closes file descriptor)
 		h.pty.Close()
-		// Notify owner for cleanup (e.g., remove from session's PTY map)
-		if h.onStop != nil {
-			h.onStop()
+		// Notify owners for cleanup (e.g., remove from session's PTY map, execution callbacks)
+		for _, fn := range h.onStop {
+			fn()
 		}
 	})
 }
 
-// SetOnStop sets a callback invoked when the hub stops.
+// SetOnStop sets the primary callback invoked when the hub stops.
 // Use this to clean up references to the hub (e.g., remove from session's PTY map).
 func (h *Hub) SetOnStop(fn func()) {
-	h.onStop = fn
+	h.onStop = []func(){fn}
+}
+
+// AddOnStop appends an additional callback invoked when the hub stops.
+// Use this to register secondary callbacks (e.g., execution completion notifications).
+func (h *Hub) AddOnStop(fn func()) {
+	h.onStop = append(h.onStop, fn)
 }
 
 // IsProcessAlive checks if the PTY's underlying process is still running.
@@ -537,6 +543,13 @@ func (h *Hub) WriteAgent(data []byte) (int, error) {
 // WriteAgentSilent sends input to the PTY with echo suppressed.
 func (h *Hub) WriteAgentSilent(data []byte) (int, error) {
 	return h.pty.WriteSilent(data)
+}
+
+// WriteSystem sends input to the PTY from control plane automation (schedules, recipes).
+// Bypasses turn-taking and agent soft lock — used for server-side command injection.
+// REVISION: server-side-cron-v1-write-system
+func (h *Hub) WriteSystem(data []byte) (int, error) {
+	return h.pty.Write(data)
 }
 
 // Resize changes the PTY window size and records the dimensions for replay.

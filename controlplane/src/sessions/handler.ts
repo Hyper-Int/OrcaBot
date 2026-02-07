@@ -165,7 +165,7 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
  * would be accessible to agents/users in another dashboard. DO NOT modify
  * this to allow sandbox sharing between dashboards.
  */
-async function ensureDashbоardSandbоx(
+export async function ensureDashbоardSandbоx(
   env: EnvWithDriveCache,
   dashboardId: string,
   userId: string
