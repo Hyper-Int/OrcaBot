@@ -1,22 +1,63 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: server-side-cron-v5-orphan-leak-fix
 
 /**
  * Schedule Handlers
  *
- * Manages cron and event-based triggers for recipes.
+ * Manages cron and event-based triggers for recipes and edge-based terminal schedules.
  * Schedules are durable - they survive restarts.
+ *
+ * Two execution paths:
+ * - Recipe-based: schedule triggers a recipe execution (existing)
+ * - Edge-based: schedule resolves dashboard edges and triggers connected terminals (new)
  */
 
-import type { Env, Schedule } from '../types';
+const MODULE_REVISION = 'server-side-cron-v1-edge-based-schedules';
+console.log(`[schedules] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
+import type { Env, Schedule, ScheduleExecution, ScheduleExecutionTerminal } from '../types';
 import * as recipes from '../recipes/handler';
 import {
   checkRecipеAccess,
   checkSchedulеAccess,
+  checkDashbоardAccess,
 } from '../auth/access';
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+// Format a DB schedule row into API response shape
+function formatSchedule(s: Record<string, unknown>): Schedule {
+  return {
+    id: s.id as string,
+    recipeId: (s.recipe_id as string) || null,
+    dashboardId: (s.dashboard_id as string) || null,
+    dashboardItemId: (s.dashboard_item_id as string) || null,
+    command: (s.command as string) || null,
+    name: s.name as string,
+    cron: (s.cron as string) || null,
+    eventTrigger: (s.event_trigger as string) || null,
+    enabled: Boolean(s.enabled),
+    lastRunAt: (s.last_run_at as string) || null,
+    nextRunAt: (s.next_run_at as string) || null,
+    createdAt: s.created_at as string,
+  };
+}
+
+// Format a DB schedule_execution row into API response shape
+function formatExecution(row: Record<string, unknown>): ScheduleExecution {
+  return {
+    id: row.id as string,
+    scheduleId: row.schedule_id as string,
+    status: row.status as ScheduleExecution['status'],
+    triggeredBy: row.triggered_by as 'cron' | 'manual' | 'event',
+    terminals: JSON.parse((row.terminals_json as string) || '[]'),
+    startedAt: row.started_at as string,
+    completedAt: (row.completed_at as string) || null,
+    error: (row.error as string) || null,
+  };
 }
 
 // Parse a cron field and return matching values (exported for testing)
@@ -113,60 +154,77 @@ export function cоmputeNextRun(cron: string, from: Date = new Date()): Date | n
   }
 }
 
-// List schedules (only those the user has access to via recipes)
+// List schedules (user has access via recipes or dashboard membership)
 export async function listSchedules(
   env: Env,
   userId: string,
-  recipeId?: string
+  opts?: { recipeId?: string; dashboardId?: string; dashboardItemId?: string }
 ): Promise<Response> {
-  // If recipeId specified, verify access first
-  if (recipeId) {
-    const { hasAccess } = await checkRecipеAccess(env, recipeId, userId, 'viewer');
+  // Filter by specific dashboard item (e.g., ScheduleBlock looking up its backend schedule)
+  if (opts?.dashboardItemId) {
+    const result = await env.DB.prepare(`
+      SELECT * FROM schedules WHERE dashboard_item_id = ? ORDER BY created_at DESC
+    `).bind(opts.dashboardItemId).all();
+
+    // Verify user has access to each schedule's dashboard (fail-closed: skip if no dashboard_id)
+    const accessible: Record<string, unknown>[] = [];
+    for (const s of result.results) {
+      if (!s.dashboard_id) {
+        // Orphan schedule with no dashboard_id — deny access (fail-closed)
+        continue;
+      }
+      const { hasAccess } = await checkDashbоardAccess(env, s.dashboard_id as string, userId, 'viewer');
+      if (!hasAccess) {
+        return Response.json({ error: 'E79725: No access' }, { status: 404 });
+      }
+      accessible.push(s);
+    }
+
+    return Response.json({ schedules: accessible.map(formatSchedule) });
+  }
+
+  // Filter by recipe
+  if (opts?.recipeId) {
+    const { hasAccess } = await checkRecipеAccess(env, opts.recipeId, userId, 'viewer');
     if (!hasAccess) {
       return Response.json({ error: 'E79725: Recipe not found or no access' }, { status: 404 });
     }
 
     const result = await env.DB.prepare(`
       SELECT * FROM schedules WHERE recipe_id = ? ORDER BY created_at DESC
-    `).bind(recipeId).all();
+    `).bind(opts.recipeId).all();
 
-    const schedules = result.results.map(s => ({
-      id: s.id,
-      recipeId: s.recipe_id,
-      name: s.name,
-      cron: s.cron,
-      eventTrigger: s.event_trigger,
-      enabled: Boolean(s.enabled),
-      lastRunAt: s.last_run_at,
-      nextRunAt: s.next_run_at,
-      createdAt: s.created_at,
-    }));
-
-    return Response.json({ schedules });
+    return Response.json({ schedules: result.results.map(formatSchedule) });
   }
 
-  // Get schedules for recipes the user has access to (via dashboard membership) + global recipes
+  // Filter by dashboard (includes both recipe-based and edge-based schedules)
+  if (opts?.dashboardId) {
+    const { hasAccess } = await checkDashbоardAccess(env, opts.dashboardId, userId, 'viewer');
+    if (!hasAccess) {
+      return Response.json({ error: 'E79725: Dashboard not found or no access' }, { status: 404 });
+    }
+
+    const result = await env.DB.prepare(`
+      SELECT * FROM schedules
+      WHERE dashboard_id = ?
+         OR recipe_id IN (SELECT id FROM recipes WHERE dashboard_id = ?)
+      ORDER BY created_at DESC
+    `).bind(opts.dashboardId, opts.dashboardId).all();
+
+    return Response.json({ schedules: result.results.map(formatSchedule) });
+  }
+
+  // All accessible schedules: only those where user is a member of the associated dashboard
+  // Fail-closed: orphaned schedules (no dashboard link) are excluded
   const result = await env.DB.prepare(`
     SELECT s.* FROM schedules s
-    INNER JOIN recipes r ON s.recipe_id = r.id
-    LEFT JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
-    WHERE r.dashboard_id IS NULL OR dm.user_id = ?
+    LEFT JOIN recipes r ON s.recipe_id = r.id
+    INNER JOIN dashboard_members dm ON COALESCE(s.dashboard_id, r.dashboard_id) = dm.dashboard_id
+    WHERE dm.user_id = ?
     ORDER BY s.created_at DESC
   `).bind(userId).all();
 
-  const schedules = result.results.map(s => ({
-    id: s.id,
-    recipeId: s.recipe_id,
-    name: s.name,
-    cron: s.cron,
-    eventTrigger: s.event_trigger,
-    enabled: Boolean(s.enabled),
-    lastRunAt: s.last_run_at,
-    nextRunAt: s.next_run_at,
-    createdAt: s.created_at,
-  }));
-
-  return Response.json({ schedules });
+  return Response.json({ schedules: result.results.map(formatSchedule) });
 }
 
 // Get a single schedule
@@ -181,42 +239,81 @@ export async function getSchedule(
     return Response.json({ error: 'E79726: Schedule not found or no access' }, { status: 404 });
   }
 
-  return Response.json({
-    schedule: {
-      id: schedule.id,
-      recipeId: schedule.recipe_id,
-      name: schedule.name,
-      cron: schedule.cron,
-      eventTrigger: schedule.event_trigger,
-      enabled: Boolean(schedule.enabled),
-      lastRunAt: schedule.last_run_at,
-      nextRunAt: schedule.next_run_at,
-      createdAt: schedule.created_at,
-    }
-  });
+  return Response.json({ schedule: formatSchedule(schedule) });
 }
 
-// Create a schedule
+// Create a schedule (recipe-based or edge-based)
 export async function createSchedule(
   env: Env,
   userId: string,
   data: {
-    recipeId: string;
+    recipeId?: string;
+    dashboardId?: string;
+    dashboardItemId?: string;
+    command?: string;
     name: string;
     cron?: string;
     eventTrigger?: string;
     enabled?: boolean;
   }
 ): Promise<Response> {
-  // Verify user has editor access to the recipe
-  const { hasAccess } = await checkRecipеAccess(env, data.recipeId, userId, 'editor');
+  // Must have either recipe or dashboard item (but not both)
+  if (!data.recipeId && !data.dashboardItemId) {
+    return Response.json({ error: 'E79740: Either recipeId or dashboardItemId required' }, { status: 400 });
+  }
+  if (data.recipeId && data.dashboardItemId) {
+    return Response.json({ error: 'E79745: Cannot set both recipeId and dashboardItemId — use one execution path' }, { status: 400 });
+  }
 
-  if (!hasAccess) {
-    return Response.json({ error: 'E79725: Recipe not found or no access' }, { status: 404 });
+  // Edge-based schedules require dashboardId (fail-closed: no orphan schedules)
+  if (data.dashboardItemId && !data.dashboardId) {
+    return Response.json({ error: 'E79743: dashboardId is required when dashboardItemId is set' }, { status: 400 });
   }
 
   if (!data.cron && !data.eventTrigger) {
     return Response.json({ error: 'E79727: Either cron or eventTrigger required' }, { status: 400 });
+  }
+
+  // Verify access
+  if (data.recipeId) {
+    const { hasAccess } = await checkRecipеAccess(env, data.recipeId, userId, 'editor');
+    if (!hasAccess) {
+      return Response.json({ error: 'E79725: Recipe not found or no access' }, { status: 404 });
+    }
+
+    // If dashboardId is also provided, verify the recipe belongs to that dashboard
+    if (data.dashboardId) {
+      const recipe = await env.DB.prepare(`
+        SELECT id FROM recipes WHERE id = ? AND dashboard_id = ?
+      `).bind(data.recipeId, data.dashboardId).first();
+      if (!recipe) {
+        return Response.json({ error: 'E79747: Recipe does not belong to this dashboard' }, { status: 400 });
+      }
+    }
+  }
+  if (data.dashboardId) {
+    const { hasAccess } = await checkDashbоardAccess(env, data.dashboardId, userId, 'editor');
+    if (!hasAccess) {
+      return Response.json({ error: 'E79725: Dashboard not found or no access' }, { status: 404 });
+    }
+  }
+
+  // Verify dashboardItemId belongs to the claimed dashboard
+  if (data.dashboardItemId && data.dashboardId) {
+    const item = await env.DB.prepare(`
+      SELECT id FROM dashboard_items WHERE id = ? AND dashboard_id = ?
+    `).bind(data.dashboardItemId, data.dashboardId).first();
+    if (!item) {
+      return Response.json({ error: 'E79744: Dashboard item not found in this dashboard' }, { status: 404 });
+    }
+  }
+
+  // Validate cron expression if provided
+  if (data.cron) {
+    const testNext = cоmputeNextRun(data.cron);
+    if (!testNext) {
+      return Response.json({ error: 'E79746: Invalid cron expression' }, { status: 400 });
+    }
   }
 
   const id = generateId();
@@ -230,11 +327,14 @@ export async function createSchedule(
   }
 
   await env.DB.prepare(`
-    INSERT INTO schedules (id, recipe_id, name, cron, event_trigger, enabled, next_run_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO schedules (id, recipe_id, dashboard_id, dashboard_item_id, command, name, cron, event_trigger, enabled, next_run_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
-    data.recipeId,
+    data.recipeId || null,
+    data.dashboardId || null,
+    data.dashboardItemId || null,
+    data.command || null,
     data.name,
     data.cron || null,
     data.eventTrigger || null,
@@ -245,7 +345,10 @@ export async function createSchedule(
 
   const schedule: Schedule = {
     id,
-    recipeId: data.recipeId,
+    recipeId: data.recipeId || null,
+    dashboardId: data.dashboardId || null,
+    dashboardItemId: data.dashboardItemId || null,
+    command: data.command || null,
     name: data.name,
     cron: data.cron || null,
     eventTrigger: data.eventTrigger || null,
@@ -265,6 +368,7 @@ export async function updateSchedule(
   userId: string,
   data: {
     name?: string;
+    command?: string;
     cron?: string;
     eventTrigger?: string;
     enabled?: boolean;
@@ -276,6 +380,14 @@ export async function updateSchedule(
     return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
+  // Validate new cron expression if provided
+  if (data.cron !== undefined && data.cron) {
+    const testNext = cоmputeNextRun(data.cron);
+    if (!testNext) {
+      return Response.json({ error: 'E79746: Invalid cron expression' }, { status: 400 });
+    }
+  }
+
   const enabled = data.enabled !== undefined ? data.enabled : Boolean(existing.enabled);
   const cron = data.cron !== undefined ? data.cron : existing.cron as string | null;
 
@@ -284,11 +396,11 @@ export async function updateSchedule(
     const next = cоmputeNextRun(cron);
     nextRunAt = next ? next.toISOString() : null;
   }
-  // nextRunAt is null if disabled OR if cron is removed/empty
 
   await env.DB.prepare(`
     UPDATE schedules SET
       name = COALESCE(?, name),
+      command = COALESCE(?, command),
       cron = ?,
       event_trigger = ?,
       enabled = ?,
@@ -296,6 +408,7 @@ export async function updateSchedule(
     WHERE id = ?
   `).bind(
     data.name || null,
+    data.command !== undefined ? data.command : null,
     data.cron !== undefined ? data.cron : existing.cron,
     data.eventTrigger !== undefined ? data.eventTrigger : existing.event_trigger,
     enabled ? 1 : 0,
@@ -307,19 +420,7 @@ export async function updateSchedule(
     SELECT * FROM schedules WHERE id = ?
   `).bind(scheduleId).first();
 
-  return Response.json({
-    schedule: {
-      id: updated!.id,
-      recipeId: updated!.recipe_id,
-      name: updated!.name,
-      cron: updated!.cron,
-      eventTrigger: updated!.event_trigger,
-      enabled: Boolean(updated!.enabled),
-      lastRunAt: updated!.last_run_at,
-      nextRunAt: updated!.next_run_at,
-      createdAt: updated!.created_at,
-    }
-  });
+  return Response.json({ schedule: formatSchedule(updated!) });
 }
 
 // Delete a schedule (owner only)
@@ -330,19 +431,25 @@ export async function dеleteSchedule(
   userId: string
 ): Promise<Response> {
   // Atomic delete: verify ownership in the DELETE query itself (defense-in-depth)
-  // Ownership is through: schedule -> recipe -> dashboard -> dashboard_members
+  // Ownership is through: schedule -> recipe -> dashboard OR schedule -> dashboard
   const result = await env.DB.prepare(`
     DELETE FROM schedules
     WHERE id = ?
     AND (
-      -- Check ownership via dashboard membership (owner role required)
+      -- Recipe-based: check via recipe -> dashboard -> members
       recipe_id IN (
         SELECT r.id FROM recipes r
         INNER JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
         WHERE dm.user_id = ? AND dm.role = 'owner'
       )
+      OR
+      -- Edge-based: check via dashboard -> members
+      dashboard_id IN (
+        SELECT dm.dashboard_id FROM dashboard_members dm
+        WHERE dm.user_id = ? AND dm.role = 'owner'
+      )
     )
-  `).bind(scheduleId, userId).run();
+  `).bind(scheduleId, userId, userId).run();
 
   if (result.meta.changes === 0) {
     return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
@@ -381,16 +488,28 @@ export async function triggerSchedule(
     return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
   }
 
-  // Start execution with actor context
-  const executionResponse = await recipes.startExecutiоn(
-    env,
-    schedule.recipe_id as string,
-    userId,
-    { triggeredBy: 'manual', scheduleId, actorUserId: userId }
-  );
+  const now = new Date().toISOString();
+  let executionData: unknown = null;
+
+  if (schedule.dashboard_item_id && !schedule.recipe_id) {
+    // Edge-based schedule: resolve edges and trigger terminals
+    // Pass triggering user's identity to avoid privilege escalation via owner's context
+    const { executeScheduleByEdges } = await import('./executor');
+    const execution = await executeScheduleByEdges(env, formatSchedule(schedule), 'manual', userId);
+    executionData = execution;
+  } else if (schedule.recipe_id) {
+    // Recipe-based schedule: existing path
+    const executionResponse = await recipes.startExecutiоn(
+      env,
+      schedule.recipe_id as string,
+      userId,
+      { triggeredBy: 'manual', scheduleId, actorUserId: userId }
+    );
+    const parsed = await executionResponse.json() as { execution: unknown };
+    executionData = parsed.execution;
+  }
 
   // Update last run
-  const now = new Date().toISOString();
   let nextRunAt: string | null = null;
   if (schedule.cron && schedule.enabled) {
     const next = cоmputeNextRun(schedule.cron as string);
@@ -401,16 +520,9 @@ export async function triggerSchedule(
     UPDATE schedules SET last_run_at = ?, next_run_at = ? WHERE id = ?
   `).bind(now, nextRunAt, scheduleId).run();
 
-  const executionData = await executionResponse.json() as { execution: unknown };
   return Response.json({
-    schedule: {
-      id: schedule.id,
-      recipeId: schedule.recipe_id,
-      name: schedule.name,
-      lastRunAt: now,
-      nextRunAt,
-    },
-    execution: executionData.execution,
+    schedule: formatSchedule({ ...schedule, last_run_at: now, next_run_at: nextRunAt }),
+    execution: executionData,
   });
 }
 
@@ -426,12 +538,18 @@ export async function prоcessDueSchedules(env: Env): Promise<void> {
 
   for (const schedule of dueSchedules.results) {
     try {
-      // Start execution (internal - no user context for cron triggers)
-      await recipes.startExecutiоnInternal(
-        env,
-        schedule.recipe_id as string,
-        { triggeredBy: 'cron', scheduleId: schedule.id }
-      );
+      if (schedule.dashboard_item_id && !schedule.recipe_id) {
+        // Edge-based schedule: resolve edges and trigger connected terminals
+        const { executeScheduleByEdges } = await import('./executor');
+        await executeScheduleByEdges(env, formatSchedule(schedule), 'cron');
+      } else if (schedule.recipe_id) {
+        // Recipe-based schedule: existing path
+        await recipes.startExecutiоnInternal(
+          env,
+          schedule.recipe_id as string,
+          { triggeredBy: 'cron', scheduleId: schedule.id }
+        );
+      }
 
       // Compute next run
       const next = cоmputeNextRun(schedule.cron as string);
@@ -464,15 +582,25 @@ export async function emitEvent(
 
   for (const schedule of schedules.results) {
     try {
-      // Start execution (internal - no user context for event triggers)
-      const executionResponse = await recipes.startExecutiоnInternal(
-        env,
-        schedule.recipe_id as string,
-        { triggeredBy: 'event', eventName, payload, scheduleId: schedule.id }
-      );
+      if (schedule.dashboard_item_id && !schedule.recipe_id) {
+        // Edge-based schedule: resolve edges and trigger connected terminals
+        const { executeScheduleByEdges } = await import('./executor');
+        const execution = await executeScheduleByEdges(env, formatSchedule(schedule), 'event');
+        executions.push(execution);
+      } else if (schedule.recipe_id) {
+        // Recipe-based schedule: existing path
+        const executionResponse = await recipes.startExecutiоnInternal(
+          env,
+          schedule.recipe_id as string,
+          { triggeredBy: 'event', eventName, payload, scheduleId: schedule.id }
+        );
 
-      const executionData = await executionResponse.json() as { execution: unknown };
-      executions.push(executionData.execution);
+        const executionData = await executionResponse.json() as { execution: unknown };
+        executions.push(executionData.execution);
+      } else {
+        console.warn(`[schedules] Schedule ${schedule.id} has neither recipe_id nor dashboard_item_id — skipping`);
+        continue;
+      }
 
       // Update last run
       await env.DB.prepare(`
@@ -488,4 +616,145 @@ export async function emitEvent(
     schedulesTriggered: schedules.results.length,
     executions,
   });
+}
+
+// List executions for a schedule
+export async function listScheduleExecutions(
+  env: Env,
+  scheduleId: string,
+  userId: string,
+  limit = 20
+): Promise<Response> {
+  const { hasAccess } = await checkSchedulеAccess(env, scheduleId, userId, 'viewer');
+  if (!hasAccess) {
+    return Response.json({ error: 'E79728: Schedule not found or no access' }, { status: 404 });
+  }
+
+  const result = await env.DB.prepare(`
+    SELECT * FROM schedule_executions
+    WHERE schedule_id = ?
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).bind(scheduleId, limit).all();
+
+  return Response.json({ executions: result.results.map(formatExecution) });
+}
+
+// PTY completion callback (called by sandbox when agent stops in an execution-tracked PTY)
+export async function handlePtyCompleted(
+  env: Env,
+  executionId: string,
+  data: {
+    ptyId: string;
+    status: 'completed' | 'failed' | 'timed_out';
+    lastMessage?: string;
+    error?: string;
+  }
+): Promise<Response> {
+  const execution = await env.DB.prepare(`
+    SELECT * FROM schedule_executions WHERE id = ?
+  `).bind(executionId).first();
+
+  if (!execution) {
+    return Response.json({ error: 'E79741: Execution not found' }, { status: 404 });
+  }
+
+  // Reject updates to already-completed executions (idempotency / anti-replay)
+  const execStatus = execution.status as string;
+  if (execStatus === 'completed' || execStatus === 'failed' || execStatus === 'timed_out') {
+    console.warn(`[schedules] Ignoring callback for already-finished execution ${executionId} (status: ${execStatus})`);
+    return Response.json({ status: execStatus });
+  }
+
+  // Update the specific terminal's status in terminals_json
+  const terminals: ScheduleExecutionTerminal[] = JSON.parse((execution.terminals_json as string) || '[]');
+  let found = false;
+  for (const t of terminals) {
+    if (t.ptyId === data.ptyId) {
+      // Skip if this terminal already reported (idempotent — handles duplicate callbacks)
+      if (t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out') {
+        console.warn(`[schedules] Duplicate callback for PTY ${data.ptyId} in execution ${executionId} — ignoring`);
+        return Response.json({ status: execution.status });
+      }
+      t.status = data.status;
+      t.lastMessage = data.lastMessage || null;
+      t.error = data.error || null;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    console.warn(`[schedules] PTY ${data.ptyId} not found in execution ${executionId}`);
+    return Response.json({ error: 'E79742: PTY not found in execution' }, { status: 404 });
+  }
+
+  // Check if all terminals have reported
+  const terminalDone = (s: string) => s === 'completed' || s === 'failed' || s === 'timed_out';
+  const allDone = terminals.every(t => terminalDone(t.status));
+  const anyFailed = terminals.some(t => t.status === 'failed');
+  const anyTimedOut = terminals.some(t => t.status === 'timed_out');
+  const newStatus = allDone ? (anyFailed ? 'failed' : anyTimedOut ? 'timed_out' : 'completed') : 'running';
+  const completedAt = allDone ? new Date().toISOString() : null;
+
+  await env.DB.prepare(`
+    UPDATE schedule_executions SET
+      terminals_json = ?,
+      status = ?,
+      completed_at = COALESCE(?, completed_at),
+      error = ?
+    WHERE id = ?
+  `).bind(
+    JSON.stringify(terminals),
+    newStatus,
+    completedAt,
+    anyFailed ? 'One or more terminals failed' : anyTimedOut ? 'One or more terminals timed out' : null,
+    executionId
+  ).run();
+
+  console.log(`[schedules] Execution ${executionId} PTY ${data.ptyId} → ${data.status} (overall: ${newStatus})`);
+
+  return Response.json({ status: newStatus });
+}
+
+// Clean up stale executions (called periodically by cron)
+// Updates both execution status and per-terminal statuses in terminals_json.
+export async function cleanupStaleExecutions(env: Env): Promise<void> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  // Fetch stale executions so we can update their terminals_json
+  const stale = await env.DB.prepare(`
+    SELECT id, terminals_json FROM schedule_executions
+    WHERE status = 'running' AND started_at < ?
+  `).bind(oneHourAgo).all();
+
+  if (stale.results.length === 0) return;
+
+  const now = new Date().toISOString();
+  let timedOutCount = 0;
+  for (const row of stale.results) {
+    // Mark all non-done terminals as timed_out
+    const terminals: ScheduleExecutionTerminal[] = JSON.parse((row.terminals_json as string) || '[]');
+    for (const t of terminals) {
+      if (t.status === 'pending' || t.status === 'running') {
+        t.status = 'timed_out';
+        t.error = 'Execution timed out after 1 hour';
+      }
+    }
+
+    // Re-check status in UPDATE to avoid overwriting a concurrent completion callback
+    const result = await env.DB.prepare(`
+      UPDATE schedule_executions
+      SET status = 'timed_out', completed_at = ?, error = 'Execution timed out after 1 hour', terminals_json = ?
+      WHERE id = ? AND status = 'running' AND started_at < ?
+    `).bind(now, JSON.stringify(terminals), row.id, oneHourAgo).run();
+
+    if (result.meta.changes > 0) {
+      timedOutCount++;
+    }
+  }
+
+  if (timedOutCount > 0) {
+    console.log(`[schedules] Timed out ${timedOutCount} stale executions`);
+  }
 }

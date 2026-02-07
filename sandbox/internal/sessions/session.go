@@ -100,6 +100,11 @@ type Session struct {
 	integrationTokens   map[string]string // ptyID -> JWT token
 	integrationTokensMu sync.RWMutex
 
+	// Execution IDs for schedule/recipe tracking (per-PTY)
+	// REVISION: server-side-cron-v1-execution-tracking
+	executionIDs   map[string]string // ptyID -> schedule_execution ID
+	executionIDsMu sync.RWMutex
+
 	// Drive sync: per-dashboard bidirectional sync with Google Drive
 	// REVISION: drivesync-v1
 	driveSyncer       *drivesync.Syncer
@@ -124,6 +129,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		brokerPort:        brokerPort,
 		secrets:           make(map[string]string),
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
+		executionIDs:      make(map[string]string), // REVISION: server-side-cron-v1-execution-tracking
 		knownProviders:    make(map[string]map[string]bool),
 	}
 
@@ -710,6 +716,22 @@ func (s *Session) GetIntegrationToken(ptyID string) string {
 	s.integrationTokensMu.RLock()
 	defer s.integrationTokensMu.RUnlock()
 	return s.integrationTokens[ptyID]
+}
+
+// SetExecutionID associates a schedule execution ID with a PTY.
+// REVISION: server-side-cron-v1-execution-tracking
+func (s *Session) SetExecutionID(ptyID, executionID string) {
+	s.executionIDsMu.Lock()
+	defer s.executionIDsMu.Unlock()
+	s.executionIDs[ptyID] = executionID
+}
+
+// GetExecutionID returns the schedule execution ID for a PTY (empty string if none).
+// REVISION: server-side-cron-v1-execution-tracking
+func (s *Session) GetExecutionID(ptyID string) string {
+	s.executionIDsMu.RLock()
+	defer s.executionIDsMu.RUnlock()
+	return s.executionIDs[ptyID]
 }
 
 func loadEnvFile(path string) map[string]string {

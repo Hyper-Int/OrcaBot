@@ -566,20 +566,43 @@ CREATE TABLE IF NOT EXISTS artifacts (
 CREATE INDEX IF NOT EXISTS idx_artifacts_execution ON artifacts(execution_id);
 
 -- Schedules (cron or event triggers)
+-- recipe_id is nullable: edge-based schedules use dashboard_item_id instead
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY,
-  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+  recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
+  dashboard_id TEXT REFERENCES dashboards(id) ON DELETE CASCADE,
+  dashboard_item_id TEXT,
+  command TEXT,
   name TEXT NOT NULL,
   cron TEXT,
   event_trigger TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
   last_run_at TEXT,
   next_run_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK (recipe_id IS NOT NULL OR dashboard_item_id IS NOT NULL),
+  CHECK (dashboard_item_id IS NULL OR dashboard_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_schedules_recipe ON schedules(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_schedules_dashboard ON schedules(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_item ON schedules(dashboard_item_id);
+
+-- Schedule executions (track each cron/manual trigger)
+CREATE TABLE IF NOT EXISTS schedule_executions (
+  id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'timed_out')),
+  triggered_by TEXT NOT NULL DEFAULT 'cron',
+  terminals_json TEXT NOT NULL DEFAULT '[]',
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  completed_at TEXT,
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_executions_schedule ON schedule_executions(schedule_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_executions_status ON schedule_executions(status);
 
 -- System health (cached health check results)
 CREATE TABLE IF NOT EXISTS system_health (
@@ -880,6 +903,9 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   } catch {
     // Backfill may fail if sessions are already cleaned up - not critical.
   }
+
+  // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
+  await migrateSchedulesTable(db);
 }
 
 // All valid integration providers - add new providers here
@@ -934,6 +960,57 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
   await db.prepare(`DROP TABLE user_integrations`).run();
   await db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`).run();
   await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider ON user_integrations(user_id, provider)`).run();
+  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+}
+
+// Migrate schedules table to support edge-based schedules (recipe_id nullable, new columns)
+async function migrateSchedulesTable(db: D1Database): Promise<void> {
+  const tableInfo = await db.prepare(`
+    SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'schedules'
+  `).first<{ sql: string }>();
+
+  if (!tableInfo?.sql) {
+    return; // Table doesn't exist yet — CREATE TABLE will handle it
+  }
+
+  // Check if migration is needed (dashboard_item_id column missing)
+  if (tableInfo.sql.includes('dashboard_item_id')) {
+    return; // Already migrated
+  }
+
+  // Recreate table with nullable recipe_id and new columns
+  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
+  await db.prepare(`DROP TABLE IF EXISTS schedules_new`).run();
+  await db.prepare(`
+    CREATE TABLE schedules_new (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
+      dashboard_id TEXT REFERENCES dashboards(id) ON DELETE CASCADE,
+      dashboard_item_id TEXT,
+      command TEXT,
+      name TEXT NOT NULL,
+      cron TEXT,
+      event_trigger TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_run_at TEXT,
+      next_run_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      CHECK (recipe_id IS NOT NULL OR dashboard_item_id IS NOT NULL),
+      CHECK (dashboard_item_id IS NULL OR dashboard_id IS NOT NULL)
+    )
+  `).run();
+  await db.prepare(`
+    INSERT INTO schedules_new
+      (id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at)
+    SELECT id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at
+    FROM schedules
+  `).run();
+  await db.prepare(`DROP TABLE schedules`).run();
+  await db.prepare(`ALTER TABLE schedules_new RENAME TO schedules`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_recipe ON schedules(recipe_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_dashboard ON schedules(dashboard_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_item ON schedules(dashboard_item_id)`).run();
   await db.prepare(`PRAGMA foreign_keys=ON`).run();
 }
 

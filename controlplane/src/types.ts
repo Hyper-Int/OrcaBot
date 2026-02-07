@@ -248,7 +248,10 @@ export interface Execution {
 // Schedule types
 export interface Schedule {
   id: string;
-  recipeId: string;
+  recipeId: string | null;
+  dashboardId: string | null;
+  dashboardItemId: string | null;
+  command: string | null;
   name: string;
   cron: string | null;
   eventTrigger: string | null;
@@ -256,6 +259,26 @@ export interface Schedule {
   lastRunAt: string | null;
   nextRunAt: string | null;
   createdAt: string;
+}
+
+// Schedule execution types
+export interface ScheduleExecution {
+  id: string;
+  scheduleId: string;
+  status: 'running' | 'completed' | 'failed' | 'timed_out';
+  triggeredBy: 'cron' | 'manual' | 'event';
+  terminals: ScheduleExecutionTerminal[];
+  startedAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
+export interface ScheduleExecutionTerminal {
+  itemId: string;
+  ptyId: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'timed_out';
+  lastMessage: string | null;
+  error: string | null;
 }
 
 // Agent profile types

@@ -161,9 +161,11 @@ export class SandboxClient {
       integrationToken?: string;
       // Relative path within workspace to start in
       workingDir?: string;
+      // Schedule execution ID — set at creation time so callback is in place before process starts
+      executionId?: string;
     }
   ): Promise<SandboxPty> {
-    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir);
+    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir || options?.executionId);
     const body = shouldSendBody
       ? JSON.stringify({
           creator_id: creatorId,
@@ -174,6 +176,8 @@ export class SandboxClient {
           integration_token: options?.integrationToken,
           // Working directory relative to workspace root
           working_dir: options?.workingDir,
+          // Execution ID for schedule tracking — stored before process starts
+          execution_id: options?.executionId,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
@@ -203,6 +207,35 @@ export class SandboxClient {
     });
     if (!res.ok && res.status !== 404) {
       throw new Error(`Failed to delete PTY: ${res.status}`);
+    }
+  }
+
+  // Write text to an existing PTY via HTTP (bypasses turn-taking for system automation)
+  // REVISION: server-side-cron-v1-write-pty
+  async writePty(
+    sessionId: string,
+    ptyId: string,
+    text: string,
+    machineId?: string,
+    executionId?: string,
+  ): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    headers.set('Content-Type', 'application/json');
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    if (executionId) {
+      headers.set('X-Execution-ID', executionId);
+    }
+    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}/write`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(no body)');
+      console.error(`[writePty] FAILED status=${res.status} sessionId=${sessionId} ptyId=${ptyId} body=${errorBody}`);
+      throw new Error(`Failed to write to PTY: ${res.status}`);
     }
   }
 }

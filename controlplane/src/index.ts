@@ -408,6 +408,7 @@ export default {
     await checkAndCacheSandbоxHealth(envWithBindings);
     try {
       await schedules.prоcessDueSchedules(envWithBindings);
+      await schedules.cleanupStaleExecutions(envWithBindings);
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
         return;
@@ -1960,8 +1961,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'schedules' && segments.length === 1 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const recipeId = url.searchParams.get('recipe_id') || undefined;
-    return schedules.listSchedules(env, auth.user!.id, recipeId);
+    return schedules.listSchedules(env, auth.user!.id, {
+      recipeId: url.searchParams.get('recipe_id') || undefined,
+      dashboardId: url.searchParams.get('dashboard_id') || undefined,
+      dashboardItemId: url.searchParams.get('dashboard_item_id') || undefined,
+    });
   }
 
   // POST /schedules - Create schedule
@@ -1969,7 +1973,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json() as {
-      recipeId: string;
+      recipeId?: string;
+      dashboardId?: string;
+      dashboardItemId?: string;
+      command?: string;
       name: string;
       cron?: string;
       eventTrigger?: string;
@@ -1991,6 +1998,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const data = await request.json() as {
       name?: string;
+      command?: string;
       cron?: string;
       eventTrigger?: string;
       enabled?: boolean;
@@ -2024,6 +2032,29 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return schedules.triggerSchedule(env, segments[1], auth.user!.id);
+  }
+
+  // GET /schedules/:id/executions - List schedule executions
+  if (segments[0] === 'schedules' && segments.length === 3 && segments[2] === 'executions' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return schedules.listScheduleExecutions(env, segments[1], auth.user!.id);
+  }
+
+  // POST /internal/schedule-executions/:id/pty-completed - Sandbox callback when PTY finishes
+  if (segments[0] === 'internal' && segments[1] === 'schedule-executions' && segments.length === 4 && segments[3] === 'pty-completed' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    const data = await request.json() as {
+      ptyId: string;
+      status: 'completed' | 'failed' | 'timed_out';
+      lastMessage?: string;
+      error?: string;
+    };
+    if (!data.ptyId || !data.status) {
+      return Response.json({ error: 'E79745: ptyId and status are required' }, { status: 400 });
+    }
+    return schedules.handlePtyCompleted(env, segments[2], data);
   }
 
   // POST /internal/events - Emit event (called by external systems with token)
