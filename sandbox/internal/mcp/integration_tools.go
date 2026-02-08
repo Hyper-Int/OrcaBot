@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integration-tools-v4-list-channels-cursor
+// REVISION: integration-tools-v5-discord-auto-guild
 package mcp
 
 import (
@@ -37,6 +37,8 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return calendarTools
 	case "slack":
 		return slackTools
+	case "discord":
+		return discordTools
 	default:
 		return nil
 	}
@@ -78,6 +80,7 @@ var allTools = map[string][]IntegrationTool{
 	"google_drive":    driveTools,
 	"google_calendar": calendarTools,
 	"slack":           slackTools,
+	"discord":         discordTools,
 }
 
 // ============================================
@@ -906,6 +909,125 @@ var slackTools = []IntegrationTool{
 				"ts": {"type": "string", "description": "Timestamp of the message to delete"}
 			},
 			"required": ["channel", "ts"]
+		}`),
+	},
+}
+
+// ============================================
+// Discord Tools
+// ============================================
+
+var discordTools = []IntegrationTool{
+	{
+		Name:        "discord_list_channels",
+		Description: "List text channels in the connected Discord server. The server is automatically determined from the integration connection.",
+		Provider:    "discord",
+		Action:      "discord.list_channels",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {}
+		}`),
+	},
+	{
+		Name:        "discord_read_messages",
+		Description: "Read recent messages from a Discord channel",
+		Provider:    "discord",
+		Action:      "discord.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"limit": {"type": "integer", "description": "Number of messages (max 100)", "default": 20},
+				"before": {"type": "string", "description": "Get messages before this message ID"},
+				"after": {"type": "string", "description": "Get messages after this message ID"}
+			},
+			"required": ["channel"]
+		}`),
+	},
+	{
+		Name:        "discord_send_message",
+		Description: "Send a message to a Discord channel",
+		Provider:    "discord",
+		Action:      "discord.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["channel", "text"]
+		}`),
+	},
+	{
+		Name:        "discord_reply_thread",
+		Description: "Reply to a specific message in a Discord channel (creates a thread reply)",
+		Provider:    "discord",
+		Action:      "discord.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to reply to"},
+				"text": {"type": "string", "description": "Reply text"}
+			},
+			"required": ["channel", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "discord_react",
+		Description: "Add an emoji reaction to a Discord message",
+		Provider:    "discord",
+		Action:      "discord.react",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID"},
+				"emoji": {"type": "string", "description": "Emoji (unicode character or custom emoji name:id)"}
+			},
+			"required": ["channel", "message_id", "emoji"]
+		}`),
+	},
+	{
+		Name:        "discord_get_user_info",
+		Description: "Get information about a Discord user",
+		Provider:    "discord",
+		Action:      "discord.get_user_info",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"user": {"type": "string", "description": "User ID"}
+			},
+			"required": ["user"]
+		}`),
+	},
+	{
+		Name:        "discord_edit_message",
+		Description: "Edit a previously sent message in a Discord channel (bot can only edit its own messages)",
+		Provider:    "discord",
+		Action:      "discord.edit_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to edit"},
+				"text": {"type": "string", "description": "New message text"}
+			},
+			"required": ["channel", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "discord_delete_message",
+		Description: "Delete a message from a Discord channel",
+		Provider:    "discord",
+		Action:      "discord.delete_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to delete"}
+			},
+			"required": ["channel", "message_id"]
 		}`),
 	},
 }

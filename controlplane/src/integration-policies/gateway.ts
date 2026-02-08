@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v20-pass-through-api-errors
-console.log(`[integration-gateway] REVISION: gateway-v20-pass-through-api-errors loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v21-discord-inject-guild-id
+console.log(`[integration-gateway] REVISION: gateway-v21-discord-inject-guild-id loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -43,6 +43,7 @@ import { executeGitHubAction } from './api-clients/github';
 import { executeDriveAction } from './api-clients/drive';
 import { executeCalendarAction } from './api-clients/calendar';
 import { executeSlackAction } from './api-clients/slack';
+import { executeDiscordAction } from './api-clients/discord';
 
 // ============================================
 // Types
@@ -603,6 +604,8 @@ async function executeProviderAPI(
       return executeCalendarAction(action, args, accessToken);
     case 'slack':
       return executeSlackAction(action, args, accessToken);
+    case 'discord':
+      return executeDiscordAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');
@@ -949,6 +952,21 @@ export async function handleGatewayExecute(
           policyVersion,
         }, { status: 403 });
       }
+    }
+  }
+
+  // 9c. Discord: inject guild_id from stored metadata so LLM doesn't need to know it
+  if (provider === 'discord') {
+    const discordMeta = await env.DB.prepare(`
+      SELECT metadata FROM user_integrations WHERE id = ?
+    `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
+    if (discordMeta?.metadata) {
+      try {
+        const meta = JSON.parse(discordMeta.metadata) as { guild_id?: string };
+        if (meta.guild_id && !body.args.guild_id) {
+          body.args.guild_id = meta.guild_id;
+        }
+      } catch { /* ignore parse errors */ }
     }
   }
 

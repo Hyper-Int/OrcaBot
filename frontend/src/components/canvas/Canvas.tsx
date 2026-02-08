@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v7-batch-delete
-console.log(`[canvas] REVISION: canvas-v7-batch-delete loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v8-discord-block
+console.log(`[canvas] REVISION: canvas-v8-discord-block loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -44,6 +44,7 @@ import { ContactsBlock } from "@/components/blocks/ContactsBlock";
 import { SheetsBlock } from "@/components/blocks/SheetsBlock";
 import { FormsBlock } from "@/components/blocks/FormsBlock";
 import { SlackBlock } from "@/components/blocks/SlackBlock";
+import { DiscordBlock } from "@/components/blocks/DiscordBlock";
 import { MessagingPlaceholderBlock } from "@/components/blocks/MessagingPlaceholderBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
@@ -67,7 +68,7 @@ const nodeTypes: NodeTypes = {
   sheets: SheetsBlock,
   forms: FormsBlock,
   slack: SlackBlock,
-  discord: MessagingPlaceholderBlock,
+  discord: DiscordBlock,
   telegram: MessagingPlaceholderBlock,
   whatsapp: MessagingPlaceholderBlock,
   teams: MessagingPlaceholderBlock,

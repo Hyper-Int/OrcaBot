@@ -1207,6 +1207,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET slack/status': integrations.getSlackStatus,
       'GET slack/channels': integrations.listSlackChannels,
       'DELETE slack': integrations.disconnectSlack,
+      // Discord
+      'GET discord/connect': integrations.connectDiscord,
+      'GET discord/callback': (request, env) => integrations.callbackDiscord(request, env),
+      'GET discord': integrations.getDiscordIntegration,
+      'GET discord/status': integrations.getDiscordStatus,
+      'GET discord/channels': integrations.listDiscordChannels,
+      'DELETE discord': integrations.disconnectDiscord,
     };
 
     const handler = integrationRoutes[routeKey];
