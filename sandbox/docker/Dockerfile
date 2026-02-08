@@ -104,6 +104,12 @@ RUN curl -fsSL https://app.factory.ai/cli | sh \
 
 # Install OpenClaw CLI
 RUN npm install -g openclaw@latest
+# Install wrapper to auto-start gateway daemon in Docker (no systemd)
+COPY docker/openclaw-wrapper.sh /usr/local/bin/openclaw-wrapper
+RUN chmod +x /usr/local/bin/openclaw-wrapper \
+    && OPENCLAW_BIN=$(which openclaw) \
+    && mv "$OPENCLAW_BIN" "${OPENCLAW_BIN}.real" \
+    && ln -sf /usr/local/bin/openclaw-wrapper "$OPENCLAW_BIN"
 
 # Install Talkito (voice assistant) - cached, no submodules
 # To force update: rebuild with --no-cache or bump a comment here
