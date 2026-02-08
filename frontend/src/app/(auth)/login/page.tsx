@@ -408,7 +408,14 @@ export default function LoginPage() {
         {/* Footer */}
         <div className="mt-12 text-center">
           <p className="text-micro text-[var(--foreground-disabled)]">
-            By continuing, you agree to our Terms of Service
+            By continuing, you agree to our{" "}
+            <a href="/terms" className="underline hover:text-[var(--foreground-subtle)]">
+              Terms of Service
+            </a>{" "}
+            and{" "}
+            <a href="/privacy" className="underline hover:text-[var(--foreground-subtle)]">
+              Privacy Policy
+            </a>
           </p>
         </div>
       </div>
