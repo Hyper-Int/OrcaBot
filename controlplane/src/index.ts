@@ -1214,6 +1214,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET discord/status': integrations.getDiscordStatus,
       'GET discord/channels': integrations.listDiscordChannels,
       'DELETE discord': integrations.disconnectDiscord,
+      // Telegram (token-based)
+      'POST telegram/connect-token': integrations.connectMessagingToken,
+      'GET telegram': integrations.getMessagingIntegration,
+      'GET telegram/chats': integrations.listMessagingChannels,
+      'DELETE telegram': integrations.disconnectMessaging,
+      // WhatsApp (token-based)
+      'POST whatsapp/connect-token': integrations.connectMessagingToken,
+      'GET whatsapp': integrations.getMessagingIntegration,
+      'GET whatsapp/chats': integrations.listMessagingChannels,
+      'DELETE whatsapp': integrations.disconnectMessaging,
+      // Teams (token-based)
+      'POST teams/connect-token': integrations.connectMessagingToken,
+      'GET teams': integrations.getMessagingIntegration,
+      'GET teams/channels': integrations.listMessagingChannels,
+      'DELETE teams': integrations.disconnectMessaging,
+      // Matrix (token-based)
+      'POST matrix/connect-token': integrations.connectMessagingToken,
+      'GET matrix': integrations.getMessagingIntegration,
+      'GET matrix/rooms': integrations.listMessagingChannels,
+      'DELETE matrix': integrations.disconnectMessaging,
+      // Google Chat (token-based)
+      'POST google_chat/connect-token': integrations.connectMessagingToken,
+      'GET google_chat': integrations.getMessagingIntegration,
+      'GET google_chat/spaces': integrations.listMessagingChannels,
+      'DELETE google_chat': integrations.disconnectMessaging,
     };
 
     const handler = integrationRoutes[routeKey];
@@ -1987,6 +2012,18 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // POST /webhooks/:provider/:hookId - Per-subscription webhook for Telegram (per-bot URL)
   // REVISION: messaging-webhook-v2-route-global
   // Security: Unauthenticated but signature-verified per platform
+  // GET /webhooks/whatsapp — WhatsApp webhook verification challenge
+  if (segments[0] === 'webhooks' && segments[1] === 'whatsapp' && segments.length === 2 && method === 'GET') {
+    const url = new URL(request.url);
+    const mode = url.searchParams.get('hub.mode');
+    const token = url.searchParams.get('hub.verify_token');
+    const challenge = url.searchParams.get('hub.challenge');
+    if (mode === 'subscribe' && token === env.WHATSAPP_VERIFY_TOKEN && challenge) {
+      return new Response(challenge, { status: 200 });
+    }
+    return Response.json({ error: 'Verification failed' }, { status: 403 });
+  }
+
   if (segments[0] === 'webhooks' && (segments.length === 2 || segments.length === 3) && method === 'POST') {
     const { handleInboundWebhook } = await import('./messaging/webhook-handler');
     const provider = segments[1];
@@ -2037,7 +2074,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     // Validate provider against providers with implemented webhook handlers.
     // The full set of messaging providers is: slack, discord, telegram, whatsapp, teams, matrix, google_chat
     // But only providers with signature verification + message parsing in webhook-handler.ts are accepted.
-    const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram'];
+    // Only providers with implemented webhook signature verification are allowed.
+    // teams, matrix, google_chat are excluded until JWT/shared-secret verification is added.
+    const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram', 'whatsapp'];
     if (!WEBHOOK_READY_PROVIDERS.includes(data.provider)) {
       return Response.json({ error: `Provider '${data.provider}' does not have webhook support yet` }, { status: 400 });
     }
@@ -2065,15 +2104,15 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
     // Require channelId for Slack/Discord (not just channelName) so subscription scoping
     // doesn't depend on runtime name resolution during webhook delivery. Telegram uses chatId.
-    if ((data.provider === 'slack' || data.provider === 'discord') && !data.channelId) {
+    if ((data.provider === 'slack' || data.provider === 'discord' || data.provider === 'teams' || data.provider === 'google_chat') && !data.channelId) {
       return Response.json(
         { error: `channelId is required for ${data.provider} subscriptions — resolve channel name to ID client-side` },
         { status: 400 },
       );
     }
-    if (data.provider === 'telegram' && !data.chatId) {
+    if ((data.provider === 'telegram' || data.provider === 'whatsapp' || data.provider === 'matrix') && !data.chatId) {
       return Response.json(
-        { error: 'chatId is required for telegram subscriptions' },
+        { error: `chatId is required for ${data.provider} subscriptions` },
         { status: 400 },
       );
     }

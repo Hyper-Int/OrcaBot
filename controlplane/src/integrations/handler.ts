@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v6-discord-oauth
-const integrationsRevision = "integrations-v6-discord-oauth";
+// REVISION: integrations-v11-clarify-per-user-scope
+const integrationsRevision = "integrations-v11-clarify-per-user-scope";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -9817,4 +9817,442 @@ export async function listDiscordChannels(
     }));
 
   return Response.json({ channels });
+}
+
+// ============================================
+// Generic Token-Based Messaging Integration Handlers
+// (Telegram, WhatsApp, Teams, Matrix, Google Chat)
+// ============================================
+
+const TOKEN_CONNECT_PROVIDERS = ['telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
+type TokenConnectProvider = typeof TOKEN_CONNECT_PROVIDERS[number];
+
+/** Validation endpoints per provider — called with the token to verify it's valid */
+const TOKEN_VALIDATION: Record<TokenConnectProvider, {
+  validate: (token: string, metadata?: Record<string, unknown>) => Promise<{ ok: boolean; accountName: string; metadata: Record<string, unknown> }>;
+}> = {
+  telegram: {
+    async validate(token: string) {
+      const resp = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      if (!resp.ok) throw new Error('Invalid Telegram bot token');
+      const data = await resp.json() as { result: { first_name: string; username?: string; id: number } };
+      return {
+        ok: true,
+        accountName: data.result.username ? `@${data.result.username}` : data.result.first_name,
+        metadata: { bot_id: data.result.id, bot_username: data.result.username, bot_name: data.result.first_name },
+      };
+    },
+  },
+  whatsapp: {
+    async validate(token: string, metadata?: Record<string, unknown>) {
+      const phoneNumberId = metadata?.phone_number_id as string;
+      if (!phoneNumberId) throw new Error('phone_number_id is required in metadata');
+      const resp = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Invalid WhatsApp Business API token');
+      const data = await resp.json() as { display_phone_number?: string; verified_name?: string; id: string };
+      return {
+        ok: true,
+        accountName: data.verified_name || data.display_phone_number || phoneNumberId,
+        metadata: { phone_number_id: phoneNumberId, display_phone_number: data.display_phone_number, verified_name: data.verified_name },
+      };
+    },
+  },
+  teams: {
+    async validate(token: string) {
+      const resp = await fetch('https://graph.microsoft.com/v1.0/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Invalid Microsoft Graph API token');
+      const data = await resp.json() as { displayName?: string; userPrincipalName?: string; id: string };
+      return {
+        ok: true,
+        accountName: data.displayName || data.userPrincipalName || 'Teams User',
+        metadata: { user_id: data.id, display_name: data.displayName, email: data.userPrincipalName },
+      };
+    },
+  },
+  matrix: {
+    async validate(token: string, metadata?: Record<string, unknown>) {
+      const homeserver = metadata?.homeserver as string;
+      if (!homeserver) throw new Error('homeserver URL is required in metadata');
+      const baseUrl = homeserver.replace(/\/$/, '');
+      const resp = await fetch(`${baseUrl}/_matrix/client/v3/account/whoami`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Invalid Matrix access token');
+      const data = await resp.json() as { user_id: string; device_id?: string };
+      return {
+        ok: true,
+        accountName: data.user_id,
+        metadata: { user_id: data.user_id, device_id: data.device_id, homeserver: baseUrl },
+      };
+    },
+  },
+  google_chat: {
+    async validate(token: string) {
+      // Expects a pre-generated OAuth2 access token (not a service account JSON key).
+      // To use a service account, exchange the JSON key for an access token first,
+      // then paste the access token here.
+      const resp = await fetch('https://chat.googleapis.com/v1/spaces?pageSize=1', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Invalid Google Chat API token — provide an OAuth2 access token, not a service account JSON key');
+      return {
+        ok: true,
+        accountName: 'Google Chat Bot',
+        metadata: {},
+      };
+    },
+  },
+};
+
+function extractProviderFromUrl(request: Request): TokenConnectProvider | null {
+  const url = new URL(request.url);
+  const segments = url.pathname.replace(/^\/+/, '').split('/');
+  // URL pattern: /integrations/{provider}/...
+  const providerIdx = segments.indexOf('integrations');
+  if (providerIdx < 0 || providerIdx + 1 >= segments.length) return null;
+  const provider = segments[providerIdx + 1] as TokenConnectProvider;
+  return TOKEN_CONNECT_PROVIDERS.includes(provider) ? provider : null;
+}
+
+/**
+ * POST /integrations/:provider/connect-token
+ * Body: { token: string, dashboardId?: string, metadata?: Record<string, unknown> }
+ *
+ * Validates the token against the provider's API, then upserts into user_integrations.
+ */
+export async function connectMessagingToken(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const provider = extractProviderFromUrl(request);
+  if (!provider) {
+    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+  }
+
+  // Token-based integrations are scoped per-user, not per-dashboard.
+  // A user connects once and the token is shared across all their dashboards
+  // (same model as Gmail, GitHub, Slack, Discord OAuth integrations).
+  // The frontend may send dashboardId for context but it is not used for scoping.
+  let body: { token: string; metadata?: Record<string, unknown> };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  if (!body.token || typeof body.token !== 'string') {
+    return Response.json({ error: 'token is required' }, { status: 400 });
+  }
+
+  // Validate token with the provider
+  const validator = TOKEN_VALIDATION[provider];
+  let result: { ok: boolean; accountName: string; metadata: Record<string, unknown> };
+  try {
+    result = await validator.validate(body.token.trim(), body.metadata);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Token validation failed';
+    return Response.json({ error: msg }, { status: 400 });
+  }
+
+  // UPSERT into user_integrations
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, NULL, NULL, 'Bearer', NULL, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      metadata = excluded.metadata,
+      updated_at = excluded.updated_at
+  `).bind(
+    id,
+    auth.user!.id,
+    provider,
+    body.token.trim(),
+    JSON.stringify(result.metadata),
+    now,
+    now,
+  ).run();
+
+  return Response.json({
+    connected: true,
+    accountName: result.accountName,
+    provider,
+    metadata: result.metadata,
+  });
+}
+
+/**
+ * GET /integrations/:provider
+ * Returns connection status for a token-based messaging provider.
+ */
+export async function getMessagingIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const provider = extractProviderFromUrl(request);
+  if (!provider) {
+    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+  }
+
+  const row = await env.DB.prepare(
+    'SELECT id, metadata FROM user_integrations WHERE user_id = ? AND provider = ?'
+  ).bind(auth.user!.id, provider).first<{ id: string; metadata: string }>();
+
+  if (!row) {
+    return Response.json({ connected: false, accountName: null });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(row.metadata); } catch { /* empty */ }
+
+  return Response.json({
+    connected: true,
+    accountName: meta.bot_username || meta.bot_name || meta.verified_name || meta.display_name || meta.user_id || 'Connected',
+    provider,
+    metadata: meta,
+  });
+}
+
+/**
+ * GET /integrations/:provider/chats|channels|rooms|spaces
+ * Lists channels/chats/rooms/spaces for a token-based messaging provider.
+ */
+export async function listMessagingChannels(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const provider = extractProviderFromUrl(request);
+  if (!provider) {
+    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+  }
+
+  const row = await env.DB.prepare(
+    'SELECT access_token, metadata FROM user_integrations WHERE user_id = ? AND provider = ?'
+  ).bind(auth.user!.id, provider).first<{ access_token: string; metadata: string }>();
+
+  if (!row) {
+    return Response.json({ error: 'Not connected' }, { status: 404 });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(row.metadata); } catch { /* empty */ }
+  const token = row.access_token;
+
+  try {
+    switch (provider) {
+      case 'telegram': {
+        // Check if a webhook is active — if so, getUpdates is blocked by the Bot API.
+        // Serve from D1 (subscriptions + inbound_messages) instead.
+        const hasWebhook = await env.DB.prepare(`
+          SELECT 1 FROM messaging_subscriptions
+          WHERE user_id = ? AND provider = 'telegram' AND status IN ('pending', 'active')
+          LIMIT 1
+        `).bind(auth.user!.id).first();
+
+        if (hasWebhook) {
+          // Collect unique chat IDs from subscriptions + inbound messages
+          const chatIdSet = new Set<string>();
+          const subs = await env.DB.prepare(`
+            SELECT chat_id FROM messaging_subscriptions
+            WHERE user_id = ? AND provider = 'telegram' AND status IN ('pending', 'active') AND chat_id IS NOT NULL
+          `).bind(auth.user!.id).all<{ chat_id: string }>();
+          for (const r of subs.results || []) if (r.chat_id) chatIdSet.add(r.chat_id);
+
+          const msgs = await env.DB.prepare(`
+            SELECT DISTINCT im.channel_id FROM inbound_messages im
+            JOIN messaging_subscriptions ms ON im.subscription_id = ms.id
+            WHERE ms.user_id = ? AND ms.provider = 'telegram' AND im.channel_id IS NOT NULL
+          `).bind(auth.user!.id).all<{ channel_id: string }>();
+          for (const r of msgs.results || []) if (r.channel_id) chatIdSet.add(r.channel_id);
+
+          // Enrich each via Telegram's getChat API (works with webhooks)
+          const channels: { id: string; name: string; type: string }[] = [];
+          for (const chatId of chatIdSet) {
+            try {
+              const chatResp = await fetch(`https://api.telegram.org/bot${token}/getChat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId }),
+              });
+              if (chatResp.ok) {
+                const chatData = await chatResp.json() as { ok: boolean; result: { id: number; type: string; title?: string; first_name?: string; username?: string } };
+                if (chatData.ok) {
+                  const c = chatData.result;
+                  channels.push({ id: String(c.id), name: c.title || c.first_name || c.username || String(c.id), type: c.type });
+                  continue;
+                }
+              }
+            } catch { /* fall through to minimal entry */ }
+            channels.push({ id: chatId, name: chatId, type: 'unknown' });
+          }
+          return Response.json({ channels });
+        }
+
+        // No webhook — safe to use getUpdates
+        const resp = await fetch(`https://api.telegram.org/bot${token}/getUpdates?limit=100`);
+        if (!resp.ok) return Response.json({ channels: [] });
+        const data = await resp.json() as { result: Array<{ message?: { chat: { id: number; type: string; title?: string; first_name?: string; username?: string } } }> };
+        const chatMap = new Map<number, { id: string; name: string; type: string }>();
+        for (const update of data.result) {
+          const chat = update.message?.chat;
+          if (chat) {
+            chatMap.set(chat.id, {
+              id: String(chat.id),
+              name: chat.title || chat.first_name || chat.username || String(chat.id),
+              type: chat.type,
+            });
+          }
+        }
+        return Response.json({ channels: Array.from(chatMap.values()) });
+      }
+
+      case 'teams': {
+        // List teams, then channels from the specified (or first) team.
+        // Always returns team_id so the UI can use it for later MCP calls.
+        const url = new URL(request.url);
+        let teamId = url.searchParams.get('team_id');
+
+        // Always fetch teams so we can return the full list for UI selection
+        const teamsResp = await fetch('https://graph.microsoft.com/v1.0/me/joinedTeams', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!teamsResp.ok) return Response.json({ channels: [], teams: [] });
+        const teamsData = await teamsResp.json() as { value: Array<{ id: string; displayName: string }> };
+        const teams = teamsData.value.map(t => ({ id: t.id, name: t.displayName }));
+
+        if (!teamId) {
+          if (teams.length === 0) return Response.json({ channels: [], teams: [] });
+          teamId = teams[0].id;
+        }
+
+        const resp = await fetch(`https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(teamId)}/channels`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return Response.json({ channels: [], teams, team_id: teamId });
+        const data = await resp.json() as { value: Array<{ id: string; displayName: string; description?: string }> };
+        return Response.json({
+          team_id: teamId,
+          teams,
+          channels: data.value.map(ch => ({ id: ch.id, name: ch.displayName, topic: ch.description || null, team_id: teamId })),
+        });
+      }
+
+      case 'matrix': {
+        const homeserver = (meta.homeserver as string || '').replace(/\/$/, '');
+        if (!homeserver) return Response.json({ channels: [] });
+        const resp = await fetch(`${homeserver}/_matrix/client/v3/joined_rooms`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return Response.json({ channels: [] });
+        const data = await resp.json() as { joined_rooms: string[] };
+        // Fetch room names
+        const rooms = await Promise.all(
+          data.joined_rooms.slice(0, 50).map(async (roomId) => {
+            try {
+              const nameResp = await fetch(`${homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (nameResp.ok) {
+                const nameData = await nameResp.json() as { name: string };
+                return { id: roomId, name: nameData.name || roomId };
+              }
+            } catch { /* fallback */ }
+            return { id: roomId, name: roomId };
+          })
+        );
+        return Response.json({ channels: rooms });
+      }
+
+      case 'google_chat': {
+        const resp = await fetch('https://chat.googleapis.com/v1/spaces?pageSize=100', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!resp.ok) return Response.json({ channels: [] });
+        const data = await resp.json() as { spaces?: Array<{ name: string; displayName: string; spaceType?: string }> };
+        return Response.json({
+          channels: (data.spaces || []).map(s => ({
+            id: s.name,
+            name: s.displayName || s.name,
+            type: s.spaceType,
+          })),
+        });
+      }
+
+      case 'whatsapp': {
+        // WhatsApp Business API has no "list conversations" endpoint.
+        // Serve known chats from D1 inbound_messages + subscriptions.
+        const chatSet = new Map<string, { id: string; name: string; type: string }>();
+
+        // 1. Chats from existing subscriptions
+        const waSubs = await env.DB.prepare(`
+          SELECT chat_id, channel_name FROM messaging_subscriptions
+          WHERE user_id = ? AND provider = 'whatsapp' AND status IN ('pending', 'active') AND chat_id IS NOT NULL
+        `).bind(auth.user!.id).all<{ chat_id: string; channel_name: string | null }>();
+        for (const r of waSubs.results || []) {
+          if (r.chat_id) chatSet.set(r.chat_id, { id: r.chat_id, name: r.channel_name || r.chat_id, type: 'individual' });
+        }
+
+        // 2. Senders from inbound messages
+        const waInbound = await env.DB.prepare(`
+          SELECT DISTINCT im.sender_id, im.sender_name FROM inbound_messages im
+          JOIN messaging_subscriptions ms ON im.subscription_id = ms.id
+          WHERE ms.user_id = ? AND ms.provider = 'whatsapp' AND im.sender_id IS NOT NULL
+        `).bind(auth.user!.id).all<{ sender_id: string; sender_name: string | null }>();
+        for (const r of waInbound.results || []) {
+          if (r.sender_id && !chatSet.has(r.sender_id)) {
+            chatSet.set(r.sender_id, { id: r.sender_id, name: r.sender_name || r.sender_id, type: 'individual' });
+          }
+        }
+
+        return Response.json({ channels: Array.from(chatSet.values()) });
+      }
+
+      default:
+        return Response.json({ channels: [] });
+    }
+  } catch (err) {
+    console.error(`[integrations] Failed to list channels for ${provider}:`, err);
+    return Response.json({ channels: [] });
+  }
+}
+
+/**
+ * DELETE /integrations/:provider
+ * Disconnects a token-based messaging provider.
+ */
+export async function disconnectMessaging(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const provider = extractProviderFromUrl(request);
+  if (!provider) {
+    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+  }
+
+  await env.DB.prepare(
+    'DELETE FROM user_integrations WHERE user_id = ? AND provider = ?'
+  ).bind(auth.user!.id, provider).run();
+
+  return Response.json({ ok: true });
 }

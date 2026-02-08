@@ -765,11 +765,18 @@ CREATE INDEX IF NOT EXISTS idx_messaging_subs_item ON messaging_subscriptions(it
 CREATE INDEX IF NOT EXISTS idx_messaging_subs_webhook ON messaging_subscriptions(webhook_id);
 CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_channel ON messaging_subscriptions(provider, channel_id);
 CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_team_channel ON messaging_subscriptions(provider, team_id, channel_id);
--- Unique per block + provider + channel (allows multi-channel per block).
--- Telegram uses chat_id instead of channel_id, but COALESCE ensures the
--- uniqueness column is never NULL (SQLite ignores NULL in unique indexes).
+-- Unique per block + provider + channel + chat (allows multi-channel per block).
+-- WhatsApp uses channel_id=phone_number_id + chat_id=sender_phone, so we need both.
+-- Telegram/Matrix use chat_id only; Slack/Discord use channel_id only.
+-- COALESCE('') prevents SQLite from ignoring NULLs in the unique constraint.
+-- Migration guard: deactivate any legacy rows with both fields null before
+-- recreating the index, since COALESCE('','') would cause collisions.
+UPDATE messaging_subscriptions
+  SET status = 'error', error_message = 'migrated: missing channel scope'
+  WHERE channel_id IS NULL AND chat_id IS NULL AND status IN ('pending', 'active');
+DROP INDEX IF EXISTS idx_messaging_subs_active_channel;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_subs_active_channel
-  ON messaging_subscriptions(dashboard_id, item_id, provider, COALESCE(channel_id, chat_id))
+  ON messaging_subscriptions(dashboard_id, item_id, provider, COALESCE(channel_id, ''), COALESCE(chat_id, ''))
   WHERE status IN ('pending', 'active');
 
 -- Inbound messages (buffer for messages arriving while VM is sleeping)

@@ -777,40 +777,57 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'discord.list_channels': 'canReceive',  // Non-channel-targeted
     'discord.read_messages': 'canReadHistory',
     'discord.send_message': 'canSend',
-    'discord.reply': 'canSend',
+    'discord.reply_thread': 'canSend',
     'discord.react': 'canReact',
+    'discord.get_user_info': 'canReceive',  // Non-channel-targeted
     'discord.edit_message': 'canEditMessages',
     'discord.delete_message': 'canDeleteMessages',
   },
   telegram: {
+    'telegram.get_chats': 'canReceive',     // Non-channel-targeted
+    'telegram.read_messages': 'canReadHistory',
     'telegram.send_message': 'canSend',
-    'telegram.reply': 'canSend',
+    'telegram.reply_thread': 'canSend',
+    'telegram.get_chat_info': 'canReceive', // Non-channel-targeted
     'telegram.edit_message': 'canEditMessages',
     'telegram.delete_message': 'canDeleteMessages',
-    'telegram.get_chat_info': 'canReceive', // Non-channel-targeted
   },
   whatsapp: {
     'whatsapp.send_message': 'canSend',
-    'whatsapp.reply': 'canSend',
-    'whatsapp.read_messages': 'canReadHistory',
+    'whatsapp.send_template': 'canSend',
+    'whatsapp.reply_message': 'canSend',
+    'whatsapp.send_reaction': 'canReact',
+    'whatsapp.get_profile': 'canReceive',   // Non-channel-targeted
+    'whatsapp.mark_read': 'canReceive',
   },
   teams: {
     'teams.list_channels': 'canReceive',    // Non-channel-targeted
+    'teams.list_teams': 'canReceive',       // Non-channel-targeted
     'teams.read_messages': 'canReadHistory',
     'teams.send_message': 'canSend',
-    'teams.reply': 'canSend',
+    'teams.reply_thread': 'canSend',
+    'teams.get_member': 'canReceive',       // Non-channel-targeted
+    'teams.edit_message': 'canEditMessages',
+    'teams.delete_message': 'canDeleteMessages',
   },
   matrix: {
     'matrix.list_rooms': 'canReceive',      // Non-channel-targeted
     'matrix.read_messages': 'canReadHistory',
     'matrix.send_message': 'canSend',
-    'matrix.reply': 'canSend',
+    'matrix.reply_thread': 'canSend',
+    'matrix.react': 'canReact',
+    'matrix.get_profile': 'canReceive',     // Non-channel-targeted
+    'matrix.redact_message': 'canDeleteMessages',
   },
   google_chat: {
     'google_chat.list_spaces': 'canReceive', // Non-channel-targeted
     'google_chat.read_messages': 'canReadHistory',
     'google_chat.send_message': 'canSend',
-    'google_chat.reply': 'canSend',
+    'google_chat.reply_thread': 'canSend',
+    'google_chat.add_reaction': 'canReact',
+    'google_chat.get_member': 'canReceive', // Non-channel-targeted
+    'google_chat.update_message': 'canEditMessages',
+    'google_chat.delete_message': 'canDeleteMessages',
   },
 };
 
