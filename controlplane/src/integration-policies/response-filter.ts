@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: response-filter-v4-glob-escape
-console.log(`[response-filter] REVISION: response-filter-v4-glob-escape loaded at ${new Date().toISOString()}`);
+// REVISION: response-filter-v7-empty-allowlist-pii
+console.log(`[response-filter] REVISION: response-filter-v7-empty-allowlist-pii loaded at ${new Date().toISOString()}`);
 
 /**
  * Response Filtering
@@ -21,6 +21,7 @@ import type {
   GitHubPolicy,
   GoogleDrivePolicy,
   CalendarPolicy,
+  MessagingPolicy,
 } from '../types';
 import { globToRegex } from './handler';
 
@@ -48,6 +49,16 @@ export function filterResponse(
       return filterDriveResponse(action, response, policy as GoogleDrivePolicy);
     case 'google_calendar':
       return filterCalendarResponse(action, response, policy as CalendarPolicy);
+    // Messaging providers — channel filtering is done at enforcement time;
+    // response filtering strips sensitive PII (emails, phones, profile URLs)
+    case 'slack':
+    case 'discord':
+    case 'telegram':
+    case 'whatsapp':
+    case 'teams':
+    case 'matrix':
+    case 'google_chat':
+      return filterMessagingResponse(action, response, policy as MessagingPolicy);
     default:
       return { data: response, filtered: false };
   }
@@ -524,4 +535,142 @@ function filterCalendarResponse(
 
   // Events are already scoped by calendarId at request time - no response filtering needed
   return { data: response, filtered: false };
+}
+
+// ============================================
+// Messaging Filtering
+// ============================================
+
+/**
+ * Filter messaging API responses to strip sensitive PII before the LLM sees it.
+ * Slack/Discord API responses can contain emails, phone numbers, profile image URLs,
+ * and other personal data that the LLM doesn't need for its task.
+ */
+function filterMessagingResponse(
+  action: string,
+  response: unknown,
+  policy: MessagingPolicy,
+): FilterResult {
+  if (!response || typeof response !== 'object') {
+    return { data: response, filtered: false };
+  }
+
+  // Deep-clone to avoid mutating cached API responses
+  const cleaned = JSON.parse(JSON.stringify(response)) as Record<string, unknown>;
+  let didFilter = false;
+  // For Discord array responses, we track a filtered array separately so PII stripping
+  // still runs on it before returning (avoids the early-return that would skip PII strip).
+  let discordArrayResult: Record<string, unknown>[] | null = null;
+
+  // Channel list responses — filter to only channels in the allowlist.
+  // list_channels is mapped to canReceive (not channel-targeted) so enforcement in
+  // enforcePolicy doesn't apply channel restrictions. We filter at response time instead
+  // to prevent channel metadata leaking outside the configured allowlist.
+  if (action.includes('list_channels') && policy.channelFilter?.mode === 'allowlist') {
+    const { channelIds, channelNames } = policy.channelFilter;
+    const hasAllowlist = channelIds?.length || channelNames?.length;
+
+    if (!hasAllowlist) {
+      // Empty allowlist = deny all — return empty list (matches enforcePolicy's fail-closed invariant)
+      if ('channels' in cleaned && Array.isArray(cleaned.channels)) {
+        cleaned.channels = [];
+        didFilter = true;
+      } else if (Array.isArray(cleaned)) {
+        discordArrayResult = [];
+        didFilter = true;
+      }
+    } else {
+      const normalizedNames = channelNames?.map(n => n.replace(/^#/, '').toLowerCase()) || [];
+
+      const filterChannel = (ch: Record<string, unknown>): boolean => {
+        const chId = ch.id as string | undefined;
+        const chName = (ch.name as string | undefined)?.replace(/^#/, '').toLowerCase();
+        const idMatch = chId && channelIds?.includes(chId);
+        const nameMatch = chName && normalizedNames.includes(chName);
+        return !!(idMatch || nameMatch);
+      };
+
+      // Slack returns { ok, channels: [...] }, Discord returns an array
+      if ('channels' in cleaned && Array.isArray(cleaned.channels)) {
+        const before = (cleaned.channels as Record<string, unknown>[]).length;
+        cleaned.channels = (cleaned.channels as Record<string, unknown>[]).filter(filterChannel);
+        didFilter = (cleaned.channels as unknown[]).length < before;
+      } else if (Array.isArray(cleaned)) {
+        discordArrayResult = (cleaned as unknown as Record<string, unknown>[]).filter(filterChannel);
+        didFilter = true;
+      }
+    }
+  }
+
+  // User info responses — strip email, phone, profile image URLs
+  if (action.includes('user_info') || action.includes('get_user')) {
+    didFilter = stripUserPII(cleaned);
+  }
+
+  // Strip PII from array items (channel member data, Discord channel objects, etc.)
+  if (discordArrayResult) {
+    // Discord array was filtered — strip PII from the filtered result
+    for (const item of discordArrayResult) {
+      if (item && typeof item === 'object') {
+        didFilter = stripUserPII(item) || didFilter;
+      }
+    }
+    return { data: discordArrayResult, filtered: didFilter };
+  }
+
+  if (Array.isArray(cleaned)) {
+    for (const item of cleaned) {
+      if (item && typeof item === 'object') {
+        didFilter = stripUserPII(item as Record<string, unknown>) || didFilter;
+      }
+    }
+  }
+
+  // Message list/search responses — strip user profile PII from embedded user objects
+  if ('messages' in cleaned && Array.isArray(cleaned.messages)) {
+    for (const msg of cleaned.messages as Record<string, unknown>[]) {
+      if (msg && typeof msg === 'object') {
+        // Slack search results embed user profiles in matches
+        if (msg.user_profile && typeof msg.user_profile === 'object') {
+          didFilter = stripUserPII(msg.user_profile as Record<string, unknown>) || didFilter;
+        }
+      }
+    }
+  }
+
+  // User object at top level (e.g., users.info response)
+  if ('user' in cleaned && cleaned.user && typeof cleaned.user === 'object') {
+    didFilter = stripUserPII(cleaned.user as Record<string, unknown>) || didFilter;
+  }
+
+  return { data: cleaned, filtered: didFilter };
+}
+
+/**
+ * Strip PII fields from a user-like object.
+ * Returns true if any fields were removed.
+ */
+function stripUserPII(obj: Record<string, unknown>): boolean {
+  let stripped = false;
+  const PII_FIELDS = ['email', 'phone', 'skype', 'image_original', 'image_512', 'image_192', 'image_72'];
+
+  for (const field of PII_FIELDS) {
+    if (field in obj) {
+      delete obj[field];
+      stripped = true;
+    }
+  }
+
+  // Recurse into nested profile objects
+  if (obj.profile && typeof obj.profile === 'object') {
+    const profile = obj.profile as Record<string, unknown>;
+    for (const field of PII_FIELDS) {
+      if (field in profile) {
+        delete profile[field];
+        stripped = true;
+      }
+    }
+  }
+
+  return stripped;
 }

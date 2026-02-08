@@ -21,6 +21,7 @@ import {
   type BoxPolicy,
   type GitHubPolicy,
   type BrowserPolicy,
+  type MessagingPolicy,
   type SecurityLevel,
   getProviderDisplayName,
   getSecurityLevelColor,
@@ -423,6 +424,116 @@ const DrivePolicyEditor: React.FC<{
   );
 };
 
+// Messaging Policy Editor (Slack, Discord, Telegram, etc.)
+const MessagingPolicyEditor: React.FC<{
+  policy: MessagingPolicy;
+  onChange: (policy: MessagingPolicy) => void;
+  providerName: string;
+}> = ({ policy, onChange, providerName }) => {
+  const update = <K extends keyof MessagingPolicy>(key: K, value: MessagingPolicy[K]) => {
+    onChange({ ...policy, [key]: value });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Section title="Receiving">
+        <Toggle
+          label="Can receive messages"
+          checked={policy.canReceive ?? false}
+          onChange={(v) => update("canReceive", v)}
+          description={`Receive inbound messages from ${providerName}`}
+        />
+        <Toggle
+          label="Can read history"
+          checked={policy.canReadHistory ?? false}
+          onChange={(v) => update("canReadHistory", v)}
+          description="Read past messages in channels"
+        />
+        {(policy.canReceive || policy.canReadHistory) && (
+          <div className="pl-4 space-y-2">
+            <div className="text-[10px] text-[var(--foreground-muted)]">Channel access:</div>
+            <select
+              className="w-full px-2 py-1 text-xs rounded border border-[var(--border)] bg-[var(--background)]"
+              value={policy.channelFilter?.mode || "allowlist"}
+              onChange={(e) =>
+                update("channelFilter", {
+                  mode: e.target.value as "all" | "allowlist",
+                  channelIds: policy.channelFilter?.channelIds || [],
+                  channelNames: policy.channelFilter?.channelNames || [],
+                })
+              }
+            >
+              <option value="all">All channels</option>
+              <option value="allowlist">Only specific channels</option>
+            </select>
+            {policy.channelFilter?.mode === "allowlist" && (
+              <DomainListInput
+                label="Allowed channels"
+                domains={policy.channelFilter?.channelNames || []}
+                onChange={(names) =>
+                  update("channelFilter", { ...policy.channelFilter!, channelNames: names })
+                }
+                placeholder="#channel-name"
+              />
+            )}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Sending">
+        <Toggle
+          label="Can send messages"
+          checked={policy.canSend ?? false}
+          onChange={(v) => update("canSend", v)}
+          warning
+          description={`Send messages on your behalf in ${providerName}`}
+        />
+        {policy.canSend && (
+          <div className="pl-4 space-y-2">
+            <Toggle
+              label="Require thread reply"
+              checked={policy.sendPolicy?.requireThreadReply ?? false}
+              onChange={(v) =>
+                update("sendPolicy", { ...policy.sendPolicy, requireThreadReply: v })
+              }
+              description="Only allow replies in threads, not new top-level messages"
+            />
+          </div>
+        )}
+      </Section>
+
+      <Section title="Actions">
+        <Toggle
+          label="Can react"
+          checked={policy.canReact ?? false}
+          onChange={(v) => update("canReact", v)}
+          description="Add emoji reactions to messages"
+        />
+        <Toggle
+          label="Can upload files"
+          checked={policy.canUploadFiles ?? false}
+          onChange={(v) => update("canUploadFiles", v)}
+          warning
+        />
+        <Toggle
+          label="Can edit messages"
+          checked={policy.canEditMessages ?? false}
+          onChange={(v) => update("canEditMessages", v)}
+          warning
+          description="Edit previously sent messages"
+        />
+        <Toggle
+          label="Can delete messages"
+          checked={policy.canDeleteMessages ?? false}
+          onChange={(v) => update("canDeleteMessages", v)}
+          warning
+          description="Permanently delete messages"
+        />
+      </Section>
+    </div>
+  );
+};
+
 // Generic Simple Policy Editor (for Contacts, Sheets, Forms)
 const SimplePolicyEditor: React.FC<{
   policy: ContactsPolicy | SheetsPolicy | FormsPolicy;
@@ -491,7 +602,6 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
   onPolicyUpdate,
 }) => {
   const [policy, setPolicy] = React.useState<AnyPolicy>(integration.policy || ({} as AnyPolicy));
-  const [highRiskConfirmed, setHighRiskConfirmed] = React.useState<Set<string>>(new Set());
 
   const updateMutation = useMutation({
     mutationFn: (data: { policy: AnyPolicy; highRiskConfirmations?: string[] }) =>
@@ -505,9 +615,26 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
   });
 
   const handleSave = () => {
+    // Auto-confirm all high-risk capabilities that are enabled in the policy.
+    // Enabling a toggle in the editor IS the user's explicit confirmation.
+    const providerCaps = HIGH_RISK_CAPABILITIES[integration.provider] || [];
+    const policyObj = policy as unknown as Record<string, unknown>;
+    const confirmations = providerCaps.filter((cap) => {
+      const parts = cap.split(".");
+      let value: unknown = policyObj;
+      for (const part of parts) {
+        if (value && typeof value === "object") {
+          value = (value as Record<string, unknown>)[part];
+        } else {
+          return false;
+        }
+      }
+      return Boolean(value);
+    });
+
     updateMutation.mutate({
       policy,
-      highRiskConfirmations: Array.from(highRiskConfirmed),
+      highRiskConfirmations: confirmations,
     });
   };
 
@@ -559,6 +686,20 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
           <SimplePolicyEditor
             policy={policy as ContactsPolicy | SheetsPolicy | FormsPolicy}
             onChange={(p) => setPolicy(p)}
+          />
+        );
+      case "slack":
+      case "discord":
+      case "telegram":
+      case "whatsapp":
+      case "teams":
+      case "matrix":
+      case "google_chat":
+        return (
+          <MessagingPolicyEditor
+            policy={policy as MessagingPolicy}
+            onChange={(p) => setPolicy(p)}
+            providerName={getProviderDisplayName(integration.provider)}
           />
         );
       default:

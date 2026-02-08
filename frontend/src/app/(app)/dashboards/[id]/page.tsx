@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v22-fix-orphaned-edges
-console.log(`[dashboard] REVISION: dashboard-v22-fix-orphaned-edges loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v23-edge-labels-on-reload
+console.log(`[dashboard] REVISION: dashboard-v23-edge-labels-on-reload loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -39,6 +39,13 @@ import {
   GoogleContactsIcon,
   GoogleSheetsIcon,
   GoogleFormsIcon,
+  SlackIcon,
+  DiscordIcon,
+  TelegramIcon,
+  WhatsAppIcon,
+  TeamsIcon,
+  MatrixIcon,
+  GoogleChatIcon,
 } from "@/components/icons";
 import { toast } from "sonner";
 
@@ -82,11 +89,13 @@ import {
   detachIntegration,
   listAvailableIntegrations,
   listTerminalIntegrations,
+  listDashboardIntegrationLabels,
   createReadOnlyPolicy,
   getProviderDisplayName,
   type IntegrationProvider,
   type SecurityLevel,
   type TerminalIntegration,
+  type IntegrationLabel,
   type BrowserPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
@@ -154,6 +163,17 @@ const googleTools: BlockTool[] = [
   { type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
 ];
 
+// Messaging integrations in their own section
+const messagingTools: BlockTool[] = [
+  { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
+  { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
+  { type: "telegram", icon: <TelegramIcon className="w-4 h-4" />, label: "Telegram" },
+  { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
+  { type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
+  { type: "matrix", icon: <MatrixIcon className="w-4 h-4" />, label: "Matrix" },
+  { type: "google_chat", icon: <GoogleChatIcon className="w-4 h-4" />, label: "Google Chat" },
+];
+
 const terminalTools: BlockTool[] = [
   {
     type: "terminal",
@@ -215,6 +235,13 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   contacts: { width: 280, height: 280 },
   sheets: { width: 300, height: 260 },
   forms: { width: 280, height: 280 },
+  slack: { width: 280, height: 280 },
+  discord: { width: 280, height: 280 },
+  telegram: { width: 280, height: 280 },
+  whatsapp: { width: 280, height: 280 },
+  teams: { width: 280, height: 280 },
+  matrix: { width: 280, height: 280 },
+  google_chat: { width: 280, height: 280 },
 };
 
 const PLACEMENT_GAP = 32; // gap between items when finding space
@@ -342,6 +369,7 @@ export default function DashboardPage() {
   const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
   const [toolbarBlocksCollapsed, setToolbarBlocksCollapsed] = React.useState(false);
   const [toolbarGoogleCollapsed, setToolbarGoogleCollapsed] = React.useState(false);
+  const [toolbarMessagingCollapsed, setToolbarMessagingCollapsed] = React.useState(false);
   const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
 
   // Workspace sidebar state
@@ -489,6 +517,14 @@ export default function DashboardPage() {
   const edgesFromData = data?.edges ?? [];
   const role = data?.role ?? "viewer";
 
+  // Fetch integration labels for edge enrichment on reload
+  const { data: integrationLabels } = useQuery({
+    queryKey: ["integration-labels", dashboardId],
+    queryFn: () => listDashboardIntegrationLabels(dashboardId),
+    enabled: isAuthenticated && isAuthResolved && !!dashboardId && edgesFromData.length > 0,
+    staleTime: 30000,
+  });
+
   // Restore template viewport if this dashboard was just created from a template.
   // Uses requestAnimationFrame retry since ReactFlow instance may not be ready
   // on the first render after data loads.
@@ -539,16 +575,49 @@ export default function DashboardPage() {
     return map;
   }, [items]);
 
+  // Build a map from (itemId, provider) → securityLevel from integration labels
+  const integrationLabelMap = React.useMemo(() => {
+    const map = new Map<string, IntegrationLabel>();
+    if (integrationLabels) {
+      for (const label of integrationLabels) {
+        // Key by itemId+provider to match edges
+        map.set(`${label.itemId}:${label.provider}`, label);
+      }
+    }
+    return map;
+  }, [integrationLabels]);
+
   // Convert edges to flow edges, using stable keys for source/target when available
+  // Also enrich with provider and securityLevel for edge label display
   const edgesFromDataFlow = React.useMemo(() => edgesFromData.map(edge => {
     const flowEdge = toFlowEdge(edge);
     // Use stable keys if the source/target items have them
+    const source = realIdToStableKey.get(flowEdge.source) || flowEdge.source;
+    const target = realIdToStableKey.get(flowEdge.target) || flowEdge.target;
+
+    // Derive provider from the non-terminal end of the edge
+    const sourceItem = items.find(i => (i._stableKey || i.id) === source);
+    const targetItem = items.find(i => (i._stableKey || i.id) === target);
+    const terminalItem = sourceItem?.type === "terminal" ? sourceItem : targetItem?.type === "terminal" ? targetItem : null;
+    const integrationItem = sourceItem?.type !== "terminal" ? sourceItem : targetItem?.type !== "terminal" ? targetItem : null;
+    const provider = integrationItem ? getProviderForBlockType(integrationItem.type) : undefined;
+
+    // Look up securityLevel from integration labels (fetched from backend)
+    let securityLevel: SecurityLevel | undefined;
+    if (terminalItem && provider) {
+      const label = integrationLabelMap.get(`${terminalItem.id}:${provider}`);
+      if (label?.securityLevel) {
+        securityLevel = label.securityLevel;
+      }
+    }
+
     return {
       ...flowEdge,
-      source: realIdToStableKey.get(flowEdge.source) || flowEdge.source,
-      target: realIdToStableKey.get(flowEdge.target) || flowEdge.target,
+      source,
+      target,
+      ...(provider ? { data: { provider, securityLevel } } : {}),
     };
-  }), [edgesFromData, realIdToStableKey]);
+  }), [edgesFromData, realIdToStableKey, items, integrationLabelMap]);
   const browserPrewarmRef = React.useRef(false);
 
   // Check if dashboard has any active sessions (indicates sandbox is ready for metrics)
@@ -1227,6 +1296,9 @@ export default function DashboardPage() {
         queryClient.invalidateQueries({
           queryKey: ["available-integrations", dashboardId, ptyId],
         });
+        queryClient.invalidateQueries({
+          queryKey: ["integration-labels", dashboardId],
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         if (action === "attach") {
@@ -1503,6 +1575,9 @@ export default function DashboardPage() {
           });
           queryClient.invalidateQueries({
             queryKey: ["available-integrations", dashboardId, session.ptyId],
+          });
+          queryClient.invalidateQueries({
+            queryKey: ["integration-labels", dashboardId],
           });
         } catch (err) {
           console.warn(`Failed to auto-attach ${provider} to terminal:`, err);
@@ -2454,20 +2529,32 @@ export default function DashboardPage() {
   React.useEffect(() => {
     // Build set of valid node IDs (real IDs and stable keys) for orphan detection
     const currentNodeIds = new Set(items.map(item => item._stableKey || item.id));
+    // Build lookup for enriched data from dataFlow edges
+    const dataFlowMap = new Map(edgesFromDataFlow.map((edge) => [edge.id, edge]));
     setEdges((prev) => {
-      const dataFlowIds = new Set(edgesFromDataFlow.map((edge) => edge.id));
       const existingIds = new Set(prev.map((edge) => edge.id));
       let changed = false;
       const next: typeof prev = [];
 
-      // Keep existing edges, but remove orphaned ones (source/target node missing)
+      // Keep existing edges, but remove orphaned ones and enrich with data from dataFlow
       for (const edge of prev) {
         if (!currentNodeIds.has(edge.source) || !currentNodeIds.has(edge.target)) {
           // Edge references a node that no longer exists — remove it
           changed = true;
           continue;
         }
-        next.push(edge);
+        // Enrich existing edge with provider/securityLevel if missing
+        const dataFlowEdge = dataFlowMap.get(edge.id);
+        if (dataFlowEdge?.data && (!edge.data?.securityLevel || !edge.data?.provider)) {
+          const enriched = {
+            ...edge,
+            data: { ...edge.data, ...dataFlowEdge.data },
+          };
+          next.push(enriched);
+          changed = true;
+        } else {
+          next.push(edge);
+        }
       }
 
       // Add new edges from data flow that aren't already in local state
@@ -2927,6 +3014,32 @@ export default function DashboardPage() {
                 ))}
               </div>
 
+              {/* Messaging integrations section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content={toolbarMessagingCollapsed ? "Expand Messaging" : "Collapse Messaging"} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setToolbarMessagingCollapsed((prev) => !prev)}
+                    className="mr-1"
+                  >
+                    {toolbarMessagingCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+                  </Button>
+                </Tooltip>
+                {!toolbarMessagingCollapsed && messagingTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
               {/* Connect mode */}
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
                 <Tooltip
@@ -3131,6 +3244,9 @@ export default function DashboardPage() {
           onSuccess={() => {
             queryClient.invalidateQueries({
               queryKey: ["terminal-integrations", dashboardId, edgePolicyEditor.ptyId],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["integration-labels", dashboardId],
             });
             setEdgePolicyEditor(null);
           }}

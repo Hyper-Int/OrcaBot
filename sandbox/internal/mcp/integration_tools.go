@@ -1,7 +1,7 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integration-tools-v1
+// REVISION: integration-tools-v4-list-channels-cursor
 package mcp
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-tools] REVISION: integration-tools-v1 loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-tools] REVISION: integration-tools-v3-slack-edit-delete loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // IntegrationTool represents an MCP tool definition for an integration
@@ -35,6 +35,8 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return driveTools
 	case "google_calendar":
 		return calendarTools
+	case "slack":
+		return slackTools
 	default:
 		return nil
 	}
@@ -75,6 +77,7 @@ var allTools = map[string][]IntegrationTool{
 	"github":          githubTools,
 	"google_drive":    driveTools,
 	"google_calendar": calendarTools,
+	"slack":           slackTools,
 }
 
 // ============================================
@@ -779,6 +782,130 @@ var calendarTools = []IntegrationTool{
 				}
 			},
 			"required": ["query"]
+		}`),
+	},
+}
+
+// ============================================
+// Slack Tools
+// ============================================
+
+var slackTools = []IntegrationTool{
+	{
+		Name:        "slack_list_channels",
+		Description: "List Slack channels the bot has access to. Returns a cursor for pagination if more channels exist.",
+		Provider:    "slack",
+		Action:      "slack.list_channels",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"types": {"type": "string", "description": "Channel types: public_channel,private_channel", "default": "public_channel,private_channel"},
+				"limit": {"type": "integer", "description": "Max channels to return (max 1000)", "default": 100},
+				"cursor": {"type": "string", "description": "Pagination cursor from a previous response to fetch the next page"}
+			}
+		}`),
+	},
+	{
+		Name:        "slack_read_messages",
+		Description: "Read recent messages from a Slack channel",
+		Provider:    "slack",
+		Action:      "slack.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"limit": {"type": "integer", "description": "Number of messages (max 100)", "default": 20},
+				"oldest": {"type": "string", "description": "Only messages after this timestamp"},
+				"latest": {"type": "string", "description": "Only messages before this timestamp"}
+			},
+			"required": ["channel"]
+		}`),
+	},
+	{
+		Name:        "slack_send_message",
+		Description: "Send a message to a Slack channel",
+		Provider:    "slack",
+		Action:      "slack.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["channel", "text"]
+		}`),
+	},
+	{
+		Name:        "slack_reply_thread",
+		Description: "Reply to a specific thread in a Slack channel",
+		Provider:    "slack",
+		Action:      "slack.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"thread_ts": {"type": "string", "description": "Thread timestamp to reply to"},
+				"text": {"type": "string", "description": "Reply text"},
+				"reply_broadcast": {"type": "boolean", "description": "Also post to channel", "default": false}
+			},
+			"required": ["channel", "thread_ts", "text"]
+		}`),
+	},
+	{
+		Name:        "slack_react",
+		Description: "Add an emoji reaction to a message",
+		Provider:    "slack",
+		Action:      "slack.react",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"timestamp": {"type": "string", "description": "Message timestamp"},
+				"name": {"type": "string", "description": "Emoji name (without colons)"}
+			},
+			"required": ["channel", "timestamp", "name"]
+		}`),
+	},
+	{
+		Name:        "slack_get_user_info",
+		Description: "Get information about a Slack user",
+		Provider:    "slack",
+		Action:      "slack.get_user_info",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"user": {"type": "string", "description": "User ID"}
+			},
+			"required": ["user"]
+		}`),
+	},
+	{
+		Name:        "slack_edit_message",
+		Description: "Edit a previously sent message in a Slack channel",
+		Provider:    "slack",
+		Action:      "slack.edit_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"ts": {"type": "string", "description": "Timestamp of the message to edit"},
+				"text": {"type": "string", "description": "New message text"}
+			},
+			"required": ["channel", "ts", "text"]
+		}`),
+	},
+	{
+		Name:        "slack_delete_message",
+		Description: "Delete a message from a Slack channel",
+		Provider:    "slack",
+		Action:      "slack.delete_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"channel": {"type": "string", "description": "Channel ID"},
+				"ts": {"type": "string", "description": "Timestamp of the message to delete"}
+			},
+			"required": ["channel", "ts"]
 		}`),
 	},
 }

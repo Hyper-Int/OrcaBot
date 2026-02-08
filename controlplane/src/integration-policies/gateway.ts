@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v12-sync-config
-console.log(`[integration-gateway] REVISION: gateway-v12-sync-config loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v20-pass-through-api-errors
+console.log(`[integration-gateway] REVISION: gateway-v20-pass-through-api-errors loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -33,6 +33,7 @@ import type {
   GoogleDrivePolicy,
   CalendarPolicy,
   BrowserPolicy,
+  MessagingPolicy,
 } from '../types';
 import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
@@ -41,6 +42,7 @@ import { executeGmailAction } from './api-clients/gmail';
 import { executeGitHubAction } from './api-clients/github';
 import { executeDriveAction } from './api-clients/drive';
 import { executeCalendarAction } from './api-clients/calendar';
+import { executeSlackAction } from './api-clients/slack';
 
 // ============================================
 // Types
@@ -75,6 +77,11 @@ interface DerivedEnforcementContext {
   folderId?: string;               // Drive target folder ID
   fileName?: string;               // Drive file name (for extension check)
   mimeType?: string;               // Drive MIME type
+  channelId?: string;              // Messaging channel/chat ID (Slack/Discord channel, Telegram chat_id)
+  channelName?: string;            // Messaging channel name
+  messageText?: string;            // Messaging: outbound message text (for maxMessageLength enforcement)
+  threadTs?: string;               // Messaging: thread ID (for requireThreadReply enforcement)
+  recipientUserId?: string;        // Messaging: DM recipient user ID (for allowedRecipients enforcement)
 }
 
 function extractEmailDomain(email: string): string | undefined {
@@ -130,10 +137,13 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
     ctx.recipientDomain = ctx.recipientDomains[0];
   }
 
-  // Extract resourceId from common ID fields
+  // Extract resourceId from common ID fields.
+  // Slack uses `ts` (timestamp) to identify messages for edit/delete/react.
   if (typeof args.fileId === 'string') ctx.resourceId = args.fileId;
   else if (typeof args.messageId === 'string') ctx.resourceId = args.messageId;
   else if (typeof args.eventId === 'string') ctx.resourceId = args.eventId;
+  else if (typeof args.ts === 'string') ctx.resourceId = args.ts;
+  else if (typeof args.timestamp === 'string') ctx.resourceId = args.timestamp;
 
   // Extract GitHub owner/repo for repo filter enforcement
   if (typeof args.owner === 'string') ctx.repoOwner = args.owner;
@@ -149,7 +159,83 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
   if (typeof args.name === 'string') ctx.fileName = args.name;
   if (typeof args.mimeType === 'string') ctx.mimeType = args.mimeType;
 
+  // Extract messaging channel ID for channel allowlist enforcement
+  // Slack/Discord use "channel", Telegram uses "chat_id"
+  if (typeof args.channel === 'string') {
+    ctx.channelId = args.channel;
+  } else if (typeof args.chat_id === 'string') {
+    ctx.channelId = args.chat_id;
+  }
+  // Channel name from args (if provided); otherwise enforcement uses ID only
+  if (typeof args.channel_name === 'string') {
+    ctx.channelName = args.channel_name;
+  }
+
+  // Extract messaging text for maxMessageLength enforcement
+  if (typeof args.text === 'string') {
+    ctx.messageText = args.text;
+  }
+
+  // Extract thread ID for requireThreadReply enforcement
+  // Slack uses thread_ts, Discord uses message_reference, Telegram uses reply_to_message_id
+  if (typeof args.thread_ts === 'string') {
+    ctx.threadTs = args.thread_ts;
+  } else if (typeof args.reply_to_message_id === 'string') {
+    ctx.threadTs = args.reply_to_message_id;
+  }
+
+  // Extract DM recipient for allowedRecipients enforcement
+  if (typeof args.user === 'string') {
+    ctx.recipientUserId = args.user;
+  } else if (typeof args.user_id === 'string') {
+    ctx.recipientUserId = args.user_id;
+  }
+
   return ctx;
+}
+
+/**
+ * Resolve a channel ID to a human-readable channel name via the platform API.
+ * Used for outbound enforcement so channel-name allowlists work when MCP tools
+ * only pass channel IDs. Returns bare name without '#' prefix (e.g., "general")
+ * to match inbound resolution format. Normalization at comparison time (in
+ * channelMatchesFilter and enforcePolicy) handles any '#' in policy config.
+ * Returns null on any error (fail-open for resolution, enforcement still has
+ * the ID to check against channelIds).
+ */
+async function resolveOutboundChannelName(
+  provider: IntegrationProvider,
+  channelId: string,
+  accessToken: string,
+): Promise<string | null> {
+  try {
+    if (provider === 'slack') {
+      const res = await fetch('https://slack.com/api/conversations.info', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: JSON.stringify({ channel: channelId }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { ok: boolean; channel?: { name?: string } };
+      return data.ok && data.channel?.name ? data.channel.name : null;
+    }
+
+    if (provider === 'discord') {
+      // Discord channel name resolution is not reliably possible with user OAuth tokens.
+      // The GET /channels/:id endpoint requires a Bot token or guild-scoped permissions.
+      // Discord policies must use channel IDs (snowflakes) which are globally unique.
+      return null;
+    }
+
+    // Telegram, WhatsApp, etc. — channel names not typically used in policies
+    return null;
+  } catch (err) {
+    console.warn(`[gateway] Failed to resolve channel name for ${provider}/${channelId}:`, err);
+    return null;
+  }
 }
 
 interface GatewayExecuteResponse {
@@ -183,9 +269,12 @@ function getActionCategory(action: string): ActionCategory {
   if (action.includes('send') || action.includes('push') || action.includes('create_pr') ||
       action.includes('reply') || action.includes('draft')) return 'sends';
   if (action.includes('delete') || action.includes('trash') || action.includes('remove')) return 'deletes';
+  // edit_message and react are write-like mutations (not reads). Without this,
+  // messaging edit/reaction actions fall through to 'reads' and bypass send/write rate limits.
   if (action.includes('create') || action.includes('update') || action.includes('write') ||
       action.includes('archive') || action.includes('label') ||
-      action.includes('move') || action.includes('share')) return 'writes';
+      action.includes('move') || action.includes('share') ||
+      action.includes('edit') || action.includes('react')) return 'writes';
   return 'reads';
 }
 
@@ -196,44 +285,60 @@ async function checkRateLimit(
   action: string,
   policy: AnyPolicy
 ): Promise<{ allowed: boolean; reason?: string }> {
-  const rateLimits = (policy as { rateLimits?: ExtendedRateLimits }).rateLimits;
-  if (!rateLimits) {
+  const rateLimits = (policy as { rateLimits?: ExtendedRateLimits & { messagesPerMinute?: number; messagesPerHour?: number } }).rateLimits;
+
+  // For messaging providers, sendPolicy.maxPerHour is the primary send rate limit
+  const msgSendMaxPerHour = (policy as { sendPolicy?: { maxPerHour?: number } }).sendPolicy?.maxPerHour;
+
+  if (!rateLimits && !msgSendMaxPerHour) {
     return { allowed: true };
   }
 
   const category = getActionCategory(action);
+  const MESSAGING_PROVIDERS = new Set(['slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat']);
 
   let limit: number | undefined;
   let window: 'minute' | 'hour' | 'day';
 
   switch (category) {
     case 'reads':
-      limit = rateLimits.readsPerMinute;
+      // For messaging, messagesPerMinute applies to reads (read_messages, list_channels, etc.)
+      if (MESSAGING_PROVIDERS.has(provider) && rateLimits?.messagesPerMinute != null) {
+        limit = rateLimits.messagesPerMinute;
+      } else {
+        limit = rateLimits?.readsPerMinute;
+      }
       window = 'minute';
       break;
     case 'writes':
-      limit = rateLimits.writesPerHour;
+      limit = rateLimits?.writesPerHour;
       window = 'hour';
       break;
     case 'deletes':
-      limit = rateLimits.deletesPerHour ?? rateLimits.writesPerHour;
+      limit = rateLimits?.deletesPerHour ?? rateLimits?.writesPerHour;
       window = 'hour';
       break;
     case 'sends':
-      if (rateLimits.sendsPerDay) {
+      if (rateLimits?.sendsPerDay) {
         limit = rateLimits.sendsPerDay;
         window = 'day';
+      } else if (MESSAGING_PROVIDERS.has(provider) && rateLimits?.messagesPerHour != null) {
+        // messagesPerHour is the messaging-specific rate limit for sends;
+        // takes priority over generic sendsPerHour for messaging providers
+        limit = rateLimits.messagesPerHour;
+        window = 'hour';
       } else {
-        limit = rateLimits.sendsPerHour ?? rateLimits.writesPerHour;
+        // sendPolicy.maxPerHour is the messaging-specific rate limit; fall back to rateLimits
+        limit = msgSendMaxPerHour ?? rateLimits?.sendsPerHour ?? rateLimits?.writesPerHour;
         window = 'hour';
       }
       break;
     case 'downloads':
-      limit = rateLimits.downloadsPerHour ?? rateLimits.readsPerMinute;
-      window = rateLimits.downloadsPerHour ? 'hour' : 'minute';
+      limit = rateLimits?.downloadsPerHour ?? rateLimits?.readsPerMinute;
+      window = rateLimits?.downloadsPerHour ? 'hour' : 'minute';
       break;
     case 'uploads':
-      limit = rateLimits.uploadsPerHour ?? rateLimits.writesPerHour;
+      limit = rateLimits?.uploadsPerHour ?? rateLimits?.writesPerHour;
       window = 'hour';
       break;
   }
@@ -496,6 +601,8 @@ async function executeProviderAPI(
       return executeDriveAction(action, args, accessToken);
     case 'google_calendar':
       return executeCalendarAction(action, args, accessToken);
+    case 'slack':
+      return executeSlackAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');
@@ -656,6 +763,23 @@ export async function handleGatewayExecute(
   // 7. Derive enforcement context server-side from args (NEVER trust body.context)
   const derivedContext = deriveEnforcementContext(body.action, body.args);
 
+  // 7b. For messaging providers: resolve channel name if we have an ID but no name.
+  // MCP tools pass channel IDs (e.g. "C1234"), but policies may use channel names
+  // (e.g. "#general"). Without resolution, channel-name allowlists silently deny all sends.
+  const MESSAGING_PROVIDERS = new Set(['slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat']);
+  let prefetchedAccessToken: string | null = null;
+  if (MESSAGING_PROVIDERS.has(provider) && derivedContext.channelId && !derivedContext.channelName) {
+    if (ti.user_integration_id) {
+      prefetchedAccessToken = await getAccessToken(env, ti.user_integration_id, provider);
+      if (prefetchedAccessToken) {
+        const resolvedName = await resolveOutboundChannelName(provider, derivedContext.channelId, prefetchedAccessToken);
+        if (resolvedName) {
+          derivedContext.channelName = resolvedName;
+        }
+      }
+    }
+  }
+
   // 8. Enforce policy (boolean logic - NO LLM)
   const enforcement = await enforcePolicy(env, provider, body.action, policy, ti.id, derivedContext);
 
@@ -749,7 +873,7 @@ export async function handleGatewayExecute(
     );
   }
 
-  const accessToken = await getAccessToken(env, ti.user_integration_id, provider);
+  const accessToken = prefetchedAccessToken ?? await getAccessToken(env, ti.user_integration_id, provider);
   if (!accessToken) {
     return Response.json(
       { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
@@ -838,8 +962,6 @@ export async function handleGatewayExecute(
     // Log full error internally for debugging
     console.error(`[gateway] API error for ${provider}/${body.action}:`, errorMessage);
 
-    const isDev = env.DEV_AUTH_ENABLED === 'true';
-
     await logAuditEntry(env, {
       terminalIntegrationId: ti.id,
       terminalId,
@@ -850,13 +972,13 @@ export async function handleGatewayExecute(
       policyId,
       policyVersion,
       decision: 'denied',
-      // In dev mode, keep full error for debugging; in prod, sanitize
-      denialReason: isDev ? `API error: ${errorMessage}` : `API error (see server logs for details)`,
+      denialReason: `API error: ${errorMessage}`,
     });
 
-    // In dev mode, return the full error for debugging; in prod, don't leak API details
+    // Pass through provider API error messages (e.g. "Slack API error: not_in_channel")
+    // These are public error codes that help the LLM and user diagnose the issue.
     return Response.json(
-      { error: 'API_ERROR', reason: isDev ? errorMessage : 'Action failed - please try again or contact support' },
+      { error: 'API_ERROR', reason: errorMessage },
       { status: 502 }
     );
   }

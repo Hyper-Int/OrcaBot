@@ -9,3 +9,13 @@ export {
   GoogleFormsIcon,
   GoogleDriveIcon,
 } from "./GoogleIcons";
+
+export {
+  SlackIcon,
+  DiscordIcon,
+  TelegramIcon,
+  WhatsAppIcon,
+  TeamsIcon,
+  MatrixIcon,
+  GoogleChatIcon,
+} from "./MessagingIcons";

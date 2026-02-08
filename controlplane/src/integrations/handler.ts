@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v1-sql-table-whitelist
-const integrationsRevision = "integrations-v1-sql-table-whitelist";
+// REVISION: integrations-v5-channels-drop-dashboard-id
+const integrationsRevision = "integrations-v5-channels-drop-dashboard-id";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -62,6 +62,25 @@ const BOX_SCOPE = [
 const ONEDRIVE_SCOPE = [
   'offline_access',
   'Files.Read',
+];
+
+const SLACK_SCOPE = [
+  'channels:read',
+  'channels:history',
+  'groups:read',          // Private channels: list
+  'groups:history',       // Private channels: read messages
+  'im:read',             // DMs: list
+  'im:history',          // DMs: read messages
+  'mpim:read',           // Group DMs: list
+  'mpim:history',        // Group DMs: read messages
+  'chat:write',
+  'users:read',
+  // search:read removed — it's a user token scope (xoxp), not a bot token scope (xoxb).
+  // The bot OAuth flow only yields a bot token, so requesting search:read would fail with
+  // invalid_scope or grant a scope that can't be used. The slack_search MCP tool was
+  // already removed in integration_tools.go for this reason.
+  'reactions:write',
+  'chat:write.customize',
 ];
 
 const DRIVE_AUTO_SYNC_LIMIT_BYTES = 1024 * 1024 * 1024;
@@ -9143,4 +9162,323 @@ export async function disconnectForms(
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });
+}
+
+// ============================================
+// Slack OAuth
+// ============================================
+
+export async function connectSlack(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.SLACK_CLIENT_ID || !env.SLACK_CLIENT_SECRET) {
+    return renderErrorPage('Slack OAuth is not configured.');
+  }
+
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  const state = buildState();
+  await createState(env, auth.user!.id, 'slack', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/slack/callback`;
+
+  const authUrl = new URL('https://slack.com/oauth/v2/authorize');
+  authUrl.searchParams.set('client_id', env.SLACK_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', SLACK_SCOPE.join(','));
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackSlack(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.SLACK_CLIENT_ID || !env.SLACK_CLIENT_SECRET) {
+    return renderErrorPage('Slack OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'slack');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/slack/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', env.SLACK_CLIENT_ID);
+  body.set('client_secret', env.SLACK_CLIENT_SECRET);
+  body.set('code', code);
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://slack.com/api/oauth.v2.access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    return renderErrorPage('Failed to exchange Slack token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    ok: boolean;
+    error?: string;
+    access_token?: string;
+    token_type?: string;
+    scope?: string;
+    bot_user_id?: string;
+    team?: { id: string; name: string };
+    authed_user?: { id: string; scope?: string; access_token?: string; token_type?: string };
+    app_id?: string;
+  };
+
+  if (!tokenData.ok || !tokenData.access_token) {
+    return renderErrorPage(`Slack authorization failed: ${tokenData.error || 'unknown error'}`);
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    team_id: tokenData.team?.id,
+    team_name: tokenData.team?.name,
+    bot_user_id: tokenData.bot_user_id,
+    authed_user_id: tokenData.authed_user?.id,
+    app_id: tokenData.app_id,
+  });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'slack', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    null, // Slack bot tokens do not use refresh tokens
+    tokenData.scope || null,
+    tokenData.token_type || null,
+    null, // Slack bot tokens do not expire
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Slack', 'slack-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Slack');
+}
+
+/**
+ * Get Slack integration status for a user/dashboard.
+ * GET /integrations/slack?dashboard_id=...
+ */
+export async function getSlackIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'slack'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, teamName: null, teamId: null, channels: [] });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(integration.metadata || '{}');
+  } catch {
+    // Ignore parse errors
+  }
+
+  return Response.json({
+    connected: true,
+    teamName: meta.team_name || null,
+    teamId: meta.team_id || null,
+    botUserId: meta.bot_user_id || null,
+    channels: [], // Channel list populated by MCP tool calls, not here
+  });
+}
+
+/**
+ * Get Slack activity status for a dashboard.
+ * GET /integrations/slack/status?dashboard_id=...
+ */
+export async function getSlackStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+  }
+
+  // Verify dashboard membership — any authenticated user could otherwise query any dashboard
+  const membership = await env.DB.prepare(
+    'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+  ).bind(dashboardId, auth.user!.id).first();
+  if (!membership) {
+    return Response.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  // Count active subscriptions and get last activity
+  const stats = await env.DB.prepare(`
+    SELECT COUNT(*) as sub_count, MAX(last_message_at) as last_activity
+    FROM messaging_subscriptions
+    WHERE dashboard_id = ? AND provider = 'slack' AND status = 'active'
+  `).bind(dashboardId).first<{ sub_count: number; last_activity: string | null }>();
+
+  return Response.json({
+    channelCount: stats?.sub_count || 0,
+    lastActivityAt: stats?.last_activity || null,
+  });
+}
+
+/**
+ * Disconnect Slack integration for a user.
+ * DELETE /integrations/slack?dashboard_id=...
+ */
+export async function disconnectSlack(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  // Delete the user's Slack integration
+  await env.DB.prepare(`
+    DELETE FROM user_integrations WHERE user_id = ? AND provider = 'slack'
+  `).bind(auth.user!.id).run();
+
+  // Deactivate any messaging subscriptions for this user
+  await env.DB.prepare(`
+    UPDATE messaging_subscriptions SET status = 'paused', updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'slack'
+  `).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+/**
+ * List Slack channels the bot has access to.
+ * GET /integrations/slack/channels?cursor=...
+ *
+ * Calls Slack's conversations.list API using the authenticated user's bot token.
+ * No dashboard_id needed — this is user-scoped (one Slack integration per user),
+ * not dashboard-scoped. Supports cursor-based pagination.
+ */
+export async function listSlackChannels(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const cursor = url.searchParams.get('cursor') || undefined;
+
+  // Retrieve the user's Slack bot token
+  const integration = await env.DB.prepare(`
+    SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'slack'
+  `).bind(auth.user!.id).first<{ access_token: string }>();
+
+  if (!integration?.access_token) {
+    return Response.json({ error: 'Slack not connected' }, { status: 404 });
+  }
+
+  // Call Slack conversations.list with the bot token
+  const params = new URLSearchParams({
+    types: 'public_channel,private_channel',
+    exclude_archived: 'true',
+    limit: '200',
+  });
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+
+  const resp = await fetch(`https://slack.com/api/conversations.list?${params}`, {
+    headers: { Authorization: `Bearer ${integration.access_token}` },
+  });
+
+  if (!resp.ok) {
+    console.error(`[integrations] Slack conversations.list failed: ${resp.status}`);
+    return Response.json({ error: 'Failed to fetch channels from Slack' }, { status: 502 });
+  }
+
+  const body = await resp.json() as {
+    ok: boolean;
+    error?: string;
+    channels?: Array<{
+      id: string;
+      name: string;
+      is_private: boolean;
+      num_members?: number;
+      topic?: { value: string };
+      purpose?: { value: string };
+    }>;
+    response_metadata?: { next_cursor?: string };
+  };
+
+  if (!body.ok) {
+    console.error(`[integrations] Slack API error: ${body.error}`);
+    return Response.json({ error: body.error || 'Slack API error' }, { status: 502 });
+  }
+
+  const channels = (body.channels || []).map(ch => ({
+    id: ch.id,
+    name: ch.name,
+    is_private: ch.is_private,
+    num_members: ch.num_members,
+    topic: ch.topic?.value || null,
+    purpose: ch.purpose?.value || null,
+  }));
+
+  // Slack returns empty string for next_cursor when there are no more pages
+  const nextCursor = body.response_metadata?.next_cursor || null;
+
+  return Response.json({ channels, next_cursor: nextCursor });
 }

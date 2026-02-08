@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v4-waituntil-email
-console.log(`[controlplane] REVISION: index-v4-waituntil-email loaded at ${new Date().toISOString()}`);
+// REVISION: index-v7-subscription-error-handling
+console.log(`[controlplane] REVISION: index-v7-subscription-error-handling loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -409,6 +409,11 @@ export default {
     try {
       await schedules.prоcessDueSchedules(envWithBindings);
       await schedules.cleanupStaleExecutions(envWithBindings);
+      // Messaging: retry buffered messages, wake stale, and clean up expired ones
+      const { retryBufferedMessages, wakeAndDrainStaleMessages, cleanupExpiredMessages } = await import('./messaging/delivery');
+      await retryBufferedMessages(envWithBindings);
+      await wakeAndDrainStaleMessages(envWithBindings);
+      await cleanupExpiredMessages(envWithBindings);
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
         return;
@@ -866,6 +871,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // Terminal Integration Policy routes
   // ============================================
 
+  // GET /dashboards/:id/integration-labels - Get integration labels for edge enrichment on reload
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'integration-labels' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return integrationPolicies.listDashboardIntegrationLabels(env, segments[1], auth.user!.id);
+  }
+
   // GET /dashboards/:id/terminals/:terminalId/available-integrations - List integrations available to attach
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'available-integrations' && method === 'GET') {
     const authError = requireAuth(auth);
@@ -1188,6 +1200,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET google/forms/responses': integrations.getFormResponsesEndpoint,
       'POST google/forms/link': integrations.setLinkedForm,
       'DELETE google/forms/disconnect': integrations.disconnectForms,
+      // Slack
+      'GET slack/connect': integrations.connectSlack,
+      'GET slack/callback': (request, env) => integrations.callbackSlack(request, env),
+      'GET slack': integrations.getSlackIntegration,
+      'GET slack/status': integrations.getSlackStatus,
+      'GET slack/channels': integrations.listSlackChannels,
+      'DELETE slack': integrations.disconnectSlack,
     };
 
     const handler = integrationRoutes[routeKey];
@@ -1951,6 +1970,141 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const data = await request.json() as Parameters<typeof integrationPolicies.logAuditEntry>[1];
     return integrationPolicies.logAuditEntry(env, data);
+  }
+
+  // ============================================
+  // Messaging webhook routes (unauthenticated — signature-verified per platform)
+  // ============================================
+
+  // POST /webhooks/:provider - Global webhook for Slack/Discord (single app-level URL)
+  // POST /webhooks/:provider/:hookId - Per-subscription webhook for Telegram (per-bot URL)
+  // REVISION: messaging-webhook-v2-route-global
+  // Security: Unauthenticated but signature-verified per platform
+  if (segments[0] === 'webhooks' && (segments.length === 2 || segments.length === 3) && method === 'POST') {
+    const { handleInboundWebhook } = await import('./messaging/webhook-handler');
+    const provider = segments[1];
+    const hookId = segments.length === 3 ? segments[2] : undefined;
+    return handleInboundWebhook(request, env, provider, hookId, ctx);
+  }
+
+  // ============================================
+  // Messaging subscription routes (authenticated)
+  // ============================================
+
+  // GET /messaging/subscriptions?dashboard_id=... - List subscriptions for a dashboard
+  // Security: Requires dashboard membership
+  if (segments[0] === 'messaging' && segments[1] === 'subscriptions' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const dashboardId = url.searchParams.get('dashboard_id');
+    if (!dashboardId) {
+      return Response.json({ error: 'dashboard_id required' }, { status: 400 });
+    }
+    // Verify dashboard membership
+    const membership = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+    ).bind(dashboardId, auth.user!.id).first();
+    if (!membership) {
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+    const { listSubscriptions } = await import('./messaging/webhook-handler');
+    return Response.json(await listSubscriptions(env, dashboardId));
+  }
+
+  // POST /messaging/subscriptions - Create a messaging subscription
+  // Security: Requires dashboard membership + itemId must belong to dashboard
+  if (segments[0] === 'messaging' && segments[1] === 'subscriptions' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as {
+      dashboardId: string;
+      itemId: string;
+      provider: string;
+      channelId?: string;
+      channelName?: string;
+      chatId?: string;
+    };
+    if (!data.dashboardId || !data.itemId || !data.provider) {
+      return Response.json({ error: 'dashboardId, itemId, and provider are required' }, { status: 400 });
+    }
+    // Validate provider against providers with implemented webhook handlers.
+    // The full set of messaging providers is: slack, discord, telegram, whatsapp, teams, matrix, google_chat
+    // But only providers with signature verification + message parsing in webhook-handler.ts are accepted.
+    const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram'];
+    if (!WEBHOOK_READY_PROVIDERS.includes(data.provider)) {
+      return Response.json({ error: `Provider '${data.provider}' does not have webhook support yet` }, { status: 400 });
+    }
+    // Verify dashboard membership
+    const membership = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+    ).bind(data.dashboardId, auth.user!.id).first();
+    if (!membership) {
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+    // Verify itemId belongs to the dashboard AND is a messaging block matching the provider.
+    // Without this, subscriptions could be created for any item (terminals, notes, etc.),
+    // causing confusing delivery behavior.
+    const item = await env.DB.prepare(
+      'SELECT id, type FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
+    ).bind(data.itemId, data.dashboardId).first<{ id: string; type: string }>();
+    if (!item) {
+      return Response.json({ error: 'Item not found in dashboard' }, { status: 404 });
+    }
+    if (item.type !== data.provider) {
+      return Response.json(
+        { error: `Item type '${item.type}' does not match provider '${data.provider}'` },
+        { status: 400 },
+      );
+    }
+    // Require channelId for Slack/Discord (not just channelName) so subscription scoping
+    // doesn't depend on runtime name resolution during webhook delivery. Telegram uses chatId.
+    if ((data.provider === 'slack' || data.provider === 'discord') && !data.channelId) {
+      return Response.json(
+        { error: `channelId is required for ${data.provider} subscriptions — resolve channel name to ID client-side` },
+        { status: 400 },
+      );
+    }
+    if (data.provider === 'telegram' && !data.chatId) {
+      return Response.json(
+        { error: 'chatId is required for telegram subscriptions' },
+        { status: 400 },
+      );
+    }
+
+    const { createSubscription, SubscriptionError } = await import('./messaging/webhook-handler');
+    const webhookBaseUrl = env.OAUTH_REDIRECT_BASE?.replace(/\/$/, '') || new URL(request.url).origin;
+    try {
+      const result = await createSubscription(env, data.dashboardId, data.itemId, auth.user!.id, data.provider, {
+        channelId: data.channelId,
+        channelName: data.channelName,
+        chatId: data.chatId,
+      }, webhookBaseUrl);
+      return Response.json(result, { status: 201 });
+    } catch (err) {
+      if (err instanceof SubscriptionError) {
+        return Response.json({ error: err.message, code: err.code }, { status: 400 });
+      }
+      throw err;
+    }
+  }
+
+  // DELETE /messaging/subscriptions/:id - Delete a messaging subscription
+  // Security: Requires subscription ownership (user_id match) + dashboard membership
+  if (segments[0] === 'messaging' && segments[1] === 'subscriptions' && segments.length === 3 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // Verify the subscription exists and belongs to the user, and user is a dashboard member
+    const sub = await env.DB.prepare(
+      `SELECT ms.id, ms.dashboard_id FROM messaging_subscriptions ms
+       JOIN dashboard_members dm ON dm.dashboard_id = ms.dashboard_id AND dm.user_id = ?
+       WHERE ms.id = ? AND ms.user_id = ?`
+    ).bind(auth.user!.id, segments[2], auth.user!.id).first();
+    if (!sub) {
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+    const { deleteSubscription } = await import('./messaging/webhook-handler');
+    await deleteSubscription(env, segments[2], auth.user!.id);
+    return Response.json({ ok: true });
   }
 
   // ============================================
