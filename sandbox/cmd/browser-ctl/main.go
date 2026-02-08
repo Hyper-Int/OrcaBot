@@ -1,4 +1,4 @@
-// Copyright 2026 Robert Macrae. All rights reserved.
+// Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 // browser-ctl is a CLI tool for controlling the sandbox browser from terminal agents.
