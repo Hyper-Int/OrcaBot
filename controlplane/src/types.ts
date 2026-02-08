@@ -47,6 +47,7 @@ export interface Env {
   DISCORD_CLIENT_ID?: string;
   DISCORD_CLIENT_SECRET?: string;
   DISCORD_PUBLIC_KEY?: string;
+  DISCORD_BOT_TOKEN?: string;
   OAUTH_REDIRECT_BASE?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */

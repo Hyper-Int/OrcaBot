@@ -16,3 +16,4 @@ export { ContactsBlock } from "./ContactsBlock";
 export { SheetsBlock } from "./SheetsBlock";
 export { FormsBlock } from "./FormsBlock";
 export { SlackBlock } from "./SlackBlock";
+export { DiscordBlock } from "./DiscordBlock";

@@ -1,8 +1,8 @@
 // Copyright 2026 Robert Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v5-channels-drop-dashboard-id
-const integrationsRevision = "integrations-v5-channels-drop-dashboard-id";
+// REVISION: integrations-v6-discord-oauth
+const integrationsRevision = "integrations-v6-discord-oauth";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -9481,4 +9481,340 @@ export async function listSlackChannels(
   const nextCursor = body.response_metadata?.next_cursor || null;
 
   return Response.json({ channels, next_cursor: nextCursor });
+}
+
+// ============================================
+// Discord OAuth
+// ============================================
+
+// Bot permissions: VIEW_CHANNEL (1024) + SEND_MESSAGES (2048) + READ_MESSAGE_HISTORY (65536) + ADD_REACTIONS (64)
+const DISCORD_BOT_PERMISSIONS = (1024 + 2048 + 65536 + 64).toString();
+
+export async function connectDiscord(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
+    return renderErrorPage('Discord OAuth is not configured.');
+  }
+
+  const requestUrl = new URL(request.url);
+  const dashboardId = requestUrl.searchParams.get('dashboard_id');
+  const mode = requestUrl.searchParams.get('mode');
+  const state = buildState();
+  await createState(env, auth.user!.id, 'discord', state, {
+    dashboard_id: dashboardId,
+    popup: mode === 'popup',
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/discord/callback`;
+
+  const authUrl = new URL('https://discord.com/oauth2/authorize');
+  authUrl.searchParams.set('client_id', env.DISCORD_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'bot identify guilds');
+  authUrl.searchParams.set('permissions', DISCORD_BOT_PERMISSIONS);
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackDiscord(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  if (!env.DISCORD_CLIENT_ID || !env.DISCORD_CLIENT_SECRET) {
+    return renderErrorPage('Discord OAuth is not configured.');
+  }
+  if (!env.DISCORD_BOT_TOKEN) {
+    return renderErrorPage('Discord bot token is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const guildId = url.searchParams.get('guild_id');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'discord');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+  const dashboardId = typeof stateData.metadata.dashboard_id === 'string'
+    ? stateData.metadata.dashboard_id
+    : null;
+  const popup = stateData.metadata.popup === true;
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/discord/callback`;
+
+  // Exchange code for token
+  const body = new URLSearchParams();
+  body.set('client_id', env.DISCORD_CLIENT_ID);
+  body.set('client_secret', env.DISCORD_CLIENT_SECRET);
+  body.set('grant_type', 'authorization_code');
+  body.set('code', code);
+  body.set('redirect_uri', redirectUri);
+
+  const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    const errText = await tokenResponse.text().catch(() => '');
+    console.error(`[integrations] Discord token exchange failed: ${tokenResponse.status} ${errText}`);
+    return renderErrorPage('Failed to exchange Discord token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token?: string;
+    token_type?: string;
+    expires_in?: number;
+    refresh_token?: string;
+    scope?: string;
+    guild?: { id: string; name: string; icon?: string | null };
+  };
+
+  if (!tokenData.access_token) {
+    return renderErrorPage('Discord authorization failed: no access token.');
+  }
+
+  // Use the guild from token response, or from query param
+  const resolvedGuildId = tokenData.guild?.id || guildId;
+  const resolvedGuildName = tokenData.guild?.name || null;
+
+  // Fetch user info using the user OAuth token
+  let discordUser: { id: string; username: string; discriminator?: string; avatar?: string | null } | null = null;
+  try {
+    const userResp = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (userResp.ok) {
+      discordUser = await userResp.json() as typeof discordUser;
+    }
+  } catch {
+    // Non-critical — continue without user info
+  }
+
+  const metadata = JSON.stringify({
+    scope: tokenData.scope,
+    token_type: tokenData.token_type,
+    guild_id: resolvedGuildId,
+    guild_name: resolvedGuildName,
+    guild_icon: tokenData.guild?.icon || null,
+    discord_user_id: discordUser?.id || null,
+    discord_username: discordUser?.username || null,
+  });
+
+  // Calculate expiry for the user token (not used for API calls, but stored for reference)
+  const expiresAt = tokenData.expires_in
+    ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  // Store the BOT token as access_token (used by gateway for API calls).
+  // The user token is only needed for the OAuth flow itself.
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'discord', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    env.DISCORD_BOT_TOKEN, // Bot token for API calls (never expires)
+    null,                  // Bot tokens don't need refresh
+    tokenData.scope || null,
+    'Bot',
+    null,                  // Bot tokens don't expire
+    metadata
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (popup) {
+    return renderProviderAuthCompletePage(frontendUrl, 'Discord', 'discord-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Discord');
+}
+
+/**
+ * Get Discord integration info for the current user.
+ * GET /integrations/discord
+ */
+export async function getDiscordIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'discord'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ connected: false, guildName: null, guildId: null });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(integration.metadata || '{}');
+  } catch {
+    // Ignore parse errors
+  }
+
+  return Response.json({
+    connected: true,
+    guildName: meta.guild_name || null,
+    guildId: meta.guild_id || null,
+    discordUsername: meta.discord_username || null,
+  });
+}
+
+/**
+ * Get Discord activity status for a dashboard.
+ * GET /integrations/discord/status?dashboard_id=...
+ */
+export async function getDiscordStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+  }
+
+  const membership = await env.DB.prepare(
+    'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+  ).bind(dashboardId, auth.user!.id).first();
+  if (!membership) {
+    return Response.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  const stats = await env.DB.prepare(`
+    SELECT COUNT(*) as sub_count, MAX(last_message_at) as last_activity
+    FROM messaging_subscriptions
+    WHERE dashboard_id = ? AND provider = 'discord' AND status = 'active'
+  `).bind(dashboardId).first<{ sub_count: number; last_activity: string | null }>();
+
+  return Response.json({
+    channelCount: stats?.sub_count || 0,
+    lastActivityAt: stats?.last_activity || null,
+  });
+}
+
+/**
+ * Disconnect Discord integration for a user.
+ * DELETE /integrations/discord?dashboard_id=...
+ */
+export async function disconnectDiscord(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await env.DB.prepare(`
+    DELETE FROM user_integrations WHERE user_id = ? AND provider = 'discord'
+  `).bind(auth.user!.id).run();
+
+  await env.DB.prepare(`
+    UPDATE messaging_subscriptions SET status = 'paused', updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'discord'
+  `).bind(auth.user!.id).run();
+
+  return Response.json({ ok: true });
+}
+
+/**
+ * List Discord channels the bot has access to in the user's guild.
+ * GET /integrations/discord/channels
+ */
+export async function listDiscordChannels(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.DISCORD_BOT_TOKEN) {
+    return Response.json({ error: 'Discord bot token not configured' }, { status: 500 });
+  }
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'discord'
+  `).bind(auth.user!.id).first<{ metadata: string }>();
+
+  if (!integration) {
+    return Response.json({ error: 'Discord not connected' }, { status: 404 });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = JSON.parse(integration.metadata || '{}');
+  } catch {
+    return Response.json({ error: 'Invalid integration metadata' }, { status: 500 });
+  }
+
+  const guildId = meta.guild_id as string;
+  if (!guildId) {
+    return Response.json({ error: 'No guild associated with this integration' }, { status: 400 });
+  }
+
+  // Fetch channels from Discord API using bot token
+  const resp = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
+    headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+  });
+
+  if (!resp.ok) {
+    console.error(`[integrations] Discord channels fetch failed: ${resp.status}`);
+    return Response.json({ error: 'Failed to fetch channels from Discord' }, { status: 502 });
+  }
+
+  const rawChannels = await resp.json() as Array<{
+    id: string;
+    name: string;
+    type: number;
+    topic?: string | null;
+    position: number;
+    parent_id?: string | null;
+  }>;
+
+  // Filter to text channels (type 0) and announcement channels (type 5)
+  const channels = rawChannels
+    .filter(ch => ch.type === 0 || ch.type === 5)
+    .sort((a, b) => a.position - b.position)
+    .map(ch => ({
+      id: ch.id,
+      name: ch.name,
+      is_private: false, // Guild channels visible to bot are not private
+      topic: ch.topic || null,
+    }));
+
+  return Response.json({ channels });
 }
