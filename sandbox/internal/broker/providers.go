@@ -1,4 +1,4 @@
-// Copyright 2026 Robert Macrae. All rights reserved.
+// Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 // Package broker implements a session-local auth broker that injects API keys
