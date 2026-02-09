@@ -14,3 +14,4 @@ export * from "./integrations";
 export * from "./members";
 export * from "./bug-reports";
 export * from "./tasks";
+export * from "./chat";

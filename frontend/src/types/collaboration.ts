@@ -343,6 +343,8 @@ export interface CreateNoteCommand extends UICommandBase {
 export interface CreateTerminalCommand extends UICommandBase {
   type: 'create_terminal';
   name?: string;
+  boot_command?: string;
+  agentic?: boolean;
   position?: { x: number; y: number };
   size?: { width: number; height: number };
 }

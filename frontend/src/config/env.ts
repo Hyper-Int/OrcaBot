@@ -122,6 +122,10 @@ export const API = {
     formsResponses: `${CLOUDFLARE_API_URL}/integrations/google/forms/responses`,
     formsLink: `${CLOUDFLARE_API_URL}/integrations/google/forms/link`,
     formsDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/forms/disconnect`,
+    // Chat
+    chat: `${CLOUDFLARE_API_URL}/chat`,
+    chatMessage: `${CLOUDFLARE_API_URL}/chat/message`,
+    chatHistory: `${CLOUDFLARE_API_URL}/chat/history`,
     ws: (dashboardId: string) =>
       `${CLOUDFLARE_API_URL.replace("https://", "wss://").replace("http://", "ws://")}/dashboards/${dashboardId}/ws`,
     terminalWs: (sessionId: string, ptyId: string) =>

@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: messaging-v3-fix-init-order
+// REVISION: schema-v4-fix-semicolon-in-comment
 
 /**
  * Database Schema
@@ -767,7 +767,7 @@ CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_channel ON messaging_subs
 CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_team_channel ON messaging_subscriptions(provider, team_id, channel_id);
 -- Unique per block + provider + channel + chat (allows multi-channel per block).
 -- WhatsApp uses channel_id=phone_number_id + chat_id=sender_phone, so we need both.
--- Telegram/Matrix use chat_id only; Slack/Discord use channel_id only.
+-- Telegram/Matrix use chat_id only. Slack/Discord use channel_id only.
 -- COALESCE('') prevents SQLite from ignoring NULLs in the unique constraint.
 -- Migration guard: deactivate any legacy rows with both fields null before
 -- recreating the index, since COALESCE('','') would cause collisions.
@@ -872,10 +872,30 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_session ON agent_memory(session_id);
 CREATE INDEX IF NOT EXISTS idx_agent_memory_type ON agent_memory(dashboard_id, memory_type);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key ON agent_memory(dashboard_id, key) WHERE session_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key_session ON agent_memory(dashboard_id, session_id, key) WHERE session_id IS NOT NULL;
+
+-- ============================================
+-- Chat Messages (Orcabot Chat Interface)
+-- ============================================
+
+-- Chat messages for Orcabot conversational interface
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT REFERENCES dashboards(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+  content TEXT NOT NULL,
+  tool_calls TEXT,         -- JSON array of tool calls (for assistant messages)
+  tool_results TEXT,       -- JSON array of tool results (for tool messages)
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_dashboard ON chat_messages(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(user_id, dashboard_id, created_at);
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "messaging-v3-fix-init-order";
+const SCHEMA_REVISION = "schema-v4-fix-semicolon-in-comment";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -883,10 +903,14 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   // IMPORTANT: Run CREATE TABLE first, then ALTER TABLE migrations to add missing
   // columns, then CREATE INDEX. On existing DBs, CREATE TABLE IF NOT EXISTS is a
   // no-op so columns added via ALTER TABLE won't exist yet when indexes run.
+  // Filter to only include statements that contain actual SQL keywords.
+  // This filters out comment-only blocks that would cause "SQL code did not contain a statement" errors.
+  const isValidSql = (s: string) => /\b(CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|SELECT)\b/i.test(s);
+
   const statements = SCHEMA
     .split(';')
     .map(s => s.trim())
-    .filter(s => s.length > 0);
+    .filter(s => s.length > 0 && isValidSql(s));
 
   const isCreateTable = (s: string) => /CREATE\s+TABLE/i.test(s);
   const tableStatements = statements.filter(isCreateTable);
@@ -979,6 +1003,17 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   await migrateDashboardItemTypes(db);
   await migrateUserIntegrationProviders(db);
+
+  // Add item_id column to terminal_integrations BEFORE migrateTerminalIntegrationProviders runs.
+  // The migration copies this column, so it must exist first.
+  try {
+    await db.prepare(`
+      ALTER TABLE terminal_integrations ADD COLUMN item_id TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
   await migrateTerminalIntegrationProviders(db);
 
   // Add partial unique index for terminal_integrations (one provider per terminal for active rows)
@@ -1020,16 +1055,7 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Index already exists.
   }
 
-  // Add item_id column to terminal_integrations for cross-session integration persistence.
-  // terminal_id (PTY ID) changes on every session, but item_id (dashboard item ID) is stable.
-  try {
-    await db.prepare(`
-      ALTER TABLE terminal_integrations ADD COLUMN item_id TEXT
-    `).run();
-  } catch {
-    // Column already exists.
-  }
-
+  // Create index on item_id column (added earlier before migrateTerminalIntegrationProviders)
   try {
     await db.prepare(`
       CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)
