@@ -70,6 +70,9 @@ export interface Env {
   /** GCP Pub/Sub topic for Gmail push notifications.
    *  Format: projects/{project-id}/topics/{topic-name} */
   GMAIL_PUBSUB_TOPIC?: string;
+  /** Gemini API key for Orcabot chat interface.
+   *  Set via: wrangler secret put GEMINI_ORCABOT_KEY */
+  GEMINI_ORCABOT_KEY?: string;
 }
 
 // User types
@@ -427,6 +430,8 @@ export interface CreateNoteCommand extends UICommandBase {
 export interface CreateTerminalCommand extends UICommandBase {
   type: 'create_terminal';
   name?: string;
+  boot_command?: string;
+  agentic?: boolean;
   position?: { x: number; y: number };
   size?: { width: number; height: number };
 }
@@ -1185,4 +1190,139 @@ export interface MemoryFilters {
   memoryType?: AgentMemoryType;
   tags?: string[];
   prefix?: string;
+}
+
+// ============================================
+// Chat Types (Orcabot Chat Interface)
+// ============================================
+
+/**
+ * Role in chat conversation
+ */
+export type ChatRole = 'user' | 'assistant' | 'tool';
+
+/**
+ * Chat message stored in database
+ */
+export interface ChatMessage {
+  id: string;
+  userId: string;
+  dashboardId: string | null;
+  role: ChatRole;
+  content: string;
+  toolCalls?: ChatToolCall[];
+  toolResults?: ChatToolResult[];
+  createdAt: string;
+}
+
+/**
+ * Tool call made by the assistant
+ */
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  thoughtSignature?: string; // Required by Gemini 3 for function calling
+}
+
+/**
+ * Result from executing a tool
+ */
+export interface ChatToolResult {
+  toolCallId: string;
+  name: string;
+  result: Record<string, unknown>;
+  isError?: boolean;
+}
+
+/**
+ * UI Guidance command types for onboarding/tutorial flows
+ */
+export type UIGuidanceCommandType =
+  | 'highlight'
+  | 'tooltip'
+  | 'open_panel'
+  | 'scroll_to'
+  | 'dismiss_guidance';
+
+/**
+ * UI Guidance command structure
+ */
+export interface UIGuidanceCommand {
+  type: UIGuidanceCommandType;
+  command_id: string;
+  /** Element selector or ID to target */
+  target?: string;
+  /** Human-readable description of the target for accessibility */
+  target_description?: string;
+}
+
+export interface UIHighlightCommand extends UIGuidanceCommand {
+  type: 'highlight';
+  /** Duration in milliseconds (default: 3000) */
+  duration?: number;
+  /** Highlight style: pulse, glow, ring */
+  style?: 'pulse' | 'glow' | 'ring';
+}
+
+export interface UITooltipCommand extends UIGuidanceCommand {
+  type: 'tooltip';
+  /** Text to show in the tooltip */
+  text: string;
+  /** Position relative to target */
+  position?: 'top' | 'bottom' | 'left' | 'right';
+  /** Auto-dismiss after milliseconds (0 = manual dismiss) */
+  duration?: number;
+}
+
+export interface UIOpenPanelCommand extends UIGuidanceCommand {
+  type: 'open_panel';
+  /** Panel name: 'integrations', 'settings', 'files', 'secrets', 'chat' */
+  panel: string;
+}
+
+export interface UIScrollToCommand extends UIGuidanceCommand {
+  type: 'scroll_to';
+  /** Smooth or instant scrolling */
+  behavior?: 'smooth' | 'instant';
+}
+
+export interface UIDismissGuidanceCommand extends UIGuidanceCommand {
+  type: 'dismiss_guidance';
+  /** Dismiss all guidance or specific command_id */
+  all?: boolean;
+}
+
+export type AnyUIGuidanceCommand =
+  | UIHighlightCommand
+  | UITooltipCommand
+  | UIOpenPanelCommand
+  | UIScrollToCommand
+  | UIDismissGuidanceCommand;
+
+/**
+ * Streaming chat event types
+ */
+export type ChatStreamEvent =
+  | { type: 'text'; content: string }
+  | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; toolCallId: string; name: string; result: Record<string, unknown>; isError?: boolean }
+  | { type: 'ui_command'; command: AnyUIGuidanceCommand }
+  | { type: 'done' }
+  | { type: 'error'; error: string };
+
+/**
+ * Chat request payload
+ */
+export interface ChatRequest {
+  message: string;
+  dashboardId?: string;
+}
+
+/**
+ * Chat history response
+ */
+export interface ChatHistoryResponse {
+  messages: ChatMessage[];
+  hasMore: boolean;
 }

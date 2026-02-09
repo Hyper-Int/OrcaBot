@@ -246,8 +246,8 @@ export function useUICommands({
 
             const terminalContent: TerminalContent = {
               name: cmd.name || "Terminal",
-              agentic: false,
-              bootCommand: "",
+              agentic: cmd.agentic ?? false,
+              bootCommand: cmd.boot_command ?? "",
             };
 
             createItemMutation.mutate(

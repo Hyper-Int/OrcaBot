@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v24-edge-labels-and-tasks
-console.log(`[dashboard] REVISION: dashboard-v24-edge-labels-and-tasks loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v26-ui-guidance
+console.log(`[dashboard] REVISION: dashboard-v26-ui-guidance loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -75,7 +75,8 @@ import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
-import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo } from "@/hooks";
+import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
+import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
@@ -100,6 +101,7 @@ import {
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { WorkspaceSidebar } from "@/components/workspace";
+import { ChatPanel } from "@/components/chat";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -376,6 +378,25 @@ export default function DashboardPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
   const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
+
+  // UI Guidance state for Orcabot onboarding
+  const uiGuidance = useUIGuidance({
+    onOpenPanel: React.useCallback((panel: string) => {
+      console.log(`[dashboard] UI Guidance: open panel "${panel}"`);
+      if (panel === "files" || panel === "workspace") {
+        setSidebarCollapsed(false);
+      }
+      // Other panels can be added here (settings, integrations, etc.)
+    }, []),
+    onScrollTo: React.useCallback((target: string, behavior: "smooth" | "instant") => {
+      console.log(`[dashboard] UI Guidance: scroll to "${target}" (${behavior})`);
+      // Find the target element and scroll to it
+      const element = document.querySelector(`[data-item-id="${target.replace(/^(terminal|browser|note)-/, '')}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior, block: "center", inline: "center" });
+      }
+    }, []),
+  });
 
   // Canvas container ref for cursor tracking
   const canvasContainerRef = React.useRef<HTMLDivElement>(null);
@@ -2964,6 +2985,7 @@ export default function DashboardPage() {
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
                     >
                       {tool.icon}
                     </Button>
@@ -2990,6 +3012,7 @@ export default function DashboardPage() {
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
                     >
                       {tool.icon}
                     </Button>
@@ -3265,6 +3288,16 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* Orcabot Chat Panel */}
+      <ChatPanel dashboardId={dashboardId} onUICommand={uiGuidance.handleCommand} />
+
+      {/* UI Guidance Overlay for Orcabot onboarding */}
+      <UIGuidanceOverlay
+        highlights={uiGuidance.highlights}
+        tooltips={uiGuidance.tooltips}
+        onDismissTooltip={uiGuidance.dismissTooltip}
+      />
     </div>
   );
 }

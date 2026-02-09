@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v8-messaging-and-agent-state
-console.log(`[controlplane] REVISION: index-v8-messaging-and-agent-state loaded at ${new Date().toISOString()}`);
+// REVISION: index-v9-orcabot-chat
+console.log(`[controlplane] REVISION: index-v9-orcabot-chat loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -38,6 +38,7 @@ import * as members from './members/handler';
 import * as mcpUi from './mcp-ui/handler';
 import * as bugReports from './bug-reports/handler';
 import * as agentState from './agent-state/handler';
+import * as chat from './chat/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
@@ -600,6 +601,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
 
     return bugReports.submitBugReport(env, auth.user!, data);
+  }
+
+  // ============================================
+  // Chat routes (Orcabot conversational interface)
+  // ============================================
+
+  // POST /chat/message - Send a message and get streaming response
+  if (segments[0] === 'chat' && segments[1] === 'message' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return chat.streamMessage(request, env, auth.user!.id);
+  }
+
+  // GET /chat/history - Get conversation history
+  if (segments[0] === 'chat' && segments[1] === 'history' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return chat.getHistory(request, env, auth.user!.id);
+  }
+
+  // DELETE /chat/history - Clear conversation history
+  if (segments[0] === 'chat' && segments[1] === 'history' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return chat.clearHistory(request, env, auth.user!.id);
   }
 
   // POST /auth/logout - clear session cookie

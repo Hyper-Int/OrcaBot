@@ -139,7 +139,7 @@ export const UI_TOOLS = [
   },
   {
     name: 'create_terminal',
-    description: 'Create a new terminal panel on the dashboard',
+    description: 'Create a new terminal panel on the dashboard. Use boot_command and agentic to create agent terminals (e.g. Claude Code, Gemini CLI, Codex) instead of plain shell terminals.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -149,7 +149,15 @@ export const UI_TOOLS = [
         },
         name: {
           type: 'string',
-          description: 'Name of the terminal (optional)',
+          description: 'Name of the terminal (e.g. "Claude Code", "Gemini CLI", "Terminal")',
+        },
+        boot_command: {
+          type: 'string',
+          description: 'Command to run on terminal startup. Use "claude" for Claude Code, "gemini" for Gemini CLI, "codex" for Codex. Leave empty for a plain shell terminal.',
+        },
+        agentic: {
+          type: 'boolean',
+          description: 'Set to true when creating an AI agent terminal (Claude Code, Gemini CLI, Codex). False for plain shell terminals.',
         },
         position: {
           type: 'object',
@@ -500,6 +508,8 @@ export async function callTool(
         command_id: commandId,
         source_terminal_id: sourceTerminalId,
         name: args.name as string | undefined,
+        boot_command: args.boot_command as string | undefined,
+        agentic: args.agentic as boolean | undefined,
         position: args.position as { x: number; y: number } | undefined,
         size: args.size as { width: number; height: number } | undefined,
       };
