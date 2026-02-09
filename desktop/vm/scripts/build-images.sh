@@ -20,7 +20,7 @@ SANDBOX_DIR="$REPO_ROOT/sandbox"
 OUTPUT_DIR="$VM_DIR/image"
 
 # Image settings
-IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-4096}"  # 4GB default
+IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-3072}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -68,8 +68,8 @@ set -euo pipefail
 apt-get update -qq
 apt-get install -y -qq e2fsprogs tar gzip linux-image-cloud-arm64 kmod > /dev/null
 
-echo "Creating empty disk image..."
-dd if=/dev/zero of=/output/sandbox.img bs=1M count=$IMAGE_SIZE_MB status=progress
+echo "Creating disk image (${IMAGE_SIZE_MB}MB)..."
+dd if=/dev/zero of=/output/sandbox.img bs=1M count=${IMAGE_SIZE_MB} status=progress
 
 echo "Creating ext4 filesystem..."
 mkfs.ext4 -F -L rootfs /output/sandbox.img
@@ -86,12 +86,73 @@ gunzip -c /output/sandbox-rootfs.tar.gz | tar -xf - -C /mnt/rootfs
 mkdir -p /mnt/rootfs/{proc,sys,dev,run,tmp}
 chmod 1777 /mnt/rootfs/tmp
 
-# Copy kernel modules into the rootfs so modprobe works at runtime.
+# =============================================================================
+# Cleanup: strip unnecessary files BEFORE copying kernel modules.
+# Must run first — the rootfs from Docker already contains ~2.5GB and the full
+# kernel module tree is another 1.2GB, which would overflow a 3GB disk.
+# =============================================================================
+
+# Remove duplicate kernel modules from Docker export (in /usr/lib/modules AND /lib/modules)
+echo "Removing kernel modules from Docker rootfs..."
+rm -rf /mnt/rootfs/usr/lib/modules
+rm -rf /mnt/rootfs/lib/modules
+
+# Remove GCC/build artifacts (not needed at runtime)
+echo "Removing build tools and headers..."
+rm -rf /mnt/rootfs/usr/include
+rm -f /mnt/rootfs/usr/bin/aarch64-linux-gnu-lto-dump*
+rm -f /mnt/rootfs/usr/bin/aarch64-linux-gnu-ld.gold
+rm -f /mnt/rootfs/usr/bin/aarch64-linux-gnu-dwp
+rm -rf /mnt/rootfs/usr/lib/gcc
+
+# Remove unnecessary /usr/share content (not needed in headless VM)
+echo "Removing unnecessary share content..."
+rm -rf /mnt/rootfs/usr/share/icons
+rm -rf /mnt/rootfs/usr/share/vim
+rm -rf /mnt/rootfs/usr/share/perl
+rm -rf /mnt/rootfs/usr/share/perl5
+rm -rf /mnt/rootfs/usr/share/doc
+rm -rf /mnt/rootfs/usr/share/man
+rm -rf /mnt/rootfs/usr/share/locale
+
+# Clean package caches
+echo "Cleaning package caches..."
+rm -rf /mnt/rootfs/var/cache/apt
+rm -rf /mnt/rootfs/var/lib/apt/lists
+
+echo "Cleanup complete."
+df -h /mnt/rootfs || true
+
+# =============================================================================
+# Copy ONLY the kernel modules the VM needs (virtio, vsock, ext4, fuse).
+# The full module tree is ~1.2GB; we only need ~5-10MB.
+# =============================================================================
 KERNEL_VERSION=$(ls /lib/modules 2>/dev/null | sort | tail -1)
 if [ -n "$KERNEL_VERSION" ]; then
-  echo "Copying kernel modules: $KERNEL_VERSION"
-  mkdir -p /mnt/rootfs/lib/modules
-  cp -a "/lib/modules/$KERNEL_VERSION" /mnt/rootfs/lib/modules/
+  echo "Copying selected kernel modules: $KERNEL_VERSION"
+  mkdir -p /mnt/rootfs/lib/modules/$KERNEL_VERSION/kernel
+  # Copy only the modules we need from the host
+  cd /lib/modules/$KERNEL_VERSION/kernel
+  find . -type f \( -name "virtio*" -o -name "vsock*" -o -name "vmw_vsock*" \
+         -o -name "ext4*" -o -name "fuse*" -o -name "virtiofs*" \
+         -o -name "jbd2*" -o -name "mbcache*" -o -name "crc16*" \
+         -o -name "crc32*" \) | while read f; do
+    mkdir -p "/mnt/rootfs/lib/modules/$KERNEL_VERSION/kernel/$(dirname "$f")"
+    cp "$f" "/mnt/rootfs/lib/modules/$KERNEL_VERSION/kernel/$f"
+  done
+  cd /
+  # Copy module metadata files
+  for meta in modules.builtin modules.builtin.modinfo modules.order; do
+    if [ -f "/lib/modules/$KERNEL_VERSION/$meta" ]; then
+      cp "/lib/modules/$KERNEL_VERSION/$meta" "/mnt/rootfs/lib/modules/$KERNEL_VERSION/"
+    fi
+  done
+  # Regenerate modules.dep for the stripped set
+  if command -v depmod >/dev/null 2>&1; then
+    depmod -b /mnt/rootfs "$KERNEL_VERSION" 2>/dev/null || true
+  fi
+  echo "Kernel modules installed (stripped)."
+  du -sh /mnt/rootfs/lib/modules/ || true
 else
   echo "Warning: no /lib/modules found; vsock modules may be unavailable"
 fi
@@ -449,11 +510,46 @@ if [ -f "$OUTPUT_DIR/custom-modules.tar.gz" ] && [ -f "$OUTPUT_DIR/sandbox.img" 
 set -euo pipefail
 apt-get update -qq
 apt-get install -y -qq e2fsprogs tar > /dev/null
+
+# Extract full module tree to /tmp first, strip there, then copy only needed modules to disk.
+# The full tarball is ~1.2GB which would overflow the disk if extracted directly.
+echo "Extracting custom modules to temp dir and stripping..."
+mkdir -p /tmp/all-modules
+tar -xzf /output/custom-modules.tar.gz -C /tmp/all-modules
+
+KVER_DIR=$(find /tmp/all-modules -maxdepth 1 -mindepth 1 -type d | head -1)
+KVER=$(basename "$KVER_DIR")
+
+# Extract only the modules we need
+mkdir -p /tmp/keep-modules/$KVER/kernel
+if [ -d "$KVER_DIR/kernel" ]; then
+  cd "$KVER_DIR/kernel"
+  find . -type f \( -name "virtio*" -o -name "vsock*" -o -name "vmw_vsock*" \
+         -o -name "ext4*" -o -name "fuse*" -o -name "virtiofs*" \
+         -o -name "jbd2*" -o -name "mbcache*" -o -name "crc16*" \
+         -o -name "crc32*" \) | while read f; do
+    mkdir -p "/tmp/keep-modules/$KVER/kernel/$(dirname "$f")"
+    cp "$f" "/tmp/keep-modules/$KVER/kernel/$f"
+  done
+  cd /
+fi
+# Copy module metadata
+for meta in modules.builtin modules.builtin.modinfo modules.order; do
+  [ -f "$KVER_DIR/$meta" ] && cp "$KVER_DIR/$meta" "/tmp/keep-modules/$KVER/" || true
+done
+rm -rf /tmp/all-modules
+
+echo "Stripped modules size:"
+du -sh /tmp/keep-modules/
+
+# Now mount disk and inject only the stripped modules
 mkdir -p /mnt/rootfs
 mount -o loop /output/sandbox.img /mnt/rootfs
 rm -rf /mnt/rootfs/lib/modules
 mkdir -p /mnt/rootfs/lib/modules
-tar -xzf /output/custom-modules.tar.gz -C /mnt/rootfs/lib/modules
+cp -a /tmp/keep-modules/. /mnt/rootfs/lib/modules/
+rm -rf /tmp/keep-modules
+
 sync
 umount /mnt/rootfs
 '

@@ -207,12 +207,13 @@ const terminalTools: BlockTool[] = [
   //   icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
   //   terminalPreset: { command: "droid", agentic: true },
   // },
-  {
-    type: "terminal",
-    label: "OpenClaw",
-    icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "[ -f ~/.openclaw/.env ] && openclaw tui || openclaw onboard", agentic: true },
-  },
+  // OpenClaw - temporarily hidden (not installed in sandbox image)
+  // {
+  //   type: "terminal",
+  //   label: "OpenClaw",
+  //   icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
+  //   terminalPreset: { command: "[ -f ~/.openclaw/.env ] && openclaw tui || openclaw onboard", agentic: true },
+  // },
   {
     type: "terminal",
     label: "Terminal",

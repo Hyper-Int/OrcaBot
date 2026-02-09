@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "identifier": "com.orcabot.desktop",
   "build": {
-    "beforeDevCommand": "sh -c \"cd ../../frontend && NEXT_PUBLIC_API_URL=http://localhost:8787 NEXT_PUBLIC_SITE_URL=http://localhost:8788 NEXT_PUBLIC_DEV_MODE_ENABLED=true npx wrangler dev -c wrangler.toml --port 8788\"",
+    "beforeDevCommand": "sh -c \"cd ../../frontend && NEXT_PUBLIC_API_URL=http://localhost:8787 NEXT_PUBLIC_SITE_URL=http://localhost:8788 NEXT_PUBLIC_DEV_MODE_ENABLED=true NEXT_PUBLIC_DESKTOP_MODE=true npx wrangler dev -c wrangler.toml --port 8788\"",
     "beforeBuildCommand": "sh -c \"../scripts/build-desktop-resources.sh\"",
     "devUrl": "http://localhost:8788",
     "frontendDist": "../dist"
@@ -29,10 +29,14 @@
       "resources/workerd/dist/worker.js",
       "resources/workerd/assets-service/worker.js",
       "resources/d1-shim/d1-shim",
-      "resources/vm/*",
+      "resources/vm/sandbox.img",
+      "resources/vm/vmlinuz",
+      "resources/vm/initrd.img",
+      "resources/vm/vz-helper",
       "resources/frontend/*",
       "resources/frontend/assets/**/*"
     ],
+    "targets": ["app"],
     "macOS": {
       "entitlements": "entitlements.plist",
       "signingIdentity": "-",

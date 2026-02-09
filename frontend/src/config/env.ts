@@ -1,6 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: desktop-env-v3-tauri-localhost
+const MODULE_REVISION = "desktop-env-v3-tauri-localhost";
+console.log(
+  `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
 /**
  * Environment configuration
  */
@@ -16,6 +22,64 @@ export const SITE_URL =
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
 
+// Desktop mode detection uses three layers (in order of reliability):
+// 1. Cookie "orcabot-desktop=1" — set by middleware on every response in desktop mode
+// 2. URL param "?desktop=1" — set by Tauri's dist/index.html redirect
+// 3. localStorage "orcabot-desktop" — persisted from either of the above
+// Server-side uses the env var directly.
+function getDesktopMode(): boolean {
+  const envDesktop = process.env.NEXT_PUBLIC_DESKTOP_MODE === "true";
+  if (typeof window === "undefined") {
+    return envDesktop;
+  }
+  const tauriWindow = window as unknown as { __TAURI__?: unknown; __TAURI_IPC__?: unknown };
+  const isTauri = Boolean(tauriWindow.__TAURI__ || tauriWindow.__TAURI_IPC__);
+  const hostname = window.location.hostname;
+  const isLocalhost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1";
+  // Never allow URL/cookie/localStorage to enable desktop mode unless:
+  // - The build explicitly opts in, OR
+  // - We're running inside Tauri, OR
+  // - We're on localhost (desktop dev / bundled workerd).
+  if (!envDesktop && !isTauri && !isLocalhost) {
+    return false;
+  }
+  try {
+    // Tauri desktop always counts as desktop mode.
+    if (isTauri) {
+      return true;
+    }
+    // Check cookie (set by middleware via HTTP Set-Cookie header)
+    if (document.cookie.includes("orcabot-desktop=1")) {
+      localStorage.setItem("orcabot-desktop", "1");
+      return true;
+    }
+    // Check URL param (set by Tauri's redirect page)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("desktop") === "1") {
+      localStorage.setItem("orcabot-desktop", "1");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("desktop");
+      window.history.replaceState({}, "", url.toString());
+      return true;
+    }
+    // Check localStorage (persisted from previous detection)
+    if (localStorage.getItem("orcabot-desktop") === "1") {
+      return true;
+    }
+    // If build opts in but no markers are set yet, still enable desktop mode.
+    if (envDesktop) {
+      return true;
+    }
+    return false;
+  } catch {
+    return envDesktop || isTauri || isLocalhost;
+  }
+}
+export const DESKTOP_MODE = getDesktopMode();
+
 /**
  * Environment object for convenience
  */
@@ -23,6 +87,7 @@ export const env = {
   CLOUDFLARE_API_URL,
   SITE_URL,
   DEV_MODE_ENABLED,
+  DESKTOP_MODE,
 };
 
 /**
