@@ -1,14 +1,20 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: desktop-auth-v1-headers
+const MODULE_REVISION = "desktop-auth-v1-headers";
+console.log(
+  `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
 "use client";
 
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
-import { API } from "@/config/env";
-import { useAuthStore } from "@/stores/auth-store";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import type { User } from "@/types";
 
 function makeQueryClient() {
@@ -40,7 +46,7 @@ interface ProvidersProps {
 }
 
 function AuthBootstrapper() {
-  const { isAuthenticated, setUser, setAuthResolved } = useAuthStore();
+  const { isAuthenticated, setUser, setAuthResolved, loginDevMode } = useAuthStore();
   const hasBootstrapped = React.useRef(false);
 
   React.useEffect(() => {
@@ -58,6 +64,24 @@ function AuthBootstrapper() {
     let isActive = true;
 
     const bootstrap = async () => {
+      // Desktop mode: auto-login as local user, no auth needed
+      if (DESKTOP_MODE) {
+        loginDevMode("Desktop User", "desktop@localhost");
+        const authHeaders = getAuthHeaders();
+        try {
+          await fetch(`${API.cloudflare.base}/auth/dev/session`, {
+            method: "POST",
+            headers: {
+              ...authHeaders,
+            },
+            credentials: "include",
+          });
+        } catch {
+          // Session creation is best-effort — auth store is already set
+        }
+        return;
+      }
+
       try {
         const response = await fetch(API.cloudflare.usersMe, {
           credentials: "include",
@@ -86,7 +110,7 @@ function AuthBootstrapper() {
     return () => {
       isActive = false;
     };
-  }, [isAuthenticated, setUser, setAuthResolved]);
+  }, [isAuthenticated, setUser, setAuthResolved, loginDevMode]);
 
   return null;
 }

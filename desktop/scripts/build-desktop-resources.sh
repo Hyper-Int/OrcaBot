@@ -87,7 +87,7 @@ if [ -d "$VM_IMAGE_DIR" ]; then
   if [ "${VM_BUILD_FAILED:-0}" = "1" ]; then
     printf '%s\n' "Skipping VM image staging due to build failure"
   else
-  # Copy all available images
+  # Copy VM images to Tauri resources
   for img in sandbox.img sandbox-rootfs.tar.gz sandbox.qcow2 vmlinuz initrd.img; do
     if [ -f "$VM_IMAGE_DIR/$img" ]; then
       cp "$VM_IMAGE_DIR/$img" "$VM_RES_DIR/$img"
@@ -121,7 +121,8 @@ if [ -d "$FRONTEND_DIR" ]; then
   : "${NEXT_PUBLIC_API_URL:=http://127.0.0.1:8787}"
   : "${NEXT_PUBLIC_SITE_URL:=http://127.0.0.1:8788}"
   : "${NEXT_PUBLIC_DEV_MODE_ENABLED:=true}"
-  export NEXT_PUBLIC_API_URL NEXT_PUBLIC_SITE_URL NEXT_PUBLIC_DEV_MODE_ENABLED
+  : "${NEXT_PUBLIC_DESKTOP_MODE:=true}"
+  export NEXT_PUBLIC_API_URL NEXT_PUBLIC_SITE_URL NEXT_PUBLIC_DEV_MODE_ENABLED NEXT_PUBLIC_DESKTOP_MODE
 
   printf '%s\n' "Building frontend worker..."
 
@@ -226,7 +227,8 @@ ${WASM_MODULES}      ],
         (name = "ASSETS", service = "assets"),
         (name = "NEXT_PUBLIC_API_URL", fromEnvironment = "NEXT_PUBLIC_API_URL"),
         (name = "NEXT_PUBLIC_SITE_URL", fromEnvironment = "NEXT_PUBLIC_SITE_URL"),
-        (name = "NEXT_PUBLIC_DEV_MODE_ENABLED", fromEnvironment = "NEXT_PUBLIC_DEV_MODE_ENABLED")
+        (name = "NEXT_PUBLIC_DEV_MODE_ENABLED", fromEnvironment = "NEXT_PUBLIC_DEV_MODE_ENABLED"),
+        (name = "NEXT_PUBLIC_DESKTOP_MODE", fromEnvironment = "NEXT_PUBLIC_DESKTOP_MODE")
       ]
     ))
   ],
@@ -268,7 +270,7 @@ cat > "$DIST_DIR/index.html" << 'REDIRECT_EOF'
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=http://localhost:8788">
+  <meta http-equiv="refresh" content="0;url=http://localhost:8788/dashboards?desktop=1">
   <title>Orcabot Desktop</title>
   <style>
     body {
@@ -286,7 +288,7 @@ cat > "$DIST_DIR/index.html" << 'REDIRECT_EOF'
 <body>
   <p>Loading Orcabot...</p>
   <script>
-    window.location.replace('http://localhost:8788');
+    window.location.replace('http://localhost:8788/dashboards?desktop=1');
   </script>
 </body>
 </html>

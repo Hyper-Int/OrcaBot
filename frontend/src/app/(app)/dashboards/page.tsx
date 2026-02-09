@@ -1,6 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: desktop-header-v1-hide-user
+const MODULE_REVISION = "desktop-header-v1-hide-user";
+console.log(
+  `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
 "use client";
 
 import * as React from "react";
@@ -44,7 +50,7 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
 import {
   listDashboards,
   createDashboard,
@@ -77,8 +83,9 @@ export default function DashboardsPage() {
   const [secretsSectionExpanded, setSecretsSectionExpanded] = React.useState(true);
   const [envVarsSectionExpanded, setEnvVarsSectionExpanded] = React.useState(true);
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated (skip in desktop mode — auto-login handles it)
   React.useEffect(() => {
+    if (DESKTOP_MODE) return;
     if (!isAuthResolved) {
       return;
     }
@@ -297,10 +304,10 @@ export default function DashboardsPage() {
             />
             <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
           </div>
-          <div className="flex items-center gap-4">
-            {isAdmin && (
-              <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
-                <Button
+            <div className="flex items-center gap-4">
+              {isAdmin && (
+                <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
+                  <Button
                   variant={adminMode ? "danger" : "ghost"}
                   size="sm"
                   onClick={() => setAdminMode(!adminMode)}
@@ -310,12 +317,14 @@ export default function DashboardsPage() {
                 </Button>
               </Tooltip>
             )}
-            <div className="flex items-center gap-2">
-              <Avatar name={user?.name || "User"} size="sm" />
-              <span className="text-body-sm text-[var(--foreground-muted)]">
-                {user?.name}
-              </span>
-            </div>
+              {!DESKTOP_MODE && (
+                <div className="flex items-center gap-2">
+                  <Avatar name={user?.name || "User"} size="sm" />
+                  <span className="text-body-sm text-[var(--foreground-muted)]">
+                    {user?.name}
+                  </span>
+                </div>
+              )}
             <Tooltip content="Toggle theme">
               <ThemeToggle />
             </Tooltip>

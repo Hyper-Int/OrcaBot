@@ -42,7 +42,7 @@ import {
 } from "@/components/icons";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
-import { API, DEV_MODE_ENABLED, SITE_URL } from "@/config/env";
+import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL } from "@/config/env";
 
 const MODULE_REVISION = "splash-v5-works-with";
 console.log(
@@ -167,6 +167,18 @@ export default function Home() {
     isLoading,
     setLoading,
   } = useAuthStore();
+
+  // Desktop mode: skip splash entirely, go straight to dashboards
+  React.useEffect(() => {
+    if (DESKTOP_MODE) {
+      router.replace("/dashboards");
+    }
+  }, [router]);
+
+  // Don't render splash content in desktop mode — just show blank while redirecting
+  if (DESKTOP_MODE) {
+    return null;
+  }
 
   // Login form state
   const [showDevLogin, setShowDevLogin] = React.useState(false);

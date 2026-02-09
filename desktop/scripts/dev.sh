@@ -62,6 +62,7 @@ printf '%s\n' "Starting frontend dev server..."
   NEXT_PUBLIC_API_URL="http://localhost:$CONTROLPLANE_PORT" \
   NEXT_PUBLIC_SITE_URL="http://localhost:$FRONTEND_PORT" \
   NEXT_PUBLIC_DEV_MODE_ENABLED="true" \
+  NEXT_PUBLIC_DESKTOP_MODE="true" \
   npx wrangler dev -c wrangler.toml --port "$FRONTEND_PORT"
 ) &
 FRONTEND_PID=$!

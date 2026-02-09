@@ -75,7 +75,7 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \
     && mv /tmp/noVNC-1.6.0 /usr/share/novnc \
     && ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
-# Install Node.js 22 (required by OpenClaw)
+# Install Node.js 22 (required by Claude Code, Codex, Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -94,16 +94,20 @@ RUN npm install -g @openai/codex
 # Install Gemini CLI (Google)
 RUN npm install -g @google/gemini-cli
 
-# Install OpenCode CLI and move to shared location
-RUN curl -fsSL https://opencode.ai/install | bash \
-    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
+# --- Temporarily disabled agents (may re-enable later) ---
+# Keeping Claude Code, Gemini CLI, and Codex CLI for now.
+# OpenCode, Droid, and OpenClaw are commented out to reduce image size (~800MB savings).
 
-# Install Droid CLI (Factory)
-RUN curl -fsSL https://app.factory.ai/cli | sh \
-    && if [ -x /root/.local/bin/droid ]; then mv /root/.local/bin/droid /usr/local/bin/droid; fi
+# # Install OpenCode CLI and move to shared location
+# RUN curl -fsSL https://opencode.ai/install | bash \
+#     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
-# Install OpenClaw CLI
-RUN npm install -g openclaw@latest
+# # Install Droid CLI (Factory)
+# RUN curl -fsSL https://app.factory.ai/cli | sh \
+#     && if [ -x /root/.local/bin/droid ]; then mv /root/.local/bin/droid /usr/local/bin/droid; fi
+
+# # Install OpenClaw CLI
+# RUN npm install -g openclaw@latest
 
 # Install Talkito (voice assistant) - cached, no submodules
 # To force update: rebuild with --no-cache or bump a comment here
@@ -114,6 +118,13 @@ RUN git clone --depth 1 --no-recurse-submodules https://github.com/robdmac/talki
 
 # Install Playwright (browser automation) without bundled browsers
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
+
+# Strip build-only packages to reduce image size (~300MB savings)
+# build-essential/gcc/g++ were needed for native npm modules; python3-dev for pip install.
+# Neither is needed at runtime.
+RUN apt-get update && apt-get purge -y --auto-remove \
+    build-essential cpp gcc g++ make python3-dev \
+    && rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
 
 # Install xdg-open wrapper to route URLs into the sandbox browser
 COPY docker/xdg-open.sh /usr/local/bin/xdg-open

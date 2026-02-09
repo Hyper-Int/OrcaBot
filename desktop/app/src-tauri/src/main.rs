@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use tauri::Manager;
+use tauri::RunEvent;
 
 use vm::{create_platform_vm, VMConfig, VirtualMachine};
 
@@ -160,6 +161,7 @@ impl DesktopServices {
           ("NEXT_PUBLIC_API_URL", format!("http://localhost:{}", std::env::var("CONTROLPLANE_PORT").unwrap_or_else(|_| "8787".to_string()))),
           ("NEXT_PUBLIC_SITE_URL", format!("http://localhost:{}", frontend_port)),
           ("NEXT_PUBLIC_DEV_MODE_ENABLED", "true".to_string()),
+          ("NEXT_PUBLIC_DESKTOP_MODE", "true".to_string()),
         ],
       );
 
@@ -228,17 +230,12 @@ impl DesktopServices {
     );
 
     wait_for_health(&controlplane_port);
-
-    // Start sandbox VM
-    if let Err(err) = self.start_sandbox_vm(app, &data_dir, &resource_root) {
-      eprintln!("Failed to start sandbox VM: {}", err);
-      eprintln!("Sandbox features will be unavailable.");
-    }
+    // VM startup is handled separately in a background thread (see main())
+    // to avoid blocking the window from appearing.
   }
 
   fn start_sandbox_vm(
     &self,
-    app: &tauri::App,
     data_dir: &Path,
     resource_root: &Path,
   ) -> Result<(), vm::VMError> {
@@ -458,10 +455,36 @@ fn main() {
         handler_services.shutdown();
         std::process::exit(0);
       });
+
+      // Start core services (d1-shim, workerd) — blocks until healthy (~5-10s)
       services.start(app);
+
+      // Start sandbox VM in a background thread so the window appears immediately
+      // instead of blocking for up to 120s waiting for the VM health check.
+      let resource_root = resolve_resource_root(app);
+      let data_dir = app.path().app_data_dir().ok();
+      if let (Some(rr), Some(dd)) = (resource_root, data_dir) {
+        let vm_services = Arc::clone(&services);
+        std::thread::spawn(move || {
+          if let Err(err) = vm_services.start_sandbox_vm(&dd, &rr) {
+            eprintln!("Failed to start sandbox VM: {}", err);
+            eprintln!("Sandbox features will be unavailable.");
+          }
+        });
+      }
+
       app.manage(Arc::clone(&services));
       Ok(())
     })
-    .run(tauri::generate_context!())
+    .run(tauri::generate_context!(), |app_handle, event| {
+      match event {
+        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+          if let Some(services) = app_handle.try_state::<Arc<DesktopServices>>() {
+            services.shutdown();
+          }
+        }
+        _ => {}
+      }
+    })
     .expect("error while running tauri application");
 }
