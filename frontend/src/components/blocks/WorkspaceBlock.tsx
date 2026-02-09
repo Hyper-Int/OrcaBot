@@ -64,6 +64,7 @@ import {
   type OnedriveSyncStatus,
 } from "@/lib/api/cloudflare";
 import type { SessionFileEntry } from "@/lib/api/cloudflare";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { useAuthStore } from "@/stores/auth-store";
 import { API } from "@/config/env";
 
@@ -1174,6 +1175,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <Copy className="w-3 h-3" />
                 <span>Duplicate</span>
               </DropdownMenuItem>
+              <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
             </DropdownMenuContent>
           </DropdownMenu>
           <Button

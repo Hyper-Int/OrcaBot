@@ -46,6 +46,7 @@ import {
 } from "@/lib/api/cloudflare";
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 
 interface FormsData extends Record<string, unknown> {
   content: string;
@@ -366,6 +367,7 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

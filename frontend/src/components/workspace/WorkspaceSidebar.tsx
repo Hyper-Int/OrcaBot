@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v16-stale-session-fix
-const MODULE_REVISION = "workspace-sidebar-v16-stale-session-fix";
+// REVISION: workspace-sidebar-v17-fix-listener-spam
+const MODULE_REVISION = "workspace-sidebar-v17-fix-listener-spam";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -785,10 +785,23 @@ export function WorkspaceSidebar({
     return () => clearInterval(interval);
   }, [expandedPaths, loadFiles, sessionId]);
 
+  // Stable ref for OAuth callbacks — avoids re-running message listener effects on every render
+  const oauthCallbacksRef = React.useRef({
+    loadDriveIntegration, loadDriveStatus, loadGithubIntegration, loadGithubRepos,
+    loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders,
+    onStorageLinked, dashboardId,
+  });
+  oauthCallbacksRef.current = {
+    loadDriveIntegration, loadDriveStatus, loadGithubIntegration, loadGithubRepos,
+    loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders,
+    onStorageLinked, dashboardId,
+  };
+
   // OAuth popup message listeners
   React.useEffect(() => {
     console.log(`[WorkspaceSidebar] Setting up message listener: location.origin=${window.location.origin}, apiOrigin=${apiOrigin}`);
     const handleMessage = (event: MessageEvent) => {
+      const cb = oauthCallbacksRef.current;
       // Only log OAuth-related messages, ignore others like React DevTools
       const payload = event.data as { type?: string; folder?: { dashboardId?: string } };
       if (typeof payload?.type === "string" && payload.type.includes("auth")) {
@@ -800,23 +813,23 @@ export function WorkspaceSidebar({
         }
         return;
       }
-      if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] drive-auth-complete"); void loadDriveIntegration(); setDrivePickerOpen(true); return; }
-      if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] drive-auth-expired"); setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
+      if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] drive-auth-complete"); void cb.loadDriveIntegration(); setDrivePickerOpen(true); return; }
+      if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] drive-auth-expired"); setDrivePickerOpen(false); void cb.loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
       if (payload?.type === "drive-linked") {
         console.log("[WorkspaceSidebar] drive-linked");
-        setDrivePickerOpen(false); void loadDriveIntegration(); void loadDriveStatus();
-        const did = payload.folder?.dashboardId || dashboardId;
+        setDrivePickerOpen(false); void cb.loadDriveIntegration(); void cb.loadDriveStatus();
+        const did = payload.folder?.dashboardId || cb.dashboardId;
         if (did) void syncGoogleDrive(did).catch(() => undefined);
-        onStorageLinked?.("google_drive");
+        cb.onStorageLinked?.("google_drive");
         return;
       }
-      if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] github-auth-complete"); void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
-      if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] box-auth-complete"); void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
-      if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] onedrive-auth-complete"); void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
+      if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] github-auth-complete"); void cb.loadGithubIntegration(); setGithubPickerOpen(true); void cb.loadGithubRepos(); return; }
+      if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] box-auth-complete"); void cb.loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void cb.loadBoxFolders("0"); return; }
+      if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] onedrive-auth-complete"); void cb.loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void cb.loadOnedriveFolders("root"); }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [apiOrigin, dashboardId, onStorageLinked, loadDriveIntegration, loadDriveStatus, loadGithubIntegration, loadGithubRepos, loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders]);
+  }, [apiOrigin]); // eslint-disable-line react-hooks/exhaustive-deps -- callbacks accessed via stable ref
 
   // BroadcastChannel for cross-tab OAuth (same-origin only, may not work if control plane is different origin)
   React.useEffect(() => {
@@ -825,23 +838,24 @@ export function WorkspaceSidebar({
       bc = new BroadcastChannel("orcabot-oauth");
       console.log("[WorkspaceSidebar] BroadcastChannel 'orcabot-oauth' created");
       bc.onmessage = (event: MessageEvent) => {
+        const cb = oauthCallbacksRef.current;
         const payload = event.data as { type?: string; dashboardId?: string };
         console.log("[WorkspaceSidebar] BroadcastChannel message:", payload?.type);
-        if (payload?.dashboardId && payload.dashboardId !== dashboardId) {
-          console.log(`[WorkspaceSidebar] BroadcastChannel dashboardId mismatch: ${payload.dashboardId} !== ${dashboardId}`);
+        if (payload?.dashboardId && payload.dashboardId !== cb.dashboardId) {
+          console.log(`[WorkspaceSidebar] BroadcastChannel dashboardId mismatch: ${payload.dashboardId} !== ${cb.dashboardId}`);
           return;
         }
-        if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] BC drive-auth-complete"); void loadDriveIntegration(); setDrivePickerOpen(true); return; }
-        if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] BC drive-auth-expired"); setDrivePickerOpen(false); void loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
-        if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] BC github-auth-complete"); void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); return; }
-        if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] BC box-auth-complete"); void loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void loadBoxFolders("0"); return; }
-        if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] BC onedrive-auth-complete"); void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); }
+        if (payload?.type === "drive-auth-complete") { console.log("[WorkspaceSidebar] BC drive-auth-complete"); void cb.loadDriveIntegration(); setDrivePickerOpen(true); return; }
+        if (payload?.type === "drive-auth-expired") { console.log("[WorkspaceSidebar] BC drive-auth-expired"); setDrivePickerOpen(false); void cb.loadDriveIntegration(); setFileError("Google Drive session expired. Please reconnect."); return; }
+        if (payload?.type === "github-auth-complete") { console.log("[WorkspaceSidebar] BC github-auth-complete"); void cb.loadGithubIntegration(); setGithubPickerOpen(true); void cb.loadGithubRepos(); return; }
+        if (payload?.type === "box-auth-complete") { console.log("[WorkspaceSidebar] BC box-auth-complete"); void cb.loadBoxIntegration(); setBoxPickerOpen(true); setBoxPath([]); void cb.loadBoxFolders("0"); return; }
+        if (payload?.type === "onedrive-auth-complete") { console.log("[WorkspaceSidebar] BC onedrive-auth-complete"); void cb.loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void cb.loadOnedriveFolders("root"); }
       };
     } catch (e) {
       console.warn("[WorkspaceSidebar] BroadcastChannel not available:", e);
     }
     return () => { try { bc?.close(); } catch {} };
-  }, [dashboardId, loadDriveIntegration, loadGithubIntegration, loadGithubRepos, loadBoxIntegration, loadBoxFolders, loadOnedriveIntegration, loadOnedriveFolders]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- callbacks accessed via stable ref
 
   // Sync status polling
   React.useEffect(() => { if (!driveSyncing) return; const i = setInterval(() => { void loadDriveStatus(); }, 2500); return () => clearInterval(i); }, [driveSyncing, loadDriveStatus]);

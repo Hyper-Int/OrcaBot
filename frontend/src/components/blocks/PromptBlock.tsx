@@ -27,6 +27,7 @@ import { useThemeStore } from "@/stores/theme-store";
 import { useASR } from "@/hooks/useASR";
 import { ASRSettingsDialog } from "./ASRSettingsDialog";
 import { CodeBlockRenderer } from "./CodeBlockRenderer";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface PromptData extends Record<string, unknown> {
@@ -258,6 +259,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
                   <Copy className="w-3 h-3" />
                   <span>Duplicate</span>
                 </DropdownMenuItem>
+                <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
               </DropdownMenuContent>
             </DropdownMenu>
             <ASRSettingsDialog open={asrSettingsOpen} onOpenChange={setAsrSettingsOpen} />

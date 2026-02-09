@@ -114,6 +114,7 @@ import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { TasksPanel } from "./TasksPanel";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
 
@@ -3677,6 +3678,7 @@ export function TerminalBlock({
                   </DropdownMenuItem>
                 </>
               )}
+              <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

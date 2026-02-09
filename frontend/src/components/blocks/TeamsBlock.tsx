@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { TeamsIcon } from "@/components/icons";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -378,6 +379,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

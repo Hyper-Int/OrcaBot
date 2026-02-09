@@ -44,6 +44,7 @@ import {
 } from "@/lib/api/cloudflare";
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 
 interface CalendarData extends Record<string, unknown> {
   content: string;
@@ -358,6 +359,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

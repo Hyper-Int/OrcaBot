@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { ApiError } from "@/lib/api/client";
 import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
@@ -240,6 +241,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
               <Copy className="w-3 h-3" />
               <span>Duplicate</span>
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
         <Button
