@@ -98,7 +98,7 @@ export class RateLimitCounter implements DurableObject {
       return Response.json({ reset: true });
     }
 
-    return Response.json({ error: 'Not found' }, { status: 404 });
+    return Response.json({ error: 'E79229: Not found' }, { status: 404 });
   }
 
   /**

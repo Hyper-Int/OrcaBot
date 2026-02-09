@@ -1368,7 +1368,7 @@ export async function getGithubRepоs(
       } catch (cleanupErr) {
         console.error('Failed to auto-disconnect GitHub after auth failure:', cleanupErr);
       }
-      return Response.json({ connected: false, repos: [], error: 'GitHub session expired. Please reconnect.' });
+      return Response.json({ connected: false, repos: [], error: 'E79450: GitHub session expired. Please reconnect.' });
     }
     return Response.json({ connected: false, repos: [] });
   }
@@ -5385,7 +5385,7 @@ export async function syncGmailMirror(
     return Response.json({ ok: true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Sync failed';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79451: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -5500,7 +5500,7 @@ export async function getGmailMessageDetail(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch message';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79452: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -5592,7 +5592,7 @@ export async function performGmailAction(
     return Response.json({ ok: true, labels: result.labelIds });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Action failed';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79453: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -5657,7 +5657,7 @@ export async function startGmailWatch(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to start watch';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79454: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -5697,7 +5697,7 @@ export async function stopGmailWatchEndpoint(
     return Response.json({ ok: true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to stop watch';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79455: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -5719,7 +5719,7 @@ export async function handleGmailPush(
     };
 
     if (!body.message?.data) {
-      return Response.json({ error: 'Missing message data' }, { status: 400 });
+      return Response.json({ error: 'E79456: Missing message data' }, { status: 400 });
     }
 
     // Decode base64 message data
@@ -5832,7 +5832,7 @@ export async function handleGmailPush(
     return Response.json({ ok: true });
   } catch (error) {
     console.error('Gmail push handler error:', error);
-    return Response.json({ error: 'Push processing failed' }, { status: 500 });
+    return Response.json({ error: 'E79457: Push processing failed' }, { status: 500 });
   }
 }
 
@@ -6581,7 +6581,7 @@ export async function syncCalendarMirror(
     return Response.json({ ok: true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Sync failed';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79458: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -7495,7 +7495,7 @@ export async function syncContactsMirror(
     return Response.json({ ok: true });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Sync failed';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79459: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -7700,7 +7700,7 @@ export async function searchContactsEndpoint(
     return Response.json({ contacts });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Search failed';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79460: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8286,7 +8286,7 @@ export async function listSpreadsheetsEndpoint(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to list spreadsheets';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79461: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8346,7 +8346,7 @@ export async function getSpreadsheetEndpoint(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch spreadsheet';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79462: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8398,7 +8398,7 @@ export async function readSheetValues(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to read values';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79463: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8454,7 +8454,7 @@ export async function writeSheetValues(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to write values';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79464: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8509,7 +8509,7 @@ export async function appendSheetValuesEndpoint(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to append values';
-    return Response.json({ error: errorMessage }, { status: 500 });
+    return Response.json({ error: 'E79465: ' + errorMessage }, { status: 500 });
   }
 }
 
@@ -8865,7 +8865,7 @@ export async function setupFormsMirror(
   const { dashboardId } = body;
 
   if (!dashboardId) {
-    return Response.json({ error: 'dashboardId is required' }, { status: 400 });
+    return Response.json({ error: 'E79466: dashboardId is required' }, { status: 400 });
   }
 
   const integration = await env.DB.prepare(
@@ -8873,7 +8873,7 @@ export async function setupFormsMirror(
   ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
 
   if (!integration) {
-    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+    return Response.json({ error: 'E79467: Google Forms not connected' }, { status: 400 });
   }
 
   let emailAddress = '';
@@ -8919,7 +8919,7 @@ export async function unlinkFormsMirror(
   const dashboardId = url.searchParams.get('dashboard_id');
 
   if (!dashboardId) {
-    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+    return Response.json({ error: 'E79468: dashboard_id is required' }, { status: 400 });
   }
 
   await env.DB.prepare(
@@ -8959,7 +8959,7 @@ export async function listFormsEndpoint(
 
   if (!driveRes.ok) {
     const errorText = await driveRes.text();
-    return Response.json({ error: `Failed to list forms: ${errorText}` }, { status: 500 });
+    return Response.json({ error: `E79469: Failed to list forms: ${errorText}` }, { status: 500 });
   }
 
   const driveData = await driveRes.json() as { files: Array<{ id: string; name: string }> };
@@ -8982,7 +8982,7 @@ export async function getFormEndpoint(
   const formId = url.searchParams.get('form_id');
 
   if (!formId) {
-    return Response.json({ error: 'form_id is required' }, { status: 400 });
+    return Response.json({ error: 'E79470: form_id is required' }, { status: 400 });
   }
 
   const integration = await env.DB.prepare(
@@ -8990,7 +8990,7 @@ export async function getFormEndpoint(
   ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
 
   if (!integration) {
-    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+    return Response.json({ error: 'E79471: Google Forms not connected' }, { status: 400 });
   }
 
   const accessToken = await getFormsAccessToken(env, auth.user!.id);
@@ -9002,7 +9002,7 @@ export async function getFormEndpoint(
 
   if (!formRes.ok) {
     const errorText = await formRes.text();
-    return Response.json({ error: `Failed to get form: ${errorText}` }, { status: 500 });
+    return Response.json({ error: `E79472: Failed to get form: ${errorText}` }, { status: 500 });
   }
 
   const formData = await formRes.json() as {
@@ -9055,7 +9055,7 @@ export async function getFormResponsesEndpoint(
   const dashboardId = url.searchParams.get('dashboard_id');
 
   if (!formId || !dashboardId) {
-    return Response.json({ error: 'form_id and dashboard_id are required' }, { status: 400 });
+    return Response.json({ error: 'E79473: form_id and dashboard_id are required' }, { status: 400 });
   }
 
   const integration = await env.DB.prepare(
@@ -9063,7 +9063,7 @@ export async function getFormResponsesEndpoint(
   ).bind(auth.user!.id).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
 
   if (!integration) {
-    return Response.json({ error: 'Google Forms not connected' }, { status: 400 });
+    return Response.json({ error: 'E79474: Google Forms not connected' }, { status: 400 });
   }
 
   const accessToken = await getFormsAccessToken(env, auth.user!.id);
@@ -9075,7 +9075,7 @@ export async function getFormResponsesEndpoint(
 
   if (!responsesRes.ok) {
     const errorText = await responsesRes.text();
-    return Response.json({ error: `Failed to get responses: ${errorText}` }, { status: 500 });
+    return Response.json({ error: `E79475: Failed to get responses: ${errorText}` }, { status: 500 });
   }
 
   const responsesData = await responsesRes.json() as {
@@ -9131,7 +9131,7 @@ export async function setLinkedForm(
   const { dashboardId, formId, formTitle } = body;
 
   if (!dashboardId || !formId || !formTitle) {
-    return Response.json({ error: 'dashboardId, formId, and formTitle are required' }, { status: 400 });
+    return Response.json({ error: 'E79476: dashboardId, formId, and formTitle are required' }, { status: 400 });
   }
 
   const existing = await env.DB.prepare(
@@ -9143,7 +9143,7 @@ export async function setLinkedForm(
       `UPDATE forms_mirrors SET form_id = ?, form_title = ?, status = 'linked', last_accessed_at = datetime('now'), updated_at = datetime('now') WHERE dashboard_id = ?`
     ).bind(formId, formTitle, dashboardId).run();
   } else {
-    return Response.json({ error: 'Forms mirror not set up for this dashboard' }, { status: 400 });
+    return Response.json({ error: 'E79477: Forms mirror not set up for this dashboard' }, { status: 400 });
   }
 
   return Response.json({ ok: true });
@@ -9352,7 +9352,7 @@ export async function getSlackStatus(
   const url = new URL(request.url);
   const dashboardId = url.searchParams.get('dashboard_id');
   if (!dashboardId) {
-    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+    return Response.json({ error: 'E79478: dashboard_id is required' }, { status: 400 });
   }
 
   // Verify dashboard membership — any authenticated user could otherwise query any dashboard
@@ -9360,7 +9360,7 @@ export async function getSlackStatus(
     'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
   ).bind(dashboardId, auth.user!.id).first();
   if (!membership) {
-    return Response.json({ error: 'Not found' }, { status: 404 });
+    return Response.json({ error: 'E79479: Not found' }, { status: 404 });
   }
 
   // Count active subscriptions and get last activity
@@ -9427,7 +9427,7 @@ export async function listSlackChannels(
   `).bind(auth.user!.id).first<{ access_token: string }>();
 
   if (!integration?.access_token) {
-    return Response.json({ error: 'Slack not connected' }, { status: 404 });
+    return Response.json({ error: 'E79540: Slack not connected' }, { status: 404 });
   }
 
   // Call Slack conversations.list with the bot token
@@ -9446,7 +9446,7 @@ export async function listSlackChannels(
 
   if (!resp.ok) {
     console.error(`[integrations] Slack conversations.list failed: ${resp.status}`);
-    return Response.json({ error: 'Failed to fetch channels from Slack' }, { status: 502 });
+    return Response.json({ error: 'E79541: Failed to fetch channels from Slack' }, { status: 502 });
   }
 
   const body = await resp.json() as {
@@ -9465,7 +9465,7 @@ export async function listSlackChannels(
 
   if (!body.ok) {
     console.error(`[integrations] Slack API error: ${body.error}`);
-    return Response.json({ error: body.error || 'Slack API error' }, { status: 502 });
+    return Response.json({ error: 'E79542: ' + (body.error || 'Slack API error') }, { status: 502 });
   }
 
   const channels = (body.channels || []).map(ch => ({
@@ -9704,14 +9704,14 @@ export async function getDiscordStatus(
   const url = new URL(request.url);
   const dashboardId = url.searchParams.get('dashboard_id');
   if (!dashboardId) {
-    return Response.json({ error: 'dashboard_id is required' }, { status: 400 });
+    return Response.json({ error: 'E79543: dashboard_id is required' }, { status: 400 });
   }
 
   const membership = await env.DB.prepare(
     'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
   ).bind(dashboardId, auth.user!.id).first();
   if (!membership) {
-    return Response.json({ error: 'Not found' }, { status: 404 });
+    return Response.json({ error: 'E79544: Not found' }, { status: 404 });
   }
 
   const stats = await env.DB.prepare(`
@@ -9763,7 +9763,7 @@ export async function listDiscordChannels(
   if (authError) return authError;
 
   if (!env.DISCORD_BOT_TOKEN) {
-    return Response.json({ error: 'Discord bot token not configured' }, { status: 500 });
+    return Response.json({ error: 'E79545: Discord bot token not configured' }, { status: 500 });
   }
 
   const integration = await env.DB.prepare(`
@@ -9771,19 +9771,19 @@ export async function listDiscordChannels(
   `).bind(auth.user!.id).first<{ metadata: string }>();
 
   if (!integration) {
-    return Response.json({ error: 'Discord not connected' }, { status: 404 });
+    return Response.json({ error: 'E79546: Discord not connected' }, { status: 404 });
   }
 
   let meta: Record<string, unknown> = {};
   try {
     meta = JSON.parse(integration.metadata || '{}');
   } catch {
-    return Response.json({ error: 'Invalid integration metadata' }, { status: 500 });
+    return Response.json({ error: 'E79547: Invalid integration metadata' }, { status: 500 });
   }
 
   const guildId = meta.guild_id as string;
   if (!guildId) {
-    return Response.json({ error: 'No guild associated with this integration' }, { status: 400 });
+    return Response.json({ error: 'E79548: No guild associated with this integration' }, { status: 400 });
   }
 
   // Fetch channels from Discord API using bot token
@@ -9793,7 +9793,7 @@ export async function listDiscordChannels(
 
   if (!resp.ok) {
     console.error(`[integrations] Discord channels fetch failed: ${resp.status}`);
-    return Response.json({ error: 'Failed to fetch channels from Discord' }, { status: 502 });
+    return Response.json({ error: 'E79549: Failed to fetch channels from Discord' }, { status: 502 });
   }
 
   const rawChannels = await resp.json() as Array<{
@@ -9934,7 +9934,7 @@ export async function connectMessagingToken(
 
   const provider = extractProviderFromUrl(request);
   if (!provider) {
-    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+    return Response.json({ error: 'E79550: Unknown messaging provider' }, { status: 400 });
   }
 
   // Token-based integrations are scoped per-user, not per-dashboard.
@@ -9945,11 +9945,11 @@ export async function connectMessagingToken(
   try {
     body = await request.json() as typeof body;
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return Response.json({ error: 'E79551: Invalid JSON body' }, { status: 400 });
   }
 
   if (!body.token || typeof body.token !== 'string') {
-    return Response.json({ error: 'token is required' }, { status: 400 });
+    return Response.json({ error: 'E79552: token is required' }, { status: 400 });
   }
 
   // Validate token with the provider
@@ -9959,7 +9959,7 @@ export async function connectMessagingToken(
     result = await validator.validate(body.token.trim(), body.metadata);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Token validation failed';
-    return Response.json({ error: msg }, { status: 400 });
+    return Response.json({ error: 'E79553: ' + msg }, { status: 400 });
   }
 
   // UPSERT into user_integrations
@@ -10047,7 +10047,7 @@ export async function getMessagingIntegration(
 
   const provider = extractProviderFromUrl(request);
   if (!provider) {
-    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+    return Response.json({ error: 'E79554: Unknown messaging provider' }, { status: 400 });
   }
 
   const row = await env.DB.prepare(
@@ -10083,7 +10083,7 @@ export async function listMessagingChannels(
 
   const provider = extractProviderFromUrl(request);
   if (!provider) {
-    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+    return Response.json({ error: 'E79555: Unknown messaging provider' }, { status: 400 });
   }
 
   const row = await env.DB.prepare(
@@ -10093,7 +10093,7 @@ export async function listMessagingChannels(
   // WhatsApp can list chats from D1 without a user_integrations row
   // (personal WhatsApp via bridge doesn't create one).
   if (!row && provider !== 'whatsapp') {
-    return Response.json({ error: 'Not connected' }, { status: 404 });
+    return Response.json({ error: 'E79556: Not connected' }, { status: 404 });
   }
 
   let meta: Record<string, unknown> = {};
@@ -10292,7 +10292,7 @@ export async function disconnectMessaging(
 
   const provider = extractProviderFromUrl(request);
   if (!provider) {
-    return Response.json({ error: 'Unknown messaging provider' }, { status: 400 });
+    return Response.json({ error: 'E79557: Unknown messaging provider' }, { status: 400 });
   }
 
   await env.DB.prepare(
@@ -10337,11 +10337,11 @@ export async function connectWhatsAppPersonal(
   try {
     body = await request.json() as typeof body;
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return Response.json({ error: 'E79558: Invalid JSON body' }, { status: 400 });
   }
 
   if (!body.dashboardId || !body.itemId) {
-    return Response.json({ error: 'dashboardId and itemId are required' }, { status: 400 });
+    return Response.json({ error: 'E79559: dashboardId and itemId are required' }, { status: 400 });
   }
 
   // Verify dashboard membership
@@ -10349,7 +10349,7 @@ export async function connectWhatsAppPersonal(
     'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
   ).bind(body.dashboardId, auth.user!.id).first();
   if (!membership) {
-    return Response.json({ error: 'Not found' }, { status: 404 });
+    return Response.json({ error: 'E79560: Not found' }, { status: 404 });
   }
 
   // Verify item exists and is a whatsapp block
@@ -10357,10 +10357,10 @@ export async function connectWhatsAppPersonal(
     'SELECT type FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
   ).bind(body.itemId, body.dashboardId).first<{ type: string }>();
   if (!item) {
-    return Response.json({ error: 'Item not found' }, { status: 404 });
+    return Response.json({ error: 'E79561: Item not found' }, { status: 404 });
   }
   if (item.type !== 'whatsapp') {
-    return Response.json({ error: 'Item is not a WhatsApp block' }, { status: 400 });
+    return Response.json({ error: 'E79562: Item is not a WhatsApp block' }, { status: 400 });
   }
 
   // Check for existing personal WhatsApp subscription on this item
@@ -10481,13 +10481,13 @@ export async function getWhatsAppQr(
   if (authError) return authError;
 
   if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
-    return Response.json({ error: 'Bridge service not configured' }, { status: 503 });
+    return Response.json({ error: 'E79563: Bridge service not configured' }, { status: 503 });
   }
 
   const url = new URL(request.url);
   const subscriptionId = url.searchParams.get('subscription_id');
   if (!subscriptionId) {
-    return Response.json({ error: 'subscription_id query param required' }, { status: 400 });
+    return Response.json({ error: 'E79564: subscription_id query param required' }, { status: 400 });
   }
 
   // Look up subscription and verify ownership
@@ -10497,7 +10497,7 @@ export async function getWhatsAppQr(
   `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string }>();
 
   if (!sub) {
-    return Response.json({ error: 'Subscription not found' }, { status: 404 });
+    return Response.json({ error: 'E79565: Subscription not found' }, { status: 404 });
   }
 
   // If already active, no QR needed
@@ -10529,7 +10529,7 @@ export async function getWhatsAppQr(
         });
       } catch (restartErr) {
         console.error('[integrations] Bridge restart failed:', restartErr);
-        return Response.json({ status: 'error', qrCode: null, error: 'Bridge session lost — please try again' });
+        return Response.json({ status: 'error', qrCode: null, error: 'E79566: Bridge session lost — please try again' });
       }
     }
 
@@ -10547,6 +10547,6 @@ export async function getWhatsAppQr(
     });
   } catch (err) {
     console.error('[integrations] Bridge getQrCode failed:', err);
-    return Response.json({ status: 'error', qrCode: null, error: 'Bridge unavailable' });
+    return Response.json({ status: 'error', qrCode: null, error: 'E79567: Bridge unavailable' });
   }
 }

@@ -675,7 +675,7 @@ export async function handleInboundWebhook(
 
   if (provider === 'telegram') {
     if (!hookId) {
-      return Response.json({ error: 'Telegram webhooks require a hookId' }, { status: 400 });
+      return Response.json({ error: 'E79430: Telegram webhooks require a hookId' }, { status: 400 });
     }
     // Telegram needs the subscription's webhook_secret for verification
     const sub = await env.DB.prepare(`
@@ -692,7 +692,7 @@ export async function handleInboundWebhook(
         const signingSecret = env.SLACK_SIGNING_SECRET;
         if (!signingSecret) {
           console.error('[webhook] SLACK_SIGNING_SECRET not configured');
-          return Response.json({ error: 'Server configuration error' }, { status: 500 });
+          return Response.json({ error: 'E79431: Server configuration error' }, { status: 500 });
         }
         signatureValid = await verifySlackSignature(request, signingSecret);
         break;
@@ -701,7 +701,7 @@ export async function handleInboundWebhook(
         const publicKey = env.DISCORD_PUBLIC_KEY;
         if (!publicKey) {
           console.error('[webhook] DISCORD_PUBLIC_KEY not configured');
-          return Response.json({ error: 'Server configuration error' }, { status: 500 });
+          return Response.json({ error: 'E79432: Server configuration error' }, { status: 500 });
         }
         signatureValid = await verifyDiscordSignature(request, publicKey);
         break;
@@ -716,7 +716,7 @@ export async function handleInboundWebhook(
           signatureValid = true;
         } else {
           console.error('[webhook] WHATSAPP_APP_SECRET not configured — rejecting webhook (set DEV_AUTH_ENABLED=true to bypass)');
-          return Response.json({ error: 'Server configuration error' }, { status: 500 });
+          return Response.json({ error: 'E79433: Server configuration error' }, { status: 500 });
         }
         break;
       }
@@ -726,17 +726,17 @@ export async function handleInboundWebhook(
         // These providers require JWT or shared-secret verification that is not yet implemented.
         // Reject webhooks until proper verification is added to prevent message injection.
         console.error(`[webhook] Provider '${provider}' webhook verification not yet implemented — rejecting`);
-        return Response.json({ error: 'Webhook verification not implemented for this provider' }, { status: 403 });
+        return Response.json({ error: 'E79434: Webhook verification not implemented for this provider' }, { status: 403 });
       }
       default:
         console.error(`[webhook] No verification for provider: ${provider}`);
-        return Response.json({ error: 'Unsupported provider' }, { status: 400 });
+        return Response.json({ error: 'E79435: Unsupported provider' }, { status: 400 });
     }
   }
 
   if (!signatureValid) {
     console.error(`[webhook] Signature verification failed for ${provider}/${hookId ?? 'global'}`);
-    return Response.json({ error: 'Invalid signature' }, { status: 401 });
+    return Response.json({ error: 'E79436: Invalid signature' }, { status: 401 });
   }
 
   // 2. Parse body and handle platform handshakes BEFORE subscription lookup.
@@ -745,7 +745,7 @@ export async function handleInboundWebhook(
     body = await request.clone().json() as Record<string, unknown>;
   } catch {
     console.error(`[webhook] Non-JSON or malformed payload from ${provider}/${hookId ?? 'global'}`);
-    return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    return Response.json({ error: 'E79437: Invalid JSON payload' }, { status: 400 });
   }
 
   if (provider === 'slack' && body.type === 'url_verification') {
@@ -1518,7 +1518,7 @@ export async function handleBridgeInbound(
   // 1. Verify bridge token
   const token = request.headers.get('X-Bridge-Token');
   if (!env.BRIDGE_INTERNAL_TOKEN || token !== env.BRIDGE_INTERNAL_TOKEN) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    return Response.json({ error: 'E79438: Unauthorized' }, { status: 401 });
   }
 
   // 2. Parse normalized message from bridge
@@ -1535,11 +1535,11 @@ export async function handleBridgeInbound(
   try {
     body = await request.json() as typeof body;
   } catch {
-    return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+    return Response.json({ error: 'E79439: Invalid JSON payload' }, { status: 400 });
   }
 
   if (!body.provider || !body.webhookId || !body.text) {
-    return Response.json({ error: 'provider, webhookId, and text are required' }, { status: 400 });
+    return Response.json({ error: 'E79440: provider, webhookId, and text are required' }, { status: 400 });
   }
 
   // 3. Look up subscription by webhook_id

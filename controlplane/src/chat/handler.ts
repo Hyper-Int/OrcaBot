@@ -1323,12 +1323,12 @@ export async function streamMessage(
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return Response.json({ error: 'E79226: Invalid JSON body' }, { status: 400 });
   }
 
   const { message, dashboardId } = body;
   if (!message || typeof message !== 'string') {
-    return Response.json({ error: 'Message is required' }, { status: 400 });
+    return Response.json({ error: 'E79227: Message is required' }, { status: 400 });
   }
 
   // Load conversation history

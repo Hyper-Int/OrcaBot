@@ -1,3 +1,5 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: workspace-sidebar-v1-agent-icons
 const MODULE_REVISION = "workspace-sidebar-v1-agent-icons";
 console.log(`[agent-icons] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);

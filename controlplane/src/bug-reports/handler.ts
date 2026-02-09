@@ -141,6 +141,6 @@ export async function submitBugReport(
     }, { status: 201 });
   } catch (error) {
     console.error('[bug-reports] Failed to send bug report:', error);
-    return Response.json({ error: 'Failed to submit bug report' }, { status: 500 });
+    return Response.json({ error: 'E79228: Failed to submit bug report' }, { status: 500 });
   }
 }
