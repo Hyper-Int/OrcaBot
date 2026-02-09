@@ -806,6 +806,72 @@ CREATE INDEX IF NOT EXISTS idx_inbound_messages_dashboard ON inbound_messages(da
 CREATE INDEX IF NOT EXISTS idx_inbound_messages_status ON inbound_messages(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_messages_dedup ON inbound_messages(subscription_id, platform_message_id);
 CREATE INDEX IF NOT EXISTS idx_inbound_messages_expires ON inbound_messages(expires_at);
+
+-- ============================================
+-- Agent State: Tasks & Memory
+-- ============================================
+
+-- Agent tasks (per-dashboard, optionally scoped to session/terminal)
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  session_id TEXT,                              -- Optional: scope to specific terminal
+  parent_id TEXT REFERENCES agent_tasks(id),    -- Subtasks
+
+  -- Task content
+  subject TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'in_progress', 'blocked', 'completed', 'cancelled')),
+  priority INTEGER NOT NULL DEFAULT 0,
+
+  -- Dependencies (JSON arrays of task IDs)
+  blocked_by TEXT NOT NULL DEFAULT '[]',
+  blocks TEXT NOT NULL DEFAULT '[]',
+
+  -- Agent metadata
+  owner_agent TEXT,                             -- Which agent owns this task
+  metadata TEXT NOT NULL DEFAULT '{}',          -- Flexible JSON for agent-specific data
+
+  -- Timestamps
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at TEXT,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_dashboard ON agent_tasks(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(dashboard_id, status);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent ON agent_tasks(parent_id);
+
+-- Agent memory (key-value store with optional categorization)
+CREATE TABLE IF NOT EXISTS agent_memory (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  session_id TEXT,                              -- Optional: scope to specific terminal
+
+  -- Memory content
+  key TEXT NOT NULL,                            -- e.g., "project_structure", "last_error"
+  value TEXT NOT NULL,                          -- JSON blob
+  memory_type TEXT NOT NULL DEFAULT 'fact'
+    CHECK (memory_type IN ('fact', 'context', 'preference', 'summary', 'checkpoint')),
+
+  -- Categorization
+  tags TEXT NOT NULL DEFAULT '[]',              -- JSON array for filtering
+
+  -- Lifecycle
+  expires_at TEXT,                              -- Optional TTL
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_memory_dashboard ON agent_memory(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_key ON agent_memory(dashboard_id, key);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_session ON agent_memory(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_type ON agent_memory(dashboard_id, memory_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key ON agent_memory(dashboard_id, key) WHERE session_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key_session ON agent_memory(dashboard_id, session_id, key) WHERE session_id IS NOT NULL;
 `;
 
 // Initialize the database

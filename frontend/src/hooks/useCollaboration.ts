@@ -12,6 +12,8 @@ import type {
   IncomingCollabMessage,
   UICommand,
   UICommandResultMessage,
+  AgentTask,
+  AgentMemory,
 } from "@/types/collaboration";
 import type { DashboardItem, DashboardEdge, Session } from "@/types/dashboard";
 import { getCurrentUser } from "@/lib/api/cloudflare";
@@ -32,7 +34,11 @@ export interface UseCollaborationState {
   items: DashboardItem[];
   edges: DashboardEdge[];
   sessions: Session[];
+  tasks: AgentTask[];
+  memories: AgentMemory[];
   error: Error | null;
+  /** Last task-related message for components that need real-time updates */
+  lastTaskMessage: IncomingCollabMessage | null;
 }
 
 export interface UseCollaborationActions {
@@ -72,6 +78,9 @@ export function useCollaboration(
   const [items, setItems] = React.useState<DashboardItem[]>([]);
   const [edges, setEdges] = React.useState<DashboardEdge[]>([]);
   const [sessions, setSessions] = React.useState<Session[]>([]);
+  const [tasks, setTasks] = React.useState<AgentTask[]>([]);
+  const [memories, setMemories] = React.useState<AgentMemory[]>([]);
+  const [lastTaskMessage, setLastTaskMessage] = React.useState<IncomingCollabMessage | null>(null);
   const [error, setError] = React.useState<Error | null>(null);
 
   // Ensure user exists (dev-auth bootstrap) before connecting to WS
@@ -238,6 +247,48 @@ export function useCollaboration(
         break;
       case "browser_open":
         break;
+
+      // Agent state messages
+      case "task_create":
+        setLastTaskMessage(message);
+        setTasks((prev) => {
+          if (prev.some((t) => t.id === message.task.id)) return prev;
+          return [...prev, message.task];
+        });
+        break;
+
+      case "task_update":
+        setLastTaskMessage(message);
+        setTasks((prev) =>
+          prev.map((t) => (t.id === message.task.id ? message.task : t))
+        );
+        break;
+
+      case "task_delete":
+        setLastTaskMessage(message);
+        setTasks((prev) => prev.filter((t) => t.id !== message.taskId));
+        break;
+
+      case "memory_update":
+        setMemories((prev) => {
+          // Use (key, sessionId) as composite identity to distinguish scopes
+          const matchesIdentity = (m: AgentMemory) =>
+            m.key === message.key &&
+            (m.sessionId ?? null) === (message.sessionId ?? null);
+
+          // memory is null when deleted
+          if (message.memory === null) {
+            return prev.filter((m) => !matchesIdentity(m));
+          }
+          const existing = prev.findIndex(matchesIdentity);
+          if (existing >= 0) {
+            const updated = [...prev];
+            updated[existing] = message.memory;
+            return updated;
+          }
+          return [...prev, message.memory];
+        });
+        break;
     }
   }, []);
 
@@ -293,6 +344,9 @@ export function useCollaboration(
     items,
     edges,
     sessions,
+    tasks,
+    memories,
+    lastTaskMessage,
     error,
   };
 

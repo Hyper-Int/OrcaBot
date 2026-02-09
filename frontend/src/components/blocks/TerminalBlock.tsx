@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: secrets-panel-v1-white-bg-prepopulate
-const TERMINAL_BLOCK_REVISION = "secrets-panel-v1-white-bg-prepopulate";
+// REVISION: terminal-block-v3-ptyid-session
+const TERMINAL_BLOCK_REVISION = "terminal-block-v3-ptyid-session";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -41,6 +41,7 @@ import {
   FolderOpen,
   Palette,
   Type,
+  ListTodo,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -112,6 +113,7 @@ import agentSkillsCatalog from "@/data/claude-agent-skills.json";
 import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { TasksPanel } from "./TasksPanel";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
 
@@ -197,7 +199,7 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | "working-dir" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | "working-dir" | "tasks" | null;
 
 type TerminalContentState = {
   name: string;
@@ -3340,6 +3342,16 @@ export function TerminalBlock({
               onIntegrationDetached={data.onIntegrationDetached}
             />
           )}
+
+          {/* Tasks Panel */}
+          {/* Use ptyId as sessionId to match MCP tool session scoping (terminal_id in PTY token) */}
+          {activePanel === "tasks" && (
+            <TasksPanel
+              dashboardId={data.dashboardId}
+              sessionId={session?.ptyId}
+              onClose={() => setActivePanel(null)}
+            />
+          )}
         </div>
       )}
 
@@ -3650,6 +3662,10 @@ export function TerminalBlock({
               <DropdownMenuItem onClick={() => setActivePanel(activePanel === "integrations" ? null : "integrations")} className="gap-2">
                 <Plug className="w-3 h-3" />
                 <span>Integrations</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setActivePanel(activePanel === "tasks" ? null : "tasks")} className="gap-2">
+                <ListTodo className="w-3 h-3" />
+                <span>Tasks</span>
               </DropdownMenuItem>
               {/* TTS Voice - for Claude Code, Codex, and Gemini */}
               {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (

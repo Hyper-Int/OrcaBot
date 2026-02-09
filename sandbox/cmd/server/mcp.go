@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-integration-v10-drivesync-notify
+// REVISION: mcp-integration-v21-full-task-schema
 
 package main
 
@@ -17,10 +17,11 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-integration-v10-drivesync-notify loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-integration-v21-full-task-schema loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // browserToolToAction maps browser MCP tool names to gateway action names
@@ -187,6 +188,18 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[mcp-tools] ListTools: no pty_id, skipping integration tools")
 	}
 
+	// Add agent state tools (tasks & memory) - ALWAYS available
+	// These are core infrastructure, not gated by integration attachment or token validation
+	agentStateTools := mcp.GetAllAgentStateTools()
+	log.Printf("[mcp-tools] ListTools: adding %d agent state tools (tasks/memory)", len(agentStateTools))
+	for _, tool := range agentStateTools {
+		allTools = append(allTools, map[string]interface{}{
+			"name":        tool.Name,
+			"description": tool.Description,
+			"inputSchema": json.RawMessage(tool.InputSchema),
+		})
+	}
+
 	// Try to get UI tools from control plane
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
 	if controlplaneURL != "" {
@@ -337,6 +350,12 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 	// Check if this is an integration tool - route to gateway
 	if mcp.IsIntegrationTool(incomingReq.Name) {
 		s.handleIntegrationToolCall(w, r, incomingReq.Name, incomingReq.Arguments)
+		return
+	}
+
+	// Check if this is an agent state tool (tasks/memory) - route to gateway
+	if mcp.IsAgentStateTool(incomingReq.Name) {
+		s.handleAgentStateToolCall(w, r, incomingReq.Name, incomingReq.Arguments)
 		return
 	}
 
@@ -563,4 +582,517 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 			},
 		},
 	})
+}
+
+// handleAgentStateToolCall handles task and memory tool calls via the gateway
+// Agent state tools (tasks/memory) are "always available" - they don't require integration
+// attachment or X-Integration-Token. They use the session's MCP token for auth.
+func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request, toolName string, args map[string]interface{}) {
+	sessionID := r.PathValue("sessionId")
+	session := s.getSessiоnOrErrоr(w, sessionID)
+	if session == nil {
+		return
+	}
+
+	// Agent state tools are always available but session-scoped operations require
+	// X-Integration-Token proof-of-possession to prevent escalation attacks.
+	var authToken string
+	var authType mcp.AuthType = mcp.AuthTypeDashboardToken // Default to dashboard token
+	ptyID := r.URL.Query().Get("pty_id")
+	if ptyID != "" {
+		callerToken := r.Header.Get("X-Integration-Token")
+		storedToken := session.GetIntegrationToken(ptyID)
+		if callerToken != "" && storedToken != "" {
+			// Caller provided a token - validate it matches the stored PTY token
+			if subtle.ConstantTimeCompare([]byte(callerToken), []byte(storedToken)) == 1 {
+				// Token matches - enable session-scoped operations
+				authToken = storedToken
+				authType = mcp.AuthTypePtyToken
+			} else {
+				// Token mismatch - reject request
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":   true,
+					"message": "E79840: Integration token mismatch",
+				})
+				return
+			}
+		}
+		// If no X-Integration-Token provided, fall through to dashboard token
+		// (session-scoped operations will be disabled)
+	}
+
+	// Fall back to session MCP token (dashboard-scoped)
+	if authToken == "" {
+		if session.MCPToken != "" {
+			authToken = session.MCPToken
+			authType = mcp.AuthTypeDashboardToken
+			// When using dashboard token, session-scoped operations are not possible.
+			// Strip sessionScoped flag to make behavior explicit and prevent silent failures.
+			if sessionScoped, ok := args["sessionScoped"].(bool); ok && sessionScoped {
+				log.Printf("[mcp] WARNING: sessionScoped=true requested but no PTY token proof; creating dashboard-wide instead (provide X-Integration-Token for session scope)")
+				delete(args, "sessionScoped")
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79843: No authentication token available for agent state calls",
+			})
+			return
+		}
+	}
+
+	// Get provider and action for this tool
+	provider := mcp.GetAgentStateToolProvider(toolName)
+	action := mcp.GetAgentStateToolAction(toolName)
+	if provider == "" || action == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   true,
+			"message": fmt.Sprintf("E79842: Unknown agent state tool: %s", toolName),
+		})
+		return
+	}
+
+	// REVISION: state-cache-v3-wired
+	// Check cache for read operations (cache hit saves a round-trip)
+	cache := session.GetStateCache()
+	const cacheMaxAge = 30 * time.Second // Consider cache fresh for 30s
+
+	if cache != nil && cache.IsFresh(cacheMaxAge) {
+		if cached := s.tryServeCachedResponse(w, action, args, cache); cached {
+			return
+		}
+	}
+
+	// Call the agent state gateway with appropriate auth type
+	gatewayClient := mcp.NewGatewayClient()
+	executeReq := mcp.ExecuteRequest{
+		Action: action,
+		Args:   args,
+	}
+
+	resp, err := gatewayClient.ExecuteAgentStateWithAuth(provider, authToken, authType, executeReq)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]interface{}{
+				{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
+			},
+			"isError": true,
+		})
+		return
+	}
+
+	// Update cache with successful response
+	if cache != nil {
+		s.updateCache(cache, action, args, resp)
+	}
+
+	// Format the response as JSON text for MCP
+	w.Header().Set("Content-Type", "application/json")
+	var resultText string
+
+	// Marshal the response to JSON
+	respJSON, err := json.MarshalIndent(resp, "", "  ")
+	if err != nil {
+		resultText = fmt.Sprintf("Error formatting response: %v", err)
+	} else {
+		resultText = string(respJSON)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": resultText,
+			},
+		},
+	})
+}
+
+// tryServeCachedResponse attempts to serve a response from cache for read operations.
+// Returns true if response was served from cache, false if cache miss.
+// REVISION: state-cache-v6-session-id
+func (s *Server) tryServeCachedResponse(w http.ResponseWriter, action string, args map[string]interface{}, cache *statecache.Cache) bool {
+	// SECURITY: Never serve session-scoped data from cache.
+	// The cache is dashboard-level; session-scoped data must always go to the gateway
+	// to ensure proper PTY isolation. Without this check, PTY A's session-scoped memory
+	// could leak to PTY B via the shared cache.
+	if isSessionScoped(args) {
+		log.Printf("[mcp] Skipping cache for %s (sessionScoped=true)", action)
+		return false
+	}
+
+	switch action {
+	case "tasks.list":
+		// Skip cache if any filters are present - cache stores unfiltered data
+		if hasTaskFilters(args) {
+			log.Printf("[mcp] Skipping cache for tasks.list (filters present)")
+			return false
+		}
+		// Get cached tasks and filter appropriately
+		allTasks := cache.GetTasks()
+		includeCompleted, _ := args["includeCompleted"].(bool)
+
+		// Filter out session-scoped tasks (they belong to specific PTYs) and
+		// completed/cancelled tasks (unless explicitly requested)
+		// REVISION: state-cache-v6-session-id
+		filteredTasks := make([]statecache.TaskEntry, 0, len(allTasks))
+		for _, task := range allTasks {
+			// Skip session-scoped tasks - they should never be served from dashboard cache
+			if isTaskSessionScoped(&task) {
+				continue
+			}
+			// Skip completed/cancelled tasks unless includeCompleted=true
+			if !includeCompleted && isTaskCompleted(&task) {
+				continue
+			}
+			filteredTasks = append(filteredTasks, task)
+		}
+
+		log.Printf("[mcp] Serving tasks.list from cache (%d tasks, filtered from %d)", len(filteredTasks), len(allTasks))
+		s.sendCachedResponse(w, map[string]interface{}{"tasks": filteredTasks})
+		return true
+
+	case "tasks.get":
+		taskID, ok := args["taskId"].(string)
+		if !ok || taskID == "" {
+			return false
+		}
+		task, found := cache.GetTask(taskID)
+		if !found {
+			return false
+		}
+		// SECURITY: Never serve session-scoped tasks from cache
+		// The task might belong to a different PTY
+		if isTaskSessionScoped(&task) {
+			log.Printf("[mcp] Skipping cache for tasks.get (task %s is session-scoped)", taskID)
+			return false
+		}
+		log.Printf("[mcp] Serving tasks.get from cache (task %s)", taskID)
+		s.sendCachedResponse(w, map[string]interface{}{"task": task})
+		return true
+
+	case "memory.get":
+		key, ok := args["key"].(string)
+		if !ok || key == "" {
+			return false
+		}
+		entry, found := cache.GetMemory(key)
+		if !found {
+			return false
+		}
+		log.Printf("[mcp] Serving memory.get from cache (key %s)", key)
+		// Match gateway response shape: {memory: {...}}
+		s.sendCachedResponse(w, map[string]interface{}{
+			"memory": map[string]interface{}{
+				"key":        key,
+				"value":      entry.Value,
+				"memoryType": entry.MemoryType,
+				"updatedAt":  entry.UpdatedAt,
+			},
+		})
+		return true
+
+	case "memory.list":
+		// Skip cache if any filters are present - cache stores unfiltered data
+		if hasMemoryFilters(args) {
+			log.Printf("[mcp] Skipping cache for memory.list (filters present)")
+			return false
+		}
+		memories := cache.GetAllMemory()
+		log.Printf("[mcp] Serving memory.list from cache (%d entries)", len(memories))
+		// Convert to array format expected by clients
+		memoryList := make([]map[string]interface{}, 0, len(memories))
+		for k, v := range memories {
+			memoryList = append(memoryList, map[string]interface{}{
+				"key":        k,
+				"value":      v.Value,
+				"memoryType": v.MemoryType,
+				"updatedAt":  v.UpdatedAt,
+			})
+		}
+		s.sendCachedResponse(w, map[string]interface{}{"memories": memoryList})
+		return true
+	}
+
+	return false // Not a cacheable action
+}
+
+// hasTaskFilters returns true if the args contain any task filters
+func hasTaskFilters(args map[string]interface{}) bool {
+	filterKeys := []string{"status", "includeCompleted", "ownerAgent", "priority", "sessionScoped"}
+	for _, key := range filterKeys {
+		if v, ok := args[key]; ok && v != nil {
+			// Check for non-empty/non-default values
+			switch val := v.(type) {
+			case string:
+				if val != "" {
+					return true
+				}
+			case bool:
+				// includeCompleted=true is a filter (default is false)
+				if key == "includeCompleted" && val {
+					return true
+				}
+				// sessionScoped=true is a filter
+				if key == "sessionScoped" && val {
+					return true
+				}
+			case float64, int:
+				return true // any priority filter
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasMemoryFilters returns true if the args contain any memory filters
+func hasMemoryFilters(args map[string]interface{}) bool {
+	filterKeys := []string{"memoryType", "tags", "prefix", "sessionScoped"}
+	for _, key := range filterKeys {
+		if v, ok := args[key]; ok && v != nil {
+			switch val := v.(type) {
+			case string:
+				if val != "" {
+					return true
+				}
+			case []interface{}:
+				if len(val) > 0 {
+					return true
+				}
+			case bool:
+				if key == "sessionScoped" && val {
+					return true
+				}
+			default:
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sendCachedResponse sends a cached response in MCP format
+func (s *Server) sendCachedResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	respJSON, _ := json.MarshalIndent(data, "", "  ")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": string(respJSON),
+			},
+		},
+	})
+}
+
+// updateCache updates the cache based on the action and response
+// REVISION: state-cache-v6-session-id
+func (s *Server) updateCache(cache *statecache.Cache, action string, args map[string]interface{}, resp *mcp.AgentStateResponse) {
+	if resp == nil || cache == nil {
+		return
+	}
+
+	// SECURITY: Never cache session-scoped data.
+	// The cache is dashboard-level; storing session-scoped data would cause it to
+	// leak to other PTYs in the same dashboard.
+	if isSessionScoped(args) {
+		log.Printf("[mcp] Skipping cache update for %s (sessionScoped=true)", action)
+		return
+	}
+
+	switch action {
+	case "tasks.list":
+		// Only cache unfiltered task lists
+		if hasTaskFilters(args) {
+			return
+		}
+		// Update full task list, but skip session-scoped tasks
+		if resp.Tasks != nil {
+			tasks := make([]statecache.TaskEntry, 0, len(resp.Tasks))
+			for _, t := range resp.Tasks {
+				if entry := taskMapToEntry(t); entry != nil {
+					// Skip session-scoped tasks - they belong to specific PTYs
+					if isTaskSessionScoped(entry) {
+						continue
+					}
+					tasks = append(tasks, *entry)
+				}
+			}
+			cache.SetTasks(tasks)
+		}
+
+	case "tasks.create", "tasks.update", "tasks.get":
+		// Update single task in cache, but skip session-scoped tasks
+		if resp.Task != nil {
+			if entry := taskMapToEntry(resp.Task); entry != nil {
+				// SECURITY: Don't cache session-scoped tasks
+				// The task's sessionId field indicates it belongs to a specific PTY
+				if isTaskSessionScoped(entry) {
+					log.Printf("[mcp] Skipping cache for task %s (session-scoped)", entry.ID)
+					return
+				}
+				cache.UpdateTask(*entry)
+			}
+		}
+
+	case "tasks.delete":
+		if taskID, ok := args["taskId"].(string); ok && resp.Deleted {
+			cache.DeleteTask(taskID)
+		}
+
+	case "memory.list":
+		// Only cache unfiltered memory lists
+		if hasMemoryFilters(args) {
+			return
+		}
+		// Could update memory cache here, but memory.list responses may be large
+		// For now, just skip - memory.get will populate cache on demand
+
+	case "memory.set", "memory.get":
+		if resp.Memory != nil {
+			if entry := memoryMapToEntry(resp.Memory); entry != nil {
+				if key, ok := resp.Memory["key"].(string); ok && key != "" {
+					cache.SetMemory(key, *entry)
+				}
+			}
+		}
+
+	case "memory.delete":
+		if key, ok := args["key"].(string); ok && resp.Deleted {
+			cache.DeleteMemory(key)
+		}
+	}
+
+	// Save cache to disk asynchronously
+	go func() {
+		if err := cache.Save(); err != nil {
+			log.Printf("[mcp] Failed to save cache: %v", err)
+		}
+	}()
+}
+
+// isSessionScoped returns true if the args indicate session-scoped operation
+func isSessionScoped(args map[string]interface{}) bool {
+	if v, ok := args["sessionScoped"].(bool); ok && v {
+		return true
+	}
+	return false
+}
+
+// taskMapToEntry converts a map[string]interface{} to a TaskEntry
+// REVISION: state-cache-v7-full-task-schema
+func taskMapToEntry(m map[string]interface{}) *statecache.TaskEntry {
+	if m == nil {
+		return nil
+	}
+
+	entry := &statecache.TaskEntry{}
+
+	if v, ok := m["id"].(string); ok {
+		entry.ID = v
+	}
+	if v, ok := m["dashboardId"].(string); ok {
+		entry.DashboardID = v
+	}
+	// SessionID can be null (dashboard-wide) or string (session-scoped)
+	if v, ok := m["sessionId"].(string); ok && v != "" {
+		entry.SessionID = &v
+	}
+	// ParentID can be null (top-level) or string (subtask)
+	if v, ok := m["parentId"].(string); ok && v != "" {
+		entry.ParentID = &v
+	}
+	if v, ok := m["subject"].(string); ok {
+		entry.Subject = v
+	}
+	if v, ok := m["description"].(string); ok {
+		entry.Description = v
+	}
+	if v, ok := m["status"].(string); ok {
+		entry.Status = v
+	}
+	if v, ok := m["priority"].(float64); ok {
+		entry.Priority = int(v)
+	}
+	if v, ok := m["ownerAgent"].(string); ok {
+		entry.OwnerAgent = v
+	}
+	if v, ok := m["metadata"].(map[string]interface{}); ok {
+		entry.Metadata = v
+	}
+	// BlockedBy and Blocks are arrays of task IDs
+	if v, ok := m["blockedBy"].([]interface{}); ok {
+		entry.BlockedBy = interfaceSliceToStrings(v)
+	}
+	if v, ok := m["blocks"].([]interface{}); ok {
+		entry.Blocks = interfaceSliceToStrings(v)
+	}
+	if v, ok := m["createdAt"].(string); ok {
+		entry.CreatedAt = v
+	}
+	if v, ok := m["updatedAt"].(string); ok {
+		entry.UpdatedAt = v
+	}
+	if v, ok := m["startedAt"].(string); ok && v != "" {
+		entry.StartedAt = &v
+	}
+	if v, ok := m["completedAt"].(string); ok && v != "" {
+		entry.CompletedAt = &v
+	}
+
+	return entry
+}
+
+// interfaceSliceToStrings converts []interface{} to []string
+func interfaceSliceToStrings(slice []interface{}) []string {
+	result := make([]string, 0, len(slice))
+	for _, v := range slice {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// isTaskSessionScoped returns true if the task has a non-nil sessionId
+func isTaskSessionScoped(task *statecache.TaskEntry) bool {
+	return task != nil && task.SessionID != nil
+}
+
+// isTaskCompleted returns true if the task status is completed or cancelled
+func isTaskCompleted(task *statecache.TaskEntry) bool {
+	if task == nil {
+		return false
+	}
+	return task.Status == "completed" || task.Status == "cancelled"
+}
+
+// memoryMapToEntry converts a map[string]interface{} to a MemoryEntry
+func memoryMapToEntry(m map[string]interface{}) *statecache.MemoryEntry {
+	if m == nil {
+		return nil
+	}
+
+	entry := &statecache.MemoryEntry{}
+
+	if v, ok := m["value"]; ok {
+		entry.Value = v
+	}
+	if v, ok := m["memoryType"].(string); ok {
+		entry.MemoryType = v
+	}
+	if v, ok := m["updatedAt"].(string); ok {
+		entry.UpdatedAt = v
+	}
+
+	return entry
 }

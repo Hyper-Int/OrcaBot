@@ -166,6 +166,82 @@ export interface PendingApprovalMessage {
   domain: string;
 }
 
+// ===== Agent State Message Types =====
+
+/**
+ * Agent task (from control plane)
+ */
+export interface AgentTask {
+  id: string;
+  dashboardId: string;
+  sessionId?: string;
+  parentId?: string;
+  subject: string;
+  description?: string;
+  status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled';
+  priority: number;
+  blockedBy: string[];
+  blocks: string[];
+  ownerAgent?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+/**
+ * Agent memory (from control plane)
+ */
+export interface AgentMemory {
+  id: string;
+  dashboardId: string;
+  sessionId?: string;
+  key: string;
+  value: unknown;
+  memoryType: 'fact' | 'context' | 'preference' | 'summary' | 'checkpoint';
+  tags: string[];
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Task create message (server -> client)
+ */
+export interface TaskCreateMessage {
+  type: "task_create";
+  task: AgentTask;
+}
+
+/**
+ * Task update message (server -> client)
+ */
+export interface TaskUpdateMessage {
+  type: "task_update";
+  task: AgentTask;
+}
+
+/**
+ * Task delete message (server -> client)
+ */
+export interface TaskDeleteMessage {
+  type: "task_delete";
+  taskId: string;
+}
+
+/**
+ * Memory update message (server -> client)
+ * Note: memory is null when a memory entry is deleted
+ * sessionId distinguishes dashboard-wide (null) vs session-scoped memory
+ */
+export interface MemoryUpdateMessage {
+  type: "memory_update";
+  key: string;
+  memory: AgentMemory | null;
+  sessionId: string | null;
+}
+
 /**
  * All incoming collaboration messages
  */
@@ -184,7 +260,11 @@ export type IncomingCollabMessage =
   | BrowserOpenMessage
   | PendingApprovalMessage
   | UICommandMessage
-  | UICommandResultMessage;
+  | UICommandResultMessage
+  | TaskCreateMessage
+  | TaskUpdateMessage
+  | TaskDeleteMessage
+  | MemoryUpdateMessage;
 
 /**
  * All outgoing collaboration messages

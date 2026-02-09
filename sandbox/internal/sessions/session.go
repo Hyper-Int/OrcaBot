@@ -28,14 +28,15 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agent"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agenthooks"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
-	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agenthooks"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drivesync"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
 const sessionRevision = "session-v6-working-dir-support"
@@ -114,6 +115,10 @@ type Session struct {
 	// Per-PTY integration tracking: used to detect attach/detach of Drive
 	knownProviders   map[string]map[string]bool // ptyID -> set of provider names
 	knownProvidersMu sync.Mutex
+
+	// State cache for tasks/memory (reduces control plane round-trips)
+	// REVISION: state-cache-v3-wired
+	stateCache *statecache.Cache
 }
 
 // NewSession creates a new session with workspace at the given root.
@@ -131,6 +136,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
 		executionIDs:      make(map[string]string), // REVISION: server-side-cron-v1-execution-tracking
 		knownProviders:    make(map[string]map[string]bool),
+		stateCache:        statecache.NewCache(workspaceRoot),
 	}
 
 	// Wire up broker callback to notify control plane of pending domain approvals
@@ -138,6 +144,24 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 	s.broker.SetOnApprovalNeeded(func(sessionID, secretName, domain string) {
 		go notifyApprovalNeeded(sessionID, secretName, domain)
 	})
+
+	// Initialize state cache: load from disk and sync from server
+	// REVISION: state-cache-v3-wired
+	if err := s.stateCache.Load(); err != nil {
+		log.Printf("[session] Failed to load state cache: %v", err)
+	}
+
+	// Sync from server in background if we have a token
+	if mcpToken != "" {
+		go func() {
+			controlPlaneURL := os.Getenv("CONTROLPLANE_URL")
+			if controlPlaneURL != "" {
+				if err := s.stateCache.SyncFromServer(mcpToken, controlPlaneURL); err != nil {
+					log.Printf("[session] Failed to sync state cache: %v", err)
+				}
+			}
+		}()
+	}
 
 	return s
 }
@@ -716,6 +740,12 @@ func (s *Session) GetIntegrationToken(ptyID string) string {
 	s.integrationTokensMu.RLock()
 	defer s.integrationTokensMu.RUnlock()
 	return s.integrationTokens[ptyID]
+}
+
+// GetStateCache returns the state cache for tasks/memory.
+// REVISION: state-cache-v3-getter
+func (s *Session) GetStateCache() *statecache.Cache {
+	return s.stateCache
 }
 
 // SetExecutionID associates a schedule execution ID with a PTY.

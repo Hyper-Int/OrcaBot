@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v7-subscription-error-handling
-console.log(`[controlplane] REVISION: index-v7-subscription-error-handling loaded at ${new Date().toISOString()}`);
+// REVISION: index-v8-messaging-and-agent-state
+console.log(`[controlplane] REVISION: index-v8-messaging-and-agent-state loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -37,6 +37,7 @@ import * as templates from './templates/handler';
 import * as members from './members/handler';
 import * as mcpUi from './mcp-ui/handler';
 import * as bugReports from './bug-reports/handler';
+import * as agentState from './agent-state/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
@@ -50,7 +51,7 @@ export { DashboardDO } from './dashboards/DurableObject';
 export { RateLimitCounter } from './rate-limit/DurableObject';
 
 // CORS headers (base - origin is added dynamically)
-const CORS_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
+const CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name';
 
 /**
@@ -414,6 +415,11 @@ export default {
       await retryBufferedMessages(envWithBindings);
       await wakeAndDrainStaleMessages(envWithBindings);
       await cleanupExpiredMessages(envWithBindings);
+      // Clean up expired agent memories (runs every minute, lightweight operation)
+      const expiredCount = await agentState.cleanupExpiredMemory(envWithBindings);
+      if (expiredCount > 0) {
+        console.log(`[scheduled] Cleaned up ${expiredCount} expired memory entries`);
+      }
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
         return;
@@ -817,6 +823,120 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       created_item_id?: string;
     };
     return dashboards.sendUICommandResult(env, segments[1], auth.user!.id, data);
+  }
+
+  // ============================================
+  // Agent State routes (Tasks & Memory)
+  // ============================================
+
+  // GET /dashboards/:id/tasks - List tasks
+  // Session-scoped access: dashboard members can view tasks for any session in their dashboard (collaborative model)
+  // The handler validates sessionId belongs to the dashboard to prevent cross-dashboard access
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'tasks' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // Support multiple status values via repeated query params (e.g., ?status=pending&status=in_progress)
+    const statusParams = url.searchParams.getAll('status') as import('./types').AgentTaskStatus[];
+    const filters = {
+      status: statusParams.length > 0 ? statusParams : undefined,
+      sessionId: url.searchParams.get('session_id') || undefined,
+      parentId: url.searchParams.get('parent_id') || undefined,
+      ownerAgent: url.searchParams.get('owner_agent') || undefined,
+      includeCompleted: url.searchParams.get('include_completed') === 'true',
+    };
+    return agentState.listTasks(env, segments[1], auth.user!.id, filters);
+  }
+
+  // POST /dashboards/:id/tasks - Create task
+  // Session-scoped creation requires PTY token (via internal gateway) to prove terminal ownership
+  // Public API only creates dashboard-wide tasks
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'tasks' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as import('./types').CreateTaskInput;
+    // createTask rejects sessionId unless allowSessionScope=true (internal gateway only)
+    return agentState.createTask(env, segments[1], auth.user!.id, data);
+  }
+
+  // GET /dashboards/:id/tasks/:taskId - Get task
+  // Session-scoped access: dashboard members can view tasks for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'tasks' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.getTask(env, segments[1], segments[3], auth.user!.id, sessionId);
+  }
+
+  // PATCH /dashboards/:id/tasks/bulk - Bulk update tasks
+  // Session-scoped access: dashboard members can update tasks for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'tasks' && segments[3] === 'bulk' && method === 'PATCH') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { updates } = await request.json() as { updates: Array<{ taskId: string; status?: import('./types').AgentTaskStatus; subject?: string; description?: string; priority?: number; metadata?: Record<string, unknown> }> };
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.bulkUpdateTasks(env, segments[1], auth.user!.id, updates, { sessionId });
+  }
+
+  // PATCH /dashboards/:id/tasks/:taskId - Update task
+  // Session-scoped access: dashboard members can update tasks for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'tasks' && method === 'PATCH') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as import('./types').UpdateTaskInput;
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.updateTask(env, segments[1], segments[3], auth.user!.id, data, { sessionId });
+  }
+
+  // DELETE /dashboards/:id/tasks/:taskId - Delete task
+  // Session-scoped access: dashboard members can delete tasks for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'tasks' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.deleteTask(env, segments[1], segments[3], auth.user!.id, sessionId);
+  }
+
+  // GET /dashboards/:id/memory - List memory
+  // Session-scoped access: dashboard members can view memory for any session in their dashboard (collaborative model)
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'memory' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const filters = {
+      sessionId: url.searchParams.get('session_id') || undefined,
+      memoryType: url.searchParams.get('memory_type') as import('./types').AgentMemoryType | undefined,
+      prefix: url.searchParams.get('prefix') || undefined,
+      tags: url.searchParams.get('tags')?.split(',').filter(Boolean) || undefined,
+    };
+    return agentState.listMemory(env, segments[1], auth.user!.id, filters);
+  }
+
+  // GET /dashboards/:id/memory/:key - Get memory by key
+  // Session-scoped access: dashboard members can view memory for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'memory' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.getMemory(env, segments[1], segments[3], auth.user!.id, sessionId);
+  }
+
+  // PUT /dashboards/:id/memory/:key - Set memory (upsert)
+  // Session-scoped creation requires PTY token (via internal gateway) to prove terminal ownership
+  // Public API only creates dashboard-wide memory (setMemory rejects sessionId unless allowSessionScope=true)
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'memory' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Omit<import('./types').SetMemoryInput, 'key'>;
+    // setMemory rejects sessionId unless allowSessionScope=true (internal gateway only)
+    return agentState.setMemory(env, segments[1], auth.user!.id, { ...data, key: segments[3] });
+  }
+
+  // DELETE /dashboards/:id/memory/:key - Delete memory
+  // Session-scoped access: dashboard members can delete memory for any session in their dashboard
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'memory' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const sessionId = url.searchParams.get('session_id') || undefined;
+    return agentState.deleteMemory(env, segments[1], segments[3], auth.user!.id, sessionId);
   }
 
   // ============================================
@@ -1969,6 +2089,109 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       action,
       context
     );
+  }
+
+  // ============================================
+  // Internal Agent State Gateway (Tasks & Memory)
+  // NOTE: These MUST come before the generic /internal/gateway/:provider/execute route
+  // ============================================
+
+  // POST /internal/gateway/tasks/execute - Execute task action
+  // Security: Accepts PTY token (Bearer) or X-Dashboard-Token
+  // REVISION: agent-state-gateway-v3-multi-auth
+  // - PTY token: provides terminal_id (for session-scoped) and dashboard_id
+  // - Dashboard token: provides only dashboard_id (dashboard-wide access only)
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments[2] === 'tasks' && segments[3] === 'execute' && segments.length === 4 && method === 'POST') {
+    const { verifyPtyToken } = await import('./auth/pty-token');
+
+    let dashboardId: string | null = null;
+    let terminalId: string | null = null;
+
+    // Try PTY token first (Bearer Authorization)
+    const authHeader = request.headers.get('Authorization');
+    const ptyToken = authHeader?.replace('Bearer ', '');
+    if (ptyToken) {
+      const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+      if (claims) {
+        dashboardId = claims.dashboard_id;
+        terminalId = claims.terminal_id;
+      }
+    }
+
+    // Fall back to X-Dashboard-Token (dashboard-scoped, no terminal access)
+    if (!dashboardId) {
+      const mcpAuth = await validateMcpAuth(request, env);
+      if (mcpAuth.isValid) {
+        dashboardId = mcpAuth.dashboardId || null;
+        terminalId = null; // Dashboard token doesn't provide terminal context
+      }
+    }
+
+    if (!dashboardId) {
+      return Response.json({ error: 'Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
+    }
+
+    const body = await request.json() as { action: string; args: Record<string, unknown> };
+    const result = await agentState.executeTaskAction(
+      env,
+      dashboardId,
+      terminalId,
+      body.action,
+      body.args
+    );
+    if (!result.success) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    return Response.json(result.data);
+  }
+
+  // POST /internal/gateway/memory/execute - Execute memory action
+  // Security: Accepts PTY token (Bearer) or X-Dashboard-Token
+  // REVISION: agent-state-gateway-v3-multi-auth
+  // - PTY token: provides terminal_id (for session-scoped) and dashboard_id
+  // - Dashboard token: provides only dashboard_id (dashboard-wide access only)
+  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments[2] === 'memory' && segments[3] === 'execute' && segments.length === 4 && method === 'POST') {
+    const { verifyPtyToken } = await import('./auth/pty-token');
+
+    let dashboardId: string | null = null;
+    let terminalId: string | null = null;
+
+    // Try PTY token first (Bearer Authorization)
+    const authHeader = request.headers.get('Authorization');
+    const ptyToken = authHeader?.replace('Bearer ', '');
+    if (ptyToken) {
+      const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+      if (claims) {
+        dashboardId = claims.dashboard_id;
+        terminalId = claims.terminal_id;
+      }
+    }
+
+    // Fall back to X-Dashboard-Token (dashboard-scoped, no terminal access)
+    if (!dashboardId) {
+      const mcpAuth = await validateMcpAuth(request, env);
+      if (mcpAuth.isValid) {
+        dashboardId = mcpAuth.dashboardId || null;
+        terminalId = null; // Dashboard token doesn't provide terminal context
+      }
+    }
+
+    if (!dashboardId) {
+      return Response.json({ error: 'Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
+    }
+
+    const body = await request.json() as { action: string; args: Record<string, unknown> };
+    const result = await agentState.executeMemoryAction(
+      env,
+      dashboardId,
+      terminalId,
+      body.action,
+      body.args
+    );
+    if (!result.success) {
+      return Response.json({ error: result.error }, { status: 400 });
+    }
+    return Response.json(result.data);
   }
 
   // POST /internal/gateway/:provider/execute - Execute gateway request with full policy enforcement

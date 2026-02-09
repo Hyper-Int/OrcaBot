@@ -13,3 +13,4 @@ export * from "./mcp-tools";
 export * from "./integrations";
 export * from "./members";
 export * from "./bug-reports";
+export * from "./tasks";

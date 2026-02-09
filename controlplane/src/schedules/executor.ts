@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: server-side-cron-v6-merge-before-final-update
+// REVISION: server-side-cron-v7-task-tracking
 
 /**
  * Edge-Based Schedule Executor
@@ -10,11 +10,12 @@
  * 2. Ensures the sandbox is running (wakes it if stopped)
  * 3. For each connected terminal: creates a PTY or writes to an existing one
  * 4. Tracks execution progress in schedule_executions table
+ * 5. Creates agent tasks for visibility in the Tasks panel
  *
  * The sandbox reports completion via POST /internal/schedule-executions/:id/pty-completed
  */
 
-const MODULE_REVISION = 'server-side-cron-v1-edge-executor';
+const MODULE_REVISION = 'server-side-cron-v7-task-tracking';
 console.log(`[executor] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env, Schedule, ScheduleExecution, ScheduleExecutionTerminal } from '../types';
@@ -22,6 +23,7 @@ import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { ensureDashbоardSandbоx } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
 import { createPtyToken } from '../auth/pty-token';
+import { createTaskInternal, updateTaskStatusInternal } from '../agent-state/handler';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -95,6 +97,31 @@ export async function executeScheduleByEdges(
       completedAt: now,
       error: null,
     };
+  }
+
+  // Create an agent task to track this scheduled execution
+  let agentTaskId: string | undefined;
+  try {
+    const scheduleName = schedule.name || `Schedule ${schedule.id.slice(0, 8)}`;
+    const agentTask = await createTaskInternal(env, {
+      dashboardId,
+      subject: `[Scheduled] ${scheduleName}`,
+      description: schedule.command
+        ? `Executing: ${schedule.command}`
+        : `Running scheduled task on ${terminals.length} terminal(s)`,
+      ownerAgent: 'scheduler',
+      metadata: {
+        scheduleId: schedule.id,
+        executionId,
+        triggeredBy,
+        terminalCount: terminals.length,
+      },
+    });
+    agentTaskId = agentTask.id;
+    console.log(`[executor] Created agent task ${agentTaskId} for schedule ${schedule.id}`);
+  } catch (error) {
+    console.error('[executor] Failed to create agent task:', error);
+    // Non-fatal: continue with execution even if task creation fails
   }
 
   // 2. Ensure sandbox is running
@@ -238,10 +265,23 @@ export async function executeScheduleByEdges(
   if (!latest || latest.status !== 'running') {
     // Execution was already finalized by callbacks — don't overwrite
     const finalTerminals = latest ? JSON.parse(latest.terminals_json) : terminals;
+    const execStatus = (latest?.status || 'completed') as ScheduleExecution['status'];
+
+    // Update agent task since execution is done
+    if (agentTaskId) {
+      try {
+        const taskStatus = execStatus === 'failed' ? 'cancelled' : 'completed';
+        await updateTaskStatusInternal(env, agentTaskId, taskStatus);
+        console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus} (callback-finalized)`);
+      } catch (error) {
+        console.error('[executor] Failed to update agent task:', error);
+      }
+    }
+
     return {
       id: executionId,
       scheduleId: schedule.id,
-      status: (latest?.status || 'completed') as ScheduleExecution['status'],
+      status: execStatus,
       triggeredBy,
       terminals: finalTerminals,
       startedAt: now,
@@ -288,6 +328,17 @@ export async function executeScheduleByEdges(
     UPDATE schedule_executions SET terminals_json = ?, status = ?, completed_at = COALESCE(?, completed_at), error = ?
     WHERE id = ? AND status = 'running'
   `).bind(JSON.stringify(mergedTerminals), finalStatus, completedAt, finalError, executionId).run();
+
+  // Update agent task if execution is done
+  if (agentTaskId && allDone) {
+    try {
+      const taskStatus = finalStatus === 'failed' ? 'cancelled' : 'completed';
+      await updateTaskStatusInternal(env, agentTaskId, taskStatus, finalError || undefined);
+      console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus}`);
+    } catch (error) {
+      console.error('[executor] Failed to update agent task:', error);
+    }
+  }
 
   return {
     id: executionId,
