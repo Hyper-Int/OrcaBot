@@ -1,17 +1,16 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v2-fix-chat-id-matching
+// REVISION: whatsapp-block-v9-taller-no-footer
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v2-fix-chat-id-matching";
+const MODULE_REVISION = "whatsapp-block-v9-taller-no-footer";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
 import {
-  MessageSquare,
   RefreshCw,
   CheckCircle,
   Loader2,
@@ -19,6 +18,7 @@ import {
   LogOut,
   Minimize2,
   Copy,
+  Smartphone,
 } from "lucide-react";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
+import { QRCodeSVG } from "qrcode.react";
 import { WhatsAppIcon } from "@/components/icons";
 import type { DashboardItem } from "@/types/dashboard";
 
@@ -41,22 +42,11 @@ import type { DashboardItem } from "@/types/dashboard";
 // WhatsApp types
 // ============================================
 
-interface WhatsAppChat {
-  id: string;
-  name: string;
-  type: string;
-  topic?: string | null;
-}
-
 interface WhatsAppIntegration {
   connected: boolean;
   accountName: string | null;
   phoneNumber: string | null;
-}
-
-interface WhatsAppStatus {
-  chatCount?: number;
-  lastActivityAt?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 interface MessagingSubscription {
@@ -74,11 +64,35 @@ interface MessagingSubscription {
 // API helpers
 // ============================================
 
+interface WhatsAppPlatformConfig {
+  configured: boolean;
+  phoneNumberId?: string;
+  displayPhone?: string | null;
+  verifiedName?: string | null;
+}
+
+async function getWhatsAppPlatformConfig(): Promise<WhatsAppPlatformConfig> {
+  const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/platform-config`);
+  try {
+    return await apiGet<WhatsAppPlatformConfig>(url.toString());
+  } catch {
+    return { configured: false };
+  }
+}
+
 async function getWhatsAppIntegration(dashboardId: string): Promise<WhatsAppIntegration> {
   const url = new URL(`${API.cloudflare.base}/integrations/whatsapp`);
   url.searchParams.set("dashboard_id", dashboardId);
   try {
-    return await apiGet<WhatsAppIntegration>(url.toString());
+    const result = await apiGet<{ connected: boolean; accountName?: string; metadata?: Record<string, unknown> }>(url.toString());
+    const meta = result.metadata || {};
+    const phoneNumber = (meta.display_phone_number as string) || null;
+    return {
+      connected: result.connected,
+      accountName: result.accountName || null,
+      phoneNumber,
+      metadata: meta,
+    };
   } catch (err) {
     if (err && typeof err === "object" && "status" in err && (err as { status: number }).status === 404) {
       return { connected: false, accountName: null, phoneNumber: null };
@@ -87,29 +101,10 @@ async function getWhatsAppIntegration(dashboardId: string): Promise<WhatsAppInte
   }
 }
 
-async function getWhatsAppStatus(dashboardId: string): Promise<WhatsAppStatus | null> {
-  const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/status`);
-  url.searchParams.set("dashboard_id", dashboardId);
-  try {
-    return await apiGet<WhatsAppStatus>(url.toString());
-  } catch {
-    return null;
-  }
-}
-
 async function disconnectWhatsAppApi(dashboardId: string): Promise<{ ok: boolean }> {
   const url = new URL(`${API.cloudflare.base}/integrations/whatsapp`);
   url.searchParams.set("dashboard_id", dashboardId);
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
-}
-
-async function listWhatsAppChats(): Promise<{ channels: WhatsAppChat[] }> {
-  const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/chats`);
-  try {
-    return await apiGet<{ channels: WhatsAppChat[] }>(url.toString());
-  } catch {
-    return { channels: [] };
-  }
 }
 
 async function connectWithToken(
@@ -135,11 +130,9 @@ async function listSubscriptions(dashboardId: string): Promise<MessagingSubscrip
   }
 }
 
-async function createSubscription(
+async function ensureWhatsAppSubscription(
   dashboardId: string,
   itemId: string,
-  chatId: string,
-  chatName: string,
 ): Promise<{ id: string; webhookId: string }> {
   const url = new URL(`${API.cloudflare.base}/messaging/subscriptions`);
   return apiFetch<{ id: string; webhookId: string }>(url.toString(), {
@@ -149,8 +142,7 @@ async function createSubscription(
       dashboardId,
       itemId,
       provider: "whatsapp",
-      chatId,
-      channelName: chatName,
+      // No chatId = catch-all subscription (receives all messages to the business number)
     }),
   });
 }
@@ -158,6 +150,28 @@ async function createSubscription(
 async function deleteSubscription(subscriptionId: string): Promise<{ ok: boolean }> {
   const url = new URL(`${API.cloudflare.base}/messaging/subscriptions/${subscriptionId}`);
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+// --- Personal WhatsApp (Bridge/Baileys) ---
+
+async function connectWhatsAppPersonal(
+  dashboardId: string,
+  itemId: string,
+): Promise<{ subscriptionId: string; webhookId: string; status: string; qrCode: string | null }> {
+  const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/connect-personal`);
+  return apiFetch<{ subscriptionId: string; webhookId: string; status: string; qrCode: string | null }>(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dashboardId, itemId }),
+  });
+}
+
+async function pollWhatsAppQr(
+  subscriptionId: string,
+): Promise<{ status: string; qrCode: string | null }> {
+  const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/qr`);
+  url.searchParams.set("subscription_id", subscriptionId);
+  return apiGet<{ status: string; qrCode: string | null }>(url.toString());
 }
 
 // ============================================
@@ -191,6 +205,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
   React.useEffect(() => {
     return () => {
       if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+      if (qrPollRef.current) clearInterval(qrPollRef.current);
     };
   }, []);
 
@@ -219,17 +234,21 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     });
   };
 
+  const [platformConfig, setPlatformConfig] = React.useState<WhatsAppPlatformConfig | null>(null);
   const [integration, setIntegration] = React.useState<WhatsAppIntegration | null>(null);
-  const [status, setStatus] = React.useState<WhatsAppStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [availableChats, setAvailableChats] = React.useState<WhatsAppChat[]>([]);
   const [subscriptions, setSubscriptions] = React.useState<MessagingSubscription[]>([]);
-  const [subscribing, setSubscribing] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [tokenInput, setTokenInput] = React.useState("");
   const [phoneNumberIdInput, setPhoneNumberIdInput] = React.useState("");
   const [connecting, setConnecting] = React.useState(false);
+  // Connection mode state — default to business API
+  const [connectMode, setConnectMode] = React.useState<"choose" | "business" | "personal">("business");
+  const [personalQrCode, setPersonalQrCode] = React.useState<string | null>(null);
+  const [personalStatus, setPersonalStatus] = React.useState<string | null>(null);
+  const [personalSubId, setPersonalSubId] = React.useState<string | null>(null);
+  const qrPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const initialLoadDone = React.useRef(false);
 
@@ -238,20 +257,52 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     try {
       if (!initialLoadDone.current) setLoading(true);
       setError(null);
-      const [integrationData, statusData] = await Promise.all([
+
+      // Fetch platform config, per-user integration, and subscriptions in parallel
+      const [platformCfg, integrationData, subs] = await Promise.all([
+        getWhatsAppPlatformConfig(),
         getWhatsAppIntegration(dashboardId),
-        getWhatsAppStatus(dashboardId),
+        listSubscriptions(dashboardId),
       ]);
+      setPlatformConfig(platformCfg);
       setIntegration(integrationData);
-      setStatus(statusData);
-      if (integrationData.connected) {
-        const [chatResult, subs] = await Promise.all([
-          listWhatsAppChats(),
-          listSubscriptions(dashboardId),
-        ]);
-        setAvailableChats(chatResult.channels);
-        setSubscriptions(subs.filter(s => s.provider === "whatsapp" && s.item_id === id));
+
+      const mySubs = subs.filter(s => s.provider === "whatsapp" && s.item_id === id);
+      setSubscriptions(mySubs);
+
+      // If platform WhatsApp is configured, auto-create catch-all subscription for this block
+      if (platformCfg.configured) {
+        const hasCatchAll = mySubs.some(
+          s => !s.chat_id && s.status === "active",
+        );
+        if (!hasCatchAll) {
+          try {
+            const newSub = await ensureWhatsAppSubscription(dashboardId, id);
+            setSubscriptions(prev => [...prev, {
+              id: newSub.id,
+              dashboard_id: dashboardId,
+              item_id: id,
+              provider: "whatsapp",
+              channel_id: platformCfg.phoneNumberId || null,
+              channel_name: null,
+              chat_id: null,
+              status: "active",
+            }]);
+          } catch (err) {
+            console.warn("[WhatsAppBlock] Auto-subscription failed:", err);
+          }
+        }
       }
+
+      // Detect existing personal subscription (bridge connection with webhook_id starting with 'bridge_')
+      const personalSub = mySubs.find(
+        s => !s.channel_id && !s.chat_id && (s.status === "pending" || s.status === "active"),
+      );
+      if (personalSub && !platformCfg.configured) {
+        setPersonalSubId(personalSub.id);
+        setPersonalStatus(personalSub.status === "active" ? "connected" : "connecting");
+      }
+
       initialLoadDone.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load WhatsApp");
@@ -270,6 +321,38 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     initialLoadDone.current = false;
     loadIntegration();
   }, [dashboardId, id, loadIntegration]);
+
+  const startQrPolling = React.useCallback((subId: string) => {
+    if (qrPollRef.current) clearInterval(qrPollRef.current);
+    qrPollRef.current = setInterval(async () => {
+      try {
+        const poll = await pollWhatsAppQr(subId);
+        setPersonalStatus(poll.status);
+        if (poll.qrCode) setPersonalQrCode(poll.qrCode);
+
+        if (poll.status === "connected") {
+          if (qrPollRef.current) clearInterval(qrPollRef.current);
+          qrPollRef.current = null;
+          setPersonalQrCode(null);
+          await loadIntegration();
+        } else if (poll.status === "error") {
+          // Bridge reported an error — stop polling, let user retry
+          if (qrPollRef.current) clearInterval(qrPollRef.current);
+          qrPollRef.current = null;
+        }
+      } catch {
+        // Transient polling error — keep trying
+      }
+    }, 2500);
+  }, [loadIntegration]);
+
+  // Resume QR polling for rehydrated pending personal subscriptions.
+  // Must be before all conditional returns to satisfy Rules of Hooks.
+  React.useEffect(() => {
+    if (personalSubId && personalStatus === "connecting" && !qrPollRef.current) {
+      startQrPolling(personalSubId);
+    }
+  }, [personalSubId, personalStatus, startQrPolling]);
 
   const handleRefresh = async () => {
     if (!dashboardId) return;
@@ -298,36 +381,22 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     }
   };
 
-  const handleToggleChat = async (chat: WhatsAppChat) => {
-    if (!dashboardId || subscribing) return;
-    setSubscribing(chat.id);
+  const handleConnectPersonal = async () => {
+    if (!dashboardId) return;
+    setConnecting(true);
+    setError(null);
     try {
-      const existingSub = subscriptions.find(
-        s => s.chat_id === chat.id && s.status === "active"
-      );
-      if (existingSub) {
-        await deleteSubscription(existingSub.id);
-        setSubscriptions(prev => prev.filter(s => s.id !== existingSub.id));
-      } else {
-        const result = await createSubscription(dashboardId, id, chat.id, chat.name);
-        setSubscriptions(prev => [
-          ...prev,
-          {
-            id: result.id,
-            dashboard_id: dashboardId,
-            item_id: id,
-            provider: "whatsapp",
-            channel_id: null,
-            channel_name: chat.name,
-            chat_id: chat.id,
-            status: "active",
-          },
-        ]);
-      }
+      const result = await connectWhatsAppPersonal(dashboardId, id);
+      setPersonalSubId(result.subscriptionId);
+      setPersonalQrCode(result.qrCode);
+      setPersonalStatus(result.status);
+
+      // Start polling for QR code / connection status
+      startQrPolling(result.subscriptionId);
     } catch (err) {
-      console.error("Failed to toggle chat subscription:", err);
+      setError(err instanceof Error ? err.message : "Failed to start personal WhatsApp connection");
     } finally {
-      setSubscribing(null);
+      setConnecting(false);
     }
   };
 
@@ -336,9 +405,25 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     try {
       await disconnectWhatsAppApi(dashboardId);
       setIntegration(null);
-      setStatus(null);
     } catch (err) {
       console.error("Failed to disconnect WhatsApp:", err);
+    }
+  };
+
+  const handleDisconnectPersonal = async () => {
+    if (!personalSubId) return;
+    try {
+      if (qrPollRef.current) {
+        clearInterval(qrPollRef.current);
+        qrPollRef.current = null;
+      }
+      await deleteSubscription(personalSubId);
+      setPersonalSubId(null);
+      setPersonalStatus(null);
+      setPersonalQrCode(null);
+      setConnectMode("choose");
+    } catch (err) {
+      console.error("Failed to disconnect personal WhatsApp:", err);
     }
   };
 
@@ -457,7 +542,34 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     );
   }
 
-  if (!integration?.connected) {
+  // If platform WhatsApp is configured, skip the manual connection form
+  // and go directly to the QR code view
+  if (platformConfig?.configured && platformConfig.displayPhone) {
+    const waDigits = platformConfig.displayPhone.replace(/\D/g, "");
+    const waLink = `https://wa.me/${waDigits}`;
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
+        <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center flex-1 p-4">
+            <div className="rounded-lg overflow-hidden border border-[var(--border)] mb-3 p-2 bg-white">
+              <QRCodeSVG value={waLink} size={140} level="M" />
+            </div>
+            <p className="text-xs font-medium text-[var(--text-primary)] mb-0.5">
+              {platformConfig.verifiedName || "OrcaBot"}
+            </p>
+            <p className="text-[10px] text-[var(--text-muted)] mb-1">{platformConfig.displayPhone}</p>
+            <p className="text-[10px] text-[var(--text-muted)] text-center">
+              Scan to chat on WhatsApp. Connect a terminal to read and reply.
+            </p>
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  if (!integration?.connected && !personalSubId) {
     return (
       <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
         <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
@@ -465,47 +577,153 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
           {header}
           <div className="flex flex-col items-center justify-center h-full p-4">
             <WhatsAppIcon className="w-8 h-8 mb-2" />
-            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
-              Connect WhatsApp Business to send and receive messages
-            </p>
-            <div className="w-full space-y-2 nodrag">
-              <input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Paste your WhatsApp Business API token"
-                className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#25D366]"
-              />
-              <input
-                type="text"
-                value={phoneNumberIdInput}
-                onChange={(e) => setPhoneNumberIdInput(e.target.value)}
-                placeholder="Phone Number ID (from Meta dashboard)"
-                className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#25D366]"
-              />
-              <Button
-                size="sm"
-                onClick={handleConnect}
-                disabled={!tokenInput.trim() || !phoneNumberIdInput.trim() || connecting}
-                className="nodrag w-full"
-                style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
-              >
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                Connect
-              </Button>
-              <p className="text-[9px] text-[var(--text-muted)] text-center">
-                Meta Business dashboard &rarr; WhatsApp &rarr; API Setup
-              </p>
-            </div>
+
+            {connectMode === "business" && (
+              <div className="w-full space-y-2 nodrag">
+                <p className="text-xs text-[var(--text-muted)] text-center mb-1">
+                  Connect WhatsApp Business API
+                </p>
+                <input
+                  type="password"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  placeholder="Access token"
+                  className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#25D366]"
+                />
+                <input
+                  type="text"
+                  value={phoneNumberIdInput}
+                  onChange={(e) => setPhoneNumberIdInput(e.target.value)}
+                  placeholder="Phone Number ID"
+                  className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#25D366]"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleConnect}
+                  disabled={!tokenInput.trim() || !phoneNumberIdInput.trim() || connecting}
+                  className="nodrag w-full"
+                  style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
+                >
+                  {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                  Connect
+                </Button>
+              </div>
+            )}
+
+            {connectMode === "personal" && (
+              <div className="w-full space-y-2 nodrag">
+                <p className="text-xs text-[var(--text-muted)] text-center mb-1">
+                  Pair via QR code (dev/testing only)
+                </p>
+                <Button
+                  size="sm"
+                  onClick={handleConnectPersonal}
+                  disabled={connecting}
+                  className="nodrag w-full gap-2"
+                  style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
+                >
+                  {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Smartphone className="w-3.5 h-3.5" />}
+                  {connecting ? "Starting..." : "Connect via QR"}
+                </Button>
+                <button
+                  onClick={() => setConnectMode("business")}
+                  className="text-[9px] text-[var(--text-muted)] hover:underline w-full text-center"
+                >
+                  &larr; Use Business API instead
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </BlockWrapper>
     );
   }
 
-  const subscribedChatIds = new Set(
-    subscriptions.filter(s => s.status === "active").map(s => s.chat_id)
-  );
+  // Personal WhatsApp QR code scanning state
+  if (personalSubId && personalStatus !== "connected" && !integration?.connected) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={320}>
+        <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            {personalStatus === "error" ? (
+              <>
+                <p className="text-xs text-red-500 text-center mb-2">Connection lost</p>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setPersonalStatus("connecting");
+                    startQrPolling(personalSubId!);
+                  }}
+                  className="nodrag gap-2"
+                  style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry
+                </Button>
+              </>
+            ) : personalQrCode ? (
+              <>
+                <p className="text-xs font-medium text-[var(--text-primary)] mb-2">Scan with WhatsApp</p>
+                <div className="rounded-lg overflow-hidden border border-[var(--border)] mb-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={personalQrCode} alt="WhatsApp QR Code" className="w-48 h-48" />
+                </div>
+                <div className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                  <Smartphone className="w-3 h-3" />
+                  <span>WhatsApp &rarr; Linked Devices &rarr; Link a Device</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)] mb-2" />
+                <p className="text-xs text-[var(--text-muted)]">
+                  {personalStatus === "connecting" ? "Generating QR code..." : "Waiting for connection..."}
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Personal WhatsApp connected — all messages forwarded, no chat picker needed
+  if (personalSubId && personalStatus === "connected" && !integration?.connected) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
+        <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center flex-1 p-4">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: `${WHATSAPP_GREEN}15` }}>
+              <CheckCircle className="w-5 h-5" style={{ color: WHATSAPP_GREEN }} />
+            </div>
+            <p className="text-xs font-medium text-[var(--text-primary)] mb-1">OrcaBot WhatsApp</p>
+            <p className="text-[10px] text-[var(--text-muted)] text-center mb-4">
+              Users message this number on WhatsApp. Connect a terminal to read and reply.
+            </p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleDisconnectPersonal}
+              className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
+            >
+              <LogOut className="w-3 h-3" />
+              Disconnect
+            </Button>
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Business API connected — show wa.me QR code for end users
+  const waPhoneNumber = integration?.phoneNumber;
+  // Strip non-digits for wa.me link (e.g. "+1 555-012-3456" → "15550123456")
+  const waDigits = waPhoneNumber ? waPhoneNumber.replace(/\D/g, "") : null;
+  const waLink = waDigits ? `https://wa.me/${waDigits}` : null;
 
   return (
     <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
@@ -513,78 +731,33 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
       <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          <div className="flex-1 overflow-y-auto">
-            {availableChats.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-4">
-                <MessageSquare className="w-6 h-6 text-[var(--text-muted)] mb-2" />
-                <p className="text-xs text-[var(--text-muted)] text-center">No chats found</p>
-                <p className="text-[10px] text-[var(--text-muted)] text-center mt-1">
-                  Chats will appear once messages are received.
-                </p>
+        <div className="flex flex-col items-center justify-center flex-1 p-4">
+          {waLink ? (
+            <>
+              <div className="rounded-lg overflow-hidden border border-[var(--border)] mb-3 p-2 bg-white">
+                <QRCodeSVG value={waLink} size={140} level="M" />
               </div>
-            ) : (
-              availableChats.map((chat) => {
-                const isSubscribed = subscribedChatIds.has(chat.id);
-                const isToggling = subscribing === chat.id;
-                return (
-                  <button
-                    key={chat.id}
-                    onClick={() => handleToggleChat(chat)}
-                    disabled={isToggling}
-                    className={cn(
-                      "w-full px-2 py-1.5 border-b border-[var(--border)] transition-colors text-left nodrag",
-                      isSubscribed
-                        ? "bg-[#25D366]/5 hover:bg-[#25D366]/10"
-                        : "hover:bg-[var(--background)]",
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <MessageSquare className={cn(
-                        "w-3 h-3 shrink-0",
-                        isSubscribed ? "text-[#25D366]" : "text-[var(--text-muted)]"
-                      )} />
-                      <span className={cn(
-                        "text-[10px] truncate flex-1 font-medium",
-                        isSubscribed ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"
-                      )}>
-                        {chat.name}
-                      </span>
-                      {isToggling ? (
-                        <Loader2 className="w-3 h-3 animate-spin text-[var(--text-muted)]" />
-                      ) : isSubscribed ? (
-                        <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />
-                      ) : null}
-                    </div>
-                    {chat.topic && (
-                      <p className="text-[9px] text-[var(--text-muted)] mt-0.5 ml-[18px] truncate">
-                        {chat.topic}
-                      </p>
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
-
-          <div className="px-2 py-1 border-t border-[var(--border)] bg-[var(--background)]">
-            <div className="flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
-              <CheckCircle className="w-2.5 h-2.5 text-green-500" />
-              <span>Connected</span>
-              {subscribedChatIds.size > 0 && (
-                <>
-                  <span>&middot;</span>
-                  <span>{subscribedChatIds.size} subscribed</span>
-                </>
-              )}
-              {status?.lastActivityAt && (
-                <>
-                  <span>&middot;</span>
-                  <span>{new Date(status.lastActivityAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                </>
-              )}
-            </div>
-          </div>
+              <p className="text-xs font-medium text-[var(--text-primary)] mb-0.5">
+                {integration?.accountName || "OrcaBot"}
+              </p>
+              <p className="text-[10px] text-[var(--text-muted)] mb-1">{waPhoneNumber}</p>
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+                Scan to chat on WhatsApp. Connect a terminal to read and reply.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: `${WHATSAPP_GREEN}15` }}>
+                <CheckCircle className="w-5 h-5" style={{ color: WHATSAPP_GREEN }} />
+              </div>
+              <p className="text-xs font-medium text-[var(--text-primary)] mb-1">
+                {integration?.accountName || "WhatsApp Connected"}
+              </p>
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+                Connect a terminal to read and reply to messages.
+              </p>
+            </>
+          )}
         </div>
       </div>
     </BlockWrapper>

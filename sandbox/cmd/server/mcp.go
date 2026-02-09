@@ -117,17 +117,13 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 	// For tool listing, missing token just means no integration tools (soft fail).
 	// Mismatched token is still an error (suspicious).
 	ptyID := r.URL.Query().Get("pty_id")
-	log.Printf("[mcp-tools] ListTools: pty_id=%q present=%v", ptyID, ptyID != "")
 	if ptyID != "" {
 		callerToken := r.Header.Get("X-Integration-Token")
 		storedToken := session.GetIntegrationToken(ptyID)
-		log.Printf("[mcp-tools] ListTools: callerToken set=%v (len=%d), storedToken set=%v (len=%d)",
-			callerToken != "", len(callerToken), storedToken != "", len(storedToken))
 
 		// Only proceed if both tokens exist and match
 		tokenValid := callerToken != "" && storedToken != "" &&
 			subtle.ConstantTimeCompare([]byte(callerToken), []byte(storedToken)) == 1
-		log.Printf("[mcp-tools] ListTools: tokenValid=%v", tokenValid)
 
 		if callerToken != "" && storedToken != "" && !tokenValid {
 			// Token mismatch - suspicious, deny
@@ -147,13 +143,10 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Printf("[mcp-tools] ListTools: ERROR listing integrations: %v", err)
 			} else if integrations == nil {
-				log.Printf("[mcp-tools] ListTools: integrations response is nil")
+				log.Printf("[mcp-tools] ListTools: ERROR integrations response is nil")
 			} else {
-				log.Printf("[mcp-tools] ListTools: got %d integrations from gateway", len(integrations.Integrations))
 				var activeProviders []string
-				for i, integration := range integrations.Integrations {
-					log.Printf("[mcp-tools] ListTools: integration[%d] provider=%s activePolicyId=%q",
-						i, integration.Provider, integration.ActivePolicyID)
+				for _, integration := range integrations.Integrations {
 					// Only add tools if there's an active policy
 					if integration.ActivePolicyID != "" {
 						activeProviders = append(activeProviders, integration.Provider)
@@ -164,8 +157,6 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 							}
 						} else {
 							providerTools := mcp.GetToolsForProvider(integration.Provider)
-							log.Printf("[mcp-tools] ListTools: adding %d tools for provider=%s",
-								len(providerTools), integration.Provider)
 							for _, tool := range providerTools {
 								allTools = append(allTools, map[string]interface{}{
 									"name":        tool.Name,
@@ -181,17 +172,11 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 				// This detects attach/detach of google_drive and triggers sync start/stop.
 				session.NotifyIntegrations(ptyID, activeProviders, storedToken)
 			}
-		} else {
-			log.Printf("[mcp-tools] ListTools: skipping integration tools (tokenValid=false)")
 		}
-	} else {
-		log.Printf("[mcp-tools] ListTools: no pty_id, skipping integration tools")
 	}
 
 	// Add agent state tools (tasks & memory) - ALWAYS available
-	// These are core infrastructure, not gated by integration attachment or token validation
 	agentStateTools := mcp.GetAllAgentStateTools()
-	log.Printf("[mcp-tools] ListTools: adding %d agent state tools (tasks/memory)", len(agentStateTools))
 	for _, tool := range agentStateTools {
 		allTools = append(allTools, map[string]interface{}{
 			"name":        tool.Name,

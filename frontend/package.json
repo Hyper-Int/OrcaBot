@@ -29,6 +29,7 @@
     "modern-screenshot": "^4.6.8",
     "nanoid": "^5.1.6",
     "next": "16.1.1",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",

@@ -28,7 +28,7 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
 }
 
 // Format a raw DB item row to camelCase
-function formatItem(row: Record<string, unknown>): DashboardItem {
+export function formatItem(row: Record<string, unknown>): DashboardItem {
   // Parse metadata from JSON string if present
   let metadata: Record<string, unknown> | undefined;
   if (row.metadata && typeof row.metadata === 'string') {

@@ -1,21 +1,21 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-delivery-v21-strip-cr
-const MODULE_REVISION = 'messaging-delivery-v21-strip-cr';
+// REVISION: messaging-delivery-v22-note-prompt-targets
+const MODULE_REVISION = 'messaging-delivery-v22-note-prompt-targets';
 console.log(`[messaging-delivery] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
  * Message Delivery Module
  *
- * Delivers buffered inbound messages to sandbox PTYs.
+ * Delivers buffered inbound messages to sandbox PTYs, note blocks, and prompt blocks.
  * If the sandbox VM is sleeping, wakes it first using ensureDashbоardSandbоx().
  *
  * Flow:
- * 1. Check if sandbox is running for the dashboard
- * 2. If not running: wake VM via ensureDashbоardSandbоx()
- * 3. Find or create a PTY for the connected terminal
- * 4. Drain all buffered messages to the PTY in chronological order
+ * 1. Check for connected targets (terminals, notes, prompts)
+ * 2. For terminals: wake sandbox VM, find/create PTYs, write to PTYs
+ * 3. For notes: append message text to item content, notify Durable Object
+ * 4. For prompts: set item content to message text, notify Durable Object
  * 5. Mark messages as delivered
  *
  * Reuses patterns from schedules/executor.ts for VM wake and PTY write.
@@ -27,6 +27,7 @@ import { ensureDashbоardSandbоx } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
 import { createPtyToken } from '../auth/pty-token';
 import { channelMatchesFilter } from './webhook-handler';
+import { formatItem } from '../dashboards/handler';
 
 interface BufferedMessage {
   id: string;
@@ -46,15 +47,21 @@ interface BufferedMessage {
   created_at: string;
 }
 
+interface ItemTarget {
+  itemId: string;
+  type: 'note' | 'prompt';
+}
+
 /**
  * Attempt to deliver buffered messages for a dashboard.
  * If the sandbox is not running, wakes it first.
  * Fans out to terminals connected to the messaging block that have an active
  * terminal_integration for the provider (policy gate — terminals without integration are skipped).
+ * Also delivers to connected note blocks (append) and prompt blocks (set input).
  *
  * Called from webhook-handler.ts via ctx.waitUntil() after buffering a message.
  *
- * @param messagingItemId - The messaging block's item_id (used to resolve connected terminals)
+ * @param messagingItemId - The messaging block's item_id (used to resolve connected targets)
  * @param provider - The messaging provider (used to filter terminals by integration)
  */
 export async function deliverOrWakeAndDrain(
@@ -64,20 +71,32 @@ export async function deliverOrWakeAndDrain(
   userId: string,
   provider: string,
 ): Promise<void> {
-  // 1. Check for eligible terminals BEFORE waking the sandbox.
-  // Terminals must be connected to this messaging block via an edge AND have an
-  // active terminal_integration with an active policy for the provider.
-  // This avoids waking VMs for dashboards with no connected terminals or no policies.
-  const connectedTerminals = await env.DB.prepare(`
-    SELECT DISTINCT de.target_item_id
-    FROM dashboard_edges de
-    JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-    JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-    WHERE de.source_item_id = ?
-  `).bind(provider, messagingItemId).all<{ target_item_id: string }>();
+  // 1. Check for eligible targets BEFORE waking the sandbox.
+  // Terminals must have an active terminal_integration with policy for the provider.
+  // Notes/prompts only need an edge from the messaging block (edge = authorization).
+  const [connectedTerminals, connectedItems] = await Promise.all([
+    env.DB.prepare(`
+      SELECT DISTINCT de.target_item_id
+      FROM dashboard_edges de
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+      JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
+      WHERE de.source_item_id = ?
+    `).bind(provider, messagingItemId).all<{ target_item_id: string }>(),
+    env.DB.prepare(`
+      SELECT DISTINCT de.target_item_id, di.type
+      FROM dashboard_edges de
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
+      WHERE de.source_item_id = ?
+    `).bind(messagingItemId).all<{ target_item_id: string; type: string }>(),
+  ]);
 
-  if (!connectedTerminals.results?.length) {
-    console.log(`[delivery] No terminal with ${provider} integration+policy connected to messaging block ${messagingItemId} — messages stay buffered`);
+  const itemTargets: ItemTarget[] = (connectedItems.results || []).map(r => ({
+    itemId: r.target_item_id,
+    type: r.type as 'note' | 'prompt',
+  }));
+
+  if (!connectedTerminals.results?.length && !itemTargets.length) {
+    console.log(`[delivery] No targets connected to messaging block ${messagingItemId} — messages stay buffered`);
     return;
   }
 
@@ -97,45 +116,49 @@ export async function deliverOrWakeAndDrain(
     `).bind(dashboardId).first<{ user_id: string }>();
 
     if (!owner) {
-      console.error(`[delivery] Dashboard ${dashboardId} has no owner — cannot wake sandbox`);
+      console.error(`[delivery] Dashboard ${dashboardId} has no owner — cannot deliver`);
       return;
     }
     effectiveUserId = owner.user_id;
   }
 
-  // 3. Ensure sandbox is running (wakes VM if sleeping)
-  const envWithCache = env as EnvWithDriveCache;
-  const sandboxResult = await ensureDashbоardSandbоx(envWithCache, dashboardId, effectiveUserId);
+  // 3. Resolve terminal PTYs (only if terminals are connected)
+  let terminalPtys: TerminalPty[] = [];
+  let sandbox: SandboxClient | null = null;
 
-  if (sandboxResult instanceof Response) {
-    console.error(`[delivery] Failed to ensure sandbox for dashboard ${dashboardId}`);
-    return;
-  }
+  if (connectedTerminals.results?.length) {
+    // Ensure sandbox is running (wakes VM if sleeping)
+    const envWithCache = env as EnvWithDriveCache;
+    const sandboxResult = await ensureDashbоardSandbоx(envWithCache, dashboardId, effectiveUserId);
 
-  const { sandboxSessionId, sandboxMachineId } = sandboxResult;
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    if (sandboxResult instanceof Response) {
+      console.error(`[delivery] Failed to ensure sandbox for dashboard ${dashboardId}`);
+      // Don't return — we can still deliver to note/prompt items
+    } else {
+      const { sandboxSessionId, sandboxMachineId } = sandboxResult;
+      sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
-  // 4. Resolve PTY info for each connected terminal
-  const terminalPtys: TerminalPty[] = [];
-  for (const terminal of connectedTerminals.results) {
-    try {
-      const pty = await resolveTerminalPty(
-        env, sandbox, dashboardId, terminal.target_item_id,
-        effectiveUserId, sandboxSessionId, sandboxMachineId,
-      );
-      if (pty) terminalPtys.push(pty);
-    } catch (err) {
-      console.error(`[delivery] Failed to resolve PTY for terminal ${terminal.target_item_id}:`, err);
+      for (const terminal of connectedTerminals.results) {
+        try {
+          const pty = await resolveTerminalPty(
+            env, sandbox, dashboardId, terminal.target_item_id,
+            effectiveUserId, sandboxSessionId, sandboxMachineId,
+          );
+          if (pty) terminalPtys.push(pty);
+        } catch (err) {
+          console.error(`[delivery] Failed to resolve PTY for terminal ${terminal.target_item_id}:`, err);
+        }
+      }
     }
   }
 
-  if (!terminalPtys.length) {
-    console.log(`[delivery] No active PTYs for dashboard ${dashboardId} — messages stay buffered`);
+  if (!terminalPtys.length && !itemTargets.length) {
+    console.log(`[delivery] No active targets for dashboard ${dashboardId} — messages stay buffered`);
     return;
   }
 
-  // 5. Claim and fan out buffered messages to all terminals
-  await claimAndFanOut(env, sandbox, dashboardId, messagingItemId, provider, terminalPtys);
+  // 4. Claim and fan out buffered messages to all targets (terminals + items)
+  await claimAndFanOut(env, sandbox, dashboardId, messagingItemId, provider, terminalPtys, itemTargets);
 }
 
 interface TerminalPty {
@@ -313,23 +336,25 @@ async function checkPerTerminalPolicy(
 }
 
 /**
- * Claim buffered messages and fan out to all connected terminal PTYs.
+ * Claim buffered messages and fan out to all connected targets (terminals + note/prompt items).
  *
- * Flow: claim each message (status → delivering), re-validate policy, write to PTYs, then mark delivered.
+ * Flow: claim each message (status → delivering), re-validate policy for terminals,
+ * write to PTYs and/or update item content, then mark delivered.
  * The claim prevents concurrent workers from double-processing the same message,
- * while the fan-out ensures every connected terminal receives it.
+ * while the fan-out ensures every connected target receives it.
  *
- * Per-terminal tracking: delivered_terminals (JSON array) tracks which terminals
+ * Per-target tracking: delivered_terminals (JSON array) tracks which targets
  * already received the message. On partial failure + retry, only the remaining
- * terminals are attempted, preventing duplicate delivery.
+ * targets are attempted, preventing duplicate delivery.
  */
 async function claimAndFanOut(
   env: Env,
-  sandbox: SandboxClient,
+  sandbox: SandboxClient | null,
   dashboardId: string,
   messagingItemId: string,
   provider: string,
   terminalPtys: TerminalPty[],
+  itemTargets: ItemTarget[] = [],
 ): Promise<void> {
   // Select buffered messages from ACTIVE subscriptions connected to this messaging block.
   // Filter by provider to prevent cross-provider leakage: if a single messaging block
@@ -363,7 +388,8 @@ async function claimAndFanOut(
     return;
   }
 
-  console.log(`[delivery] Fanning out ${messages.results.length} messages to ${terminalPtys.length} terminal(s) for dashboard ${dashboardId}`);
+  const totalTargets = terminalPtys.length + itemTargets.length;
+  console.log(`[delivery] Fanning out ${messages.results.length} messages to ${totalTargets} target(s) (${terminalPtys.length} terminal, ${itemTargets.length} item) for dashboard ${dashboardId}`);
 
   for (const msg of messages.results) {
     try {
@@ -384,33 +410,7 @@ async function claimAndFanOut(
       // Use post-increment value for consistent retry limit checks (matches watchdog's < 3).
       const attemptsAfterClaim = msg.delivery_attempts + 1;
 
-      // Re-validate against current per-terminal policies — catches policy changes since buffering.
-      // Each terminal is evaluated independently: a permissive Terminal A can't cause messages
-      // to leak to a restrictive Terminal B.
-      const allTerminalIds = terminalPtys.map(p => p.terminalItemId);
-      const policyResult = await checkPerTerminalPolicy(env, msg, messagingItemId, allTerminalIds);
-      if (policyResult === 'all_denied') {
-        console.log(`[delivery] Message ${msg.id} denied by all terminal policies — dropping`);
-        await env.DB.prepare(`
-          UPDATE inbound_messages SET status = 'failed' WHERE id = ?
-        `).bind(msg.id).run();
-        continue;
-      }
-      if (policyResult === 'no_policy') {
-        // No policy configured yet — reset to buffered so message isn't lost.
-        // Also roll back delivery_attempts so retryBufferedMessages (which filters
-        // delivery_attempts < 3) keeps picking it up. Without this rollback,
-        // 3 no-policy cycles would strand the message as permanently buffered.
-        console.log(`[delivery] Message ${msg.id} has no policy configured — keeping buffered`);
-        await env.DB.prepare(`
-          UPDATE inbound_messages
-          SET status = 'buffered', claimed_at = NULL, delivery_attempts = delivery_attempts - 1
-          WHERE id = ?
-        `).bind(msg.id).run();
-        continue;
-      }
-
-      // Parse which terminals already received this message (from previous partial delivery)
+      // Parse which targets already received this message (from previous partial delivery)
       let alreadyDelivered: Set<string>;
       try {
         alreadyDelivered = new Set(JSON.parse(msg.delivered_terminals || '[]') as string[]);
@@ -418,53 +418,86 @@ async function claimAndFanOut(
         alreadyDelivered = new Set();
       }
 
-      // Only deliver to terminals whose individual policy allows AND haven't already received
-      const remainingPtys = terminalPtys.filter(p =>
-        !alreadyDelivered.has(p.terminalItemId) && policyResult.get(p.terminalItemId) === true
-      );
-      if (!remainingPtys.length) {
-        // All terminals already received — mark as delivered
-        await env.DB.prepare(`
-          UPDATE inbound_messages SET status = 'delivered', delivered_at = datetime('now') WHERE id = ?
-        `).bind(msg.id).run();
-        continue;
-      }
-
-      // Format message once, write to remaining terminal PTYs
-      const formattedMessage = formatMessageForPty(msg);
       const newlyDelivered: string[] = [];
-      const failedTerminals: string[] = [];
+      const failedTargets: string[] = [];
 
-      for (const pty of remainingPtys) {
-        try {
-          await sandbox.writePty(pty.sessionId, pty.ptyId, formattedMessage, pty.machineId);
-          newlyDelivered.push(pty.terminalItemId);
-        } catch (err) {
-          console.error(`[delivery] Failed to write message ${msg.id} to terminal ${pty.terminalItemId}:`, err);
-          failedTerminals.push(pty.terminalItemId);
+      // --- Deliver to note/prompt items (no policy gate — edge is the authorization) ---
+      const remainingItems = itemTargets.filter(t => !alreadyDelivered.has(t.itemId));
+      if (remainingItems.length) {
+        for (const target of remainingItems) {
+          try {
+            await deliverToItem(env, dashboardId, target, msg);
+            newlyDelivered.push(target.itemId);
+          } catch (err) {
+            console.error(`[delivery] Failed to deliver message ${msg.id} to ${target.type} ${target.itemId}:`, err);
+            failedTargets.push(target.itemId);
+          }
         }
       }
 
-      // Merge newly delivered with previously delivered
-      const allDeliveredTerminals = [...alreadyDelivered, ...newlyDelivered];
+      // --- Deliver to terminal PTYs (policy-gated) ---
+      if (terminalPtys.length && sandbox) {
+        // Re-validate against current per-terminal policies — catches policy changes since buffering.
+        const allTerminalIds = terminalPtys.map(p => p.terminalItemId);
+        const policyResult = await checkPerTerminalPolicy(env, msg, messagingItemId, allTerminalIds);
 
-      if (!failedTerminals.length) {
-        // All remaining terminals succeeded — mark as fully delivered
+        let remainingPtys: TerminalPty[] = [];
+        if (policyResult === 'all_denied') {
+          console.log(`[delivery] Message ${msg.id} denied by all terminal policies`);
+          // Don't short-circuit — items may have already been delivered above
+        } else if (policyResult === 'no_policy') {
+          console.log(`[delivery] Message ${msg.id} has no terminal policy configured`);
+          // Don't short-circuit — items may have already been delivered above
+        } else {
+          remainingPtys = terminalPtys.filter(p =>
+            !alreadyDelivered.has(p.terminalItemId) && policyResult.get(p.terminalItemId) === true
+          );
+        }
+
+        if (remainingPtys.length) {
+          const formattedMessage = formatMessageForPty(msg);
+          for (const pty of remainingPtys) {
+            try {
+              await sandbox.writePty(pty.sessionId, pty.ptyId, formattedMessage, pty.machineId);
+              newlyDelivered.push(pty.terminalItemId);
+            } catch (err) {
+              console.error(`[delivery] Failed to write message ${msg.id} to terminal ${pty.terminalItemId}:`, err);
+              failedTargets.push(pty.terminalItemId);
+            }
+          }
+        }
+      }
+
+      // Check if all targets have been delivered (combining previous + new)
+      const allDeliveredIds = [...alreadyDelivered, ...newlyDelivered];
+      const allTargetIds = [
+        ...terminalPtys.map(p => p.terminalItemId),
+        ...itemTargets.map(t => t.itemId),
+      ];
+      const allTargetsHandled = newlyDelivered.length > 0 || alreadyDelivered.size > 0;
+
+      if (!failedTargets.length && allTargetsHandled) {
         await env.DB.prepare(`
           UPDATE inbound_messages
           SET status = 'delivered', delivered_at = datetime('now'), delivered_terminals = ?
           WHERE id = ?
-        `).bind(JSON.stringify(allDeliveredTerminals), msg.id).run();
-      } else {
-        // Some terminals failed — save progress and reset for retry (or fail if exhausted)
+        `).bind(JSON.stringify(allDeliveredIds), msg.id).run();
+      } else if (failedTargets.length) {
         const newStatus = attemptsAfterClaim >= 3 ? 'failed' : 'buffered';
         await env.DB.prepare(`
           UPDATE inbound_messages SET status = ?, delivered_terminals = ? WHERE id = ?
-        `).bind(newStatus, JSON.stringify(allDeliveredTerminals), msg.id).run();
+        `).bind(newStatus, JSON.stringify(allDeliveredIds), msg.id).run();
 
         if (newStatus === 'buffered') {
-          console.log(`[delivery] Message ${msg.id}: ${newlyDelivered.length} delivered, ${failedTerminals.length} failed — will retry for remaining`);
+          console.log(`[delivery] Message ${msg.id}: ${newlyDelivered.length} delivered, ${failedTargets.length} failed — will retry`);
         }
+      } else {
+        // No targets were delivered and none failed — could be policy-denied terminals with no items
+        // If there were item targets that all succeeded earlier, we'd have newlyDelivered > 0
+        // This means all terminals were policy-denied and there are no item targets
+        await env.DB.prepare(`
+          UPDATE inbound_messages SET status = 'failed' WHERE id = ?
+        `).bind(msg.id).run();
       }
     } catch (err) {
       console.error(`[delivery] Failed to deliver message ${msg.id}:`, err);
@@ -475,6 +508,77 @@ async function claimAndFanOut(
       `).bind(newStatus, msg.id).run();
     }
   }
+}
+
+/**
+ * Deliver a message to a note or prompt block by updating its content in D1
+ * and notifying the Durable Object for real-time broadcast.
+ *
+ * - Notes: message text is appended to existing content (conversation log style)
+ * - Prompts: message text replaces content (used as input for the next prompt execution)
+ */
+async function deliverToItem(
+  env: Env,
+  dashboardId: string,
+  target: ItemTarget,
+  msg: BufferedMessage,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const formattedText = formatMessageForItem(msg);
+
+  if (target.type === 'note') {
+    // Append to existing note content
+    const existing = await env.DB.prepare(
+      'SELECT content FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
+    ).bind(target.itemId, dashboardId).first<{ content: string }>();
+
+    const currentContent = existing?.content || '';
+    const separator = currentContent.trim() ? '\n' : '';
+    const newContent = currentContent + separator + formattedText;
+
+    await env.DB.prepare(
+      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ?'
+    ).bind(newContent, now, target.itemId).run();
+  } else {
+    // Prompt: replace content with message text (raw, no formatting wrapper)
+    await env.DB.prepare(
+      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ?'
+    ).bind(msg.message_text || '', now, target.itemId).run();
+  }
+
+  // Notify Durable Object for real-time WebSocket broadcast
+  const savedItem = await env.DB.prepare(
+    'SELECT * FROM dashboard_items WHERE id = ?'
+  ).bind(target.itemId).first();
+
+  if (savedItem) {
+    const doId = env.DASHBOARD.idFromName(dashboardId);
+    const stub = env.DASHBOARD.get(doId);
+    const formattedItem = formatItem(savedItem as Record<string, unknown>);
+    await stub.fetch(new Request('http://do/item', {
+      method: 'PUT',
+      body: JSON.stringify(formattedItem),
+    }));
+  }
+
+  console.log(`[delivery] Delivered message ${msg.id} to ${target.type} ${target.itemId}`);
+}
+
+/**
+ * Format a message for display in a note block.
+ * Simpler than the PTY format — no ANSI concerns, just readable text.
+ */
+function formatMessageForItem(msg: BufferedMessage): string {
+  const provider = msg.provider.charAt(0).toUpperCase() + msg.provider.slice(1);
+  const sender = msg.sender_name || msg.sender_id || 'unknown';
+  const text = msg.message_text || '(empty)';
+  const time = new Date(msg.created_at).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+  return `[${provider} · ${sender} · ${time}]\n${text}`;
 }
 
 /**
@@ -577,6 +681,8 @@ function getReplyToolName(provider: string, metadata: Record<string, unknown>): 
     case 'slack':
       // slack_reply_thread requires thread_ts; for top-level messages use slack_send_message
       return metadata.thread_ts ? 'slack_reply_thread' : 'slack_send_message';
+    case 'whatsapp':
+      return 'whatsapp_send_message';
     // Discord, Telegram, and other providers do not yet have MCP tools registered.
     // Uncomment these as tools are added to integration_tools.go:
     // case 'discord': return 'discord_send_message';
@@ -671,17 +777,18 @@ export async function cleanupExpiredMessages(env: Env): Promise<void> {
  * Called from the scheduled handler (minutely cron).
  *
  * Groups by (dashboard, messaging_item) to reuse the same fan-out logic
- * as the primary delivery path — each message goes to ALL connected terminals.
+ * as the primary delivery path — each message goes to ALL connected targets.
  */
 export async function retryBufferedMessages(env: Env): Promise<void> {
-  // Find (dashboard, messaging_item) pairs with buffered messages that have active sandboxes.
-  // Also fetch sandbox session/machine info so we can create PTYs if needed.
+  // Find (dashboard, messaging_item) pairs with buffered messages.
+  // Include dashboards with active sandboxes (for terminal delivery) or any buffered messages
+  // (for note/prompt delivery which doesn't need a sandbox).
   const targets = await env.DB.prepare(`
     SELECT DISTINCT im.dashboard_id, ms.item_id as messaging_item_id, ms.user_id, im.provider,
       ds.sandbox_session_id, ds.sandbox_machine_id
     FROM inbound_messages im
     JOIN messaging_subscriptions ms ON ms.id = im.subscription_id
-    JOIN dashboard_sandboxes ds ON ds.dashboard_id = im.dashboard_id
+    LEFT JOIN dashboard_sandboxes ds ON ds.dashboard_id = im.dashboard_id
     WHERE im.status = 'buffered'
       AND ms.status = 'active'
       AND im.delivery_attempts < 3
@@ -689,7 +796,7 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
     LIMIT 10
   `).all<{
     dashboard_id: string; messaging_item_id: string; user_id: string; provider: string;
-    sandbox_session_id: string; sandbox_machine_id: string;
+    sandbox_session_id: string | null; sandbox_machine_id: string | null;
   }>();
 
   if (!targets.results?.length) {
@@ -700,43 +807,55 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
 
   for (const row of targets.results) {
     try {
-      // Find terminals connected to this messaging block that have an active integration + policy
-      const connectedTerminals = await env.DB.prepare(`
-        SELECT DISTINCT de.target_item_id
-        FROM dashboard_edges de
-        JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-        JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-        WHERE de.source_item_id = ?
-      `).bind(row.provider, row.messaging_item_id).all<{ target_item_id: string }>();
+      // Find all connected targets: terminals (with policy) and note/prompt items
+      const [connectedTerminals, connectedItems] = await Promise.all([
+        env.DB.prepare(`
+          SELECT DISTINCT de.target_item_id
+          FROM dashboard_edges de
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+          JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
+          WHERE de.source_item_id = ?
+        `).bind(row.provider, row.messaging_item_id).all<{ target_item_id: string }>(),
+        env.DB.prepare(`
+          SELECT DISTINCT de.target_item_id, di.type
+          FROM dashboard_edges de
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
+          WHERE de.source_item_id = ?
+        `).bind(row.messaging_item_id).all<{ target_item_id: string; type: string }>(),
+      ]);
 
-      if (!connectedTerminals.results?.length) continue;
+      const itemTargets: ItemTarget[] = (connectedItems.results || []).map(r => ({
+        itemId: r.target_item_id,
+        type: r.type as 'note' | 'prompt',
+      }));
 
-      // Resolve the effective user (dashboard owner) for PTY creation
-      const owner = await env.DB.prepare(`
-        SELECT user_id FROM dashboard_members
-        WHERE dashboard_id = ? AND role = 'owner' LIMIT 1
-      `).bind(row.dashboard_id).first<{ user_id: string }>();
-      const effectiveUserId = owner?.user_id || row.user_id;
+      if (!connectedTerminals.results?.length && !itemTargets.length) continue;
 
-      // Resolve (or create) PTYs for each terminal. Unlike the old approach that only
-      // looked for existing active PTYs (leaving messages stuck when no PTY was open),
-      // this uses resolveTerminalPty which creates PTYs on demand.
+      // Resolve terminal PTYs if sandbox is active and terminals are connected
       const terminalPtys: TerminalPty[] = [];
-      for (const terminal of connectedTerminals.results) {
-        try {
-          const pty = await resolveTerminalPty(
-            env, sandbox, row.dashboard_id, terminal.target_item_id,
-            effectiveUserId, row.sandbox_session_id, row.sandbox_machine_id,
-          );
-          if (pty) terminalPtys.push(pty);
-        } catch (err) {
-          console.error(`[delivery] Retry: failed to resolve PTY for terminal ${terminal.target_item_id}:`, err);
+      if (connectedTerminals.results?.length && row.sandbox_session_id && row.sandbox_machine_id) {
+        const owner = await env.DB.prepare(`
+          SELECT user_id FROM dashboard_members
+          WHERE dashboard_id = ? AND role = 'owner' LIMIT 1
+        `).bind(row.dashboard_id).first<{ user_id: string }>();
+        const effectiveUserId = owner?.user_id || row.user_id;
+
+        for (const terminal of connectedTerminals.results) {
+          try {
+            const pty = await resolveTerminalPty(
+              env, sandbox, row.dashboard_id, terminal.target_item_id,
+              effectiveUserId, row.sandbox_session_id, row.sandbox_machine_id,
+            );
+            if (pty) terminalPtys.push(pty);
+          } catch (err) {
+            console.error(`[delivery] Retry: failed to resolve PTY for terminal ${terminal.target_item_id}:`, err);
+          }
         }
       }
 
-      if (!terminalPtys.length) continue;
+      if (!terminalPtys.length && !itemTargets.length) continue;
 
-      await claimAndFanOut(env, sandbox, row.dashboard_id, row.messaging_item_id, row.provider, terminalPtys);
+      await claimAndFanOut(env, terminalPtys.length ? sandbox : null, row.dashboard_id, row.messaging_item_id, row.provider, terminalPtys, itemTargets);
     } catch (err) {
       console.error(`[delivery] Retry failed for dashboard ${row.dashboard_id}:`, err);
     }

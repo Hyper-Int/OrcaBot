@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v11-clarify-per-user-scope
-const integrationsRevision = "integrations-v11-clarify-per-user-scope";
+// REVISION: integrations-v14-qr-no-session-restart
+const integrationsRevision = "integrations-v14-qr-no-session-restart";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -9991,6 +9991,49 @@ export async function connectMessagingToken(
 }
 
 /**
+ * GET /integrations/whatsapp/platform-config
+ * Returns the platform-level WhatsApp Business API configuration.
+ * Phone number + verified name are fetched from Meta Graph API using env vars.
+ * No per-user credentials needed — this is a platform-wide config.
+ */
+export async function getWhatsAppPlatformConfig(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const accessToken = env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!accessToken || !phoneNumberId) {
+    return Response.json({ configured: false });
+  }
+
+  // Fetch phone number details from Meta Graph API
+  try {
+    const resp = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!resp.ok) {
+      console.error(`[whatsapp-platform] Meta API error: ${resp.status}`);
+      return Response.json({ configured: true, phoneNumberId, displayPhone: null, verifiedName: null });
+    }
+    const data = await resp.json() as { display_phone_number?: string; verified_name?: string };
+    return Response.json({
+      configured: true,
+      phoneNumberId,
+      displayPhone: data.display_phone_number || null,
+      verifiedName: data.verified_name || null,
+    });
+  } catch (err) {
+    console.error(`[whatsapp-platform] Failed to fetch phone info:`, err);
+    return Response.json({ configured: true, phoneNumberId, displayPhone: null, verifiedName: null });
+  }
+}
+
+/**
  * GET /integrations/:provider
  * Returns connection status for a token-based messaging provider.
  */
@@ -10047,13 +10090,15 @@ export async function listMessagingChannels(
     'SELECT access_token, metadata FROM user_integrations WHERE user_id = ? AND provider = ?'
   ).bind(auth.user!.id, provider).first<{ access_token: string; metadata: string }>();
 
-  if (!row) {
+  // WhatsApp can list chats from D1 without a user_integrations row
+  // (personal WhatsApp via bridge doesn't create one).
+  if (!row && provider !== 'whatsapp') {
     return Response.json({ error: 'Not connected' }, { status: 404 });
   }
 
   let meta: Record<string, unknown> = {};
-  try { meta = JSON.parse(row.metadata); } catch { /* empty */ }
-  const token = row.access_token;
+  try { if (row?.metadata) meta = JSON.parse(row.metadata); } catch { /* empty */ }
+  const token = row?.access_token ?? '';
 
   try {
     switch (provider) {
@@ -10255,4 +10300,253 @@ export async function disconnectMessaging(
   ).bind(auth.user!.id, provider).run();
 
   return Response.json({ ok: true });
+}
+
+// ============================================
+// WhatsApp Personal (Bridge/Baileys — QR Code Pairing)
+// ============================================
+
+/**
+ * POST /integrations/whatsapp/connect-personal
+ * Body: { dashboardId: string, itemId: string }
+ *
+ * Starts a personal WhatsApp connection via the bridge service (Baileys + QR code).
+ * Creates a messaging subscription and tells the bridge to open a Baileys session.
+ * The user then scans the QR code with their WhatsApp Linked Devices to connect.
+ *
+ * Unlike the Business API flow (connect-token), this does NOT require an API token
+ * or phone_number_id. The subscription has no chat scope — all inbound messages
+ * from the connected WhatsApp account are forwarded.
+ */
+export async function connectWhatsAppPersonal(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
+    return Response.json(
+      { error: 'Bridge service not configured (BRIDGE_URL / BRIDGE_INTERNAL_TOKEN missing)' },
+      { status: 503 },
+    );
+  }
+
+  let body: { dashboardId: string; itemId: string };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  if (!body.dashboardId || !body.itemId) {
+    return Response.json({ error: 'dashboardId and itemId are required' }, { status: 400 });
+  }
+
+  // Verify dashboard membership
+  const membership = await env.DB.prepare(
+    'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+  ).bind(body.dashboardId, auth.user!.id).first();
+  if (!membership) {
+    return Response.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  // Verify item exists and is a whatsapp block
+  const item = await env.DB.prepare(
+    'SELECT type FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
+  ).bind(body.itemId, body.dashboardId).first<{ type: string }>();
+  if (!item) {
+    return Response.json({ error: 'Item not found' }, { status: 404 });
+  }
+  if (item.type !== 'whatsapp') {
+    return Response.json({ error: 'Item is not a WhatsApp block' }, { status: 400 });
+  }
+
+  // Check for existing personal WhatsApp subscription on this item
+  const existing = await env.DB.prepare(`
+    SELECT id, webhook_id FROM messaging_subscriptions
+    WHERE item_id = ? AND provider = 'whatsapp' AND status IN ('pending', 'active')
+    AND channel_id IS NULL AND chat_id IS NULL
+    LIMIT 1
+  `).bind(body.itemId).first<{ id: string; webhook_id: string }>();
+
+  if (existing) {
+    // Verify the bridge still has a session — after a bridge restart, the
+    // subscription can be stuck pending with no live session behind it.
+    const { BridgeClient } = await import('../bridge/client');
+    const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
+    let bridgeAlive = false;
+    try {
+      const status = await bridge.getStatus(existing.webhook_id);
+      bridgeAlive = status !== null;
+    } catch {
+      // Bridge unreachable — treat as dead
+    }
+
+    if (bridgeAlive) {
+      return Response.json({
+        subscriptionId: existing.id,
+        webhookId: existing.webhook_id,
+        status: 'existing',
+      });
+    }
+
+    // Bridge has no session — restart it
+    console.log(`[integrations] Stale bridge session for subscription ${existing.id}, restarting`);
+    const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
+    try {
+      const bridgeResult = await bridge.startSession({
+        sessionId: existing.webhook_id,
+        userId: auth.user!.id,
+        provider: 'whatsapp',
+        callbackUrl,
+      });
+      return Response.json({
+        subscriptionId: existing.id,
+        webhookId: existing.webhook_id,
+        status: bridgeResult.status,
+        qrCode: bridgeResult.qrCode || null,
+      });
+    } catch (err) {
+      // Bridge totally unreachable — clean up the stale subscription so user can retry
+      console.error('[integrations] Bridge unreachable, cleaning up stale subscription:', err);
+      await env.DB.prepare('DELETE FROM messaging_subscriptions WHERE id = ?').bind(existing.id).run();
+      // Fall through to create a fresh subscription below
+    }
+  }
+
+  // Create subscription (no chatId/channelId — receives all messages)
+  const subscriptionId = crypto.randomUUID();
+  const webhookId = `bridge_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    INSERT INTO messaging_subscriptions (
+      id, dashboard_id, item_id, user_id, provider, webhook_id,
+      channel_id, channel_name, chat_id, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'whatsapp', ?, NULL, NULL, NULL, 'pending', ?, ?)
+  `).bind(
+    subscriptionId,
+    body.dashboardId,
+    body.itemId,
+    auth.user!.id,
+    webhookId,
+    now,
+    now,
+  ).run();
+
+  // Tell the bridge to start a Baileys session
+  const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
+  const { BridgeClient } = await import('../bridge/client');
+  const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
+
+  try {
+    const bridgeResult = await bridge.startSession({
+      sessionId: webhookId,
+      userId: auth.user!.id,
+      provider: 'whatsapp',
+      callbackUrl,
+    });
+
+    return Response.json({
+      subscriptionId,
+      webhookId,
+      status: bridgeResult.status,
+      qrCode: bridgeResult.qrCode || null,
+    }, { status: 201 });
+  } catch (err) {
+    // Roll back subscription if bridge call fails
+    await env.DB.prepare('DELETE FROM messaging_subscriptions WHERE id = ?').bind(subscriptionId).run();
+    console.error('[integrations] Bridge startSession failed:', err);
+    return Response.json(
+      { error: 'Failed to start WhatsApp connection — bridge service unavailable' },
+      { status: 502 },
+    );
+  }
+}
+
+/**
+ * GET /integrations/whatsapp/qr?subscription_id=...
+ *
+ * Returns the current QR code for a pending personal WhatsApp connection.
+ * The frontend polls this every 2-3 seconds until status becomes 'connected'.
+ */
+export async function getWhatsAppQr(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext,
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
+    return Response.json({ error: 'Bridge service not configured' }, { status: 503 });
+  }
+
+  const url = new URL(request.url);
+  const subscriptionId = url.searchParams.get('subscription_id');
+  if (!subscriptionId) {
+    return Response.json({ error: 'subscription_id query param required' }, { status: 400 });
+  }
+
+  // Look up subscription and verify ownership
+  const sub = await env.DB.prepare(`
+    SELECT id, webhook_id, status FROM messaging_subscriptions
+    WHERE id = ? AND user_id = ? AND provider = 'whatsapp'
+  `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string }>();
+
+  if (!sub) {
+    return Response.json({ error: 'Subscription not found' }, { status: 404 });
+  }
+
+  // If already active, no QR needed
+  if (sub.status === 'active') {
+    return Response.json({ status: 'connected', qrCode: null });
+  }
+
+  // Proxy QR code from bridge
+  const { BridgeClient } = await import('../bridge/client');
+  const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
+
+  try {
+    const qrResult = await bridge.getQrCode(sub.webhook_id);
+
+    if (!qrResult || qrResult.status === 'error') {
+      // Bridge session missing or in error state (e.g. max retries exhausted). Auto-restart it.
+      console.log(`[integrations] Bridge session for ${sub.webhook_id} is ${qrResult ? 'error' : 'missing'}, restarting`);
+      const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
+      try {
+        const restartResult = await bridge.startSession({
+          sessionId: sub.webhook_id,
+          userId: auth.user!.id,
+          provider: 'whatsapp',
+          callbackUrl,
+        });
+        return Response.json({
+          status: restartResult.status,
+          qrCode: restartResult.qrCode || null,
+        });
+      } catch (restartErr) {
+        console.error('[integrations] Bridge restart failed:', restartErr);
+        return Response.json({ status: 'error', qrCode: null, error: 'Bridge session lost — please try again' });
+      }
+    }
+
+    // If bridge reports connected, mark subscription as active
+    if (qrResult.status === 'connected' && sub.status !== 'active') {
+      await env.DB.prepare(`
+        UPDATE messaging_subscriptions SET status = 'active', updated_at = datetime('now')
+        WHERE id = ? AND status = 'pending'
+      `).bind(sub.id).run();
+    }
+
+    return Response.json({
+      status: qrResult.status,
+      qrCode: qrResult.qrCode || null,
+    });
+  } catch (err) {
+    console.error('[integrations] Bridge getQrCode failed:', err);
+    return Response.json({ status: 'error', qrCode: null, error: 'Bridge unavailable' });
+  }
 }

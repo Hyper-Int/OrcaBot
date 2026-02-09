@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v24-resourceid-snake-case
-console.log(`[integration-gateway] REVISION: gateway-v24-resourceid-snake-case loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v26-bridge-sub-scoped-by-item
+console.log(`[integration-gateway] REVISION: gateway-v26-bridge-sub-scoped-by-item loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -745,6 +745,7 @@ export async function handleGatewayExecute(
   `).bind(terminalId, provider).first<{
     id: string;
     terminal_id: string;
+    item_id: string | null;
     dashboard_id: string;
     user_id: string;
     provider: string;
@@ -917,14 +918,124 @@ export async function handleGatewayExecute(
     } as GatewayExecuteResponse);
   }
 
-  if (!ti.user_integration_id) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
-      { status: 403 }
-    );
+  // WhatsApp without OAuth: prefer platform credentials (Business API), fall back to bridge (Baileys).
+  if (provider === 'whatsapp' && !ti.user_integration_id) {
+    // Platform credentials take priority — skip bridge entirely
+    if (env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
+      // Fall through to the platform credential path below (line ~1009)
+    } else {
+      // Bridge-backed WhatsApp: route outbound through bridge service.
+      // Scope by item_id to pick the correct WhatsApp block's bridge subscription
+      // when multiple personal WhatsApp connections exist on the same dashboard.
+      const bridgeSub = ti.item_id
+        ? await env.DB.prepare(`
+            SELECT webhook_id FROM messaging_subscriptions
+            WHERE dashboard_id = ? AND user_id = ? AND item_id = ? AND provider = 'whatsapp'
+              AND webhook_id LIKE 'bridge_%' AND status = 'active'
+            LIMIT 1
+          `).bind(dashboardId, userId, ti.item_id).first<{ webhook_id: string }>()
+        : await env.DB.prepare(`
+            SELECT webhook_id FROM messaging_subscriptions
+            WHERE dashboard_id = ? AND user_id = ? AND provider = 'whatsapp'
+              AND webhook_id LIKE 'bridge_%' AND status = 'active'
+            LIMIT 1
+          `).bind(dashboardId, userId).first<{ webhook_id: string }>();
+
+      if (!bridgeSub) {
+        return Response.json(
+          { error: 'AUTH_DENIED', reason: 'No active bridge WhatsApp connection found' },
+          { status: 403 }
+        );
+      }
+
+    if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
+      return Response.json(
+        { error: 'API_ERROR', reason: 'Bridge service not configured' },
+        { status: 503 }
+      );
+    }
+
+    let bridgeResponse: unknown;
+    try {
+      const { BridgeClient } = await import('../bridge/client');
+      const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
+
+      switch (body.action) {
+        case 'whatsapp.send_message':
+        case 'whatsapp.reply_message': {
+          const to = body.args.to as string;
+          const text = body.args.text as string;
+          if (!to || !text) throw new Error('to and text are required');
+          bridgeResponse = await bridge.sendMessage(bridgeSub.webhook_id, to, text);
+          break;
+        }
+        default:
+          return Response.json(
+            { error: 'API_ERROR', reason: `Action ${body.action} is not supported for bridge WhatsApp connections` },
+            { status: 400 }
+          );
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      console.error(`[gateway] Bridge WhatsApp error for ${body.action}:`, errorMessage);
+
+      await logAuditEntry(env, {
+        terminalIntegrationId: ti.id,
+        terminalId,
+        dashboardId,
+        userId,
+        provider,
+        action: body.action,
+        policyId,
+        policyVersion,
+        decision: 'denied',
+        denialReason: `Bridge error: ${errorMessage}`,
+      });
+
+      return Response.json(
+        { error: 'API_ERROR', reason: errorMessage },
+        { status: 502 }
+      );
+    }
+
+    await logAuditEntry(env, {
+      terminalIntegrationId: ti.id,
+      terminalId,
+      dashboardId,
+      userId,
+      provider,
+      action: body.action,
+      policyId,
+      policyVersion,
+      decision: 'allowed',
+    });
+
+    return Response.json({
+      allowed: true,
+      decision: 'allowed',
+      filteredResponse: bridgeResponse,
+      policyId,
+      policyVersion,
+    } as GatewayExecuteResponse);
+    } // end else (bridge path)
   }
 
-  const accessToken = prefetchedAccessToken ?? await getAccessToken(env, ti.user_integration_id, provider);
+  if (!ti.user_integration_id) {
+    // WhatsApp can use platform-level credentials when no per-user integration exists
+    if (provider === 'whatsapp' && env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
+      prefetchedAccessToken = env.WHATSAPP_ACCESS_TOKEN;
+      if (!body.args.phone_number_id) {
+        body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
+      }
+    } else {
+      return Response.json(
+        { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
+        { status: 403 }
+      );
+    }
+  }
+
+  const accessToken = prefetchedAccessToken ?? await getAccessToken(env, ti.user_integration_id!, provider);
   if (!accessToken) {
     return Response.json(
       { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
@@ -1013,6 +1124,21 @@ export async function handleGatewayExecute(
         const meta = JSON.parse(discordMeta.metadata) as { guild_id?: string };
         if (meta.guild_id && !body.args.guild_id) {
           body.args.guild_id = meta.guild_id;
+        }
+      } catch { /* ignore parse errors */ }
+    }
+  }
+
+  // 9d. WhatsApp Cloud API: inject phone_number_id from stored metadata so LLM doesn't need to know it
+  if (provider === 'whatsapp' && ti.user_integration_id && !body.args.phone_number_id) {
+    const waMeta = await env.DB.prepare(`
+      SELECT metadata FROM user_integrations WHERE id = ?
+    `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
+    if (waMeta?.metadata) {
+      try {
+        const meta = JSON.parse(waMeta.metadata) as { phone_number_id?: string };
+        if (meta.phone_number_id) {
+          body.args.phone_number_id = meta.phone_number_id;
         }
       } catch { /* ignore parse errors */ }
     }
@@ -1107,8 +1233,6 @@ export async function handleListTerminalIntegrations(
   env: Env,
   ptyId: string
 ): Promise<Response> {
-  console.log(`[gateway] ListTerminalIntegrations: ptyId=${ptyId}`);
-
   // 1. Authenticate PTY token
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -1123,18 +1247,16 @@ export async function handleListTerminalIntegrations(
   const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
 
   if (!claims) {
-    console.log(`[gateway] ListTerminalIntegrations: invalid/expired PTY token (len=${ptyToken.length})`);
+    console.log(`[gateway] ListTerminalIntegrations: invalid/expired PTY token`);
     return Response.json(
       { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
       { status: 401 }
     );
   }
 
-  console.log(`[gateway] ListTerminalIntegrations: claims.terminal_id=${claims.terminal_id} dashboard_id=${claims.dashboard_id}`);
-
   // 2. Verify PTY ID matches token
   if (claims.terminal_id !== ptyId) {
-    console.log(`[gateway] ListTerminalIntegrations: PTY ID mismatch token.terminal_id=${claims.terminal_id} url.ptyId=${ptyId}`);
+    console.log(`[gateway] ListTerminalIntegrations: PTY ID mismatch token=${claims.terminal_id} url=${ptyId}`);
     return Response.json(
       { error: 'AUTH_DENIED', reason: 'PTY ID mismatch' },
       { status: 403 }
@@ -1151,11 +1273,6 @@ export async function handleListTerminalIntegrations(
     active_policy_id: string | null;
     account_email: string | null;
   }>();
-
-  console.log(`[gateway] ListTerminalIntegrations: found ${integrations.results.length} integrations for ptyId=${ptyId}`);
-  for (const row of integrations.results) {
-    console.log(`[gateway] ListTerminalIntegrations: provider=${row.provider} active_policy_id=${row.active_policy_id ?? 'NULL'}`);
-  }
 
   return Response.json({
     integrations: integrations.results.map(row => ({
