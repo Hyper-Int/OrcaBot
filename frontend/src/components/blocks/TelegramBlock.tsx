@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { TelegramIcon } from "@/components/icons";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -379,6 +380,7 @@ export function TelegramBlock({ id, data, selected }: NodeProps<TelegramNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

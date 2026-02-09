@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { GoogleChatIcon } from "@/components/icons";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -297,6 +298,7 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

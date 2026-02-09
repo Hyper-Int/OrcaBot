@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v9-all-messaging-blocks
-console.log(`[canvas] REVISION: canvas-v9-all-messaging-blocks loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v10-preserve-selection
+console.log(`[canvas] REVISION: canvas-v10-preserve-selection loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -358,7 +358,13 @@ export function Canvas({
         onTerminalCwdChange
       )
     );
-    setNodes([...baseNodes, ...extraNodes]);
+    // Preserve selection state from current nodes when rebuilding
+    setNodes((currentNodes) => {
+      const selectedIds = new Set(currentNodes.filter(n => n.selected).map(n => n.id));
+      const newNodes = [...baseNodes, ...extraNodes];
+      if (selectedIds.size === 0) return newNodes;
+      return newNodes.map(n => selectedIds.has(n.id) ? { ...n, selected: true } : n);
+    });
   }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate, onTerminalCwdChange]);
 
   // Update nodes when items or sessions change from server
@@ -580,6 +586,7 @@ export function Canvas({
           panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
           selectNodesOnDrag={false}
           autoPanOnNodeDrag={false}
+          deleteKeyCode={["Backspace", "Delete"]}
           className="canvas-flow"
           proOptions={{ hideAttribution: true }}
           nodeDragThreshold={1}

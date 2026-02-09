@@ -30,6 +30,7 @@ import {
 } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface TodoItem {
@@ -279,6 +280,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
                   <Copy className="w-3 h-3" />
                   <span>Duplicate</span>
                 </DropdownMenuItem>
+                <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
               </DropdownMenuContent>
             </DropdownMenu>
             <Button

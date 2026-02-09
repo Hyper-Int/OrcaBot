@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 type StepStatus = "pending" | "running" | "completed" | "failed";
@@ -159,6 +160,7 @@ export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
                   <Copy className="w-3 h-3" />
                   <span>Duplicate</span>
                 </DropdownMenuItem>
+                <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
               </DropdownMenuContent>
             </DropdownMenu>
             <Button

@@ -30,6 +30,7 @@ import {
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { CodeBlockRenderer } from "./CodeBlockRenderer";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
@@ -262,6 +263,7 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
                 <Copy className="w-3 h-3" />
                 <span>Duplicate</span>
               </DropdownMenuItem>
+              <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
             </DropdownMenuContent>
           </DropdownMenu>
           <Button

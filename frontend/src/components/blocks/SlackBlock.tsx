@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import type { DashboardItem } from "@/types/dashboard";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 
 // ============================================
 // Slack types
@@ -483,6 +484,7 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

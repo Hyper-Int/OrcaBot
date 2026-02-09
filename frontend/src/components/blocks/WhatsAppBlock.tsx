@@ -36,6 +36,7 @@ import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { QRCodeSVG } from "qrcode.react";
 import { WhatsAppIcon } from "@/components/icons";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -466,6 +467,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
               <Copy className="w-3 h-3" />
               Duplicate
             </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 import {
   getScheduleByItem,
@@ -417,6 +418,7 @@ export function ScheduleBlock({ id, data, selected }: NodeProps<ScheduleNode>) {
                   <Copy className="w-3 h-3" />
                   <span>Duplicate</span>
                 </DropdownMenuItem>
+                <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
               </DropdownMenuContent>
             </DropdownMenu>
             <Button

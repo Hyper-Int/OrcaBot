@@ -17,6 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface LinkData extends Record<string, unknown> {
@@ -149,6 +150,7 @@ export function LinkBlock({ id, data, selected }: NodeProps<LinkNode>) {
                 <Copy className="w-3 h-3" />
                 <span>Duplicate</span>
               </DropdownMenuItem>
+              <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
             </DropdownMenuContent>
           </DropdownMenu>
           <Button

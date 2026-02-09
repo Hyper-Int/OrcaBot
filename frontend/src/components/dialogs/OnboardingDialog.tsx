@@ -36,7 +36,7 @@ const ONBOARDING_SLIDES: OnboardingSlide[] = [
   },
   {
     title: "Build agentic AI on a Canvas",
-    description: "Drag terminals, notes, todos, and integrations onto an infinite canvas. Add your Gmail, Calendar, Drive and attatch them to the agentic terminals with precisely defined access gates. Connect them with edges to grant what each agent can access.",
+    description: "Drag terminals, notes, todos, and integrations onto an infinite canvas. Add your Gmail, Calendar, Drive and attach them to the agentic terminals with precisely defined access gates. Connect them with edges to grant what each agent can access.",
     imageSrc: "/onboarding/integrations.png",
   },
   {
