@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v28-legacy-team-id
-const MODULE_REVISION = 'messaging-webhook-v28-legacy-team-id';
+// REVISION: messaging-webhook-v34-hmac-raw-bytes
+const MODULE_REVISION = 'messaging-webhook-v34-hmac-raw-bytes';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -144,6 +144,33 @@ function verifyTelegramSecret(request: Request, webhookSecret: string): boolean 
   let mismatch = 0;
   for (let i = 0; i < headerToken.length; i++) {
     mismatch |= headerToken.charCodeAt(i) ^ webhookSecret.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+async function verifyWhatsAppSignature(request: Request, appSecret: string): Promise<boolean> {
+  const signature = request.headers.get('X-Hub-Signature-256');
+  if (!signature) return false;
+
+  // HMAC must be computed over the raw body bytes, not re-encoded text.
+  // Using arrayBuffer() preserves the exact wire bytes and avoids false
+  // negatives from non-ASCII characters or different JSON escaping.
+  const rawBody = await request.clone().arrayBuffer();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(appSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, rawBody);
+  const expected = 'sha256=' + Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  // Constant-time comparison
+  if (signature.length !== expected.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < signature.length; i++) {
+    mismatch |= signature.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return mismatch === 0;
 }
@@ -324,6 +351,156 @@ function parseTelegramUpdate(body: Record<string, unknown>): NormalizedMessage |
       chat_type: chat?.type,
       reply_to_message_id: (message.reply_to_message as Record<string, unknown>)?.message_id,
       update_id: body.update_id,
+    },
+  };
+}
+
+/**
+ * Normalize a WhatsApp phone number to digits-only canonical form.
+ * WhatsApp Cloud API sends msg.from as pure digits (e.g. "15551234567").
+ * But users or UIs may pass "+1 (555) 123-4567" or "+15551234567".
+ * Stripping all non-digits ensures subscription chat_id matches inbound channelId.
+ */
+function normalizeWhatsAppPhone(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+function parseWhatsAppWebhook(body: Record<string, unknown>): NormalizedMessage[] {
+  // WhatsApp Cloud API webhook format: { entry: [{ changes: [{ value: { messages: [...] } }] }] }
+  // A single webhook can batch multiple entries/changes/messages — iterate all.
+  const results: NormalizedMessage[] = [];
+  const entries = body.entry as Array<Record<string, unknown>> | undefined;
+  if (!entries) return results;
+
+  for (const entry of entries) {
+    const changes = entry.changes as Array<Record<string, unknown>> | undefined;
+    if (!changes) continue;
+
+    for (const change of changes) {
+      const value = change.value as Record<string, unknown> | undefined;
+      if (!value) continue;
+      const messages = value.messages as Array<Record<string, unknown>> | undefined;
+      if (!messages) continue;
+      const contacts = value.contacts as Array<Record<string, unknown>> | undefined;
+
+      for (const msg of messages) {
+        if (msg.type !== 'text') continue; // Only handle text messages for now
+
+        const textObj = msg.text as Record<string, unknown> | undefined;
+        const text = ((textObj?.body as string) || '').trim();
+        if (!text) continue;
+
+        // Match contact by wa_id (phone) falling back to first contact.
+        // Normalize to digits-only so subscription routing always matches.
+        const rawSenderId = (msg.from as string) || '';
+        const senderId = normalizeWhatsAppPhone(rawSenderId);
+        const contact = contacts?.find(
+          c => normalizeWhatsAppPhone((c.wa_id as string) || '') === senderId
+        ) || contacts?.[0];
+
+        results.push({
+          platformMessageId: (msg.id as string) || '',
+          senderId,
+          senderName: (contact?.profile as Record<string, unknown>)?.name as string || senderId || 'unknown',
+          channelId: senderId, // WhatsApp uses sender phone (digits-only) as channel
+          channelName: (contact?.profile as Record<string, unknown>)?.name as string || senderId || '',
+          text,
+          metadata: {
+            phone_number_id: value.metadata && (value.metadata as Record<string, unknown>).phone_number_id,
+            timestamp: msg.timestamp,
+            context: msg.context, // reply context
+          },
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+function parseTeamsActivity(body: Record<string, unknown>): NormalizedMessage | null {
+  // Teams Bot Framework activity format
+  if (body.type !== 'message') return null;
+
+  const text = ((body.text as string) || '').trim();
+  if (!text) return null;
+
+  const from = body.from as Record<string, unknown> | undefined;
+  const conversation = body.conversation as Record<string, unknown> | undefined;
+  const channelData = body.channelData as Record<string, unknown> | undefined;
+
+  // Teams channel messages have the real channel ID in channelData.channel.id;
+  // conversation.id is the thread/conversation context, not the subscription channel.
+  const teamsChannelId = (channelData?.channel as Record<string, unknown>)?.id as string | undefined;
+
+  return {
+    platformMessageId: (body.id as string) || '',
+    senderId: (from?.id as string) || '',
+    senderName: (from?.name as string) || 'unknown',
+    channelId: teamsChannelId || (conversation?.id as string) || '',
+    channelName: teamsChannelId || (conversation?.id as string) || '',
+    text,
+    metadata: {
+      team_id: channelData?.team && (channelData.team as Record<string, unknown>).id,
+      tenant_id: channelData?.tenant && (channelData.tenant as Record<string, unknown>).id,
+      conversation_id: conversation?.id, // thread context for replies
+      reply_to_id: body.replyToId,
+    },
+  };
+}
+
+function parseMatrixEvent(body: Record<string, unknown>): NormalizedMessage | null {
+  // Matrix webhook / appservice format
+  // For simple webhooks, the body is the event itself
+  if (body.type !== 'm.room.message') return null;
+
+  const content = body.content as Record<string, unknown> | undefined;
+  if (!content) return null;
+
+  const msgtype = content.msgtype as string;
+  if (msgtype !== 'm.text') return null; // Only handle text messages
+
+  const text = ((content.body as string) || '').trim();
+  if (!text) return null;
+
+  return {
+    platformMessageId: (body.event_id as string) || '',
+    senderId: (body.sender as string) || '',
+    senderName: (body.sender as string) || 'unknown',
+    channelId: (body.room_id as string) || '',
+    channelName: (body.room_id as string) || '',
+    text,
+    metadata: {
+      origin_server_ts: body.origin_server_ts,
+      relates_to: content['m.relates_to'],
+    },
+  };
+}
+
+function parseGoogleChatEvent(body: Record<string, unknown>): NormalizedMessage | null {
+  // Google Chat webhook format
+  if (body.type !== 'MESSAGE') return null;
+
+  const message = body.message as Record<string, unknown> | undefined;
+  if (!message) return null;
+
+  const text = ((message.text as string) || (message.argumentText as string) || '').trim();
+  if (!text) return null;
+
+  const sender = message.sender as Record<string, unknown> | undefined;
+  const space = message.space as Record<string, unknown> | undefined;
+  const thread = message.thread as Record<string, unknown> | undefined;
+
+  return {
+    platformMessageId: (message.name as string) || '',
+    senderId: (sender?.name as string) || '',
+    senderName: (sender?.displayName as string) || 'unknown',
+    channelId: (space?.name as string) || '',
+    channelName: (space?.displayName as string) || (space?.name as string) || '',
+    text,
+    metadata: {
+      space_type: space?.spaceType,
+      thread_name: thread?.name,
     },
   };
 }
@@ -529,6 +706,28 @@ export async function handleInboundWebhook(
         signatureValid = await verifyDiscordSignature(request, publicKey);
         break;
       }
+      case 'whatsapp': {
+        // WhatsApp Cloud API uses app secret for HMAC-SHA256 signature verification
+        const appSecret = env.WHATSAPP_APP_SECRET;
+        if (appSecret) {
+          signatureValid = await verifyWhatsAppSignature(request, appSecret);
+        } else if (env.DEV_AUTH_ENABLED === 'true') {
+          // Only skip verification in explicit dev mode
+          signatureValid = true;
+        } else {
+          console.error('[webhook] WHATSAPP_APP_SECRET not configured — rejecting webhook (set DEV_AUTH_ENABLED=true to bypass)');
+          return Response.json({ error: 'Server configuration error' }, { status: 500 });
+        }
+        break;
+      }
+      case 'teams':
+      case 'matrix':
+      case 'google_chat': {
+        // These providers require JWT or shared-secret verification that is not yet implemented.
+        // Reject webhooks until proper verification is added to prevent message injection.
+        console.error(`[webhook] Provider '${provider}' webhook verification not yet implemented — rejecting`);
+        return Response.json({ error: 'Webhook verification not implemented for this provider' }, { status: 403 });
+      }
       default:
         console.error(`[webhook] No verification for provider: ${provider}`);
         return Response.json({ error: 'Unsupported provider' }, { status: 400 });
@@ -555,6 +754,10 @@ export async function handleInboundWebhook(
   if (provider === 'discord' && body.type === 1) {
     return Response.json({ type: 1 }); // Discord PING acknowledgment
   }
+  // Google Chat ADDED_TO_SPACE / REMOVED_FROM_SPACE events
+  if (provider === 'google_chat' && (body.type === 'ADDED_TO_SPACE' || body.type === 'REMOVED_FROM_SPACE')) {
+    return Response.json({ text: '' });
+  }
 
   // 3. Parse the message first (needed for channel-based routing for Slack/Discord).
   let message: NormalizedMessage | null = null;
@@ -567,6 +770,25 @@ export async function handleInboundWebhook(
       break;
     case 'telegram':
       message = parseTelegramUpdate(body);
+      break;
+    case 'whatsapp': {
+      const whatsappMessages = parseWhatsAppWebhook(body);
+      message = whatsappMessages[0] ?? null;
+      // Process additional batched messages (2nd onward) after the primary flow below.
+      // We store them for later so we don't restructure the entire handler.
+      if (whatsappMessages.length > 1) {
+        (body as Record<string, unknown>).__whatsappBatchedMessages = whatsappMessages.slice(1);
+      }
+      break;
+    }
+    case 'teams':
+      message = parseTeamsActivity(body);
+      break;
+    case 'matrix':
+      message = parseMatrixEvent(body);
+      break;
+    case 'google_chat':
+      message = parseGoogleChatEvent(body);
       break;
   }
 
@@ -582,13 +804,34 @@ export async function handleInboundWebhook(
   //   to the same channel). All matching active subscriptions receive the message.
   let subscriptions: Record<string, unknown>[];
 
-  if (provider === 'telegram') {
+  if (provider === 'telegram' && hookId) {
     const sub = await env.DB.prepare(`
       SELECT * FROM messaging_subscriptions
       WHERE webhook_id = ? AND provider = 'telegram'
       LIMIT 1
-    `).bind(hookId!).first();
+    `).bind(hookId).first();
     subscriptions = sub ? [sub] : [];
+  } else if (provider === 'whatsapp') {
+    // WhatsApp routes by chat_id (sender phone) AND channel_id (phone_number_id).
+    // Without phone_number_id scoping, the same sender messaging different business
+    // numbers would cause cross-tenant leakage.
+    const chatId = message.channelId;
+    const phoneNumberId = message.metadata?.phone_number_id as string | undefined;
+    if (!chatId || !phoneNumberId) return Response.json({ ok: true });
+    const results = await env.DB.prepare(`
+      SELECT * FROM messaging_subscriptions
+      WHERE provider = 'whatsapp' AND chat_id = ? AND channel_id = ? AND status = 'active'
+    `).bind(chatId, phoneNumberId).all();
+    subscriptions = results.results || [];
+  } else if (provider === 'matrix') {
+    // Matrix uses chat_id (room_id) for routing
+    const chatId = message.channelId;
+    if (!chatId) return Response.json({ ok: true });
+    const results = await env.DB.prepare(`
+      SELECT * FROM messaging_subscriptions
+      WHERE provider = 'matrix' AND chat_id = ? AND status = 'active'
+    `).bind(chatId).all();
+    subscriptions = results.results || [];
   } else {
     // Slack/Discord: find all active subscriptions for this channel
     const channelId = message.channelId;
@@ -645,6 +888,27 @@ export async function handleInboundWebhook(
     ctx.waitUntil(processSubscriptionMessage(env, provider, subscription, msgClone, body, ctx));
   }
 
+  // Process additional WhatsApp batched messages (if any).
+  // Each additional message goes through the same subscription-lookup + fan-out flow.
+  // Include phone_number_id in lookup to prevent cross-tenant leakage.
+  const batchedMessages = (body as Record<string, unknown>).__whatsappBatchedMessages as NormalizedMessage[] | undefined;
+  if (batchedMessages?.length) {
+    for (const batchedMsg of batchedMessages) {
+      const chatId = batchedMsg.channelId;
+      const batchPhoneNumberId = batchedMsg.metadata?.phone_number_id as string | undefined;
+      if (!chatId || !batchPhoneNumberId) continue;
+      const batchResults = await env.DB.prepare(`
+        SELECT * FROM messaging_subscriptions
+        WHERE provider = 'whatsapp' AND chat_id = ? AND channel_id = ? AND status = 'active'
+      `).bind(chatId, batchPhoneNumberId).all();
+      const batchSubs = (batchResults.results || []).filter(s => s.status === 'active');
+      for (const sub of batchSubs) {
+        const clone: NormalizedMessage = { ...batchedMsg, metadata: { ...batchedMsg.metadata } };
+        ctx.waitUntil(processSubscriptionMessage(env, provider, sub, clone, body, ctx));
+      }
+    }
+  }
+
   return Response.json({ ok: true });
 }
 
@@ -688,6 +952,8 @@ async function processSubscriptionMessage(
   }
 
   // Enforce subscription channel scoping (Telegram uses chatId, Slack/Discord use channelId).
+  // WhatsApp is special: channel_id stores phone_number_id (business number) and
+  // chat_id stores sender phone. Both must match their respective incoming values.
   const subChannelId = subscription.channel_id as string | null;
   const subChatId = subscription.chat_id as string | null;
   const subChannelName = subscription.channel_name as string | null;
@@ -695,7 +961,14 @@ async function processSubscriptionMessage(
     const incomingChannel = message.channelId || '';
     const incomingName = normalizeChannelName(message.channelName || '');
     let scopeMatch = false;
-    if (subChannelId) {
+    if (provider === 'whatsapp') {
+      // WhatsApp: channel_id = phone_number_id, chat_id = sender phone.
+      // message.channelId = sender phone, message.metadata.phone_number_id = business number.
+      const incomingPhoneNumberId = message.metadata?.phone_number_id as string | undefined;
+      const chatMatch = !subChatId || incomingChannel === subChatId;
+      const phoneMatch = !subChannelId || (!!incomingPhoneNumberId && incomingPhoneNumberId === subChannelId);
+      scopeMatch = chatMatch && phoneMatch;
+    } else if (subChannelId) {
       scopeMatch = incomingChannel === subChannelId;
     } else if (subChatId) {
       scopeMatch = incomingChannel === subChatId;
@@ -851,11 +1124,44 @@ export async function createSubscription(
   // Validate provider-specific scope. Without this, subscriptions with null scope
   // bypass the unique index (COALESCE(NULL, NULL) = NULL is not unique-constrained in SQLite)
   // and will never match inbound webhook routing.
-  if ((provider === 'slack' || provider === 'discord') && !data.channelId) {
+  if ((provider === 'slack' || provider === 'discord' || provider === 'teams' || provider === 'google_chat') && !data.channelId) {
     throw new Error(`channelId is required for ${provider} subscriptions`);
   }
-  if (provider === 'telegram' && !data.chatId) {
-    throw new Error('chatId is required for telegram subscriptions');
+  if ((provider === 'telegram' || provider === 'whatsapp' || provider === 'matrix') && !data.chatId) {
+    throw new Error(`chatId is required for ${provider} subscriptions`);
+  }
+
+  // Normalize WhatsApp chatId to digits-only so it matches inbound webhook channelId.
+  if (provider === 'whatsapp' && data.chatId) {
+    data.chatId = normalizeWhatsAppPhone(data.chatId);
+  }
+
+  // Resolve phone_number_id for WhatsApp subscriptions.
+  // WhatsApp chat_id (sender phone) is NOT globally unique — the same sender can message
+  // different business numbers. Without phone_number_id scoping, inbound messages from
+  // the same sender would be delivered to subscriptions for the wrong business number.
+  // Auto-resolve from user_integrations metadata (stored at connect time). Fail if not
+  // resolvable — can't safely route without it.
+  if (provider === 'whatsapp' && !data.channelId) {
+    const integration = await env.DB.prepare(
+      `SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'whatsapp'`
+    ).bind(userId).first<{ metadata: string }>();
+
+    if (integration?.metadata) {
+      try {
+        const meta = JSON.parse(integration.metadata) as { phone_number_id?: string };
+        if (meta.phone_number_id) {
+          data.channelId = meta.phone_number_id;
+        }
+      } catch { /* parse failure */ }
+    }
+
+    if (!data.channelId) {
+      throw new Error(
+        'WhatsApp phone_number_id could not be resolved. ' +
+        'Please disconnect and reconnect WhatsApp with your Business phone number ID.'
+      );
+    }
   }
 
   // Resolve team_id for Slack subscriptions.
@@ -913,18 +1219,18 @@ export async function createSubscription(
     }
   }
 
-  // Guard against duplicate active subscriptions for the same block + provider + channel.
-  // Multi-channel per block is allowed — each channel gets its own subscription row.
-  // The partial unique index (idx_messaging_subs_active_channel) enforces uniqueness at
-  // (dashboard_id, item_id, provider, COALESCE(channel_id, chat_id)) level.
-  const scopeKey = data.channelId || data.chatId || null;
-  const existing = scopeKey ? await env.DB.prepare(`
+  // Guard against duplicate active subscriptions for the same block + provider + channel + chat.
+  // Multi-channel per block is allowed — each (channel_id, chat_id) pair gets its own row.
+  // The partial unique index uses COALESCE(..., '') on both columns to match this check.
+  const hasScope = data.channelId || data.chatId;
+  const existing = hasScope ? await env.DB.prepare(`
     SELECT id, webhook_id, channel_id, channel_name, chat_id, team_id FROM messaging_subscriptions
     WHERE dashboard_id = ? AND item_id = ? AND provider = ?
-      AND COALESCE(channel_id, chat_id) = ?
+      AND COALESCE(channel_id, '') = ?
+      AND COALESCE(chat_id, '') = ?
       AND status IN ('pending', 'active')
     LIMIT 1
-  `).bind(dashboardId, itemId, provider, scopeKey).first<{
+  `).bind(dashboardId, itemId, provider, data.channelId || '', data.chatId || '').first<{
     id: string; webhook_id: string;
     channel_id: string | null; channel_name: string | null; chat_id: string | null; team_id: string | null;
   }>() : null;

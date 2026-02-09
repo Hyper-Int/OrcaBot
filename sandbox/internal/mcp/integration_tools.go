@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integration-tools-v5-discord-auto-guild
+// REVISION: integration-tools-v6-all-messaging
 package mcp
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-tools] REVISION: integration-tools-v3-slack-edit-delete loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-tools] REVISION: integration-tools-v6-all-messaging loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // IntegrationTool represents an MCP tool definition for an integration
@@ -39,6 +39,16 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return slackTools
 	case "discord":
 		return discordTools
+	case "telegram":
+		return telegramTools
+	case "whatsapp":
+		return whatsappTools
+	case "teams":
+		return teamsTools
+	case "matrix":
+		return matrixTools
+	case "google_chat":
+		return googleChatTools
 	default:
 		return nil
 	}
@@ -81,6 +91,11 @@ var allTools = map[string][]IntegrationTool{
 	"google_calendar": calendarTools,
 	"slack":           slackTools,
 	"discord":         discordTools,
+	"telegram":        telegramTools,
+	"whatsapp":        whatsappTools,
+	"teams":           teamsTools,
+	"matrix":          matrixTools,
+	"google_chat":     googleChatTools,
 }
 
 // ============================================
@@ -1028,6 +1043,548 @@ var discordTools = []IntegrationTool{
 				"message_id": {"type": "string", "description": "Message ID to delete"}
 			},
 			"required": ["channel", "message_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Telegram Tools
+// ============================================
+
+var telegramTools = []IntegrationTool{
+	{
+		Name:        "telegram_get_chats",
+		Description: "List chats the Telegram bot has interacted with",
+		Provider:    "telegram",
+		Action:      "telegram.get_chats",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+	},
+	{
+		Name:        "telegram_read_messages",
+		Description: "Read recent messages from a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"},
+				"limit": {"type": "integer", "description": "Number of messages (default: 20)", "default": 20}
+			},
+			"required": ["chat_id"]
+		}`),
+	},
+	{
+		Name:        "telegram_send_message",
+		Description: "Send a message to a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"},
+				"text": {"type": "string", "description": "Message text"},
+				"parse_mode": {"type": "string", "description": "Parse mode: HTML or Markdown", "enum": ["HTML", "Markdown"]}
+			},
+			"required": ["chat_id", "text"]
+		}`),
+	},
+	{
+		Name:        "telegram_reply_thread",
+		Description: "Reply to a specific message in a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"},
+				"message_id": {"type": "string", "description": "Message ID to reply to"},
+				"text": {"type": "string", "description": "Reply text"}
+			},
+			"required": ["chat_id", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "telegram_get_chat_info",
+		Description: "Get information about a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.get_chat_info",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"}
+			},
+			"required": ["chat_id"]
+		}`),
+	},
+	{
+		Name:        "telegram_edit_message",
+		Description: "Edit a message in a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.edit_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"},
+				"message_id": {"type": "string", "description": "Message ID to edit"},
+				"text": {"type": "string", "description": "New message text"}
+			},
+			"required": ["chat_id", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "telegram_delete_message",
+		Description: "Delete a message in a Telegram chat",
+		Provider:    "telegram",
+		Action:      "telegram.delete_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"chat_id": {"type": "string", "description": "Telegram chat ID"},
+				"message_id": {"type": "string", "description": "Message ID to delete"}
+			},
+			"required": ["chat_id", "message_id"]
+		}`),
+	},
+}
+
+// ============================================
+// WhatsApp Tools
+// ============================================
+
+var whatsappTools = []IntegrationTool{
+	{
+		Name:        "whatsapp_send_message",
+		Description: "Send a WhatsApp message to a phone number",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"to": {"type": "string", "description": "Recipient phone number (with country code, e.g. +1234567890)"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["phone_number_id", "to", "text"]
+		}`),
+	},
+	{
+		Name:        "whatsapp_send_template",
+		Description: "Send a WhatsApp template message",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.send_template",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"to": {"type": "string", "description": "Recipient phone number"},
+				"template_name": {"type": "string", "description": "Template name"},
+				"language_code": {"type": "string", "description": "Language code (e.g. en_US)"}
+			},
+			"required": ["phone_number_id", "to", "template_name", "language_code"]
+		}`),
+	},
+	{
+		Name:        "whatsapp_reply_message",
+		Description: "Reply to a WhatsApp message",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.reply_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"to": {"type": "string", "description": "Recipient phone number"},
+				"text": {"type": "string", "description": "Reply text"},
+				"message_id": {"type": "string", "description": "Message ID to reply to"}
+			},
+			"required": ["phone_number_id", "to", "text", "message_id"]
+		}`),
+	},
+	{
+		Name:        "whatsapp_send_reaction",
+		Description: "React to a WhatsApp message with an emoji",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.send_reaction",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"to": {"type": "string", "description": "Recipient phone number"},
+				"message_id": {"type": "string", "description": "Message ID to react to"},
+				"emoji": {"type": "string", "description": "Emoji to react with"}
+			},
+			"required": ["phone_number_id", "to", "message_id", "emoji"]
+		}`),
+	},
+	{
+		Name:        "whatsapp_get_profile",
+		Description: "Get WhatsApp Business profile information",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.get_profile",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"}
+			},
+			"required": ["phone_number_id"]
+		}`),
+	},
+	{
+		Name:        "whatsapp_mark_read",
+		Description: "Mark a WhatsApp message as read",
+		Provider:    "whatsapp",
+		Action:      "whatsapp.mark_read",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"message_id": {"type": "string", "description": "Message ID to mark as read"}
+			},
+			"required": ["phone_number_id", "message_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Teams Tools
+// ============================================
+
+var teamsTools = []IntegrationTool{
+	{
+		Name:        "teams_list_teams",
+		Description: "List Microsoft Teams you are a member of",
+		Provider:    "teams",
+		Action:      "teams.list_teams",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+	},
+	{
+		Name:        "teams_list_channels",
+		Description: "List channels in a Microsoft Teams team",
+		Provider:    "teams",
+		Action:      "teams.list_channels",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"}
+			},
+			"required": ["team_id"]
+		}`),
+	},
+	{
+		Name:        "teams_read_messages",
+		Description: "Read messages from a Teams channel",
+		Provider:    "teams",
+		Action:      "teams.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"channel_id": {"type": "string", "description": "Channel ID"},
+				"limit": {"type": "integer", "description": "Number of messages (default: 20)", "default": 20}
+			},
+			"required": ["team_id", "channel_id"]
+		}`),
+	},
+	{
+		Name:        "teams_send_message",
+		Description: "Send a message to a Teams channel",
+		Provider:    "teams",
+		Action:      "teams.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"channel_id": {"type": "string", "description": "Channel ID"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["team_id", "channel_id", "text"]
+		}`),
+	},
+	{
+		Name:        "teams_reply_thread",
+		Description: "Reply to a message thread in Teams",
+		Provider:    "teams",
+		Action:      "teams.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"channel_id": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to reply to"},
+				"text": {"type": "string", "description": "Reply text"}
+			},
+			"required": ["team_id", "channel_id", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "teams_get_member",
+		Description: "Get information about a Teams member",
+		Provider:    "teams",
+		Action:      "teams.get_member",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"user_id": {"type": "string", "description": "User ID"}
+			},
+			"required": ["team_id", "user_id"]
+		}`),
+	},
+	{
+		Name:        "teams_edit_message",
+		Description: "Edit a message in Teams",
+		Provider:    "teams",
+		Action:      "teams.edit_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"channel_id": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to edit"},
+				"text": {"type": "string", "description": "New message text"}
+			},
+			"required": ["team_id", "channel_id", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "teams_delete_message",
+		Description: "Delete a message in Teams",
+		Provider:    "teams",
+		Action:      "teams.delete_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"team_id": {"type": "string", "description": "Team ID"},
+				"channel_id": {"type": "string", "description": "Channel ID"},
+				"message_id": {"type": "string", "description": "Message ID to delete"}
+			},
+			"required": ["team_id", "channel_id", "message_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Matrix Tools
+// ============================================
+
+var matrixTools = []IntegrationTool{
+	{
+		Name:        "matrix_list_rooms",
+		Description: "List Matrix rooms you have joined",
+		Provider:    "matrix",
+		Action:      "matrix.list_rooms",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL (e.g. https://matrix.org)"}
+			},
+			"required": ["homeserver"]
+		}`),
+	},
+	{
+		Name:        "matrix_read_messages",
+		Description: "Read messages from a Matrix room",
+		Provider:    "matrix",
+		Action:      "matrix.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"room_id": {"type": "string", "description": "Room ID (e.g. !abc123:matrix.org)"},
+				"limit": {"type": "integer", "description": "Number of messages (default: 20)", "default": 20}
+			},
+			"required": ["homeserver", "room_id"]
+		}`),
+	},
+	{
+		Name:        "matrix_send_message",
+		Description: "Send a message to a Matrix room",
+		Provider:    "matrix",
+		Action:      "matrix.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"room_id": {"type": "string", "description": "Room ID"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["homeserver", "room_id", "text"]
+		}`),
+	},
+	{
+		Name:        "matrix_reply_thread",
+		Description: "Reply to a message in a Matrix room",
+		Provider:    "matrix",
+		Action:      "matrix.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"room_id": {"type": "string", "description": "Room ID"},
+				"event_id": {"type": "string", "description": "Event ID to reply to"},
+				"text": {"type": "string", "description": "Reply text"}
+			},
+			"required": ["homeserver", "room_id", "event_id", "text"]
+		}`),
+	},
+	{
+		Name:        "matrix_react",
+		Description: "React to a message in a Matrix room",
+		Provider:    "matrix",
+		Action:      "matrix.react",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"room_id": {"type": "string", "description": "Room ID"},
+				"event_id": {"type": "string", "description": "Event ID to react to"},
+				"emoji": {"type": "string", "description": "Emoji to react with"}
+			},
+			"required": ["homeserver", "room_id", "event_id", "emoji"]
+		}`),
+	},
+	{
+		Name:        "matrix_get_profile",
+		Description: "Get a Matrix user's profile",
+		Provider:    "matrix",
+		Action:      "matrix.get_profile",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"user_id": {"type": "string", "description": "User ID (e.g. @user:matrix.org)"}
+			},
+			"required": ["homeserver", "user_id"]
+		}`),
+	},
+	{
+		Name:        "matrix_redact_message",
+		Description: "Redact (delete) a message in a Matrix room",
+		Provider:    "matrix",
+		Action:      "matrix.redact_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"homeserver": {"type": "string", "description": "Matrix homeserver URL"},
+				"room_id": {"type": "string", "description": "Room ID"},
+				"event_id": {"type": "string", "description": "Event ID to redact"},
+				"reason": {"type": "string", "description": "Reason for redaction"}
+			},
+			"required": ["homeserver", "room_id", "event_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Google Chat Tools
+// ============================================
+
+var googleChatTools = []IntegrationTool{
+	{
+		Name:        "google_chat_list_spaces",
+		Description: "List Google Chat spaces the bot has access to",
+		Provider:    "google_chat",
+		Action:      "google_chat.list_spaces",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+	},
+	{
+		Name:        "google_chat_read_messages",
+		Description: "Read messages from a Google Chat space",
+		Provider:    "google_chat",
+		Action:      "google_chat.read_messages",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name (e.g. spaces/abc123)"},
+				"limit": {"type": "integer", "description": "Number of messages (default: 20)", "default": 20}
+			},
+			"required": ["space"]
+		}`),
+	},
+	{
+		Name:        "google_chat_send_message",
+		Description: "Send a message to a Google Chat space",
+		Provider:    "google_chat",
+		Action:      "google_chat.send_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name (e.g. spaces/abc123)"},
+				"text": {"type": "string", "description": "Message text"}
+			},
+			"required": ["space", "text"]
+		}`),
+	},
+	{
+		Name:        "google_chat_reply_thread",
+		Description: "Reply to a thread in Google Chat",
+		Provider:    "google_chat",
+		Action:      "google_chat.reply_thread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name"},
+				"thread_key": {"type": "string", "description": "Thread key or thread name to reply to"},
+				"text": {"type": "string", "description": "Reply text"}
+			},
+			"required": ["space", "thread_key", "text"]
+		}`),
+	},
+	{
+		Name:        "google_chat_add_reaction",
+		Description: "Add a reaction to a Google Chat message",
+		Provider:    "google_chat",
+		Action:      "google_chat.add_reaction",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name"},
+				"message_id": {"type": "string", "description": "Message name (e.g. spaces/abc/messages/xyz)"},
+				"emoji": {"type": "string", "description": "Unicode emoji"}
+			},
+			"required": ["space", "message_id", "emoji"]
+		}`),
+	},
+	{
+		Name:        "google_chat_get_member",
+		Description: "Get a Google Chat space member",
+		Provider:    "google_chat",
+		Action:      "google_chat.get_member",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name"},
+				"member_id": {"type": "string", "description": "Member name (e.g. spaces/abc/members/xyz)"}
+			},
+			"required": ["space", "member_id"]
+		}`),
+	},
+	{
+		Name:        "google_chat_update_message",
+		Description: "Update a message in Google Chat",
+		Provider:    "google_chat",
+		Action:      "google_chat.update_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name"},
+				"message_id": {"type": "string", "description": "Message name to update"},
+				"text": {"type": "string", "description": "New message text"}
+			},
+			"required": ["space", "message_id", "text"]
+		}`),
+	},
+	{
+		Name:        "google_chat_delete_message",
+		Description: "Delete a message in Google Chat",
+		Provider:    "google_chat",
+		Action:      "google_chat.delete_message",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"space": {"type": "string", "description": "Space name"},
+				"message_id": {"type": "string", "description": "Message name to delete"}
+			},
+			"required": ["space", "message_id"]
 		}`),
 	},
 }

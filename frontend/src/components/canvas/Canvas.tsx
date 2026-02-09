@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v8-discord-block
-console.log(`[canvas] REVISION: canvas-v8-discord-block loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v9-all-messaging-blocks
+console.log(`[canvas] REVISION: canvas-v9-all-messaging-blocks loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -45,7 +45,11 @@ import { SheetsBlock } from "@/components/blocks/SheetsBlock";
 import { FormsBlock } from "@/components/blocks/FormsBlock";
 import { SlackBlock } from "@/components/blocks/SlackBlock";
 import { DiscordBlock } from "@/components/blocks/DiscordBlock";
-import { MessagingPlaceholderBlock } from "@/components/blocks/MessagingPlaceholderBlock";
+import { TelegramBlock } from "@/components/blocks/TelegramBlock";
+import { WhatsAppBlock } from "@/components/blocks/WhatsAppBlock";
+import { TeamsBlock } from "@/components/blocks/TeamsBlock";
+import { MatrixBlock } from "@/components/blocks/MatrixBlock";
+import { GoogleChatBlock } from "@/components/blocks/GoogleChatBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -69,11 +73,11 @@ const nodeTypes: NodeTypes = {
   forms: FormsBlock,
   slack: SlackBlock,
   discord: DiscordBlock,
-  telegram: MessagingPlaceholderBlock,
-  whatsapp: MessagingPlaceholderBlock,
-  teams: MessagingPlaceholderBlock,
-  matrix: MessagingPlaceholderBlock,
-  google_chat: MessagingPlaceholderBlock,
+  telegram: TelegramBlock,
+  whatsapp: WhatsAppBlock,
+  teams: TeamsBlock,
+  matrix: MatrixBlock,
+  google_chat: GoogleChatBlock,
   cursor: CursorNode,
 };
 

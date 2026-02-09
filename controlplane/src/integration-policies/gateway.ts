@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v21-discord-inject-guild-id
-console.log(`[integration-gateway] REVISION: gateway-v21-discord-inject-guild-id loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v24-resourceid-snake-case
+console.log(`[integration-gateway] REVISION: gateway-v24-resourceid-snake-case loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -44,6 +44,11 @@ import { executeDriveAction } from './api-clients/drive';
 import { executeCalendarAction } from './api-clients/calendar';
 import { executeSlackAction } from './api-clients/slack';
 import { executeDiscordAction } from './api-clients/discord';
+import { executeTelegramAction, type TelegramD1Context } from './api-clients/telegram';
+import { executeWhatsAppAction } from './api-clients/whatsapp';
+import { executeTeamsAction } from './api-clients/teams';
+import { executeMatrixAction } from './api-clients/matrix';
+import { executeGoogleChatAction } from './api-clients/google_chat';
 
 // ============================================
 // Types
@@ -140,11 +145,15 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
 
   // Extract resourceId from common ID fields.
   // Slack uses `ts` (timestamp) to identify messages for edit/delete/react.
+  // New messaging providers use snake_case (message_id, event_id).
   if (typeof args.fileId === 'string') ctx.resourceId = args.fileId;
   else if (typeof args.messageId === 'string') ctx.resourceId = args.messageId;
+  else if (typeof args.message_id === 'string') ctx.resourceId = args.message_id;
   else if (typeof args.eventId === 'string') ctx.resourceId = args.eventId;
+  else if (typeof args.event_id === 'string') ctx.resourceId = args.event_id;
   else if (typeof args.ts === 'string') ctx.resourceId = args.ts;
   else if (typeof args.timestamp === 'string') ctx.resourceId = args.timestamp;
+  else if (typeof args.name === 'string' && (args.name as string).includes('/messages/')) ctx.resourceId = args.name;
 
   // Extract GitHub owner/repo for repo filter enforcement
   if (typeof args.owner === 'string') ctx.repoOwner = args.owner;
@@ -160,12 +169,28 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
   if (typeof args.name === 'string') ctx.fileName = args.name;
   if (typeof args.mimeType === 'string') ctx.mimeType = args.mimeType;
 
-  // Extract messaging channel ID for channel allowlist enforcement
-  // Slack/Discord use "channel", Telegram uses "chat_id"
+  // Extract messaging channel ID for channel allowlist enforcement.
+  // Different providers use different arg names for the target channel/chat/room/space:
+  //   Slack/Discord: "channel"
+  //   Telegram: "chat_id"
+  //   Teams: "channel_id"
+  //   Matrix: "room_id"
+  //   Google Chat: "space" or "space_name"
+  //   WhatsApp: "to" (recipient phone number)
   if (typeof args.channel === 'string') {
     ctx.channelId = args.channel;
   } else if (typeof args.chat_id === 'string') {
     ctx.channelId = args.chat_id;
+  } else if (typeof args.channel_id === 'string') {
+    ctx.channelId = args.channel_id;
+  } else if (typeof args.room_id === 'string') {
+    ctx.channelId = args.room_id;
+  } else if (typeof args.space === 'string') {
+    ctx.channelId = args.space;
+  } else if (typeof args.space_name === 'string') {
+    ctx.channelId = args.space_name;
+  } else if (typeof args.to === 'string') {
+    ctx.channelId = args.to;
   }
   // Channel name from args (if provided); otherwise enforcement uses ID only
   if (typeof args.channel_name === 'string') {
@@ -177,12 +202,24 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
     ctx.messageText = args.text;
   }
 
-  // Extract thread ID for requireThreadReply enforcement
-  // Slack uses thread_ts, Discord uses message_reference, Telegram uses reply_to_message_id
+  // Extract thread ID for requireThreadReply enforcement.
+  // Different providers use different arg names for the parent message/thread:
+  //   Slack: thread_ts
+  //   Discord/Telegram: reply_to_message_id
+  //   Teams: message_id (in reply_thread action)
+  //   Matrix: event_id (in reply_thread action)
+  //   Google Chat: thread_key or message_id (in reply_thread action)
+  //   WhatsApp: message_id (in reply_message action, via context.message_id)
   if (typeof args.thread_ts === 'string') {
     ctx.threadTs = args.thread_ts;
   } else if (typeof args.reply_to_message_id === 'string') {
     ctx.threadTs = args.reply_to_message_id;
+  } else if (typeof args.message_id === 'string') {
+    ctx.threadTs = args.message_id;
+  } else if (typeof args.event_id === 'string') {
+    ctx.threadTs = args.event_id;
+  } else if (typeof args.thread_key === 'string') {
+    ctx.threadTs = args.thread_key;
   }
 
   // Extract DM recipient for allowedRecipients enforcement
@@ -591,7 +628,8 @@ async function executeProviderAPI(
   provider: IntegrationProvider,
   action: string,
   args: Record<string, unknown>,
-  accessToken: string
+  accessToken: string,
+  telegramD1Ctx?: TelegramD1Context,
 ): Promise<unknown> {
   switch (provider) {
     case 'gmail':
@@ -606,6 +644,16 @@ async function executeProviderAPI(
       return executeSlackAction(action, args, accessToken);
     case 'discord':
       return executeDiscordAction(action, args, accessToken);
+    case 'telegram':
+      return executeTelegramAction(action, args, accessToken, telegramD1Ctx);
+    case 'whatsapp':
+      return executeWhatsAppAction(action, args, accessToken);
+    case 'teams':
+      return executeTeamsAction(action, args, accessToken);
+    case 'matrix':
+      return executeMatrixAction(action, args, accessToken);
+    case 'google_chat':
+      return executeGoogleChatAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');
@@ -973,7 +1021,10 @@ export async function handleGatewayExecute(
   // 10. Execute the API call
   let apiResponse: unknown;
   try {
-    apiResponse = await executeProviderAPI(provider, body.action, body.args, accessToken);
+    const telegramCtx: TelegramD1Context | undefined = provider === 'telegram'
+      ? { db: env.DB, userId }
+      : undefined;
+    apiResponse = await executeProviderAPI(provider, body.action, body.args, accessToken, telegramCtx);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
 
