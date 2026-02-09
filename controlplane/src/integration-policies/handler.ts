@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v12-dashboard-integration-labels
-console.log(`[integration-handler] REVISION: handler-v12-dashboard-integration-labels loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v13-whatsapp-available-integrations
+console.log(`[integration-handler] REVISION: handler-v13-whatsapp-available-integrations loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -1437,8 +1437,21 @@ export async function listAvailableIntegrations(
     policyId: browserAttached?.active_policy_id as string | undefined,
   });
 
-  // Add disconnected providers (for "connect" buttons)
   const connectedProviders = new Set(userIntegrations.results.map((r) => r.provider as string));
+
+  // Add WhatsApp if platform credentials are configured (no OAuth needed)
+  if (env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID && !connectedProviders.has('whatsapp')) {
+    const whatsappAttached = attachedMap.get('whatsapp');
+    integrations.push({
+      provider: 'whatsapp',
+      connected: true,
+      attached: !!whatsappAttached,
+      terminalIntegrationId: whatsappAttached?.terminal_integration_id as string | undefined,
+      policyId: whatsappAttached?.active_policy_id as string | undefined,
+    });
+  }
+
+  // Add disconnected providers (for "connect" buttons)
   const allProviders: IntegrationProvider[] = [
     'gmail',
     'google_calendar',
@@ -1582,6 +1595,27 @@ export async function attachIntegration(
         { error: 'Browser integration requires at least one URL pattern' },
         { status: 400 }
       );
+    }
+  } else if (provider === 'whatsapp' && !userIntegrationId) {
+    // WhatsApp without OAuth: allow if platform credentials are configured OR a bridge subscription exists.
+    // Platform credentials (WHATSAPP_ACCESS_TOKEN) = WhatsApp Business API via env vars.
+    // Bridge subscription (webhook_id LIKE 'bridge_%') = personal WhatsApp via Baileys QR.
+    const hasPlatformCredentials = !!(env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID);
+
+    if (!hasPlatformCredentials) {
+      const bridgeSub = await env.DB.prepare(`
+        SELECT id FROM messaging_subscriptions
+        WHERE dashboard_id = ? AND user_id = ? AND provider = 'whatsapp'
+          AND webhook_id LIKE 'bridge_%' AND status IN ('pending', 'active')
+        LIMIT 1
+      `).bind(dashboardId, userId).first();
+
+      if (!bridgeSub) {
+        return Response.json(
+          { error: 'No WhatsApp connection found. Configure platform credentials or connect via QR code first.' },
+          { status: 400 }
+        );
+      }
     }
   } else {
     // Non-browser providers require userIntegrationId

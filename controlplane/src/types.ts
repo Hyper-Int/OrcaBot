@@ -50,6 +50,10 @@ export interface Env {
   DISCORD_BOT_TOKEN?: string;
   WHATSAPP_VERIFY_TOKEN?: string;
   WHATSAPP_APP_SECRET?: string;
+  /** WhatsApp Business API permanent access token (system user token) */
+  WHATSAPP_ACCESS_TOKEN?: string;
+  /** WhatsApp Business API phone number ID */
+  WHATSAPP_PHONE_NUMBER_ID?: string;
   OAUTH_REDIRECT_BASE?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
@@ -73,6 +77,12 @@ export interface Env {
   /** Gemini API key for Orcabot chat interface.
    *  Set via: wrangler secret put GEMINI_ORCABOT_KEY */
   GEMINI_ORCABOT_KEY?: string;
+  /** Bridge service URL for persistent messaging connections (WhatsApp personal, Matrix sync).
+   *  Example: https://orcabot-bridge.fly.dev */
+  BRIDGE_URL?: string;
+  /** Shared secret for control plane ↔ bridge authentication.
+   *  Set via: wrangler secret put BRIDGE_INTERNAL_TOKEN */
+  BRIDGE_INTERNAL_TOKEN?: string;
 }
 
 // User types

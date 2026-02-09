@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v9-orcabot-chat
-console.log(`[controlplane] REVISION: index-v9-orcabot-chat loaded at ${new Date().toISOString()}`);
+// REVISION: index-v10-merge-bridge-chat
+console.log(`[controlplane] REVISION: index-v10-merge-bridge-chat loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -1365,11 +1365,15 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET telegram': integrations.getMessagingIntegration,
       'GET telegram/chats': integrations.listMessagingChannels,
       'DELETE telegram': integrations.disconnectMessaging,
-      // WhatsApp (token-based)
+      // WhatsApp Business (token-based + platform config)
+      'GET whatsapp/platform-config': integrations.getWhatsAppPlatformConfig,
       'POST whatsapp/connect-token': integrations.connectMessagingToken,
       'GET whatsapp': integrations.getMessagingIntegration,
       'GET whatsapp/chats': integrations.listMessagingChannels,
       'DELETE whatsapp': integrations.disconnectMessaging,
+      // WhatsApp Personal (bridge/Baileys — QR code pairing)
+      'POST whatsapp/connect-personal': integrations.connectWhatsAppPersonal,
+      'GET whatsapp/qr': integrations.getWhatsAppQr,
       // Teams (token-based)
       'POST teams/connect-token': integrations.connectMessagingToken,
       'GET teams': integrations.getMessagingIntegration,
@@ -2253,6 +2257,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return integrationPolicies.logAuditEntry(env, data);
   }
 
+  // POST /internal/bridge/inbound - Receive message from bridge relay service
+  // Security: Authenticated via X-Bridge-Token (shared secret with bridge)
+  if (segments[0] === 'internal' && segments[1] === 'bridge' && segments[2] === 'inbound' && segments.length === 3 && method === 'POST') {
+    const { handleBridgeInbound } = await import('./messaging/webhook-handler');
+    return handleBridgeInbound(request, env, ctx);
+  }
+
   // ============================================
   // Messaging webhook routes (unauthenticated — signature-verified per platform)
   // ============================================
@@ -2359,7 +2370,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         { status: 400 },
       );
     }
-    if ((data.provider === 'telegram' || data.provider === 'whatsapp' || data.provider === 'matrix') && !data.chatId) {
+    if ((data.provider === 'telegram' || data.provider === 'matrix') && !data.chatId) {
       return Response.json(
         { error: `chatId is required for ${data.provider} subscriptions` },
         { status: 400 },

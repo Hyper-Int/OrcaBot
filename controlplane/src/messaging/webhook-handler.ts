@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v34-hmac-raw-bytes
-const MODULE_REVISION = 'messaging-webhook-v34-hmac-raw-bytes';
+// REVISION: messaging-webhook-v38-item-target-gate
+const MODULE_REVISION = 'messaging-webhook-v38-item-target-gate';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -812,16 +812,18 @@ export async function handleInboundWebhook(
     `).bind(hookId).first();
     subscriptions = sub ? [sub] : [];
   } else if (provider === 'whatsapp') {
-    // WhatsApp routes by chat_id (sender phone) AND channel_id (phone_number_id).
-    // Without phone_number_id scoping, the same sender messaging different business
-    // numbers would cause cross-tenant leakage.
+    // WhatsApp routes by channel_id (phone_number_id) and optionally chat_id (sender phone).
+    // Supports two subscription models:
+    // 1. Catch-all: chat_id IS NULL — receives messages from ANY sender to this business number
+    // 2. Specific: chat_id = sender_phone — only messages from that sender
     const chatId = message.channelId;
     const phoneNumberId = message.metadata?.phone_number_id as string | undefined;
     if (!chatId || !phoneNumberId) return Response.json({ ok: true });
     const results = await env.DB.prepare(`
       SELECT * FROM messaging_subscriptions
-      WHERE provider = 'whatsapp' AND chat_id = ? AND channel_id = ? AND status = 'active'
-    `).bind(chatId, phoneNumberId).all();
+      WHERE provider = 'whatsapp' AND channel_id = ? AND status = 'active'
+        AND (chat_id IS NULL OR chat_id = ?)
+    `).bind(phoneNumberId, chatId).all();
     subscriptions = results.results || [];
   } else if (provider === 'matrix') {
     // Matrix uses chat_id (room_id) for routing
@@ -978,16 +980,27 @@ async function processSubscriptionMessage(
     if (!scopeMatch) return; // Wrong channel for this subscription — skip
   }
 
-  // Enforce inbound policy: at least one connected terminal's policy must allow the message.
-  // If no terminals/policies exist, fail-closed (data minimization).
-  const terminalPolicies = await env.DB.prepare(`
-    SELECT ip.policy
-    FROM dashboard_edges de
-    JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-    JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
-    JOIN integration_policies ip ON ip.id = ti.active_policy_id
-    WHERE de.source_item_id = ?
-  `).bind(provider, subscription.item_id).all<{ policy: string }>();
+  // Enforce inbound policy gate.
+  // Terminal delivery requires an active terminal_integration with a policy that allows the message.
+  // Note/prompt delivery only requires an edge (the edge is the authorization).
+  // If no targets exist at all (no terminals with policies, no notes/prompts), fail-closed.
+  const [terminalPolicies, connectedItems] = await Promise.all([
+    env.DB.prepare(`
+      SELECT ip.policy
+      FROM dashboard_edges de
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+      JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
+      JOIN integration_policies ip ON ip.id = ti.active_policy_id
+      WHERE de.source_item_id = ?
+    `).bind(provider, subscription.item_id).all<{ policy: string }>(),
+    env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM dashboard_edges de
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
+      WHERE de.source_item_id = ?
+    `).bind(subscription.item_id).first<{ cnt: number }>(),
+  ]);
+
+  const hasItemTargets = (connectedItems?.cnt || 0) > 0;
 
   const policies = (terminalPolicies.results || []).map(row => {
     try { return JSON.parse(row.policy) as MessagingPolicy; }
@@ -1022,14 +1035,16 @@ async function processSubscriptionMessage(
       return true;
     });
 
-    if (!allowedByAnyPolicy) {
-      console.log(`[webhook] Inbound denied for subscription ${subscription.id}: no policy allows message from ${message.senderId} in ${message.channelId}`);
+    if (!allowedByAnyPolicy && !hasItemTargets) {
+      console.log(`[webhook] Inbound denied for subscription ${subscription.id}: no policy allows message from ${message.senderId} in ${message.channelId} and no item targets`);
       return;
     }
-  } else {
-    console.log(`[webhook] Inbound denied (fail-closed): no terminal policies for subscription ${subscription.id} — message dropped`);
+    // If terminal policies deny but item targets exist, allow buffering for item delivery
+  } else if (!hasItemTargets) {
+    console.log(`[webhook] Inbound denied (fail-closed): no terminal policies and no item targets for subscription ${subscription.id} — message dropped`);
     return;
   }
+  // If no terminal policies but item targets exist, allow through for note/prompt delivery
 
   // Deduplicate and buffer message
   const messageId = crypto.randomUUID();
@@ -1127,9 +1142,11 @@ export async function createSubscription(
   if ((provider === 'slack' || provider === 'discord' || provider === 'teams' || provider === 'google_chat') && !data.channelId) {
     throw new Error(`channelId is required for ${provider} subscriptions`);
   }
-  if ((provider === 'telegram' || provider === 'whatsapp' || provider === 'matrix') && !data.chatId) {
+  if ((provider === 'telegram' || provider === 'matrix') && !data.chatId) {
     throw new Error(`chatId is required for ${provider} subscriptions`);
   }
+  // WhatsApp allows catch-all subscriptions (chatId omitted) for platform-level routing.
+  // When chatId is null, all messages to the business number are delivered.
 
   // Normalize WhatsApp chatId to digits-only so it matches inbound webhook channelId.
   if (provider === 'whatsapp' && data.chatId) {
@@ -1140,26 +1157,31 @@ export async function createSubscription(
   // WhatsApp chat_id (sender phone) is NOT globally unique — the same sender can message
   // different business numbers. Without phone_number_id scoping, inbound messages from
   // the same sender would be delivered to subscriptions for the wrong business number.
-  // Auto-resolve from user_integrations metadata (stored at connect time). Fail if not
-  // resolvable — can't safely route without it.
+  // Resolution order: 1. Platform env var, 2. user_integrations metadata. Fail if not resolvable.
   if (provider === 'whatsapp' && !data.channelId) {
-    const integration = await env.DB.prepare(
-      `SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'whatsapp'`
-    ).bind(userId).first<{ metadata: string }>();
+    // Try platform-level env var first
+    if (env.WHATSAPP_PHONE_NUMBER_ID) {
+      data.channelId = env.WHATSAPP_PHONE_NUMBER_ID;
+    } else {
+      // Fallback to per-user integration metadata
+      const integration = await env.DB.prepare(
+        `SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'whatsapp'`
+      ).bind(userId).first<{ metadata: string }>();
 
-    if (integration?.metadata) {
-      try {
-        const meta = JSON.parse(integration.metadata) as { phone_number_id?: string };
-        if (meta.phone_number_id) {
-          data.channelId = meta.phone_number_id;
-        }
-      } catch { /* parse failure */ }
+      if (integration?.metadata) {
+        try {
+          const meta = JSON.parse(integration.metadata) as { phone_number_id?: string };
+          if (meta.phone_number_id) {
+            data.channelId = meta.phone_number_id;
+          }
+        } catch { /* parse failure */ }
+      }
     }
 
     if (!data.channelId) {
       throw new Error(
         'WhatsApp phone_number_id could not be resolved. ' +
-        'Please disconnect and reconnect WhatsApp with your Business phone number ID.'
+        'Set WHATSAPP_PHONE_NUMBER_ID env var or reconnect WhatsApp with your Business phone number ID.'
       );
     }
   }
@@ -1404,11 +1426,11 @@ export async function deleteSubscription(
   subscriptionId: string,
   userId: string,
 ): Promise<void> {
-  // Load subscription before deleting to check provider
+  // Load subscription before deleting to check provider and webhook_id
   const sub = await env.DB.prepare(`
-    SELECT provider FROM messaging_subscriptions
+    SELECT provider, webhook_id FROM messaging_subscriptions
     WHERE id = ? AND user_id = ?
-  `).bind(subscriptionId, userId).first<{ provider: string }>();
+  `).bind(subscriptionId, userId).first<{ provider: string; webhook_id: string }>();
 
   // Delete the subscription row first
   await env.DB.prepare(`
@@ -1432,6 +1454,20 @@ export async function deleteSubscription(
         // Best-effort: log but don't block
         console.error(`[subscription] Failed to deregister Telegram webhook for user ${userId}:`, err);
       }
+    }
+  }
+
+  // For bridge (personal WhatsApp): stop the Baileys session so it doesn't
+  // continue ingesting messages after the subscription is deleted.
+  if (sub?.webhook_id?.startsWith('bridge_') && env.BRIDGE_URL && env.BRIDGE_INTERNAL_TOKEN) {
+    try {
+      const { BridgeClient } = await import('../bridge/client');
+      const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
+      await bridge.stopSession(sub.webhook_id);
+      console.log(`[subscription] Stopped bridge session ${sub.webhook_id}`);
+    } catch (err) {
+      // Best-effort: bridge may already be stopped or unreachable
+      console.error(`[subscription] Failed to stop bridge session ${sub.webhook_id}:`, err);
     }
   }
 }
@@ -1458,4 +1494,91 @@ async function deregisterTelegramWebhook(env: Env, userId: string): Promise<void
   } else {
     console.log(`[subscription] Deregistered Telegram webhook for user ${userId}`);
   }
+}
+
+// ============================================
+// Bridge Inbound Handler
+// ============================================
+
+/**
+ * Handle an inbound message from the bridge service.
+ *
+ * The bridge maintains persistent WebSocket/long-poll connections (e.g. WhatsApp
+ * personal via Baileys, Matrix /sync) and forwards normalized messages here.
+ * Auth is via X-Bridge-Token (shared secret), not per-platform webhook signatures.
+ *
+ * This reuses the existing processSubscriptionMessage() pipeline for policy
+ * enforcement, deduplication, buffering, and delivery.
+ */
+export async function handleBridgeInbound(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  // 1. Verify bridge token
+  const token = request.headers.get('X-Bridge-Token');
+  if (!env.BRIDGE_INTERNAL_TOKEN || token !== env.BRIDGE_INTERNAL_TOKEN) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 2. Parse normalized message from bridge
+  let body: {
+    provider: string;
+    webhookId: string;
+    platformMessageId: string;
+    senderId: string;
+    senderName: string;
+    channelId: string;
+    text: string;
+    metadata: Record<string, unknown>;
+  };
+  try {
+    body = await request.json() as typeof body;
+  } catch {
+    return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
+  }
+
+  if (!body.provider || !body.webhookId || !body.text) {
+    return Response.json({ error: 'provider, webhookId, and text are required' }, { status: 400 });
+  }
+
+  // 3. Look up subscription by webhook_id
+  const sub = await env.DB.prepare(`
+    SELECT * FROM messaging_subscriptions
+    WHERE webhook_id = ? AND provider = ? AND status IN ('pending', 'active')
+    LIMIT 1
+  `).bind(body.webhookId, body.provider).first();
+
+  if (!sub) {
+    console.warn(`[bridge-inbound] No active subscription for webhookId=${body.webhookId} provider=${body.provider}`);
+    return Response.json({ ok: true }); // Don't reveal subscription existence
+  }
+
+  // 4. Build NormalizedMessage and reuse existing pipeline
+  const message: NormalizedMessage = {
+    platformMessageId: body.platformMessageId || `bridge-${crypto.randomUUID()}`,
+    senderId: body.senderId || 'unknown',
+    senderName: body.senderName || body.senderId || 'unknown',
+    channelId: body.channelId || '',
+    channelName: '',
+    text: body.text,
+    metadata: { ...(body.metadata ?? {}), source: 'bridge' },
+  };
+
+  // Process in background (same pattern as webhook handler)
+  ctx.waitUntil(
+    processSubscriptionMessage(env, body.provider, sub, message, body as Record<string, unknown>, ctx),
+  );
+
+  // Mark subscription as active on first bridge message if still pending
+  if (sub.status === 'pending') {
+    ctx.waitUntil(
+      env.DB.prepare(`
+        UPDATE messaging_subscriptions SET status = 'active', updated_at = datetime('now')
+        WHERE id = ? AND status = 'pending'
+      `).bind(sub.id).run(),
+    );
+  }
+
+  return Response.json({ ok: true });
 }

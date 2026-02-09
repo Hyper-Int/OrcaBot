@@ -1160,11 +1160,11 @@ var whatsappTools = []IntegrationTool{
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID (optional for bridge connections)"},
 				"to": {"type": "string", "description": "Recipient phone number (with country code, e.g. +1234567890)"},
 				"text": {"type": "string", "description": "Message text"}
 			},
-			"required": ["phone_number_id", "to", "text"]
+			"required": ["to", "text"]
 		}`),
 	},
 	{
@@ -1191,12 +1191,12 @@ var whatsappTools = []IntegrationTool{
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID"},
+				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID (optional for bridge connections)"},
 				"to": {"type": "string", "description": "Recipient phone number"},
 				"text": {"type": "string", "description": "Reply text"},
 				"message_id": {"type": "string", "description": "Message ID to reply to"}
 			},
-			"required": ["phone_number_id", "to", "text", "message_id"]
+			"required": ["to", "text", "message_id"]
 		}`),
 	},
 	{

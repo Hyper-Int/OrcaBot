@@ -1,6 +1,5 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: schema-v4-fix-semicolon-in-comment
 
 /**
  * Database Schema
@@ -683,7 +682,7 @@ CREATE TABLE IF NOT EXISTS terminal_integrations (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   created_by TEXT NOT NULL REFERENCES users(id),
-  CHECK (provider = 'browser' OR user_integration_id IS NOT NULL)
+  CHECK (provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id);
@@ -771,9 +770,12 @@ CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_team_channel ON messaging
 -- COALESCE('') prevents SQLite from ignoring NULLs in the unique constraint.
 -- Migration guard: deactivate any legacy rows with both fields null before
 -- recreating the index, since COALESCE('','') would cause collisions.
+-- Exclude bridge (personal WhatsApp) subscriptions which intentionally have
+-- both fields null — they use webhook_id prefix 'bridge_' for identification.
 UPDATE messaging_subscriptions
   SET status = 'error', error_message = 'migrated: missing channel scope'
-  WHERE channel_id IS NULL AND chat_id IS NULL AND status IN ('pending', 'active');
+  WHERE channel_id IS NULL AND chat_id IS NULL AND status IN ('pending', 'active')
+    AND webhook_id NOT LIKE 'bridge_%';
 DROP INDEX IF EXISTS idx_messaging_subs_active_channel;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_subs_active_channel
   ON messaging_subscriptions(dashboard_id, item_id, provider, COALESCE(channel_id, ''), COALESCE(chat_id, ''))
@@ -895,7 +897,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(use
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v4-fix-semicolon-in-comment";
+const SCHEMA_REVISION = "schema-v4-skip-comment-only-stmts";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1254,16 +1256,28 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
   `).first<{ sql: string }>();
 
   if (!tableInfo?.sql) {
+    console.log(`[migrateTerminalIntegrationProviders] No terminal_integrations table found, skipping`);
     return;
   }
 
-  // Check if all required providers are present in the CHECK constraint
+  console.log(`[migrateTerminalIntegrationProviders] Current table SQL: ${tableInfo.sql.substring(0, 500)}`);
+
+  // Check if all required providers are present in the provider enum CHECK
   const allProvidersPresent = TERMINAL_INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
-  if (allProvidersPresent) {
+
+  // Also check if the platform-credential exemption CHECK is up to date
+  // (providers that don't need user_integration_id, e.g. browser + whatsapp)
+  const hasCorrectExemption = tableInfo.sql.includes("provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL");
+
+  console.log(`[migrateTerminalIntegrationProviders] allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
+
+  if (allProvidersPresent && hasCorrectExemption) {
+    console.log(`[migrateTerminalIntegrationProviders] Table is up to date, skipping migration`);
     return;
   }
 
   // Recreate table with updated CHECK constraint
+  console.log(`[migrateTerminalIntegrationProviders] Recreating terminal_integrations table. allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
   const providerList = TERMINAL_INTEGRATION_PROVIDERS.map(p => `'${p}'`).join(', ');
 
   await db.prepare(`PRAGMA foreign_keys=OFF`).run();
@@ -1284,7 +1298,7 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       created_by TEXT NOT NULL REFERENCES users(id),
-      CHECK (provider = 'browser' OR user_integration_id IS NOT NULL)
+      CHECK (provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL)
     )
   `).run();
   await db.prepare(`

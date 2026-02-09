@@ -1,0 +1,266 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: whatsapp-provider-v7-normalize-e164-jid
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v7-normalize-e164-jid loaded at ${new Date().toISOString()}`);
+
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  makeCacheableSignalKeyStore,
+  getContentType,
+  Browsers,
+  type WASocket,
+  type WAMessage,
+} from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import pino from 'pino';
+import QRCode from 'qrcode';
+import { mkdirSync } from 'fs';
+import type { BridgeProvider, SessionManager, NormalizedMessage } from '../session-manager.js';
+
+const logger = pino({ level: 'silent' });
+
+const MAX_RECONNECT_RETRIES = 8;
+const BASE_RECONNECT_DELAY_MS = 3_000;
+const MAX_RECONNECT_DELAY_MS = 60_000;
+
+export class WhatsAppProvider implements BridgeProvider {
+  private sock: WASocket | null = null;
+  private currentQr: string | null = null;
+  private status: 'connecting' | 'connected' | 'disconnected' | 'error' = 'connecting';
+  private stopped = false;
+  private starting = false;
+  private reconnectAttempts = 0;
+  private authDir: string;
+
+  // Auth state loaded once and reused across reconnects
+  private authState: Awaited<ReturnType<typeof useMultiFileAuthState>> | null = null;
+
+  constructor(
+    private sessionId: string,
+    private userId: string,
+    private dataDir: string,
+    private sessionManager: SessionManager,
+  ) {
+    // Auth dir scoped by sessionId (not just userId) to prevent credential
+    // collisions when the same user has multiple WhatsApp blocks/connections.
+    this.authDir = `${dataDir}/whatsapp-sessions/${userId}/${sessionId}`;
+  }
+
+  async start(): Promise<void> {
+    // Guard against overlapping start() calls (e.g. rapid reconnects)
+    if (this.starting) {
+      console.warn(`[whatsapp] Session ${this.sessionId} start() already in progress, skipping`);
+      return;
+    }
+    this.starting = true;
+
+    try {
+      // Tear down existing socket before creating a new one
+      this.teardownSocket();
+
+      mkdirSync(this.authDir, { recursive: true });
+
+      // Load auth state once on first start; reuse on reconnects so identity keys persist
+      if (!this.authState) {
+        this.authState = await useMultiFileAuthState(this.authDir);
+      }
+
+      const { state, saveCreds } = this.authState;
+
+      this.sock = makeWASocket({
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys, logger),
+        },
+        logger,
+        browser: Browsers.ubuntu('Chrome'),
+        printQRInTerminal: false,
+      });
+
+      this.sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          try {
+            this.currentQr = await QRCode.toDataURL(qr);
+          } catch (err) {
+            console.error(`[whatsapp] Failed to generate QR data URL:`, err);
+          }
+        }
+
+        if (connection === 'open') {
+          this.currentQr = null;
+          this.status = 'connected';
+          this.reconnectAttempts = 0;
+          this.sessionManager.updateSessionStatus(this.sessionId, 'connected');
+          console.log(`[whatsapp] Session ${this.sessionId} connected`);
+        }
+
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          const loggedOut = statusCode === DisconnectReason.loggedOut;
+
+          if (loggedOut || this.stopped) {
+            this.status = 'disconnected';
+            this.sessionManager.updateSessionStatus(
+              this.sessionId,
+              'disconnected',
+              loggedOut ? 'Logged out from WhatsApp' : 'Stopped',
+            );
+            console.log(`[whatsapp] Session ${this.sessionId} disconnected (logged out: ${loggedOut})`);
+          } else {
+            this.reconnectAttempts++;
+
+            if (this.reconnectAttempts > MAX_RECONNECT_RETRIES) {
+              console.error(`[whatsapp] Session ${this.sessionId} exceeded ${MAX_RECONNECT_RETRIES} reconnect attempts, giving up`);
+              this.status = 'error';
+              this.sessionManager.updateSessionStatus(
+                this.sessionId,
+                'error',
+                `Connection failed after ${MAX_RECONNECT_RETRIES} attempts`,
+              );
+              return;
+            }
+
+            const delay = Math.min(
+              BASE_RECONNECT_DELAY_MS * Math.pow(2, this.reconnectAttempts - 1),
+              MAX_RECONNECT_DELAY_MS,
+            );
+            console.log(`[whatsapp] Session ${this.sessionId} connection closed, reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_RETRIES})...`);
+            this.status = 'connecting';
+            this.sessionManager.updateSessionStatus(this.sessionId, 'connecting');
+            setTimeout(() => {
+              if (!this.stopped) this.start().catch(console.error);
+            }, delay);
+          }
+        }
+      });
+
+      this.sock.ev.on('creds.update', saveCreds);
+
+      this.sock.ev.on('messages.upsert', ({ messages, type }) => {
+        if (type !== 'notify') return;
+
+        for (const msg of messages) {
+          if (msg.key.fromMe) continue;
+          if (!msg.message) continue;
+
+          const normalized = this.normalizeMessage(msg);
+          if (normalized) {
+            // Fire-and-forget: don't block the event loop on slow callbacks
+            void this.sessionManager.forwardMessage(this.sessionId, normalized);
+          }
+        }
+      });
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  /** Tear down the current socket and its listeners without changing stopped flag */
+  private teardownSocket(): void {
+    if (this.sock) {
+      this.sock.ev.removeAllListeners('connection.update');
+      this.sock.ev.removeAllListeners('creds.update');
+      this.sock.ev.removeAllListeners('messages.upsert');
+      this.sock.end(undefined);
+      this.sock = null;
+    }
+  }
+
+  async sendMessage(jid: string, text: string): Promise<{ messageId: string }> {
+    if (!this.sock || this.status !== 'connected') {
+      throw new Error(`WhatsApp not connected (status: ${this.status})`);
+    }
+
+    // Normalize JID: strip non-digits (handles "+1 555-123-4567" style inputs)
+    // then append @s.whatsapp.net for individual chats if missing
+    const normalizedJid = jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@s.whatsapp.net`;
+
+    const result = await this.sock.sendMessage(normalizedJid, { text });
+    const messageId = result?.key?.id || '';
+    console.log(`[whatsapp] Session ${this.sessionId} sent message to ${normalizedJid}: ${messageId}`);
+    return { messageId };
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    this.teardownSocket();
+    this.status = 'disconnected';
+  }
+
+  getStatus(): 'connecting' | 'connected' | 'disconnected' | 'error' {
+    return this.status;
+  }
+
+  getQrCode(): string | null {
+    return this.currentQr;
+  }
+
+  private normalizeMessage(msg: WAMessage): NormalizedMessage | null {
+    const jid = msg.key.remoteJid;
+    if (!jid) return null;
+
+    const text = this.extractText(msg);
+    if (!text) return null;
+
+    // Extract sender info
+    // For group messages: participant is the actual sender, remoteJid is the group
+    // For DMs: remoteJid is the sender
+    const senderId = msg.key.participant || jid;
+    const pushName = msg.pushName || senderId.split('@')[0];
+
+    // Strip @s.whatsapp.net suffix for clean IDs
+    const cleanSenderId = senderId.replace(/@s\.whatsapp\.net$/, '');
+    const cleanChannelId = jid.replace(/@s\.whatsapp\.net$/, '').replace(/@g\.us$/, '');
+
+    return {
+      provider: 'whatsapp',
+      webhookId: this.sessionId,
+      platformMessageId: msg.key.id || `${Date.now()}`,
+      senderId: cleanSenderId,
+      senderName: pushName,
+      channelId: cleanChannelId,
+      text,
+      metadata: {
+        source: 'bridge',
+        pushName,
+        isGroup: jid.endsWith('@g.us'),
+        jid,
+      },
+    };
+  }
+
+  private extractText(msg: WAMessage): string | null {
+    if (!msg.message) return null;
+
+    const contentType = getContentType(msg.message);
+
+    switch (contentType) {
+      case 'conversation':
+        return msg.message.conversation || null;
+      case 'extendedTextMessage':
+        return msg.message.extendedTextMessage?.text || null;
+      case 'imageMessage':
+        return msg.message.imageMessage?.caption || '<image>';
+      case 'videoMessage':
+        return msg.message.videoMessage?.caption || '<video>';
+      case 'documentMessage':
+        return msg.message.documentMessage?.caption || `<document: ${msg.message.documentMessage?.fileName || 'file'}>`;
+      case 'audioMessage':
+        return '<audio message>';
+      case 'contactMessage':
+        return `<contact: ${msg.message.contactMessage?.displayName || 'unknown'}>`;
+      case 'locationMessage': {
+        const loc = msg.message.locationMessage;
+        return loc ? `<location: ${loc.degreesLatitude}, ${loc.degreesLongitude}>` : '<location>';
+      }
+      case 'stickerMessage':
+        return '<sticker>';
+      default:
+        return null;
+    }
+  }
+}

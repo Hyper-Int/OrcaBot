@@ -171,9 +171,7 @@ const messagingTools: BlockTool[] = [
   { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
   { type: "telegram", icon: <TelegramIcon className="w-4 h-4" />, label: "Telegram" },
   { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
-  { type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
-  { type: "matrix", icon: <MatrixIcon className="w-4 h-4" />, label: "Matrix" },
-  { type: "google_chat", icon: <GoogleChatIcon className="w-4 h-4" />, label: "Google Chat" },
+  // Teams, Matrix, Google Chat hidden until ready
 ];
 
 const terminalTools: BlockTool[] = [
@@ -240,7 +238,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   slack: { width: 280, height: 280 },
   discord: { width: 280, height: 280 },
   telegram: { width: 280, height: 280 },
-  whatsapp: { width: 280, height: 280 },
+  whatsapp: { width: 280, height: 320 },
   teams: { width: 280, height: 280 },
   matrix: { width: 280, height: 280 },
   google_chat: { width: 280, height: 280 },
@@ -1143,7 +1141,7 @@ export default function DashboardPage() {
       );
       if (!session) {
         if (action === "attach") {
-          toast.warning("Terminal not active. Start the terminal first, then draw the connection.");
+          toast.info("Connection saved. Integration will attach when the terminal starts.");
         }
         return;
       }
@@ -1257,7 +1255,7 @@ export default function DashboardPage() {
             // OAuth-based integrations - need userIntegrationId
             const availableIntegrations = await listAvailableIntegrations(dashboardId, ptyId);
             const userIntegration = availableIntegrations.find(
-              (i) => i.provider === provider && i.connected && !i.attached
+              (i) => i.provider === provider && i.connected && !i.attached && i.userIntegrationId
             );
 
             if (!userIntegration) {
@@ -1268,6 +1266,36 @@ export default function DashboardPage() {
               if (alreadyAttached) {
                 toast.info(`${getProviderDisplayName(provider)} is already attached to this terminal`);
                 return;
+              }
+              // WhatsApp can work without OAuth (platform credentials or bridge/QR connection)
+              // — try attaching without userIntegrationId
+              if (provider === "whatsapp") {
+                try {
+                  const result = await attachIntegration(dashboardId, ptyId, {
+                    provider,
+                    policy: createReadOnlyPolicy(provider),
+                  });
+                  setEdges((prev) =>
+                    prev.map((e) =>
+                      e.id === edge.id
+                        ? {
+                            ...e,
+                            type: "integration",
+                            data: { securityLevel: result.securityLevel, provider },
+                          }
+                        : e
+                    )
+                  );
+                  toast.success(`${getProviderDisplayName(provider)} attached to terminal`);
+                  return;
+                } catch (err: unknown) {
+                  // 409 = already attached — edge is already styled from the first successful call, just return
+                  if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 409) {
+                    return;
+                  }
+                  console.error(`[handleIntegrationEdge] WhatsApp attach without OAuth failed:`, err);
+                  // Fall through to show sign-in warning
+                }
               }
               // Not connected via OAuth yet - delete the edge and show warning
               await deleteEdge(dashboardId, edge.id);
@@ -1370,6 +1398,46 @@ export default function DashboardPage() {
     },
     [items, setEdges]
   );
+
+  // Auto-attach integrations when a terminal session becomes active.
+  // If the user draws an integration edge before starting the terminal, the edge is saved
+  // but attachment is deferred. This effect retries attachment when new sessions appear.
+  const prevActiveSessionIdsRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    const currentActiveIds = new Set(
+      sessions.filter((s) => s.status === "active" && s.ptyId).map((s) => s.itemId)
+    );
+    const newlyActive = [...currentActiveIds].filter((id) => !prevActiveSessionIdsRef.current.has(id));
+    prevActiveSessionIdsRef.current = currentActiveIds;
+
+    if (!newlyActive.length) return;
+
+    // For each newly active terminal, check for integration edges without attachments
+    const data = queryClient.getQueryData<{
+      items: DashboardItem[];
+      edges: DashboardEdge[];
+    }>(["dashboard", dashboardId]);
+    if (!data) return;
+
+    for (const terminalItemId of newlyActive) {
+      // Find integration edges connected to this terminal
+      const integrationEdges = data.edges.filter((edge) => {
+        const otherItemId =
+          edge.sourceItemId === terminalItemId ? edge.targetItemId :
+          edge.targetItemId === terminalItemId ? edge.sourceItemId : null;
+        if (!otherItemId) return false;
+        const otherItem = data.items.find((i) => i.id === otherItemId);
+        return otherItem && isIntegrationBlockType(otherItem.type);
+      });
+
+      for (const edge of integrationEdges) {
+        handleIntegrationEdge(
+          { id: edge.id, sourceItemId: edge.sourceItemId, targetItemId: edge.targetItemId },
+          "attach"
+        );
+      }
+    }
+  }, [sessions, dashboardId, queryClient, handleIntegrationEdge]);
 
   // Handle edge label click - open policy editor for the integration on this edge
   const handleEdgeLabelClick = React.useCallback(
