@@ -130,7 +130,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/broker/")
 	parts := strings.SplitN(path, "/", 3)
 	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, `{"error":"invalid_path","message":"Invalid broker path"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid_path","message":"E79326: Invalid broker path"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		targetURL = r.URL.Query().Get("target")
 		if targetURL == "" {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"missing_target","message":"Custom secrets require ?target=https://... parameter"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"missing_target","message":"E79327: Custom secrets require ?target=https://... parameter"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -158,7 +158,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		parsedTarget, err := url.Parse(targetURL)
 		if err != nil || parsedTarget.Scheme != "https" {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"invalid_target","message":"Target URL must use HTTPS"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"invalid_target","message":"E79328: Target URL must use HTTPS"}`, http.StatusBadRequest)
 			return
 		}
 
@@ -170,7 +170,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.mu.RUnlock()
 		if !exists || config.SecretValue == "" {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"secret_not_configured","message":"%s not configured","hint":"Add your secret in Environment Variables"}`, secretName), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf(`{"error":"secret_not_configured","message":"E79329: %s not configured","hint":"Add your secret in Environment Variables"}`, secretName), http.StatusNotFound)
 			return
 		}
 		secretValue = config.SecretValue
@@ -211,7 +211,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if !exists {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"provider_not_configured","message":"%s not configured","hint":"Add your API key in Environment Variables"}`, providerID), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf(`{"error":"provider_not_configured","message":"E79330: %s not configured","hint":"Add your API key in Environment Variables"}`, providerID), http.StatusNotFound)
 			return
 		}
 
@@ -232,7 +232,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Verify target host matches expected (prevent SSRF)
 		if !b.hostAllowed(providerID, targetURL) {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"host_not_allowed","message":"Target host does not match provider configuration"}`, http.StatusForbidden)
+			http.Error(w, `{"error":"host_not_allowed","message":"E79331: Target host does not match provider configuration"}`, http.StatusForbidden)
 			return
 		}
 	}
@@ -241,7 +241,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	outReq, err := http.NewRequest(r.Method, targetURL, r.Body)
 	if err != nil {
 		log.Printf("broker: failed to create request: %v", err)
-		http.Error(w, `{"error":"request_failed","message":"Failed to create request"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"request_failed","message":"E79332: Failed to create request"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("broker: request failed for %s: %v", providerID, err)
 		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, `{"error":"upstream_failed","message":"Request to upstream API failed"}`, http.StatusBadGateway)
+		http.Error(w, `{"error":"upstream_failed","message":"E79333: Request to upstream API failed"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

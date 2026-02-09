@@ -1,4 +1,4 @@
-// Copyright 2026 Robert Macrae. All rights reserved.
+// Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 // REVISION: agent-state-v27-d1-compat-fallback
@@ -153,14 +153,14 @@ export async function listTasks(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access) {
-    return Response.json({ error: 'Dashboard not found or access denied' }, { status: 404 });
+    return Response.json({ error: 'E79010: Dashboard not found or access denied' }, { status: 404 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent session enumeration)
   if (filters?.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, filters.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79011: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -220,14 +220,14 @@ export async function getTask(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access) {
-    return Response.json({ error: 'Dashboard not found or access denied' }, { status: 404 });
+    return Response.json({ error: 'E79012: Dashboard not found or access denied' }, { status: 404 });
   }
 
   // Validate sessionId if provided
   if (sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79013: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -247,7 +247,7 @@ export async function getTask(
   const row = await env.DB.prepare(query).bind(...params).first();
 
   if (!row) {
-    return Response.json({ error: 'Task not found' }, { status: 404 });
+    return Response.json({ error: 'E79014: Task not found' }, { status: 404 });
   }
 
   return Response.json({ task: formatTask(row) });
@@ -265,25 +265,25 @@ export async function createTask(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79015: Access denied' }, { status: 403 });
   }
 
   // Validate required fields
   if (!input.subject || typeof input.subject !== 'string' || input.subject.trim() === '') {
-    return Response.json({ error: 'subject is required and must be a non-empty string' }, { status: 400 });
+    return Response.json({ error: 'E79016: subject is required and must be a non-empty string' }, { status: 400 });
   }
 
   // Session-scoped writes require PTY token (internal gateway only)
   // Public API (allowSessionScope=false or undefined) rejects sessionId
   if (input.sessionId && !options?.allowSessionScope) {
-    return Response.json({ error: 'Session-scoped tasks can only be created via terminal (PTY token required)' }, { status: 403 });
+    return Response.json({ error: 'E79017: Session-scoped tasks can only be created via terminal (PTY token required)' }, { status: 403 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent orphaned session-scoped tasks)
   if (input.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, input.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79018: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -349,14 +349,14 @@ export async function updateTask(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79019: Access denied' }, { status: 403 });
   }
 
   // Validate sessionId if provided
   if (options?.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, options.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79020: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -379,7 +379,7 @@ export async function updateTask(
   const existing = await env.DB.prepare(query).bind(...queryParams).first();
 
   if (!existing) {
-    return Response.json({ error: 'Task not found' }, { status: 404 });
+    return Response.json({ error: 'E79021: Task not found' }, { status: 404 });
   }
 
   const updates: string[] = [];
@@ -465,7 +465,7 @@ export async function updateTask(
   }
 
   if (updates.length === 0) {
-    return Response.json({ error: 'No updates provided' }, { status: 400 });
+    return Response.json({ error: 'E79022: No updates provided' }, { status: 400 });
   }
 
   updates.push('updated_at = ?');
@@ -505,14 +505,14 @@ export async function deleteTask(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79023: Access denied' }, { status: 403 });
   }
 
   // Validate sessionId if provided
   if (sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79024: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -532,7 +532,7 @@ export async function deleteTask(
   const task = await env.DB.prepare(query).bind(...params).first();
 
   if (!task) {
-    return Response.json({ error: 'Task not found' }, { status: 404 });
+    return Response.json({ error: 'E79025: Task not found' }, { status: 404 });
   }
 
   // Remove this task from blockedBy of other tasks
@@ -755,14 +755,14 @@ export async function listMemory(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access) {
-    return Response.json({ error: 'Dashboard not found or access denied' }, { status: 404 });
+    return Response.json({ error: 'E79026: Dashboard not found or access denied' }, { status: 404 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent session enumeration)
   if (filters?.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, filters.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79027: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -851,14 +851,14 @@ export async function getMemory(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access) {
-    return Response.json({ error: 'Dashboard not found or access denied' }, { status: 404 });
+    return Response.json({ error: 'E79028: Dashboard not found or access denied' }, { status: 404 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent session enumeration)
   if (sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79029: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -894,7 +894,7 @@ export async function getMemory(
     }
   }
 
-  return Response.json({ error: 'Memory not found' }, { status: 404 });
+  return Response.json({ error: 'E79030: Memory not found' }, { status: 404 });
 }
 
 /**
@@ -936,28 +936,28 @@ export async function setMemory(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79031: Access denied' }, { status: 403 });
   }
 
   // Validate required fields
   if (!input.key || typeof input.key !== 'string' || input.key.trim() === '') {
-    return Response.json({ error: 'key is required and must be a non-empty string' }, { status: 400 });
+    return Response.json({ error: 'E79032: key is required and must be a non-empty string' }, { status: 400 });
   }
   if (input.value === undefined) {
-    return Response.json({ error: 'value is required' }, { status: 400 });
+    return Response.json({ error: 'E79033: value is required' }, { status: 400 });
   }
 
   // Session-scoped writes require PTY token (internal gateway only)
   // Public API (allowSessionScope=false or undefined) rejects sessionId
   if (input.sessionId && !options?.allowSessionScope) {
-    return Response.json({ error: 'Session-scoped memory can only be created via terminal (PTY token required)' }, { status: 403 });
+    return Response.json({ error: 'E79034: Session-scoped memory can only be created via terminal (PTY token required)' }, { status: 403 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent cross-session injection)
   if (input.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, input.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79035: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -1072,7 +1072,7 @@ export async function setMemory(
 
   const row = await env.DB.prepare(fetchQuery).bind(...fetchParams).first();
   if (!row) {
-    return Response.json({ error: 'Failed to save memory' }, { status: 500 });
+    return Response.json({ error: 'E79036: Failed to save memory' }, { status: 500 });
   }
 
   const memory = formatMemory(row);
@@ -1095,14 +1095,14 @@ export async function deleteMemory(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79037: Access denied' }, { status: 403 });
   }
 
   // Validate sessionId belongs to this dashboard (security: prevent session enumeration)
   if (sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79038: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
@@ -1195,23 +1195,23 @@ export async function bulkUpdateTasks(
 ): Promise<Response> {
   const access = await ensureDashboardAccess(env, dashboardId, userId);
   if (!access || access.role === 'viewer') {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79039: Access denied' }, { status: 403 });
   }
 
   // Validate sessionId if provided
   if (options?.sessionId) {
     const sessionValid = await validateSessionBelongsToDashboard(env, dashboardId, options.sessionId);
     if (!sessionValid) {
-      return Response.json({ error: 'Invalid session for this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79040: Invalid session for this dashboard' }, { status: 400 });
     }
   }
 
   if (!Array.isArray(updates) || updates.length === 0) {
-    return Response.json({ error: 'updates array is required' }, { status: 400 });
+    return Response.json({ error: 'E79041: updates array is required' }, { status: 400 });
   }
 
   if (updates.length > 100) {
-    return Response.json({ error: 'Maximum 100 updates per batch' }, { status: 400 });
+    return Response.json({ error: 'E79042: Maximum 100 updates per batch' }, { status: 400 });
   }
 
   const now = new Date().toISOString();

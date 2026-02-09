@@ -33,7 +33,7 @@ func (s *Server) handleBrowserStart(w http.ResponseWriter, r *http.Request) {
 	status, err := session.StartBrowser()
 	if err != nil {
 		log.Printf("browser start error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79310: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -91,7 +91,7 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.OpenBrowserURL(req.URL); err != nil {
 		log.Printf("browser open error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79311: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -211,7 +211,7 @@ func (s *Server) handleBrowserScreenshot(w http.ResponseWriter, r *http.Request)
 	path, err := session.BrowserScreenshot(req.Path)
 	if err != nil {
 		log.Printf("browser screenshot error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79312: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -241,7 +241,7 @@ func (s *Server) handleBrowserClick(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.BrowserClick(req.Selector); err != nil {
 		log.Printf("browser click error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79313: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -272,7 +272,7 @@ func (s *Server) handleBrowserType(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.BrowserType(req.Selector, req.Text); err != nil {
 		log.Printf("browser type error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79314: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -303,7 +303,7 @@ func (s *Server) handleBrowserEvaluate(w http.ResponseWriter, r *http.Request) {
 	result, err := session.BrowserEvaluate(req.Script)
 	if err != nil {
 		log.Printf("browser evaluate error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79315: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -319,7 +319,7 @@ func (s *Server) handleBrowserContent(w http.ResponseWriter, r *http.Request) {
 	content, err := session.BrowserGetContent()
 	if err != nil {
 		log.Printf("browser content error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79316: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -335,7 +335,7 @@ func (s *Server) handleBrowserHTML(w http.ResponseWriter, r *http.Request) {
 	html, err := session.BrowserGetHTML()
 	if err != nil {
 		log.Printf("browser html error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79317: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -351,7 +351,7 @@ func (s *Server) handleBrowserURL(w http.ResponseWriter, r *http.Request) {
 	url, err := session.BrowserGetURL()
 	if err != nil {
 		log.Printf("browser url error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79318: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -367,7 +367,7 @@ func (s *Server) handleBrowserTitle(w http.ResponseWriter, r *http.Request) {
 	title, err := session.BrowserGetTitle()
 	if err != nil {
 		log.Printf("browser title error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79319: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -403,7 +403,7 @@ func (s *Server) handleBrowserWait(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.BrowserWaitForSelector(req.Selector, timeout); err != nil {
 		log.Printf("browser wait error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79320: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -433,7 +433,7 @@ func (s *Server) handleBrowserNavigate(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.BrowserNavigate(req.URL); err != nil {
 		log.Printf("browser navigate error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79321: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -459,7 +459,7 @@ func (s *Server) handleBrowserScroll(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.BrowserScroll(req.X, req.Y); err != nil {
 		log.Printf("browser scroll error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "E79322: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

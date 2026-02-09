@@ -544,7 +544,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
     // Validate email
     if (!email || !email.includes('@')) {
-      return Response.json({ error: 'Valid email is required' }, { status: 400 });
+      return Response.json({ error: 'E79407: Valid email is required' }, { status: 400 });
     }
 
     // Limit note length
@@ -573,7 +573,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json({ success: true, message: 'Interest registered successfully' }, { status: 201 });
     } catch (error) {
       console.error('Failed to send interest registration emails:', error);
-      return Response.json({ error: 'Failed to register interest. Please try again.' }, { status: 500 });
+      return Response.json({ error: 'E79408: Failed to register interest. Please try again.' }, { status: 500 });
     }
   }
 
@@ -597,7 +597,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     try {
       data = await request.json();
     } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'E79409: Invalid JSON body' }, { status: 400 });
     }
 
     return bugReports.submitBugReport(env, auth.user!, data);
@@ -2095,7 +2095,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate-token' && method === 'POST') {
     const ptyToken = request.headers.get('X-PTY-Token');
     if (!ptyToken) {
-      return Response.json({ error: 'AUTH_DENIED', reason: 'Missing X-PTY-Token header' }, { status: 401 });
+      return Response.json({ error: 'E79410: AUTH_DENIED', reason: 'Missing X-PTY-Token header' }, { status: 401 });
     }
     let action: string | undefined;
     let args: Record<string, unknown> | undefined;
@@ -2158,7 +2158,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
 
     if (!dashboardId) {
-      return Response.json({ error: 'Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
+      return Response.json({ error: 'E79411: Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
     }
 
     const body = await request.json() as { action: string; args: Record<string, unknown> };
@@ -2170,7 +2170,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       body.args
     );
     if (!result.success) {
-      return Response.json({ error: result.error }, { status: 400 });
+      return Response.json({ error: 'E79412: ' + result.error }, { status: 400 });
     }
     return Response.json(result.data);
   }
@@ -2207,7 +2207,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
 
     if (!dashboardId) {
-      return Response.json({ error: 'Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
+      return Response.json({ error: 'E79413: Missing valid PTY token or X-Dashboard-Token' }, { status: 401 });
     }
 
     const body = await request.json() as { action: string; args: Record<string, unknown> };
@@ -2219,7 +2219,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       body.args
     );
     if (!result.success) {
-      return Response.json({ error: result.error }, { status: 400 });
+      return Response.json({ error: 'E79414: ' + result.error }, { status: 400 });
     }
     return Response.json(result.data);
   }
@@ -2281,7 +2281,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (mode === 'subscribe' && token === env.WHATSAPP_VERIFY_TOKEN && challenge) {
       return new Response(challenge, { status: 200 });
     }
-    return Response.json({ error: 'Verification failed' }, { status: 403 });
+    return Response.json({ error: 'E79415: Verification failed' }, { status: 403 });
   }
 
   if (segments[0] === 'webhooks' && (segments.length === 2 || segments.length === 3) && method === 'POST') {
@@ -2302,14 +2302,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const dashboardId = url.searchParams.get('dashboard_id');
     if (!dashboardId) {
-      return Response.json({ error: 'dashboard_id required' }, { status: 400 });
+      return Response.json({ error: 'E79416: dashboard_id required' }, { status: 400 });
     }
     // Verify dashboard membership
     const membership = await env.DB.prepare(
       'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
     ).bind(dashboardId, auth.user!.id).first();
     if (!membership) {
-      return Response.json({ error: 'Not found' }, { status: 404 });
+      return Response.json({ error: 'E79417: Not found' }, { status: 404 });
     }
     const { listSubscriptions } = await import('./messaging/webhook-handler');
     return Response.json(await listSubscriptions(env, dashboardId));
@@ -2329,7 +2329,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       chatId?: string;
     };
     if (!data.dashboardId || !data.itemId || !data.provider) {
-      return Response.json({ error: 'dashboardId, itemId, and provider are required' }, { status: 400 });
+      return Response.json({ error: 'E79418: dashboardId, itemId, and provider are required' }, { status: 400 });
     }
     // Validate provider against providers with implemented webhook handlers.
     // The full set of messaging providers is: slack, discord, telegram, whatsapp, teams, matrix, google_chat
@@ -2338,14 +2338,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     // teams, matrix, google_chat are excluded until JWT/shared-secret verification is added.
     const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram', 'whatsapp'];
     if (!WEBHOOK_READY_PROVIDERS.includes(data.provider)) {
-      return Response.json({ error: `Provider '${data.provider}' does not have webhook support yet` }, { status: 400 });
+      return Response.json({ error: `E79419: Provider '${data.provider}' does not have webhook support yet` }, { status: 400 });
     }
     // Verify dashboard membership
     const membership = await env.DB.prepare(
       'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
     ).bind(data.dashboardId, auth.user!.id).first();
     if (!membership) {
-      return Response.json({ error: 'Not found' }, { status: 404 });
+      return Response.json({ error: 'E79420: Not found' }, { status: 404 });
     }
     // Verify itemId belongs to the dashboard AND is a messaging block matching the provider.
     // Without this, subscriptions could be created for any item (terminals, notes, etc.),
@@ -2354,7 +2354,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'SELECT id, type FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
     ).bind(data.itemId, data.dashboardId).first<{ id: string; type: string }>();
     if (!item) {
-      return Response.json({ error: 'Item not found in dashboard' }, { status: 404 });
+      return Response.json({ error: 'E79421: Item not found in dashboard' }, { status: 404 });
     }
     if (item.type !== data.provider) {
       return Response.json(
@@ -2388,7 +2388,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json(result, { status: 201 });
     } catch (err) {
       if (err instanceof SubscriptionError) {
-        return Response.json({ error: err.message, code: err.code }, { status: 400 });
+        return Response.json({ error: 'E79422: ' + err.message, code: err.code }, { status: 400 });
       }
       throw err;
     }
@@ -2406,7 +2406,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
        WHERE ms.id = ? AND ms.user_id = ?`
     ).bind(auth.user!.id, segments[2], auth.user!.id).first();
     if (!sub) {
-      return Response.json({ error: 'Not found' }, { status: 404 });
+      return Response.json({ error: 'E79423: Not found' }, { status: 404 });
     }
     const { deleteSubscription } = await import('./messaging/webhook-handler');
     await deleteSubscription(env, segments[2], auth.user!.id);

@@ -101,7 +101,7 @@ export async function listMembers(
   // Check access - any member can view the list
   const role = await getDashboardRole(env, dashboardId, userId);
   if (!role) {
-    return Response.json({ error: 'Access denied' }, { status: 403 });
+    return Response.json({ error: 'E79060: Access denied' }, { status: 403 });
   }
 
   // Get members with user info
@@ -158,17 +158,17 @@ export async function addMember(
   // Only owners can add members
   const role = await getDashboardRole(env, dashboardId, userId);
   if (role !== 'owner') {
-    return Response.json({ error: 'Only owners can add members' }, { status: 403 });
+    return Response.json({ error: 'E79061: Only owners can add members' }, { status: 403 });
   }
 
   const dashboard = await getDashboardInfo(env, dashboardId);
   if (!dashboard) {
-    return Response.json({ error: 'Dashboard not found' }, { status: 404 });
+    return Response.json({ error: 'E79062: Dashboard not found' }, { status: 404 });
   }
 
   const inviter = await getUserById(env, userId);
   if (!inviter) {
-    return Response.json({ error: 'User not found' }, { status: 404 });
+    return Response.json({ error: 'E79063: User not found' }, { status: 404 });
   }
 
   const email = data.email.toLowerCase().trim();
@@ -176,7 +176,7 @@ export async function addMember(
 
   // Validate role
   if (!['editor', 'viewer'].includes(inviteRole)) {
-    return Response.json({ error: 'Invalid role. Must be editor or viewer.' }, { status: 400 });
+    return Response.json({ error: 'E79064: Invalid role. Must be editor or viewer.' }, { status: 400 });
   }
 
   // Check if user exists
@@ -189,7 +189,7 @@ export async function addMember(
     `).bind(dashboardId, existingUser.id).first();
 
     if (existingMember) {
-      return Response.json({ error: 'User is already a member of this dashboard' }, { status: 400 });
+      return Response.json({ error: 'E79065: User is already a member of this dashboard' }, { status: 400 });
     }
 
     // Add as member directly
@@ -237,7 +237,7 @@ export async function addMember(
   `).bind(dashboardId, email).first();
 
   if (existingInvitation) {
-    return Response.json({ error: 'An invitation has already been sent to this email' }, { status: 400 });
+    return Response.json({ error: 'E79066: An invitation has already been sent to this email' }, { status: 400 });
   }
 
   const invitationId = generateId();
@@ -303,22 +303,22 @@ export async function updateMemberRole(
   // Only owners can update roles
   const role = await getDashboardRole(env, dashboardId, userId);
   if (role !== 'owner') {
-    return Response.json({ error: 'Only owners can update member roles' }, { status: 403 });
+    return Response.json({ error: 'E79067: Only owners can update member roles' }, { status: 403 });
   }
 
   // Cannot change owner's role
   const memberRole = await getDashboardRole(env, dashboardId, memberId);
   if (memberRole === 'owner') {
-    return Response.json({ error: 'Cannot change the owner\'s role' }, { status: 400 });
+    return Response.json({ error: 'E79068: Cannot change the owner\'s role' }, { status: 400 });
   }
 
   if (!memberRole) {
-    return Response.json({ error: 'Member not found' }, { status: 404 });
+    return Response.json({ error: 'E79069: Member not found' }, { status: 404 });
   }
 
   const newRole = data.role;
   if (!['editor', 'viewer'].includes(newRole)) {
-    return Response.json({ error: 'Invalid role. Must be editor or viewer.' }, { status: 400 });
+    return Response.json({ error: 'E79070: Invalid role. Must be editor or viewer.' }, { status: 400 });
   }
 
   await env.DB.prepare(`
@@ -327,7 +327,7 @@ export async function updateMemberRole(
 
   const member = await getUserById(env, memberId);
   if (!member) {
-    return Response.json({ error: 'Member user not found' }, { status: 404 });
+    return Response.json({ error: 'E79071: Member user not found' }, { status: 404 });
   }
 
   const result = await env.DB.prepare(`
@@ -357,17 +357,17 @@ export async function removeMember(
   // Only owners can remove members
   const role = await getDashboardRole(env, dashboardId, userId);
   if (role !== 'owner') {
-    return Response.json({ error: 'Only owners can remove members' }, { status: 403 });
+    return Response.json({ error: 'E79072: Only owners can remove members' }, { status: 403 });
   }
 
   // Cannot remove owner
   const memberRole = await getDashboardRole(env, dashboardId, memberId);
   if (memberRole === 'owner') {
-    return Response.json({ error: 'Cannot remove the owner' }, { status: 400 });
+    return Response.json({ error: 'E79073: Cannot remove the owner' }, { status: 400 });
   }
 
   if (!memberRole) {
-    return Response.json({ error: 'Member not found' }, { status: 404 });
+    return Response.json({ error: 'E79074: Member not found' }, { status: 404 });
   }
 
   await env.DB.prepare(`
@@ -389,7 +389,7 @@ export async function resendInvitation(
   // Only owners can resend invitations
   const role = await getDashboardRole(env, dashboardId, userId);
   if (role !== 'owner') {
-    return Response.json({ error: 'Only owners can resend invitations' }, { status: 403 });
+    return Response.json({ error: 'E79075: Only owners can resend invitations' }, { status: 403 });
   }
 
   const invitation = await env.DB.prepare(`
@@ -403,17 +403,17 @@ export async function resendInvitation(
   }>();
 
   if (!invitation) {
-    return Response.json({ error: 'Invitation not found or already accepted' }, { status: 404 });
+    return Response.json({ error: 'E79076: Invitation not found or already accepted' }, { status: 404 });
   }
 
   const dashboard = await getDashboardInfo(env, dashboardId);
   if (!dashboard) {
-    return Response.json({ error: 'Dashboard not found' }, { status: 404 });
+    return Response.json({ error: 'E79077: Dashboard not found' }, { status: 404 });
   }
 
   const inviter = await getUserById(env, userId);
   if (!inviter) {
-    return Response.json({ error: 'User not found' }, { status: 404 });
+    return Response.json({ error: 'E79078: User not found' }, { status: 404 });
   }
 
   // Generate new token and extend expiry
@@ -443,7 +443,7 @@ export async function resendInvitation(
     });
   } catch (e) {
     console.error('Failed to send invitation email:', e);
-    return Response.json({ error: 'Failed to send email' }, { status: 500 });
+    return Response.json({ error: 'E79079: Failed to send email' }, { status: 500 });
   }
 
   return Response.json({ success: true });
@@ -461,7 +461,7 @@ export async function cancelInvitation(
   // Only owners can cancel invitations
   const role = await getDashboardRole(env, dashboardId, userId);
   if (role !== 'owner') {
-    return Response.json({ error: 'Only owners can cancel invitations' }, { status: 403 });
+    return Response.json({ error: 'E79080: Only owners can cancel invitations' }, { status: 403 });
   }
 
   const invitation = await env.DB.prepare(`
@@ -470,7 +470,7 @@ export async function cancelInvitation(
   `).bind(invitationId, dashboardId).first();
 
   if (!invitation) {
-    return Response.json({ error: 'Invitation not found or already accepted' }, { status: 404 });
+    return Response.json({ error: 'E79081: Invitation not found or already accepted' }, { status: 404 });
   }
 
   await env.DB.prepare(`
