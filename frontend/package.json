@@ -12,7 +12,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "workers:build": "npx @opennextjs/cloudflare build",
-    "workers:deploy": "node scripts/workers-deploy.mjs"
+    "workers:deploy": "node scripts/workers-deploy.mjs",
+    "workers:deploy:gemini": "node scripts/workers-deploy-gemini.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

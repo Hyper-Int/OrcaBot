@@ -58,13 +58,23 @@ export class SandboxClient {
       });
     }
 
-    const res = await fetch(`${this.baseUrl}/sessions`, {
-      method: 'POST',
-      headers,
-      body,
-    });
+    const fetchUrl = `${this.baseUrl}/sessions`;
+    console.log(`[SandboxClient.createSession] POST ${fetchUrl} (baseUrl=${this.baseUrl}, hasToken=${Boolean(this.token)})`);
+    let res: Response;
+    try {
+      res = await fetch(fetchUrl, {
+        method: 'POST',
+        headers,
+        body,
+      });
+    } catch (fetchErr) {
+      console.error(`[SandboxClient.createSession] fetch threw: ${fetchErr instanceof Error ? fetchErr.message : fetchErr}`);
+      throw new Error(`Failed to create session: fetch error: ${fetchErr instanceof Error ? fetchErr.message : fetchErr}`);
+    }
     if (!res.ok) {
-      throw new Error(`Failed to create session: ${res.status}`);
+      const errorBody = await res.text().catch(() => '(no body)');
+      console.error(`[SandboxClient.createSession] FAILED status=${res.status} statusText=${res.statusText} url=${fetchUrl} body=${errorBody}`);
+      throw new Error(`Failed to create session: ${res.status} ${res.statusText} - ${errorBody}`);
     }
     const data = await res.json() as { id: string; machine_id?: string };
     return {
