@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gemini-auth-v1-persist-auth-settings
+// REVISION: gemini-ui-v1-hide-sandbox-status
 
 package agenthooks
 
@@ -399,6 +399,15 @@ func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) err
 		ui = make(map[string]interface{})
 	}
 	ui["showHomeDirectoryWarning"] = false
+
+	// Hide "no sandbox" footer indicator — Gemini is already running inside an isolated sandbox VM
+	footer, ok := ui["footer"].(map[string]interface{})
+	if !ok {
+		footer = make(map[string]interface{})
+	}
+	footer["hideSandboxStatus"] = true
+	ui["footer"] = footer
+
 	settings["ui"] = ui
 
 	// Mirror auth-related fields from ~/.gemini/settings.json into the system override.

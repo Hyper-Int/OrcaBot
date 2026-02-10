@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v10-preserve-selection
-console.log(`[canvas] REVISION: canvas-v10-preserve-selection loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v13-drag-jitter-guard
+console.log(`[canvas] REVISION: canvas-v13-drag-jitter-guard loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -216,6 +216,8 @@ interface CanvasProps {
   onEdgeDelete?: (edgeId: string) => void;
   /** Called when a drag completes, with before/after positions for undo */
   onDragComplete?: (itemId: string, before: { x: number; y: number }, after: { x: number; y: number }) => void;
+  /** Called when drag state changes (start/stop) */
+  onDragStateChange?: (dragging: boolean) => void;
   /** Called when a resize completes, with before/after position+size for undo */
   onResizeComplete?: (itemId: string, before: { position: { x: number; y: number }; size: { width: number; height: number } }, after: { position: { x: number; y: number }; size: { width: number; height: number } }) => void;
   /** Called when a terminal's working directory changes */
@@ -250,6 +252,7 @@ export function Canvas({
   onEdgeLabelClick,
   onEdgeDelete,
   onDragComplete,
+  onDragStateChange,
   onResizeComplete,
   onTerminalCwdChange,
   reactFlowRef,
@@ -452,17 +455,19 @@ export function Canvas({
   const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = true;
+      onDragStateChange?.(true);
       bringToFront(node.id);
       // Capture position before drag for undo
       dragStartPositionRef.current = node.position ? { ...node.position } : null;
     },
-    [bringToFront]
+    [bringToFront, onDragStateChange]
   );
 
   // Handle node drag END - sync to server only when drag stops
   const handleNodeDragStop: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = false;
+      onDragStateChange?.(false);
 
       if (onItemChange && node.position) {
         // Use itemId (real ID) for API calls, not node.id (which may be stable key)
@@ -483,14 +488,19 @@ export function Canvas({
       // Flush any node rebuilds that were deferred during the drag
       if (pendingNodeRebuildRef.current) {
         pendingNodeRebuildRef.current = false;
-        rebuildNodes();
+        // Defer rebuild to next frame to allow item cache updates to land
+        requestAnimationFrame(() => {
+          if (!isDraggingRef.current) {
+            rebuildNodes();
+          }
+        });
       }
 
       if (node.type === "terminal") {
         terminalRefs.current.get(node.id)?.fit();
       }
     },
-    [onItemChange, onDragComplete, rebuildNodes]
+    [onItemChange, onDragComplete, rebuildNodes, onDragStateChange]
   );
 
   // Handle node deletion

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v14-qr-no-session-restart
-const integrationsRevision = "integrations-v14-qr-no-session-restart";
+// REVISION: integrations-v15-github-batch-sync
+const integrationsRevision = "integrations-v15-github-batch-sync";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -110,7 +110,7 @@ interface DriveFileEntry {
   size: number;
   modifiedTime: string | null;
   md5Checksum: string | null;
-  cacheStatus: 'cached' | 'skipped_large' | 'skipped_unsupported';
+  cacheStatus: 'cached' | 'pending' | 'skipped_large' | 'skipped_unsupported';
   placeholder?: string;
 }
 
@@ -1442,12 +1442,13 @@ export async function setGithubRepо(
   ).run();
 
   try {
-    await runGithubSync(env, auth.user!.id, data.dashboardId);
+    // Downloads up to 40 files per request to stay under CF's 50 subrequest limit.
+    // If hasMore=true, frontend should call syncGithubMirror to continue.
+    const result = await runGithubSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true, hasMore: result.hasMore });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : 'E79843: GitHub sync failed' }, { status: 500 });
   }
-
-  return Response.json({ ok: true });
 }
 
 export async function unlinkGithubRepо(
@@ -1596,8 +1597,8 @@ export async function syncGithubMirrоr(
   }
 
   try {
-    await runGithubSync(env, auth.user!.id, data.dashboardId);
-    return Response.json({ ok: true });
+    const result = await runGithubSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true, hasMore: result.hasMore });
   } catch (error) {
     await env.DB.prepare(`
       UPDATE github_mirrors
@@ -1611,7 +1612,7 @@ export async function syncGithubMirrоr(
   }
 }
 
-async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId: string) {
+async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId: string): Promise<{ hasMore: boolean }> {
   const access = await env.DB.prepare(`
     SELECT role FROM dashboard_members
     WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
@@ -1668,6 +1669,12 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
     }
   }
 
+  // Cloudflare Workers allow max 50 subrequests per request.
+  // Budget: 1 (tree API) + N (file downloads) + 1 (sandbox sync) = stay under 50.
+  const MAX_CACHE_FETCHES = 40;
+  let fetchCount = 0;
+  let pendingFiles = 0;
+
   let totalFiles = 0;
   let totalBytes = 0;
   let cacheSyncedFiles = 0;
@@ -1687,12 +1694,19 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
     }
 
     const previous = existingEntries.get(entry.id);
-    if (previous && previous.md5Checksum && previous.md5Checksum === entry.md5Checksum) {
+    if (previous && previous.md5Checksum && previous.md5Checksum === entry.md5Checksum
+        && previous.cacheStatus !== 'pending') {
       entry.cacheStatus = previous.cacheStatus;
       if (entry.cacheStatus === 'cached') {
         cacheSyncedFiles += 1;
         cacheSyncedBytes += entry.size;
       }
+      continue;
+    }
+
+    if (fetchCount >= MAX_CACHE_FETCHES) {
+      entry.cacheStatus = 'pending';
+      pendingFiles += 1;
       continue;
     }
 
@@ -1711,6 +1725,7 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
     }
 
     await uploadDriveFileToCache(env, mirrorFileKey('github', dashboardId, entry.id), fileRes, entry.size);
+    fetchCount += 1;
     cacheSyncedFiles += 1;
     cacheSyncedBytes += entry.size;
     entry.cacheStatus = 'cached';
@@ -1723,6 +1738,32 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
   });
 
   const now = new Date().toISOString();
+
+  // If there are still pending files, stay in syncing_cache and signal continuation needed
+  if (pendingFiles > 0) {
+    await env.DB.prepare(`
+      UPDATE github_mirrors
+      SET status = 'syncing_cache',
+          total_files = ?,
+          total_bytes = ?,
+          cache_synced_files = ?,
+          cache_synced_bytes = ?,
+          large_files = ?,
+          large_bytes = ?,
+          updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(
+      totalFiles,
+      totalBytes,
+      cacheSyncedFiles,
+      cacheSyncedBytes,
+      largeFiles,
+      largeBytes,
+      dashboardId
+    ).run();
+    return { hasMore: true };
+  }
+
   await env.DB.prepare(`
     UPDATE github_mirrors
     SET status = 'syncing_workspace',
@@ -1768,6 +1809,7 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
       WHERE dashboard_id = ?
     `).bind(dashboardId).run();
   }
+  return { hasMore: false };
 }
 
 export async function syncGithubLargeFiles(
@@ -3807,7 +3849,7 @@ async function buildGithubManifest(
   }
 
   const treeData = await treeRes.json() as {
-    tree?: Array<{ path: string; type: 'blob' | 'tree'; size?: number }>;
+    tree?: Array<{ path: string; type: 'blob' | 'tree'; size?: number; sha?: string }>;
   };
 
   const entries: DriveFileEntry[] = [];
@@ -3828,7 +3870,7 @@ async function buildGithubManifest(
       mimeType: 'application/octet-stream',
       size,
       modifiedTime: null,
-      md5Checksum: null,
+      md5Checksum: node.sha || null,
       cacheStatus: 'cached',
     });
   }

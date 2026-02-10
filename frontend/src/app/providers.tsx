@@ -1,13 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+"use client";
 
 // REVISION: desktop-auth-v1-headers
 const MODULE_REVISION = "desktop-auth-v1-headers";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
-
-"use client";
 
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

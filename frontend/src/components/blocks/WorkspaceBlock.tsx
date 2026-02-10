@@ -34,6 +34,7 @@ import {
   getGithubSyncStatus,
   listGithubRepos,
   setGithubRepo,
+  syncGithub,
   unlinkGithubRepo,
   disconnectGithub,
   getBoxIntegration,
@@ -518,7 +519,13 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     try {
       const status = await getGithubSyncStatus(data.dashboardId);
       setGithubStatus(status);
-      setGithubSyncing(status.status === "syncing_cache" || status.status === "syncing_workspace");
+      const syncing = status.status === "syncing_cache" || status.status === "syncing_workspace";
+      setGithubSyncing(syncing);
+      // If cache sync is partial (batched), trigger next batch automatically.
+      // Each poll is a separate HTTP request so CF subrequest limits reset.
+      if (status.status === "syncing_cache") {
+        void syncGithub(data.dashboardId);
+      }
     } catch {
       setGithubStatus(null);
       setGithubSyncing(false);

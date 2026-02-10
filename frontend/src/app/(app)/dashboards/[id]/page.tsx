@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v26-ui-guidance
-console.log(`[dashboard] REVISION: dashboard-v26-ui-guidance loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v29-drag-jitter-guard
+console.log(`[dashboard] REVISION: dashboard-v29-drag-jitter-guard loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -486,6 +486,10 @@ export default function DashboardPage() {
     collabActions.sendCursor({ x: -1000, y: -1000 });
   }, [collabActions]);
 
+  const handleDragStateChange = React.useCallback((dragging: boolean) => {
+    isDraggingRef.current = dragging;
+  }, []);
+
   // Pending updates for batching
   const pendingUpdatesRef = React.useRef<Map<string, Partial<DashboardItem>>>(new Map());
   // Track item IDs with pending local updates (to avoid cache invalidation for self-updates)
@@ -500,6 +504,7 @@ export default function DashboardPage() {
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
   const prevCollabSessionsRef = React.useRef<Session[]>([]);
+  const isDraggingRef = React.useRef(false);
   // workspaceCreateRequestedRef removed - workspace is now a sidebar, not a canvas block
 
   // Fetch dashboard data with better caching
@@ -2179,7 +2184,6 @@ export default function DashboardPage() {
 
     // Track this item as having a pending local update
     pendingItemIdsRef.current.add(itemId);
-
     // Optimistically update the React Query cache so items reflects the change immediately
     // This prevents the "bounce back" where nodes are rebuilt from stale items
     queryClient.setQueryData(
@@ -2477,7 +2481,7 @@ export default function DashboardPage() {
     // AND only when connected - don't trigger refetches during reconnection
     // AND only when no mutations are in flight (WebSocket broadcast can arrive before mutation completes)
     const isConnected = collabState.connectionState === "connected";
-    const canInvalidate = isConnected && mutationsInFlightRef.current === 0;
+    const canInvalidate = isConnected && mutationsInFlightRef.current === 0 && !isDraggingRef.current;
 
     if (changedItemIds.size > 0 && canInvalidate) {
       const hasRemoteChanges = Array.from(changedItemIds).some(
@@ -3256,6 +3260,7 @@ export default function DashboardPage() {
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
               onEdgeDelete={role === "viewer" ? undefined : deleteEdgeWithUndo}
               onDragComplete={role === "viewer" ? undefined : handleDragComplete}
+              onDragStateChange={handleDragStateChange}
               onResizeComplete={role === "viewer" ? undefined : handleResizeComplete}
               onTerminalCwdChange={handleTerminalCwdChange}
               reactFlowRef={reactFlowInstanceRef}

@@ -1,13 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+"use client";
 
 // REVISION: desktop-header-v1-hide-user
 const MODULE_REVISION = "desktop-header-v1-hide-user";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
-
-"use client";
 
 import * as React from "react";
 import { useRouter } from "next/navigation";

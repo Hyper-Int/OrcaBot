@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v11-code-login
-console.log(`[controlplane] REVISION: index-v11-code-login loaded at ${new Date().toISOString()}`);
+// REVISION: index-v12-fix-guest-unique-email
+console.log(`[controlplane] REVISION: index-v12-fix-guest-unique-email loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -679,10 +679,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json({ error: 'E79409: Invalid access code' }, { status: 401 });
     }
 
-    // Create or reuse a guest user
-    const guestId = `guest-${crypto.randomUUID().slice(0, 8)}`;
+    // Create a guest user (unique email per guest to avoid UNIQUE constraint)
+    const guestSuffix = crypto.randomUUID().slice(0, 8);
+    const guestId = `guest-${guestSuffix}`;
     const guestName = (body.name || 'Guest').slice(0, 100);
-    const guestEmail = 'guest@orcabot.com';
+    const guestEmail = `guest-${guestSuffix}@orcabot.com`;
     const now = new Date().toISOString();
 
     await env.DB.prepare(`
