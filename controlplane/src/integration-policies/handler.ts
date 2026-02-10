@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v13-whatsapp-available-integrations
-console.log(`[integration-handler] REVISION: handler-v13-whatsapp-available-integrations loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v14-fix-token-refresh-in-validate
+console.log(`[integration-handler] REVISION: handler-v14-fix-token-refresh-in-validate loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -27,6 +27,7 @@ import type {
 } from '../types';
 import { HIGH_RISK_CAPABILITIES } from '../types';
 import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
+import { getAccessToken } from './token-refresh';
 
 // ============================================
 // Helper Functions
@@ -2114,25 +2115,16 @@ export async function validateGatewayRequest(
     );
   }
 
-  // Get OAuth token if needed (non-browser providers)
+  // Get OAuth token if needed (non-browser providers), with automatic refresh
   let accessToken: string | null = null;
   if (provider !== 'browser' && ti.user_integration_id) {
-    const userInt = await env.DB.prepare(`
-      SELECT access_token, refresh_token, expires_at
-      FROM user_integrations WHERE id = ?
-    `)
-      .bind(ti.user_integration_id)
-      .first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
-
-    if (!userInt) {
+    accessToken = await getAccessToken(env, ti.user_integration_id, provider);
+    if (!accessToken) {
       return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
+        { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
         { status: 403 }
       );
     }
-
-    // TODO: Check token expiration and refresh if needed
-    accessToken = userInt.access_token;
   }
 
   return Response.json({
@@ -2303,25 +2295,16 @@ export async function validateGatewayWithToken(
     }
   }
 
-  // 6. Get OAuth token if needed (non-browser providers)
+  // 6. Get OAuth token if needed (non-browser providers), with automatic refresh
   let accessToken: string | null = null;
   if (provider !== 'browser' && ti.user_integration_id) {
-    const userInt = await env.DB.prepare(`
-      SELECT access_token, refresh_token, expires_at
-      FROM user_integrations WHERE id = ?
-    `)
-      .bind(ti.user_integration_id)
-      .first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
-
-    if (!userInt) {
+    accessToken = await getAccessToken(env, ti.user_integration_id, provider);
+    if (!accessToken) {
       return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
+        { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
         { status: 403 }
       );
     }
-
-    // TODO: Check token expiration and refresh if needed
-    accessToken = userInt.access_token;
   }
 
   return Response.json({

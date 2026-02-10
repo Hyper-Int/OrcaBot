@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v29-drag-jitter-guard
-console.log(`[dashboard] REVISION: dashboard-v29-drag-jitter-guard loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v30-fix-disconnect-refresh
+console.log(`[dashboard] REVISION: dashboard-v30-fix-disconnect-refresh loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -1700,6 +1700,31 @@ export default function DashboardPage() {
     [items, sessions, dashboardId, queryClient]
   );
 
+  // Handle storage disconnected - invalidate caches so UI reflects removal
+  const handleStorageDisconnected = React.useCallback(
+    (provider: "google_drive" | "onedrive" | "box" | "github") => {
+      console.log(`[handleStorageDisconnected] called for provider: ${provider}`);
+      // Invalidate terminal-integrations and available-integrations for all active sessions
+      const terminalItems = items.filter((item) => item.type === "terminal");
+      for (const terminalItem of terminalItems) {
+        const session = sessions.find(
+          (s) => s.itemId === terminalItem.id && s.status === "active"
+        );
+        if (!session?.ptyId) continue;
+        queryClient.invalidateQueries({
+          queryKey: ["terminal-integrations", dashboardId, session.ptyId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["available-integrations", dashboardId, session.ptyId],
+        });
+      }
+      queryClient.invalidateQueries({
+        queryKey: ["integration-labels", dashboardId],
+      });
+    },
+    [items, sessions, dashboardId, queryClient]
+  );
+
   // Update item mutation - don't invalidate cache to avoid excessive refetches
   const updateItemMutation = useMutation({
     mutationFn: ({
@@ -3019,6 +3044,7 @@ export default function DashboardPage() {
           items={items}
           sessions={sessions}
           onStorageLinked={(provider) => handleStorageLinked(provider)}
+          onStorageDisconnected={handleStorageDisconnected}
           onSelectedPathChange={setWorkspaceCwd}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
@@ -3256,6 +3282,7 @@ export default function DashboardPage() {
               onIntegrationAttached={handleIntegrationAttached}
               onIntegrationDetached={handleIntegrationDetached}
               onStorageLinked={handleStorageLinked}
+              onStorageDisconnected={handleStorageDisconnected}
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
               onEdgeDelete={role === "viewer" ? undefined : deleteEdgeWithUndo}

@@ -121,6 +121,8 @@ interface WorkspaceData extends Record<string, unknown> {
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
   /** Called when cloud storage is linked (Drive, OneDrive, etc.) to auto-attach to connected terminals */
   onStorageLinked?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
+  /** Called when cloud storage is disconnected, to invalidate caches */
+  onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
   onDuplicate?: () => void;
 }
 
@@ -943,10 +945,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await disconnectGoogleDrive();
       setDriveIntegration(null);
       setDriveStatus(null);
+      data.onStorageDisconnected?.("google_drive");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to disconnect Drive");
     }
-  }, []);
+  }, [data.onStorageDisconnected]);
 
   const handleDisconnectGithub = React.useCallback(async () => {
     const ok = window.confirm("Sign out of GitHub? This will unlink all repos from your dashboards.");
@@ -955,10 +958,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await disconnectGithub();
       setGithubIntegration(null);
       setGithubStatus(null);
+      data.onStorageDisconnected?.("github");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to disconnect GitHub");
     }
-  }, []);
+  }, [data.onStorageDisconnected]);
 
   const handleDisconnectBox = React.useCallback(async () => {
     const ok = window.confirm("Sign out of Box? This will unlink all Box folders from your dashboards.");
@@ -967,10 +971,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await disconnectBox();
       setBoxIntegration(null);
       setBoxStatus(null);
+      data.onStorageDisconnected?.("box");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to disconnect Box");
     }
-  }, []);
+  }, [data.onStorageDisconnected]);
 
   const handleDisconnectOnedrive = React.useCallback(async () => {
     const ok = window.confirm("Sign out of OneDrive? This will unlink all OneDrive folders from your dashboards.");
@@ -979,10 +984,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       await disconnectOnedrive();
       setOnedriveIntegration(null);
       setOnedriveStatus(null);
+      data.onStorageDisconnected?.("onedrive");
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Failed to disconnect OneDrive");
     }
-  }, []);
+  }, [data.onStorageDisconnected]);
 
   const handleSelectOnedriveFolder = React.useCallback(async (folder: OnedriveFolder) => {
     if (!data.dashboardId) return;

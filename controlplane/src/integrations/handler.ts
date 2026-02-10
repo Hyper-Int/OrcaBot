@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v15-github-batch-sync
-const integrationsRevision = "integrations-v15-github-batch-sync";
+// REVISION: integrations-v16-fix-disconnect-fk-cascade
+const integrationsRevision = "integrations-v16-fix-disconnect-fk-cascade";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -267,18 +267,28 @@ async function cleanupIntegration(
 
   await env.DB.prepare(`DELETE FROM ${mirrorTable} WHERE user_id = ?`).bind(userId).run();
 
-  // Soft-delete terminal_integrations that reference this user's integrations for this provider
-  // so sandboxes detect detach and clean up synced files
+  // Hard-delete terminal_integrations and their children for this provider.
+  // Must delete in FK order: children → terminal_integrations → user_integrations.
+  // Soft-delete was causing FK constraint errors because rows still referenced user_integrations.
   const userIntegrations = await env.DB.prepare(`
     SELECT id FROM user_integrations WHERE user_id = ? AND provider = ?
   `).bind(userId, provider).all<{ id: string }>();
 
   for (const ui of userIntegrations.results || []) {
-    await env.DB.prepare(`
-      UPDATE terminal_integrations
-      SET deleted_at = datetime('now'), updated_at = datetime('now')
-      WHERE user_integration_id = ? AND deleted_at IS NULL
-    `).bind(ui.id).run();
+    const tiRows = await env.DB.prepare(`
+      SELECT id FROM terminal_integrations WHERE user_integration_id = ?
+    `).bind(ui.id).all<{ id: string }>();
+
+    for (const ti of tiRows.results || []) {
+      // Delete children in FK-safe order (no ON DELETE CASCADE defined)
+      // integration_audit_log references integration_policies via policy_id
+      await env.DB.prepare(`DELETE FROM integration_audit_log WHERE terminal_integration_id = ?`).bind(ti.id).run();
+      await env.DB.prepare(`DELETE FROM high_risk_confirmations WHERE terminal_integration_id = ?`).bind(ti.id).run();
+      await env.DB.prepare(`DELETE FROM integration_policies WHERE terminal_integration_id = ?`).bind(ti.id).run();
+    }
+
+    // Hard-delete terminal_integrations (replaces previous soft-delete)
+    await env.DB.prepare(`DELETE FROM terminal_integrations WHERE user_integration_id = ?`).bind(ui.id).run();
   }
 
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = ?`).bind(userId, provider).run();

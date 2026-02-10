@@ -103,6 +103,7 @@ function itemsToNodes(
   onIntegrationAttached?: (terminalItemId: string, provider: string, securityLevel: string) => void,
   onIntegrationDetached?: (terminalItemId: string, provider: string) => void,
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
+  onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onDuplicate?: (itemId: string) => void,
   onTerminalCwdChange?: (itemId: string, cwd: string) => void
 ): Node[] {
@@ -166,6 +167,8 @@ function itemsToNodes(
         onStorageLinked: item.type === "workspace" && onStorageLinked
           ? (provider: "google_drive" | "onedrive" | "box" | "github") => onStorageLinked(item.id, provider)
           : undefined,
+        // For workspace blocks: callback when cloud storage is disconnected
+        onStorageDisconnected: item.type === "workspace" ? onStorageDisconnected : undefined,
         // Duplicate this block
         onDuplicate: onDuplicate ? () => onDuplicate(item.id) : undefined,
         // Terminal cwd change
@@ -208,6 +211,8 @@ interface CanvasProps {
   onIntegrationDetached?: (terminalItemId: string, provider: string) => void;
   /** Called when cloud storage is linked to workspace, to auto-attach to connected terminals */
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void;
+  /** Called when cloud storage is disconnected, to invalidate caches */
+  onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
   /** Called when a block wants to duplicate itself */
   onDuplicate?: (itemId: string) => void;
   /** Called when an edge label is clicked, to open policy editor */
@@ -248,6 +253,7 @@ export function Canvas({
   onIntegrationAttached,
   onIntegrationDetached,
   onStorageLinked,
+  onStorageDisconnected,
   onDuplicate,
   onEdgeLabelClick,
   onEdgeDelete,
@@ -302,6 +308,7 @@ export function Canvas({
         onIntegrationAttached,
         onIntegrationDetached,
         onStorageLinked,
+        onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
         onTerminalCwdChange
       )
@@ -357,6 +364,7 @@ export function Canvas({
         onIntegrationAttached,
         onIntegrationDetached,
         onStorageLinked,
+        onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
         onTerminalCwdChange
       )
@@ -368,7 +376,7 @@ export function Canvas({
       if (selectedIds.size === 0) return newNodes;
       return newNodes.map(n => selectedIds.has(n.id) ? { ...n, selected: true } : n);
     });
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onDuplicate, onTerminalCwdChange]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onStorageDisconnected, onDuplicate, onTerminalCwdChange]);
 
   // Update nodes when items or sessions change from server
   // Deferred during active drag to prevent mid-drag position jumps
