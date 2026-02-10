@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v30-fix-disconnect-refresh
-console.log(`[dashboard] REVISION: dashboard-v30-fix-disconnect-refresh loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v31-fix-drag-position-revert
+console.log(`[dashboard] REVISION: dashboard-v31-fix-drag-position-revert loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -2534,7 +2534,7 @@ export default function DashboardPage() {
           };
         }
       );
-      if (recentlyCreatedItemsRef.current.size === 0) {
+      if (recentlyCreatedItemsRef.current.size === 0 && pendingItemIdsRef.current.size === 0) {
         queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
       }
     }
@@ -2544,8 +2544,11 @@ export default function DashboardPage() {
   const handleItemDelete = async (itemId: string) => {
     // Remove from pending update tracking (no longer needed since item is being deleted)
     pendingUpdatesRef.current.delete(itemId);
-    // Note: do NOT remove from pendingItemIdsRef here — the delete mutation's
-    // recentlyDeletedItemsRef handles preventing stale refetches
+    // Also clear pendingItemIdsRef — without this, if a debounced update was pending
+    // for this item, the ID leaks forever (no mutation fires → onSettled never clears it).
+    // recentlyDeletedItemsRef (set in deleteItemMutation.onMutate) prevents the deleted
+    // item from reappearing in refetches, so this is safe.
+    pendingItemIdsRef.current.delete(itemId);
 
     // Capture data BEFORE mutation modifies query cache (for undo + detach)
     const data = queryClient.getQueryData<{
