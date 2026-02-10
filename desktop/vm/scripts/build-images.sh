@@ -204,12 +204,28 @@ else
   grep -E "vsock|virtio" /proc/modules > /dev/console 2>/dev/null || true
 fi
 
-# Start vsock-to-TCP bridge (host connects to vsock, guest listens)
+# Start vsock-to-TCP bridge (host connects to vsock, guest listens).
+# The bridge must stay alive as long as the server runs, so we start both
+# as children of PID 1 and wait. Using exec would orphan the background
+# process, killing the bridge.
 if command -v socat >/dev/null 2>&1; then
+  echo "[init] starting vsock bridge on port ${PORT:-8080}" > /dev/console
   socat VSOCK-LISTEN:${PORT:-8080},reuseaddr,fork TCP:127.0.0.1:${PORT:-8080} &
+  SOCAT_PID=$!
 fi
 
-exec /usr/local/bin/orcabot-server
+echo "[init] starting orcabot-server" > /dev/console
+/usr/local/bin/orcabot-server &
+SERVER_PID=$!
+
+# PID 1 must not exit — wait for the server (primary process).
+# If it dies, clean up the bridge and halt.
+wait $SERVER_PID 2>/dev/null
+echo "[init] orcabot-server exited ($?)" > /dev/console
+[ -n "${SOCAT_PID:-}" ] && kill $SOCAT_PID 2>/dev/null
+# Keep kernel alive briefly for log flush, then halt
+sleep 1
+echo "[init] halting" > /dev/console
 MININIT
 chmod +x /mnt/rootfs/sbin/init
 
@@ -448,9 +464,10 @@ if [ "${NEED_CUSTOM_KERNEL:-0}" -eq 1 ]; then
     ./scripts/config --file .config \
         -e HVC_VIRTIO \
         -e VIRTIO_CONSOLE \
+        -e VIRTIO \
         -e VSOCKETS \
-        -e VIRTIO_VSOCK \
-        -e VMW_VSOCKETS \
+        -e VIRTIO_VSOCKETS \
+        -e VIRTIO_VSOCKETS_COMMON \
         -e VSOCKETS_DIAG \
         -e VIRTIO_PCI \
         -e VIRTIO_BLK \
@@ -509,7 +526,7 @@ if [ -f "$OUTPUT_DIR/custom-modules.tar.gz" ] && [ -f "$OUTPUT_DIR/sandbox.img" 
         /bin/bash -c '
 set -euo pipefail
 apt-get update -qq
-apt-get install -y -qq e2fsprogs tar > /dev/null
+apt-get install -y -qq e2fsprogs tar kmod > /dev/null
 
 # Extract full module tree to /tmp first, strip there, then copy only needed modules to disk.
 # The full tarball is ~1.2GB which would overflow the disk if extracted directly.
@@ -549,6 +566,14 @@ rm -rf /mnt/rootfs/lib/modules
 mkdir -p /mnt/rootfs/lib/modules
 cp -a /tmp/keep-modules/. /mnt/rootfs/lib/modules/
 rm -rf /tmp/keep-modules
+
+# Regenerate modules.dep for the stripped custom kernel modules.
+# Without this, modprobe cannot find any modules by name.
+INJECTED_KVER=$(ls /mnt/rootfs/lib/modules/ | head -1)
+if [ -n "$INJECTED_KVER" ]; then
+  echo "Running depmod for custom kernel $INJECTED_KVER..."
+  depmod -b /mnt/rootfs "$INJECTED_KVER" 2>/dev/null || echo "Warning: depmod failed"
+fi
 
 sync
 umount /mnt/rootfs

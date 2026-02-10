@@ -34,7 +34,8 @@ const config :Workerd.Config = (
         (name = "ASSETS", service = "assets"),
         (name = "NEXT_PUBLIC_API_URL", fromEnvironment = "NEXT_PUBLIC_API_URL"),
         (name = "NEXT_PUBLIC_SITE_URL", fromEnvironment = "NEXT_PUBLIC_SITE_URL"),
-        (name = "NEXT_PUBLIC_DEV_MODE_ENABLED", fromEnvironment = "NEXT_PUBLIC_DEV_MODE_ENABLED")
+        (name = "NEXT_PUBLIC_DEV_MODE_ENABLED", fromEnvironment = "NEXT_PUBLIC_DEV_MODE_ENABLED"),
+        (name = "NEXT_PUBLIC_DESKTOP_MODE", fromEnvironment = "NEXT_PUBLIC_DESKTOP_MODE")
       ]
     ))
   ],

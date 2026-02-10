@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// REVISION: main-v2-pid-file-cleanup
+const MODULE_REVISION: &str = "main-v2-pid-file-cleanup";
+
+mod commands;
 mod vm;
 
 use std::io::{Read, Write};
@@ -11,11 +15,60 @@ use std::time::{Duration, SystemTime};
 use tauri::Manager;
 use tauri::RunEvent;
 
+use commands::WorkspaceState;
 use vm::{create_platform_vm, VMConfig, VirtualMachine};
+
+/// Path to the PID file that tracks child processes across app restarts.
+/// If the app crashes or is force-killed, the next launch reads this file
+/// and kills any orphaned processes before starting new ones.
+fn pid_file_path(data_dir: &Path) -> PathBuf {
+  data_dir.join("desktop-services.pid")
+}
+
+/// Kill any processes listed in a stale PID file from a previous run.
+fn cleanup_stale_processes(data_dir: &Path) {
+  let pid_path = pid_file_path(data_dir);
+  let contents = match std::fs::read_to_string(&pid_path) {
+    Ok(c) => c,
+    Err(_) => return, // No PID file — nothing to clean up
+  };
+
+  for line in contents.lines() {
+    if let Ok(pid) = line.trim().parse::<i32>() {
+      // Check if the process is still alive
+      #[cfg(unix)]
+      {
+        if unsafe { libc::kill(pid, 0) } == 0 {
+          eprintln!("[cleanup] Killing stale process {}", pid);
+          unsafe { libc::kill(pid, libc::SIGTERM) };
+          // Give it a moment to exit gracefully, then force kill
+          std::thread::sleep(Duration::from_millis(500));
+          unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
+      }
+    }
+  }
+
+  let _ = std::fs::remove_file(&pid_path);
+}
+
+/// Write all tracked child PIDs to the PID file.
+fn write_pid_file(data_dir: &Path, children: &[Child], vm_pid: Option<u32>) {
+  let pid_path = pid_file_path(data_dir);
+  let mut pids = Vec::new();
+  for child in children {
+    pids.push(child.id().to_string());
+  }
+  if let Some(pid) = vm_pid {
+    pids.push(pid.to_string());
+  }
+  let _ = std::fs::write(&pid_path, pids.join("\n"));
+}
 
 struct DesktopServices {
   children: Mutex<Vec<Child>>,
   sandbox_vm: Mutex<Option<Box<dyn VirtualMachine>>>,
+  data_dir: Mutex<Option<PathBuf>>,
 }
 
 impl DesktopServices {
@@ -23,6 +76,7 @@ impl DesktopServices {
     Self {
       children: Mutex::new(Vec::new()),
       sandbox_vm: Mutex::new(None),
+      data_dir: Mutex::new(None),
     }
   }
 
@@ -64,6 +118,14 @@ impl DesktopServices {
         return;
       }
     };
+
+    // Kill any orphaned processes from a previous crash/force-quit
+    cleanup_stale_processes(&data_dir);
+
+    // Store data_dir for PID file writes
+    if let Ok(mut dd) = self.data_dir.lock() {
+      *dd = Some(data_dir.clone());
+    }
 
     let bin_dir = data_dir.join("bin");
     if let Err(err) = std::fs::create_dir_all(&bin_dir) {
@@ -230,6 +292,12 @@ impl DesktopServices {
     );
 
     wait_for_health(&controlplane_port);
+
+    // Write PID file so next launch can clean up orphans if we crash
+    if let Ok(children) = self.children.lock() {
+      write_pid_file(&data_dir, &children, None);
+    }
+
     // VM startup is handled separately in a background thread (see main())
     // to avoid blocking the window from appearing.
   }
@@ -312,9 +380,20 @@ impl DesktopServices {
       eprintln!("Sandbox VM running at {}", url);
     }
 
+    let vm_pid = vm.pid();
+
     // Store VM instance
     if let Ok(mut vm_lock) = self.sandbox_vm.lock() {
       *vm_lock = Some(vm);
+    }
+
+    // Re-write PID file with VM process included
+    if let Ok(dd) = self.data_dir.lock() {
+      if let Some(ref data_dir) = *dd {
+        if let Ok(children) = self.children.lock() {
+          write_pid_file(data_dir, &children, vm_pid);
+        }
+      }
     }
 
     Ok(())
@@ -359,11 +438,26 @@ impl DesktopServices {
       }
     }
 
-    // Stop child processes
+    // Stop child processes: SIGTERM first for graceful shutdown, then SIGKILL
     if let Ok(mut children) = self.children.lock() {
+      // Send SIGTERM to all children
+      for child in children.iter() {
+        #[cfg(unix)]
+        unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+      }
+      // Wait briefly for graceful exit
+      std::thread::sleep(Duration::from_secs(2));
+      // Force kill any survivors
       for child in children.iter_mut() {
         let _ = child.kill();
         let _ = child.wait();
+      }
+    }
+
+    // Remove PID file since we've cleaned up
+    if let Ok(dd) = self.data_dir.lock() {
+      if let Some(ref data_dir) = *dd {
+        let _ = std::fs::remove_file(pid_file_path(data_dir));
       }
     }
   }
@@ -447,7 +541,21 @@ fn wait_for_health(port: &str) {
 }
 
 fn main() {
-  tauri::Builder::default()
+  eprintln!(
+    "[main] REVISION: {} loaded at {}",
+    MODULE_REVISION,
+    SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map(|d| format!("{}s", d.as_secs()))
+      .unwrap_or_default()
+  );
+
+  let app = tauri::Builder::default()
+    .plugin(tauri_plugin_dialog::init())
+    .invoke_handler(tauri::generate_handler![
+      commands::get_workspace_path,
+      commands::import_folder,
+    ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());
       let handler_services = Arc::clone(&services);
@@ -459,10 +567,22 @@ fn main() {
       // Start core services (d1-shim, workerd) — blocks until healthy (~5-10s)
       services.start(app);
 
+      // Register workspace state for Tauri commands
+      let data_dir = app.path().app_data_dir().ok();
+      if let Some(ref dd) = data_dir {
+        let workspace_path = dd.join("workspace");
+        let _ = std::fs::create_dir_all(&workspace_path);
+        app.manage(WorkspaceState { workspace_path });
+      } else {
+        // Fallback: manage with empty path (commands will return errors)
+        app.manage(WorkspaceState {
+          workspace_path: PathBuf::new(),
+        });
+      }
+
       // Start sandbox VM in a background thread so the window appears immediately
       // instead of blocking for up to 120s waiting for the VM health check.
       let resource_root = resolve_resource_root(app);
-      let data_dir = app.path().app_data_dir().ok();
       if let (Some(rr), Some(dd)) = (resource_root, data_dir) {
         let vm_services = Arc::clone(&services);
         std::thread::spawn(move || {
@@ -476,15 +596,17 @@ fn main() {
       app.manage(Arc::clone(&services));
       Ok(())
     })
-    .run(tauri::generate_context!(), |app_handle, event| {
-      match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-          if let Some(services) = app_handle.try_state::<Arc<DesktopServices>>() {
-            services.shutdown();
-          }
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application");
+
+  app.run(|app_handle, event| {
+    match event {
+      RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+        if let Some(services) = app_handle.try_state::<Arc<DesktopServices>>() {
+          services.shutdown();
         }
-        _ => {}
       }
-    })
-    .expect("error while running tauri application");
+      _ => {}
+    }
+  });
 }

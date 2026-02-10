@@ -3,14 +3,15 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v23-dev-clear-workspace
-const MODULE_REVISION = "workspace-sidebar-v23-dev-clear-workspace";
+// REVISION: workspace-sidebar-v24-folder-import
+const MODULE_REVISION = "workspace-sidebar-v24-folder-import";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { createPortal } from "react-dom";
 import {
   Folder,
+  FolderInput,
   Cloud,
   Github,
   Box,
@@ -87,9 +88,13 @@ import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
-import { API, DEV_MODE_ENABLED } from "@/config/env";
+import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
+import { useFolderImport } from "@/hooks/useFolderImport";
+import { FolderImportButton } from "./FolderImportButton";
+import { DragDropOverlay } from "./DragDropOverlay";
+import { ImportProgressBar } from "./ImportProgressBar";
 
 // Module-level cache (shared with WorkspaceBlock for backwards compat)
 const integrationLoadCache = new Map<string, number>();
@@ -155,6 +160,7 @@ export function WorkspaceSidebar({
   terminalCwds,
 }: WorkspaceSidebarProps) {
   const { user } = useAuthStore();
+  const folderImport = useFolderImport();
   const [selectedPath, setSelectedPath] = React.useState<string>("/");
 
   const handleSelectPath = React.useCallback((path: string) => {
@@ -338,6 +344,17 @@ export function WorkspaceSidebar({
     },
     [sessionId]
   );
+
+  // Refresh file tree when a desktop folder import completes
+  React.useEffect(() => {
+    if (folderImport.lastResult && sessionId) {
+      loadFiles("/");
+      expandedPaths.forEach((path) => {
+        if (path !== "/") loadFiles(path);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folderImport.lastResult, sessionId]);
 
   const buildDrivePreviewEntries = React.useCallback((manifest: GoogleDriveManifest) => {
     const entryMap: Record<string, SessionFileEntry[]> = {};
@@ -1203,6 +1220,11 @@ export function WorkspaceSidebar({
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--foreground-muted)] flex-1">
             Workspace
           </span>
+          <FolderImportButton
+            onPickFolder={folderImport.handlePickFolder}
+            isImporting={folderImport.isImporting}
+            progress={folderImport.progress}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" title="Settings" className="h-5 w-5">
@@ -1217,6 +1239,17 @@ export function WorkspaceSidebar({
                 {showHiddenFiles ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                 <span>{showHiddenFiles ? "Hide hidden files" : "Show hidden files"}</span>
               </DropdownMenuItem>
+
+              {DESKTOP_MODE && (
+                <DropdownMenuItem
+                  onSelect={folderImport.handlePickFolder}
+                  disabled={folderImport.isImporting}
+                  className="flex items-center gap-2"
+                >
+                  <FolderInput className="w-3 h-3" />
+                  <span>{folderImport.isImporting ? "Importing..." : "Import local folder"}</span>
+                </DropdownMenuItem>
+              )}
 
               <DropdownMenuSeparator />
               {DEV_MODE_ENABLED && (
@@ -1662,6 +1695,16 @@ export function WorkspaceSidebar({
 
       {/* Drive buttons portal — renders into toolbar target */}
       {drivePortalTarget && createPortal(driveButtonsJSX, drivePortalTarget)}
+
+      {/* Desktop folder import UI */}
+      <DragDropOverlay visible={folderImport.isDragOver} />
+      <ImportProgressBar
+        progress={folderImport.progress}
+        error={folderImport.error}
+        isImporting={folderImport.isImporting}
+        lastResult={folderImport.lastResult}
+        onDismissError={folderImport.clearError}
+      />
     </>
   );
 }

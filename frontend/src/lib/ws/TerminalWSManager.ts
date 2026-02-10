@@ -24,6 +24,7 @@ import type {
   AgentStoppedEvent,
 } from "@/types/terminal";
 import { API } from "@/config/env";
+import { useAuthStore } from "@/stores/auth-store";
 
 export interface TerminalWSConfig extends WebSocketConfig {
   userId: string;
@@ -73,7 +74,11 @@ export class TerminalWSManager extends BaseWebSocketManager {
     ptyId: string,
     config: TerminalWSConfig
   ) {
-    const url = `${API.cloudflare.terminalWs(sessionId, ptyId)}?user_id=${encodeURIComponent(config.userId)}`;
+    let url = `${API.cloudflare.terminalWs(sessionId, ptyId)}?user_id=${encodeURIComponent(config.userId)}`;
+    const email = useAuthStore.getState()?.user?.email;
+    if (email) {
+      url += `&user_email=${encodeURIComponent(email)}`;
+    }
     super(url, config);
 
     this.sessionId = sessionId;

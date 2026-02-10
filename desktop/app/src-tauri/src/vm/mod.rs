@@ -35,6 +35,9 @@ pub trait VirtualMachine: Send + Sync {
     /// Check if the VM is running.
     fn is_running(&self) -> bool;
 
+    /// Get the PID of the VM process (for PID file tracking).
+    fn pid(&self) -> Option<u32>;
+
     /// Get the host-accessible URL for the sandbox service.
     fn sandbox_url(&self) -> Option<String>;
 
