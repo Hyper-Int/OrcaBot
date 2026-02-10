@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v17-fix-listener-spam
-const MODULE_REVISION = "workspace-sidebar-v17-fix-listener-spam";
+// REVISION: workspace-sidebar-v18-github-batch-sync
+const MODULE_REVISION = "workspace-sidebar-v18-github-batch-sync";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -51,6 +51,7 @@ import {
   getGithubSyncStatus,
   listGithubRepos,
   setGithubRepo,
+  syncGithub,
   unlinkGithubRepo,
   disconnectGithub,
   getBoxIntegration,
@@ -461,7 +462,13 @@ export function WorkspaceSidebar({
     try {
       const status = await getGithubSyncStatus(dashboardId);
       setGithubStatus(status);
-      setGithubSyncing(status.status === "syncing_cache" || status.status === "syncing_workspace");
+      const syncing = status.status === "syncing_cache" || status.status === "syncing_workspace";
+      setGithubSyncing(syncing);
+      // If cache sync is partial (batched), trigger next batch automatically.
+      // Each poll is a separate HTTP request so CF subrequest limits reset.
+      if (status.status === "syncing_cache") {
+        void syncGithub(dashboardId);
+      }
     } catch { setGithubStatus(null); setGithubSyncing(false); }
   }, [dashboardId, user]);
 
@@ -869,9 +876,31 @@ export function WorkspaceSidebar({
   React.useEffect(() => { if (!onedrivePickerOpen || !onedriveIntegration?.connected) return; setOnedrivePath([]); void loadOnedriveFolders("root"); }, [onedrivePickerOpen, onedriveIntegration?.connected, loadOnedriveFolders]);
 
   // ── Agent indicators for a given path ──────────────────────────
+  // Pre-compute effective display path for each indicator: if a terminal's CWD
+  // folder isn't visible (parent collapsed), bubble the indicator up to the
+  // deepest visible ancestor — similar to how IDEs show git modified markers.
+  const indicatorsByDisplayPath = React.useMemo(() => {
+    const map = new Map<string, typeof agentIndicators>();
+    for (const indicator of agentIndicators) {
+      const segments = indicator.cwdPath.split("/").filter(Boolean);
+      let current = "/";
+      let lastVisible = "/";
+      for (const segment of segments) {
+        if (!expandedPaths.has(current)) break;
+        const child = current === "/" ? `/${segment}` : `${current}/${segment}`;
+        lastVisible = child;
+        current = child;
+      }
+      const arr = map.get(lastVisible) || [];
+      arr.push(indicator);
+      map.set(lastVisible, arr);
+    }
+    return map;
+  }, [agentIndicators, expandedPaths]);
+
   const getIndicatorsForPath = React.useCallback(
-    (path: string) => agentIndicators.filter((a) => a.cwdPath === path),
-    [agentIndicators]
+    (path: string) => indicatorsByDisplayPath.get(path) || [],
+    [indicatorsByDisplayPath]
   );
 
   const renderAgentIndicators = React.useCallback(
