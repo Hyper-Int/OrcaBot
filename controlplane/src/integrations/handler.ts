@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v16-fix-disconnect-fk-cascade
-const integrationsRevision = "integrations-v16-fix-disconnect-fk-cascade";
+// REVISION: integrations-v18-mirror-cleanup-intermediate-dirs
+const integrationsRevision = "integrations-v18-mirror-cleanup-intermediate-dirs";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -212,6 +212,36 @@ function driveManifestKey(dashboardId: string): string {
 
 type IntegrationProvider = 'google_drive' | 'github' | 'box' | 'onedrive';
 
+type MirrorCleanupRow = {
+  dashboard_id: string;
+  folder_name?: string | null;
+  repo_owner?: string | null;
+  repo_name?: string | null;
+};
+
+function buildFallbackMirrorFolderPath(provider: IntegrationProvider, mirror: MirrorCleanupRow): string | null {
+  switch (provider) {
+    case 'google_drive': {
+      if (!mirror.folder_name) return null;
+      return `drive/${sanitizePathSegment(mirror.folder_name)}`;
+    }
+    case 'github': {
+      if (!mirror.repo_owner || !mirror.repo_name) return null;
+      return `github/${sanitizePathSegment(mirror.repo_owner)}/${sanitizePathSegment(mirror.repo_name)}`;
+    }
+    case 'box': {
+      if (!mirror.folder_name) return null;
+      return `box/${sanitizePathSegment(mirror.folder_name)}`;
+    }
+    case 'onedrive': {
+      if (!mirror.folder_name) return null;
+      return `onedrive/${sanitizePathSegment(mirror.folder_name)}`;
+    }
+    default:
+      return null;
+  }
+}
+
 function driveFileKey(dashboardId: string, fileId: string): string {
   return `drive/${dashboardId}/files/${fileId}`;
 }
@@ -235,29 +265,54 @@ async function cleanupIntegration(
     console.error(`[integrations] Invalid mirror provider: ${provider}`);
     return;
   }
-  const mirrors = await env.DB.prepare(`
-    SELECT dashboard_id FROM ${mirrorTable} WHERE user_id = ?
-  `).bind(userId).all<{ dashboard_id: string }>();
+  let mirrors: MirrorCleanupRow[] = [];
+  if (provider === 'github') {
+    const rows = await env.DB.prepare(`
+      SELECT dashboard_id, repo_owner, repo_name FROM github_mirrors WHERE user_id = ?
+    `).bind(userId).all<MirrorCleanupRow>();
+    mirrors = rows.results || [];
+  } else {
+    const rows = await env.DB.prepare(`
+      SELECT dashboard_id, folder_name FROM ${mirrorTable} WHERE user_id = ?
+    `).bind(userId).all<MirrorCleanupRow>();
+    mirrors = rows.results || [];
+  }
 
-  for (const mirror of mirrors.results || []) {
+  for (const mirror of mirrors) {
     try {
+      const fallbackFolderPath = buildFallbackMirrorFolderPath(provider, mirror);
       if (provider === 'google_drive') {
+        // Drive uses drivesync for sandbox cleanup (triggered by NotifyIntegrations).
         const manifestObject = await env.DRIVE_CACHE.get(driveManifestKey(mirror.dashboard_id));
         if (manifestObject) {
           const manifest = await manifestObject.json<DriveManifest>();
+          const folderPath = manifest.folderPath || fallbackFolderPath;
+          if (folderPath) {
+            await cleanupSandboxMirror(env, 'drive', mirror.dashboard_id, folderPath);
+          }
           await env.DRIVE_CACHE.delete(driveManifestKey(mirror.dashboard_id));
           for (const entry of manifest.entries) {
             await env.DRIVE_CACHE.delete(driveFileKey(mirror.dashboard_id, entry.id));
           }
+        } else if (fallbackFolderPath) {
+          await cleanupSandboxMirror(env, 'drive', mirror.dashboard_id, fallbackFolderPath);
         }
       } else {
+        // Mirror providers: read manifest to get folderPath (ground truth used by sandbox
+        // during sync), then clean up sandbox workspace before deleting the cache.
         const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey(provider, mirror.dashboard_id));
         if (manifestObject) {
           const manifest = await manifestObject.json<DriveManifest>();
+          const folderPath = manifest.folderPath || fallbackFolderPath;
+          if (folderPath) {
+            await cleanupSandboxMirror(env, provider, mirror.dashboard_id, folderPath);
+          }
           await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, mirror.dashboard_id));
           for (const entry of manifest.entries) {
             await env.DRIVE_CACHE.delete(mirrorFileKey(provider, mirror.dashboard_id, entry.id));
           }
+        } else if (fallbackFolderPath) {
+          await cleanupSandboxMirror(env, provider, mirror.dashboard_id, fallbackFolderPath);
         }
       }
     } catch (cacheErr) {
@@ -1500,13 +1555,28 @@ export async function unlinkGithubRepо(
     return Response.json({ error: 'E79845: Not found or no access' }, { status: 404 });
   }
 
+  // Build fallback folder path from DB before deleting anything.
+  const githubMirror = await env.DB.prepare(`
+    SELECT repo_owner, repo_name FROM github_mirrors WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ repo_owner: string; repo_name: string }>();
+  const fallbackPath = githubMirror
+    ? `github/${sanitizePathSegment(githubMirror.repo_owner)}/${sanitizePathSegment(githubMirror.repo_name)}`
+    : null;
+
+  // Clean up sandbox workspace. Prefer manifest folderPath, fall back to DB-derived path.
   const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('github', dashboardId));
   if (manifestObject) {
     const manifest = await manifestObject.json<DriveManifest>();
+    const folderPath = manifest.folderPath || fallbackPath;
+    if (folderPath) {
+      await cleanupSandboxMirror(env, 'github', dashboardId, folderPath);
+    }
     await env.DRIVE_CACHE.delete(mirrorManifestKey('github', dashboardId));
     for (const entry of manifest.entries) {
       await env.DRIVE_CACHE.delete(mirrorFileKey('github', dashboardId, entry.id));
     }
+  } else if (fallbackPath) {
+    await cleanupSandboxMirror(env, 'github', dashboardId, fallbackPath);
   }
 
   await env.DB.prepare(`
@@ -2231,13 +2301,28 @@ export async function unlinkBоxFоlder(
     return Response.json({ error: 'E79864: Not found or no access' }, { status: 404 });
   }
 
+  // Build fallback folder path from DB before deleting anything.
+  const boxMirror = await env.DB.prepare(`
+    SELECT folder_name FROM box_mirrors WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ folder_name: string }>();
+  const fallbackPath = boxMirror
+    ? `box/${sanitizePathSegment(boxMirror.folder_name)}`
+    : null;
+
+  // Clean up sandbox workspace. Prefer manifest folderPath, fall back to DB-derived path.
   const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('box', dashboardId));
   if (manifestObject) {
     const manifest = await manifestObject.json<DriveManifest>();
+    const folderPath = manifest.folderPath || fallbackPath;
+    if (folderPath) {
+      await cleanupSandboxMirror(env, 'box', dashboardId, folderPath);
+    }
     await env.DRIVE_CACHE.delete(mirrorManifestKey('box', dashboardId));
     for (const entry of manifest.entries) {
       await env.DRIVE_CACHE.delete(mirrorFileKey('box', dashboardId, entry.id));
     }
+  } else if (fallbackPath) {
+    await cleanupSandboxMirror(env, 'box', dashboardId, fallbackPath);
   }
 
   await env.DB.prepare(`
@@ -2819,13 +2904,28 @@ export async function unlinkОnedriveFоlder(
     return Response.json({ error: 'E79884: Not found or no access' }, { status: 404 });
   }
 
+  // Build fallback folder path from DB before deleting anything.
+  const onedriveMirror = await env.DB.prepare(`
+    SELECT folder_name FROM onedrive_mirrors WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ folder_name: string }>();
+  const fallbackPath = onedriveMirror
+    ? `onedrive/${sanitizePathSegment(onedriveMirror.folder_name)}`
+    : null;
+
+  // Clean up sandbox workspace. Prefer manifest folderPath, fall back to DB-derived path.
   const manifestObject = await env.DRIVE_CACHE.get(mirrorManifestKey('onedrive', dashboardId));
   if (manifestObject) {
     const manifest = await manifestObject.json<DriveManifest>();
+    const folderPath = manifest.folderPath || fallbackPath;
+    if (folderPath) {
+      await cleanupSandboxMirror(env, 'onedrive', dashboardId, folderPath);
+    }
     await env.DRIVE_CACHE.delete(mirrorManifestKey('onedrive', dashboardId));
     for (const entry of manifest.entries) {
       await env.DRIVE_CACHE.delete(mirrorFileKey('onedrive', dashboardId, entry.id));
     }
+  } else if (fallbackPath) {
+    await cleanupSandboxMirror(env, 'onedrive', dashboardId, fallbackPath);
   }
 
   await env.DB.prepare(`
@@ -3452,6 +3552,52 @@ async function startSandboxMirrorSync(
       SET sync_error = 'Failed to start sandbox sync', status = 'error', updated_at = datetime('now')
       WHERE dashboard_id = ?
     `).bind(dashboardId).run();
+  }
+}
+
+/**
+ * Tell the sandbox to remove a mirrored folder from /workspace/.
+ * Silently catches errors (sandbox may be offline — folder dies with sandbox).
+ *
+ * Ownership note: dashboard_sandboxes is 1:1 per dashboard (dashboard_id is the key).
+ * Callers must verify the user has owner/editor access to the dashboard before calling
+ * this function. The unlink handlers check dashboard_members; cleanupIntegration is
+ * called from disconnect handlers that require auth.
+ */
+async function cleanupSandboxMirror(
+  env: EnvWithDriveCache,
+  provider: string,
+  dashboardId: string,
+  folderPath: string
+) {
+  try {
+    const sandboxRecord = await env.DB.prepare(`
+      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes
+      WHERE dashboard_id = ?
+    `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+
+    if (!sandboxRecord?.sandbox_session_id) {
+      return; // No active sandbox — nothing to clean up
+    }
+
+    // Sandbox requires folder_path to start with "{provider}/" (e.g. "github/owner/repo").
+    // Manifest folderPaths are built this way, but guard against format drift.
+    if (!folderPath.startsWith(provider + '/')) {
+      console.error(`[integrations] mirror cleanup skipped: folderPath "${folderPath}" does not start with "${provider}/"`);
+      return;
+    }
+
+    await sandboxFetch(env, `/sessions/${sandboxRecord.sandbox_session_id}/mirror/cleanup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider,
+        folder_path: folderPath,
+      }),
+      machineId: sandboxRecord.sandbox_machine_id || undefined,
+    });
+  } catch (err) {
+    console.error(`[integrations] mirror cleanup failed for ${provider}/${dashboardId}:`, err);
   }
 }
 
