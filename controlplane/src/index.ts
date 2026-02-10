@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 // REVISION: controlplane-v2-bugreport
 
-// REVISION: index-v10-merge-bridge-chat
-console.log(`[controlplane] REVISION: index-v10-merge-bridge-chat loaded at ${new Date().toISOString()}`);
+// REVISION: index-v11-code-login
+console.log(`[controlplane] REVISION: index-v11-code-login loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -498,6 +498,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const skipIpRateLimit =
       path === '/auth/google/callback'
       || path === '/auth/google/login'
+      || path === '/auth/config'
+      || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)
       || /^\/integrations\/[^/]+\/connect$/.test(path);
 
@@ -519,6 +521,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
+
+  // GET /auth/config - public auth configuration (no auth required)
+  if (segments[0] === 'auth' && segments[1] === 'config' && segments.length === 2 && method === 'GET') {
+    return Response.json({
+      codeLoginEnabled: Boolean(env.ACCESS_CODE),
+    });
+  }
 
   // GET /auth/google/login - Google OAuth login
   if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'login' && method === 'GET') {
@@ -643,6 +652,45 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
 
     const session = await createUserSession(env, auth.user!.id);
+    const cookie = buildSessionCookie(request, session.id, session.expiresAt);
+
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Set-Cookie': cookie,
+      },
+    });
+  }
+
+  // POST /auth/code/session - login with shared access code (hackathon/demo)
+  if (segments[0] === 'auth' && segments[1] === 'code' && segments[2] === 'session' && method === 'POST') {
+    if (!env.ACCESS_CODE) {
+      return Response.json({ error: 'E79407: Code login not configured' }, { status: 403 });
+    }
+
+    let body: { code?: string; name?: string };
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: 'E79408: Invalid request body' }, { status: 400 });
+    }
+
+    if (!body.code || body.code !== env.ACCESS_CODE) {
+      return Response.json({ error: 'E79409: Invalid access code' }, { status: 401 });
+    }
+
+    // Create or reuse a guest user
+    const guestId = `guest-${crypto.randomUUID().slice(0, 8)}`;
+    const guestName = (body.name || 'Guest').slice(0, 100);
+    const guestEmail = 'guest@orcabot.com';
+    const now = new Date().toISOString();
+
+    await env.DB.prepare(`
+      INSERT INTO users (id, email, name, created_at)
+      VALUES (?, ?, ?, ?)
+    `).bind(guestId, guestEmail, guestName, now).run();
+
+    const session = await createUserSession(env, guestId);
     const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
     return new Response(null, {

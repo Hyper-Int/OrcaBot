@@ -1,0 +1,21 @@
+# Frozen deployment for gemini.orcabot.com (hackathon demo)
+# Deploy with: npm run workers:build && npx wrangler deploy -c wrangler.gemini.toml
+
+name = "orcabot-frontend-gemini"
+compatibility_date = "2024-09-23"
+
+main = ".open-next/worker.js"
+
+# Compatibility flags for Next.js
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# API endpoint for gemini control plane
+NEXT_PUBLIC_API_URL = "https://api.gemini.orcabot.com"
+NEXT_PUBLIC_SITE_URL = "https://gemini.orcabot.com"
+NEXT_PUBLIC_DEV_MODE_ENABLED = "false"
+NEXT_PUBLIC_OPTIMISTIC_UPDATE = "true"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"

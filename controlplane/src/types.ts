@@ -83,6 +83,9 @@ export interface Env {
   /** Shared secret for control plane ↔ bridge authentication.
    *  Set via: wrangler secret put BRIDGE_INTERNAL_TOKEN */
   BRIDGE_INTERNAL_TOKEN?: string;
+  /** Shared access code for code-based login (hackathon / demo access).
+   *  Set via: wrangler secret put ACCESS_CODE */
+  ACCESS_CODE?: string;
 }
 
 // User types

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v5-works-with
+// REVISION: splash-v6-code-login
 "use client";
 
 import * as React from "react";
@@ -44,7 +44,7 @@ import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL } from "@/config/env";
 
-const MODULE_REVISION = "splash-v5-works-with";
+const MODULE_REVISION = "splash-v6-code-login";
 console.log(
   `[splash] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -180,12 +180,25 @@ export default function Home() {
     return null;
   }
 
+  // Auth config from backend (runtime feature flags)
+  const [codeLoginEnabled, setCodeLoginEnabled] = React.useState(false);
+  React.useEffect(() => {
+    fetch(`${API.cloudflare.base}/auth/config`)
+      .then((r) => r.json())
+      .then((data: { codeLoginEnabled?: boolean }) => {
+        if (data.codeLoginEnabled) setCodeLoginEnabled(true);
+      })
+      .catch(() => {});
+  }, []);
+
   // Login form state
   const [showDevLogin, setShowDevLogin] = React.useState(false);
+  const [showCodeLogin, setShowCodeLogin] = React.useState(false);
   const [showRegisterInterest, setShowRegisterInterest] = React.useState(false);
   const [registrationSuccess, setRegistrationSuccess] = React.useState(false);
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
+  const [accessCode, setAccessCode] = React.useState("");
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
 
@@ -236,6 +249,43 @@ export default function Home() {
     }
   };
 
+  const handleCodeLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    if (!accessCode.trim()) {
+      setError("Access code is required");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API.cloudflare.base}/auth/code/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ code: accessCode }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setError("Invalid access code");
+        } else {
+          setError("Login failed. Please try again.");
+        }
+        return;
+      }
+
+      // Session cookie is set — redirect and let AuthBootstrapper pick up the session
+      window.location.assign("/dashboards");
+    } catch (err) {
+      setError("Login failed. Please try again.");
+      console.warn("Code login failed:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRegisterInterest = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -275,10 +325,12 @@ export default function Home() {
 
   const resetLoginForms = () => {
     setShowDevLogin(false);
+    setShowCodeLogin(false);
     setShowRegisterInterest(false);
     setRegistrationSuccess(false);
     setName("");
     setEmail("");
+    setAccessCode("");
     setNote("");
     setError("");
   };
@@ -370,7 +422,7 @@ export default function Home() {
         ) : isAuthResolved ? (
           /* Unauthenticated: Login options */
           <div className="max-w-md mx-auto">
-            {!showDevLogin && !showRegisterInterest ? (
+            {!showDevLogin && !showRegisterInterest && !showCodeLogin ? (
               <div className="space-y-4">
                 {/* Private beta notice */}
                 <p className="text-caption text-[var(--foreground-muted)]">
@@ -430,6 +482,19 @@ export default function Home() {
                 >
                   Register Interest
                 </Button>
+
+                {/* Code Login */}
+                {codeLoginEnabled && (
+                  <Button
+                    variant="ghost"
+                    size="md"
+                    className="w-full"
+                    onClick={() => setShowCodeLogin(true)}
+                    leftIcon={<Lock className="w-4 h-4" />}
+                  >
+                    Login with access code
+                  </Button>
+                )}
 
                 {/* Dev Mode */}
                 {DEV_MODE_ENABLED && (
@@ -559,6 +624,62 @@ export default function Home() {
                   </div>
                 </form>
               )
+            ) : showCodeLogin ? (
+              /* Access Code Login form */
+              <form
+                onSubmit={handleCodeLogin}
+                className="space-y-4 text-left"
+              >
+                <div className="p-4 rounded-lg bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20">
+                  <p className="text-caption text-[var(--accent-primary)] flex items-center gap-2">
+                    <Lock className="w-4 h-4" />
+                    Enter your access code
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label
+                    htmlFor="access-code"
+                    className="text-caption text-[var(--foreground-muted)]"
+                  >
+                    Access Code
+                  </label>
+                  <Input
+                    id="access-code"
+                    type="password"
+                    placeholder="Enter access code"
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-caption text-[var(--status-error)]">
+                    {error}
+                  </p>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={resetLoginForms}
+                    className="flex-1"
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    className="flex-1"
+                    isLoading={isLoading}
+                    disabled={!accessCode.trim()}
+                  >
+                    Login
+                  </Button>
+                </div>
+              </form>
             ) : DEV_MODE_ENABLED ? (
               /* Dev Login form */
               <form

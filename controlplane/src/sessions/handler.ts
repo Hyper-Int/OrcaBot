@@ -664,6 +664,7 @@ export async function createSessiоn(
 
     return Response.json({ session }, { status: 201 });
   } catch (error) {
+    console.error(`[createSession] FAILED dashboardId=${dashboardId} itemId=${itemId} sandboxUrl=${env.SANDBOX_URL} error=`, error);
     // Update status to error
     await env.DB.prepare(`
       UPDATE sessions SET status = 'error' WHERE id = ?
