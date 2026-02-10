@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: integrations-api-v3-github-history
+const MODULE_REVISION = "integrations-api-v3-github-history";
+console.log(`[integrations-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 import { apiFetch, apiGet, apiPost } from "@/lib/api/client";
 import { API } from "@/config/env";
 
@@ -84,6 +88,7 @@ export interface GithubSyncStatus {
   totalBytes?: number;
   cacheSyncedFiles?: number;
   cacheSyncedBytes?: number;
+  cacheLastPath?: string | null;
   workspaceSyncedFiles?: number;
   workspaceSyncedBytes?: number;
   largeFiles?: GoogleDriveLargeFile[];
@@ -95,6 +100,11 @@ export interface GithubManifestResponse {
   connected: boolean;
   repo?: GithubRepo | null;
   manifest?: GoogleDriveManifest | null;
+}
+
+export interface GithubHistoryResponse {
+  connected: boolean;
+  repos: GithubRepo[];
 }
 
 export interface BoxFolder {
@@ -250,6 +260,14 @@ export async function getGithubSyncStatus(
   const url = new URL(API.cloudflare.githubStatus);
   url.searchParams.set("dashboard_id", dashboardId);
   return apiGet<GithubSyncStatus>(url.toString());
+}
+
+export async function getGithubRepoHistory(
+  dashboardId: string
+): Promise<GithubHistoryResponse> {
+  const url = new URL(API.cloudflare.githubHistory);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<GithubHistoryResponse>(url.toString());
 }
 
 export async function syncGithub(dashboardId: string): Promise<{ ok: boolean }> {

@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS drive_mirrors (
   total_bytes INTEGER NOT NULL DEFAULT 0,
   cache_synced_files INTEGER NOT NULL DEFAULT 0,
   cache_synced_bytes INTEGER NOT NULL DEFAULT 0,
+  cache_last_path TEXT,
   workspace_synced_files INTEGER NOT NULL DEFAULT 0,
   workspace_synced_bytes INTEGER NOT NULL DEFAULT 0,
   large_files INTEGER NOT NULL DEFAULT 0,
@@ -272,6 +273,22 @@ CREATE TABLE IF NOT EXISTS github_mirrors (
 );
 
 CREATE INDEX IF NOT EXISTS idx_github_mirrors_user ON github_mirrors(user_id);
+
+-- GitHub repo history (per dashboard)
+CREATE TABLE IF NOT EXISTS github_repo_history (
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  repo_id TEXT NOT NULL,
+  repo_owner TEXT NOT NULL,
+  repo_name TEXT NOT NULL,
+  repo_branch TEXT NOT NULL,
+  last_linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (dashboard_id, repo_owner, repo_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_github_repo_history_user ON github_repo_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_github_repo_history_dashboard ON github_repo_history(dashboard_id);
 
 -- Box mirrors (per dashboard)
 CREATE TABLE IF NOT EXISTS box_mirrors (
@@ -897,7 +914,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(use
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v4-skip-comment-only-stmts";
+const SCHEMA_REVISION = "schema-v5-github-repo-history";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1033,6 +1050,15 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE dashboard_templates ADD COLUMN viewport_json TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add cache_last_path column to github_mirrors for sync progress visibility
+  try {
+    await db.prepare(`
+      ALTER TABLE github_mirrors ADD COLUMN cache_last_path TEXT
     `).run();
   } catch {
     // Column already exists.

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v3-tauri-localhost
-const MODULE_REVISION = "desktop-env-v3-tauri-localhost";
+// REVISION: desktop-env-v4-github-history
+const MODULE_REVISION = "desktop-env-v4-github-history";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -121,6 +121,8 @@ export const API = {
     githubIntegration: `${CLOUDFLARE_API_URL}/integrations/github`,
     githubRepos: `${CLOUDFLARE_API_URL}/integrations/github/repos`,
     githubRepo: `${CLOUDFLARE_API_URL}/integrations/github/repo`,
+    githubHistory: `${CLOUDFLARE_API_URL}/integrations/github/history`,
+    devClearWorkspace: `${CLOUDFLARE_API_URL}/dev/workspace/clear`,
     githubStatus: `${CLOUDFLARE_API_URL}/integrations/github/status`,
     githubManifest: `${CLOUDFLARE_API_URL}/integrations/github/manifest`,
     githubSync: `${CLOUDFLARE_API_URL}/integrations/github/sync`,

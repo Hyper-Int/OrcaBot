@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v19-fix-disconnect-refresh
-const MODULE_REVISION = "workspace-sidebar-v19-fix-disconnect-refresh";
+// REVISION: workspace-sidebar-v23-dev-clear-workspace
+const MODULE_REVISION = "workspace-sidebar-v23-dev-clear-workspace";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -49,9 +49,11 @@ import {
   getGithubIntegration,
   getGithubManifest,
   getGithubSyncStatus,
+  getGithubRepoHistory,
   listGithubRepos,
   setGithubRepo,
   syncGithub,
+  clearWorkspaceDev,
   unlinkGithubRepo,
   disconnectGithub,
   getBoxIntegration,
@@ -85,7 +87,7 @@ import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
-import { API } from "@/config/env";
+import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
 
@@ -223,6 +225,8 @@ export function WorkspaceSidebar({
   const [githubLoading, setGithubLoading] = React.useState(false);
   const [githubSelected, setGithubSelected] = React.useState<GithubRepo | null>(null);
   const [githubImporting, setGithubImporting] = React.useState(false);
+  const [githubHistory, setGithubHistory] = React.useState<Set<string>>(new Set());
+  const [devClearing, setDevClearing] = React.useState(false);
   const [boxIntegration, setBoxIntegration] = React.useState<BoxIntegration | null>(null);
   const [boxStatus, setBoxStatus] = React.useState<BoxSyncStatus | null>(null);
   const [boxSyncing, setBoxSyncing] = React.useState(false);
@@ -255,6 +259,18 @@ export function WorkspaceSidebar({
   const isBoxLinked = Boolean(boxIntegration?.connected && boxIntegration?.folder);
   const isOnedriveConnected = Boolean(onedriveIntegration?.connected);
   const isOnedriveLinked = Boolean(onedriveIntegration?.connected && onedriveIntegration?.folder);
+
+  const getGithubSyncProgress = React.useCallback((status: GithubSyncStatus | null) => {
+    if (!status) return null;
+    const synced = status.cacheSyncedFiles ?? 0;
+    const total = status.totalFiles ?? 0;
+    const label = total > 0
+      ? `Syncing repo: ${synced}/${total} files`
+      : synced > 0
+        ? `Syncing repo: ${synced} files`
+        : "Syncing repo...";
+    return { label };
+  }, []);
 
   const drivePickerUrl = React.useMemo(() => {
     const url = new URL(`${API.cloudflare.base}/integrations/google/drive/picker`);
@@ -487,6 +503,17 @@ export function WorkspaceSidebar({
     finally { setGithubLoading(false); }
   }, [loadGithubIntegration]);
 
+  const loadGithubHistory = React.useCallback(async () => {
+    if (!user || !dashboardId) return;
+    try {
+      const response = await getGithubRepoHistory(dashboardId);
+      const next = new Set((response.repos || []).map((repo) => `${repo.owner}/${repo.name}`));
+      setGithubHistory(next);
+    } catch {
+      setGithubHistory(new Set());
+    }
+  }, [dashboardId, user]);
+
   const loadBoxIntegration = React.useCallback(async () => {
     if (!user) return;
     try {
@@ -589,10 +616,11 @@ export function WorkspaceSidebar({
       await setGithubRepo(dashboardId, repo);
       await loadGithubIntegration();
       await loadGithubStatus();
+      await loadGithubHistory();
       setGithubPickerOpen(false);
       onStorageLinked?.("github");
     } catch (error) { setFileError(error instanceof Error ? error.message : "Failed to link GitHub repo"); }
-  }, [dashboardId, loadGithubIntegration, loadGithubStatus, onStorageLinked]);
+  }, [dashboardId, loadGithubIntegration, loadGithubStatus, loadGithubHistory, onStorageLinked]);
 
   const handleConfirmGithubRepo = React.useCallback(async () => {
     if (!githubSelected) return;
@@ -600,6 +628,44 @@ export function WorkspaceSidebar({
     try { await handleSelectGithubRepo(githubSelected); }
     finally { setGithubImporting(false); }
   }, [githubSelected, handleSelectGithubRepo]);
+
+  const handleDevClearWorkspace = React.useCallback(async () => {
+    if (!DEV_MODE_ENABLED || !dashboardId) return;
+    const ok = window.confirm(
+      "Dev only: Clear sandbox /workspace and mirrored caches for this dashboard? This will delete all files in the workspace."
+    );
+    if (!ok) return;
+    setDevClearing(true);
+    try {
+      let hasMore = true;
+      let attempts = 0;
+      while (hasMore && attempts < 50) {
+        const result = await clearWorkspaceDev(dashboardId);
+        hasMore = Boolean(result.hasMore);
+        attempts += 1;
+      }
+      setFileEntries({});
+      if (sessionId) {
+        await loadFiles("/");
+      }
+      await loadDriveStatus();
+      await loadGithubStatus();
+      await loadBoxStatus();
+      await loadOnedriveStatus();
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Failed to clear workspace");
+    } finally {
+      setDevClearing(false);
+    }
+  }, [
+    dashboardId,
+    sessionId,
+    loadFiles,
+    loadDriveStatus,
+    loadGithubStatus,
+    loadBoxStatus,
+    loadOnedriveStatus,
+  ]);
 
   const handleUnlinkBox = React.useCallback(async () => {
     if (!dashboardId) return;
@@ -876,7 +942,12 @@ export function WorkspaceSidebar({
   React.useEffect(() => { if (!onedriveSyncing) return; const i = setInterval(() => { void loadOnedriveStatus(); }, 2500); return () => clearInterval(i); }, [onedriveSyncing, loadOnedriveStatus]);
 
   // Picker open effects
-  React.useEffect(() => { if (!githubPickerOpen || !githubIntegration?.connected) return; setGithubSelected(null); void loadGithubRepos(); }, [githubPickerOpen, githubIntegration?.connected, loadGithubRepos]);
+  React.useEffect(() => {
+    if (!githubPickerOpen || !githubIntegration?.connected) return;
+    setGithubSelected(null);
+    void loadGithubRepos();
+    void loadGithubHistory();
+  }, [githubPickerOpen, githubIntegration?.connected, loadGithubRepos, loadGithubHistory]);
   React.useEffect(() => { if (!boxPickerOpen || !boxIntegration?.connected) return; setBoxPath([]); void loadBoxFolders("0"); }, [boxPickerOpen, boxIntegration?.connected, loadBoxFolders]);
   React.useEffect(() => { if (!onedrivePickerOpen || !onedriveIntegration?.connected) return; setOnedrivePath([]); void loadOnedriveFolders("root"); }, [onedrivePickerOpen, onedriveIntegration?.connected, loadOnedriveFolders]);
 
@@ -1148,6 +1219,18 @@ export function WorkspaceSidebar({
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />
+              {DEV_MODE_ENABLED && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={handleDevClearWorkspace}
+                    disabled={devClearing}
+                    className="flex items-center gap-2 text-[var(--status-warning)]"
+                  >
+                    <span>{devClearing ? "Clearing workspace..." : "Dev: Clear workspace"}</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuLabel className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase">
                 Storage Integrations
               </DropdownMenuLabel>
@@ -1386,7 +1469,7 @@ export function WorkspaceSidebar({
             {showFiles && renderFileTree("/", 0)}
             {!sessionId && !showFiles && (
               <div className="px-2 py-2 text-[10px] text-[var(--foreground-muted)]">
-                {githubSyncing ? "Syncing repo..." : "Start a terminal to see files."}
+                {githubSyncing ? getGithubSyncProgress(githubStatus)?.label ?? "Syncing repo..." : "Start a terminal to see files."}
               </div>
             )}
           </div>
@@ -1429,7 +1512,12 @@ export function WorkspaceSidebar({
                   <div className="p-4 text-xs text-[var(--foreground-muted)]">No repos found.</div>
                 ) : (
                   <div className="divide-y divide-[var(--border)]">
-                    {githubRepos.map((repo) => (
+                    {githubRepos.map((repo) => {
+                      const repoKey = `${repo.owner}/${repo.name}`;
+                      const isLinkedRepo = githubIntegration?.repo?.owner === repo.owner
+                        && githubIntegration?.repo?.name === repo.name;
+                      const isImportedRepo = !isLinkedRepo && githubHistory.has(repoKey);
+                      return (
                       <button
                         key={`${repo.owner}/${repo.name}`}
                         type="button"
@@ -1438,19 +1526,37 @@ export function WorkspaceSidebar({
                         className={`w-full text-left px-4 py-3 transition-colors ${
                           githubSelected?.owner === repo.owner && githubSelected?.name === repo.name
                             ? "bg-[var(--background-hover)]"
-                            : "hover:bg-[var(--background-hover)]"
+                            : isLinkedRepo
+                              ? "bg-[var(--accent-primary)]/10"
+                              : isImportedRepo
+                                ? "bg-[var(--accent-secondary)]/10"
+                                : "hover:bg-[var(--background-hover)]"
                         }`}
                       >
-                        <div className="text-sm text-[var(--foreground)]">{repo.owner}/{repo.name}</div>
+                        <div className={`text-sm ${
+                          isLinkedRepo
+                            ? "text-[var(--accent-primary)]"
+                            : isImportedRepo
+                              ? "text-[var(--accent-secondary)]"
+                              : "text-[var(--foreground)]"
+                        }`}>
+                          {repo.owner}/{repo.name}
+                          {isLinkedRepo && <span className="ml-2 text-[10px] font-medium">Linked</span>}
+                          {isImportedRepo && <span className="ml-2 text-[10px] font-medium">Imported</span>}
+                        </div>
                         <div className="text-[10px] text-[var(--foreground-muted)]">
                           {repo.branch ? `Branch: ${repo.branch}` : "Default branch"}
                         </div>
                       </button>
-                    ))}
+                    )})}
                   </div>
                 )}
               </div>
-              {githubImporting && <div className="text-xs text-[var(--foreground-muted)]">Importing repo...</div>}
+              {githubImporting && (
+                <div className="text-xs text-[var(--foreground-muted)]">
+                  {getGithubSyncProgress(githubStatus)?.label ?? "Importing repo..."}
+                </div>
+              )}
               <div className="flex justify-end gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setGithubPickerOpen(false)} disabled={githubImporting}>Cancel</Button>
                 <Button variant="primary" size="sm" disabled={!githubSelected || githubImporting} onClick={handleConfirmGithubRepo}>

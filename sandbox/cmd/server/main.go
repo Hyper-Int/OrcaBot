@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v4-working-dir-support
+// REVISION: main-v5-pty-error-logging
 
 package main
 
@@ -28,7 +28,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v4-working-dir-support"
+const mainRevision = "main-v5-pty-error-logging"
 
 func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
@@ -351,7 +351,7 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// REVISION: working-dir-v1-handler
+// REVISION: working-dir-v2-handler-logging
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -381,6 +381,8 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		log.Printf("[handleCreatePTY] E79708 PTY creation failed: sessionId=%s command=%q ptyId=%q workingDir=%q err=%v",
+			r.PathValue("sessionId"), req.Command, req.PtyID, req.WorkingDir, err)
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
