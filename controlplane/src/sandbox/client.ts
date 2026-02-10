@@ -157,7 +157,7 @@ export class SandboxClient {
   }
 
   // PTY management
-  // REVISION: working-dir-v1-createpty
+  // REVISION: working-dir-v2-createpty-error-propagation
   async createPty(
     sessionId: string,
     creatorId?: string,
@@ -205,7 +205,7 @@ export class SandboxClient {
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '(no body)');
       console.error(`[createPty] FAILED status=${res.status} sessionId=${sessionId} command=${JSON.stringify(command)} machineId=${machineId} body=${errorBody}`);
-      throw new Error(`Failed to create PTY: ${res.status}`);
+      throw new Error(`Failed to create PTY: ${res.status} - ${errorBody}`);
     }
     return res.json();
   }

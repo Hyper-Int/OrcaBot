@@ -1430,6 +1430,8 @@ export async function setGithubRepо(
     branch = repoData.default_branch || 'main';
   }
 
+  const repoId = String(data.repoId || `${data.repoOwner}/${data.repoName}`);
+
   await env.DB.prepare(`
     INSERT INTO github_mirrors (
       dashboard_id, user_id, repo_id, repo_owner, repo_name, repo_branch, status, created_at, updated_at
@@ -1445,11 +1447,25 @@ export async function setGithubRepо(
   `).bind(
     data.dashboardId,
     auth.user!.id,
-    String(data.repoId || `${data.repoOwner}/${data.repoName}`),
+    repoId,
     data.repoOwner,
     data.repoName,
     branch
   ).run();
+
+  try {
+    await recordGithubRepoHistory(
+      env,
+      data.dashboardId,
+      auth.user!.id,
+      repoId,
+      data.repoOwner,
+      data.repoName,
+      branch
+    );
+  } catch (error) {
+    console.error('Failed to record GitHub repo history:', error);
+  }
 
   try {
     // Downloads up to 40 files per request to stay under CF's 50 subrequest limit.
@@ -1517,13 +1533,17 @@ async function updateGithubMirrorCacheProgress(
   env: EnvWithDriveCache,
   dashboardId: string,
   cacheSyncedFiles: number,
-  cacheSyncedBytes: number
+  cacheSyncedBytes: number,
+  cacheLastPath?: string | null
 ) {
   await env.DB.prepare(`
     UPDATE github_mirrors
-    SET cache_synced_files = ?, cache_synced_bytes = ?, updated_at = datetime('now')
+    SET cache_synced_files = ?,
+        cache_synced_bytes = ?,
+        cache_last_path = ?,
+        updated_at = datetime('now')
     WHERE dashboard_id = ?
-  `).bind(cacheSyncedFiles, cacheSyncedBytes, dashboardId).run();
+  `).bind(cacheSyncedFiles, cacheSyncedBytes, cacheLastPath ?? null, dashboardId).run();
 }
 
 async function updateGithubMirrorWorkspaceProgress(
@@ -1537,6 +1557,34 @@ async function updateGithubMirrorWorkspaceProgress(
     SET workspace_synced_files = ?, workspace_synced_bytes = ?, updated_at = datetime('now')
     WHERE dashboard_id = ?
   `).bind(workspaceSyncedFiles, workspaceSyncedBytes, dashboardId).run();
+}
+
+async function recordGithubRepoHistory(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+  repoId: string,
+  repoOwner: string,
+  repoName: string,
+  repoBranch: string
+) {
+  await env.DB.prepare(`
+    INSERT INTO github_repo_history (
+      dashboard_id, user_id, repo_id, repo_owner, repo_name, repo_branch, last_linked_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    ON CONFLICT(dashboard_id, repo_owner, repo_name) DO UPDATE SET
+      user_id = excluded.user_id,
+      repo_id = excluded.repo_id,
+      repo_branch = excluded.repo_branch,
+      last_linked_at = datetime('now')
+  `).bind(
+    dashboardId,
+    userId,
+    repoId,
+    repoOwner,
+    repoName,
+    repoBranch
+  ).run();
 }
 
 export async function getGithubSyncStatus(
@@ -1585,11 +1633,60 @@ export async function getGithubSyncStatus(
     totalBytes: record.total_bytes,
     cacheSyncedFiles: record.cache_synced_files,
     cacheSyncedBytes: record.cache_synced_bytes,
+    cacheLastPath: record.cache_last_path,
     workspaceSyncedFiles: record.workspace_synced_files,
     workspaceSyncedBytes: record.workspace_synced_bytes,
     largeFiles,
     lastSyncAt: record.last_sync_at,
     syncError: record.sync_error,
+  });
+}
+
+export async function getGithubRepoHistory(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'E79855: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor', 'viewer')
+  `).bind(dashboardId, auth.user!.id).first();
+
+  if (!access) {
+    return Response.json({ error: 'E79856: Not found or no access' }, { status: 404 });
+  }
+
+  const rows = await env.DB.prepare(`
+    SELECT repo_id, repo_owner, repo_name, repo_branch, last_linked_at
+    FROM github_repo_history
+    WHERE dashboard_id = ? AND user_id = ?
+    ORDER BY last_linked_at DESC
+  `).bind(dashboardId, auth.user!.id).all<{
+    repo_id: string;
+    repo_owner: string;
+    repo_name: string;
+    repo_branch: string;
+    last_linked_at: string;
+  }>();
+
+  return Response.json({
+    connected: true,
+    repos: (rows.results || []).map((row) => ({
+      id: row.repo_id,
+      owner: row.repo_owner,
+      name: row.repo_name,
+      branch: row.repo_branch,
+      linked_at: row.last_linked_at,
+    })),
   });
 }
 
@@ -1654,6 +1751,7 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
         total_bytes = 0,
         cache_synced_files = 0,
         cache_synced_bytes = 0,
+        cache_last_path = null,
         workspace_synced_files = 0,
         workspace_synced_bytes = 0,
         large_files = 0,
@@ -1739,7 +1837,7 @@ async function runGithubSync(env: EnvWithDriveCache, userId: string, dashboardId
     cacheSyncedFiles += 1;
     cacheSyncedBytes += entry.size;
     entry.cacheStatus = 'cached';
-    await updateGithubMirrorCacheProgress(env, dashboardId, cacheSyncedFiles, cacheSyncedBytes);
+    await updateGithubMirrorCacheProgress(env, dashboardId, cacheSyncedFiles, cacheSyncedBytes, entry.path);
   }
 
   manifest.entries = entries;
@@ -1894,7 +1992,7 @@ export async function syncGithubLargeFiles(
     entry.placeholder = undefined;
     cacheSyncedFiles += 1;
     cacheSyncedBytes += entry.size;
-    await updateGithubMirrorCacheProgress(env, data.dashboardId, cacheSyncedFiles, cacheSyncedBytes);
+    await updateGithubMirrorCacheProgress(env, data.dashboardId, cacheSyncedFiles, cacheSyncedBytes, entry.path);
   }
 
   await env.DRIVE_CACHE.put(mirrorManifestKey('github', data.dashboardId), JSON.stringify(manifest), {

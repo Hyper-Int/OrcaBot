@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: cloudflare-api-index-v2-dev-clear-workspace
+const MODULE_REVISION = "cloudflare-api-index-v2-dev-clear-workspace";
+console.log(`[cloudflare-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 export * from "./dashboards";
 export * from "./users";
 export * from "./embed";
@@ -15,3 +19,4 @@ export * from "./members";
 export * from "./bug-reports";
 export * from "./tasks";
 export * from "./chat";
+export * from "./dev";

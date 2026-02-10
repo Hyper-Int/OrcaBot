@@ -18,6 +18,7 @@ import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
+import { requireAuth, type AuthContext } from '../auth/middleware';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
 // SECURITY: Never interpolate provider names directly into SQL - always use this map
@@ -242,6 +243,182 @@ function mirrorManifestKey(provider: string, dashboardId: string): string {
 
 function workspaceSnapshotKey(dashboardId: string): string {
   return `workspace/${dashboardId}/snapshot.json`;
+}
+
+export async function clearWorkspaceDev(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  if (env.DEV_AUTH_ENABLED !== 'true') {
+    return Response.json({ error: 'E79790: Dev mode only' }, { status: 403 });
+  }
+
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79791: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first();
+
+  if (!access) {
+    return Response.json({ error: 'E79792: Not found or no access' }, { status: 404 });
+  }
+
+  await env.DRIVE_CACHE.delete(workspaceSnapshotKey(data.dashboardId));
+  await env.DRIVE_CACHE.delete(driveManifestKey(data.dashboardId));
+  for (const provider of ['github', 'box', 'onedrive']) {
+    await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, data.dashboardId));
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    UPDATE drive_mirrors
+    SET status = 'idle',
+        sync_error = null,
+        total_files = 0,
+        total_bytes = 0,
+        cache_synced_files = 0,
+        cache_synced_bytes = 0,
+        workspace_synced_files = 0,
+        workspace_synced_bytes = 0,
+        large_files = 0,
+        large_bytes = 0,
+        last_sync_at = null,
+        updated_at = ?
+    WHERE dashboard_id = ?
+  `).bind(now, data.dashboardId).run();
+
+  await env.DB.prepare(`
+    UPDATE github_mirrors
+    SET status = 'idle',
+        sync_error = null,
+        total_files = 0,
+        total_bytes = 0,
+        cache_synced_files = 0,
+        cache_synced_bytes = 0,
+        cache_last_path = null,
+        workspace_synced_files = 0,
+        workspace_synced_bytes = 0,
+        large_files = 0,
+        large_bytes = 0,
+        last_sync_at = null,
+        updated_at = ?
+    WHERE dashboard_id = ?
+  `).bind(now, data.dashboardId).run();
+
+  await env.DB.prepare(`
+    UPDATE box_mirrors
+    SET status = 'idle',
+        sync_error = null,
+        total_files = 0,
+        total_bytes = 0,
+        cache_synced_files = 0,
+        cache_synced_bytes = 0,
+        workspace_synced_files = 0,
+        workspace_synced_bytes = 0,
+        large_files = 0,
+        large_bytes = 0,
+        last_sync_at = null,
+        updated_at = ?
+    WHERE dashboard_id = ?
+  `).bind(now, data.dashboardId).run();
+
+  await env.DB.prepare(`
+    UPDATE onedrive_mirrors
+    SET status = 'idle',
+        sync_error = null,
+        total_files = 0,
+        total_bytes = 0,
+        cache_synced_files = 0,
+        cache_synced_bytes = 0,
+        workspace_synced_files = 0,
+        workspace_synced_bytes = 0,
+        large_files = 0,
+        large_bytes = 0,
+        last_sync_at = null,
+        updated_at = ?
+    WHERE dashboard_id = ?
+  `).bind(now, data.dashboardId).run();
+
+  let deletedFiles = 0;
+  let deletedDirs = 0;
+  let remainingFiles = 0;
+  let remainingDirs = 0;
+  let hasMore = false;
+
+  const sandboxRecord = await env.DB.prepare(`
+    SELECT sandbox_session_id, sandbox_machine_id
+    FROM dashboard_sandboxes
+    WHERE dashboard_id = ?
+  `).bind(data.dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+
+  if (sandboxRecord?.sandbox_session_id) {
+    try {
+      const res = await sandboxFetch(
+        env,
+        `/sessions/${sandboxRecord.sandbox_session_id}/files?path=/&recursive=true`,
+        { machineId: sandboxRecord.sandbox_machine_id || undefined, timeoutMs: 15_000 }
+      );
+      if (res.ok) {
+        const payload = await res.json() as { files?: Array<{ path?: string; is_dir?: boolean }> };
+        const entries = (payload.files || []);
+        const files = entries
+          .filter((entry) => entry && !entry.is_dir && typeof entry.path === 'string')
+          .map((entry) => entry.path as string);
+        const dirs = entries
+          .filter((entry) => entry && entry.is_dir && typeof entry.path === 'string')
+          .map((entry) => entry.path as string)
+          .sort((a, b) => b.length - a.length);
+        const MAX_DELETE = 40;
+        const batch = files.slice(0, MAX_DELETE);
+        for (const path of batch) {
+          try {
+            await sandboxFetch(
+              env,
+              `/sessions/${sandboxRecord.sandbox_session_id}/file?path=${encodeURIComponent(path)}`,
+              { method: 'DELETE', machineId: sandboxRecord.sandbox_machine_id || undefined }
+            );
+            deletedFiles += 1;
+          } catch (error) {
+            console.error('[clearWorkspaceDev] Failed to delete file', path, error);
+          }
+        }
+        remainingFiles = Math.max(0, files.length - batch.length);
+
+        if (remainingFiles === 0 && dirs.length > 0) {
+          const dirBatch = dirs.slice(0, MAX_DELETE);
+          for (const path of dirBatch) {
+            try {
+              await sandboxFetch(
+                env,
+                `/sessions/${sandboxRecord.sandbox_session_id}/file?path=${encodeURIComponent(path)}`,
+                { method: 'DELETE', machineId: sandboxRecord.sandbox_machine_id || undefined }
+              );
+              deletedDirs += 1;
+            } catch (error) {
+              console.error('[clearWorkspaceDev] Failed to delete dir', path, error);
+            }
+          }
+          remainingDirs = Math.max(0, dirs.length - dirBatch.length);
+        } else {
+          remainingDirs = dirs.length;
+        }
+
+        hasMore = remainingFiles > 0 || remainingDirs > 0;
+      }
+    } catch (error) {
+      console.error('[clearWorkspaceDev] Failed to list workspace files', error);
+    }
+  }
+
+  return Response.json({ ok: true, deletedFiles, deletedDirs, remainingFiles, remainingDirs, hasMore });
 }
 
 /**

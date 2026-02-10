@@ -662,6 +662,16 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     });
   }
 
+  // POST /dev/workspace/clear - dev-only workspace reset
+  if (segments[0] === 'dev' && segments[1] === 'workspace' && segments[2] === 'clear' && method === 'POST') {
+    if (env.DEV_AUTH_ENABLED !== 'true') {
+      return Response.json({ error: 'E79789: Dev mode only' }, { status: 403 });
+    }
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.clearWorkspaceDev(request, env, auth);
+  }
+
   // POST /auth/code/session - login with shared access code (hackathon/demo)
   if (segments[0] === 'auth' && segments[1] === 'code' && segments[2] === 'session' && method === 'POST') {
     if (!env.ACCESS_CODE) {
@@ -1304,6 +1314,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET github/callback': (request, env) => integrations.callbackGithub(request, env),
       'GET github': integrations.getGithubIntegratiоn,
       'GET github/repos': integrations.getGithubRepоs,
+      'GET github/history': integrations.getGithubRepoHistory,
       'POST github/repo': integrations.setGithubRepо,
       'DELETE github/repo': integrations.unlinkGithubRepо,
       'DELETE github/disconnect': integrations.disconnectGithub,
