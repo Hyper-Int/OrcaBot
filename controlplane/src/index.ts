@@ -753,7 +753,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         return Response.json({ error: 'E79737: Too many redirects' }, { status: 400 });
       }
       console.warn('Embed check fetch failed:', error);
-      return Response.json({ embeddable: true, reason: 'fetch_failed' });
+      return Response.json({ embeddable: false, reason: 'fetch_failed' });
     }
 
     const checkedUrl = finalUrl.toString();

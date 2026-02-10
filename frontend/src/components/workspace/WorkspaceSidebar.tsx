@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v18-github-batch-sync
-const MODULE_REVISION = "workspace-sidebar-v18-github-batch-sync";
+// REVISION: workspace-sidebar-v19-fix-disconnect-refresh
+const MODULE_REVISION = "workspace-sidebar-v19-fix-disconnect-refresh";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -130,6 +130,7 @@ interface WorkspaceSidebarProps {
   items: DashboardItem[];
   sessions: Session[];
   onStorageLinked?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
+  onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void;
   onSelectedPathChange?: (path: string) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
@@ -144,6 +145,7 @@ export function WorkspaceSidebar({
   items,
   sessions,
   onStorageLinked,
+  onStorageDisconnected,
   onSelectedPathChange,
   collapsed,
   onToggleCollapse,
@@ -637,27 +639,27 @@ export function WorkspaceSidebar({
 
   const handleDisconnectDrive = React.useCallback(async () => {
     if (!window.confirm("Sign out of Google Drive? This will unlink all Drive folders from your dashboards.")) return;
-    try { await disconnectGoogleDrive(); setDriveIntegration(null); setDriveStatus(null); }
+    try { await disconnectGoogleDrive(); setDriveIntegration(null); setDriveStatus(null); onStorageDisconnected?.("google_drive"); }
     catch (error) { setFileError(error instanceof Error ? error.message : "Failed to disconnect Drive"); }
-  }, []);
+  }, [onStorageDisconnected]);
 
   const handleDisconnectGithub = React.useCallback(async () => {
     if (!window.confirm("Sign out of GitHub? This will unlink all repos from your dashboards.")) return;
-    try { await disconnectGithub(); setGithubIntegration(null); setGithubStatus(null); }
+    try { await disconnectGithub(); setGithubIntegration(null); setGithubStatus(null); onStorageDisconnected?.("github"); }
     catch (error) { setFileError(error instanceof Error ? error.message : "Failed to disconnect GitHub"); }
-  }, []);
+  }, [onStorageDisconnected]);
 
   const handleDisconnectBox = React.useCallback(async () => {
     if (!window.confirm("Sign out of Box? This will unlink all Box folders from your dashboards.")) return;
-    try { await disconnectBox(); setBoxIntegration(null); setBoxStatus(null); }
+    try { await disconnectBox(); setBoxIntegration(null); setBoxStatus(null); onStorageDisconnected?.("box"); }
     catch (error) { setFileError(error instanceof Error ? error.message : "Failed to disconnect Box"); }
-  }, []);
+  }, [onStorageDisconnected]);
 
   const handleDisconnectOnedrive = React.useCallback(async () => {
     if (!window.confirm("Sign out of OneDrive? This will unlink all OneDrive folders from your dashboards.")) return;
-    try { await disconnectOnedrive(); setOnedriveIntegration(null); setOnedriveStatus(null); }
+    try { await disconnectOnedrive(); setOnedriveIntegration(null); setOnedriveStatus(null); onStorageDisconnected?.("onedrive"); }
     catch (error) { setFileError(error instanceof Error ? error.message : "Failed to disconnect OneDrive"); }
-  }, []);
+  }, [onStorageDisconnected]);
 
   const handleOpenBoxFolder = React.useCallback((folder: BoxFolder) => {
     setBoxPath((prev) => [...prev, folder]);
@@ -779,7 +781,10 @@ export function WorkspaceSidebar({
       loadGithubIntegration(), loadGithubStatus(),
       loadBoxIntegration(), loadBoxStatus(),
       loadOnedriveIntegration(), loadOnedriveStatus(),
-    ]).finally(() => { integrationLoadingRef.current = false; });
+    ]).catch(() => {
+      // Reset so a failed load can be retried
+      integrationLoadedRef.current = null;
+    }).finally(() => { integrationLoadingRef.current = false; });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardId, user]);
 
