@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v3-vnc-perf
+// REVISION: browser-v4-clean-startup
 package browser
 
 import (
@@ -42,7 +42,7 @@ type Controller struct {
 	processes []*exec.Cmd
 }
 
-const browserRevision = "browser-v3-vnc-perf"
+const browserRevision = "browser-v4-clean-startup"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -102,6 +102,12 @@ func (c *Controller) Start() (Status, error) {
 		_ = os.Remove(filepath.Join(userDataDir, lockFile))
 	}
 
+	// Clean crash state so Chromium won't show "Restore pages?" bubble.
+	// Set exit_type to Normal and exited_cleanly to true in Preferences.
+	// Safe to call here: Chromium is not yet launched (Start holds c.mu and
+	// launches chromiumCmd below), so there is no concurrent writer.
+	cleanCrashState(userDataDir)
+
 	displayVar := fmt.Sprintf(":%d", display)
 	env := append(os.Environ(), "DISPLAY="+displayVar)
 
@@ -151,10 +157,15 @@ func (c *Controller) Start() (Status, error) {
 		"--disable-sync",
 		"--disable-component-update",
 		"--autoplay-policy=no-user-gesture-required",
+		"--noerrdialogs",
+		"--disable-session-crashed-bubble",
+		"--hide-crash-restore-bubble",
+		"--disable-infobars",
 		"--remote-debugging-address=127.0.0.1",
 		"--remote-debugging-port="+strconv.Itoa(debugPort),
 		"--user-data-dir="+userDataDir,
 		"--window-size=1280,720",
+		"about:blank",
 	)
 	chromiumCmd.Env = env
 
@@ -252,10 +263,42 @@ func (c *Controller) OpenURL(target string) error {
 	c.mu.Lock()
 	c.ready = true
 	c.mu.Unlock()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// If a tab already has this URL, just activate it — don't open a duplicate.
+	// This happens when the frontend BrowserBlock echoes the URL back after
+	// the sandbox already opened it via xdg-open.
+	if id := c.findTabByURL(client, target); id != "" {
+		debugGet(client, fmt.Sprintf("http://127.0.0.1:%d/json/activate/%s", c.debugPort, id))
+		log.Printf("[browser] tab already open for %s, activated", target)
+		return nil
+	}
+
+	// Try to navigate an existing blank tab instead of creating a new one.
+	// This avoids accumulating extra tabs on each OpenURL call.
+	blankTabID := c.findBlankTab(client)
+	if blankTabID != "" {
+		// Activate the blank tab and connect CDP directly to that target
+		debugGet(client, fmt.Sprintf("http://127.0.0.1:%d/json/activate/%s", c.debugPort, blankTabID))
+		cdp := NewCDPClient(c.debugPort)
+		if err := cdp.ConnectToTarget(blankTabID); err == nil {
+			navErr := cdp.Navigate(target)
+			cdp.Close()
+			if navErr == nil {
+				log.Printf("[browser] navigated existing blank tab to %s", target)
+				return nil
+			}
+			log.Printf("[browser] CDP navigate failed, falling back to /json/new: %v", navErr)
+		}
+	}
+
+	// Fallback: create a new tab via debug protocol.
+	// If we reach here after failing to navigate a blank tab, we'll clean it
+	// up after successfully creating the new tab.
 	openURL := fmt.Sprintf("http://127.0.0.1:%d/json/new?%s", c.debugPort, url.QueryEscape(target))
 	openAltURL := fmt.Sprintf("http://127.0.0.1:%d/json/new?url=%s", c.debugPort, url.QueryEscape(target))
 	var lastErr error
-	client := &http.Client{Timeout: 5 * time.Second}
 	for i := 0; i < 6; i++ {
 		for _, candidate := range []string{openURL, openAltURL} {
 			req, err := http.NewRequest(http.MethodPut, candidate, nil)
@@ -279,7 +322,13 @@ func (c *Controller) OpenURL(target string) error {
 				ID string `json:"id"`
 			}
 			if err := json.Unmarshal(body, &payload); err == nil && payload.ID != "" {
-				_, _ = client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/activate/%s", c.debugPort, payload.ID))
+				// Activate the new tab so it's in front
+				debugGet(client, fmt.Sprintf("http://127.0.0.1:%d/json/activate/%s", c.debugPort, payload.ID))
+			}
+
+			// Close the stale blank tab that we failed to navigate
+			if blankTabID != "" {
+				debugGet(client, fmt.Sprintf("http://127.0.0.1:%d/json/close/%s", c.debugPort, blankTabID))
 			}
 			return nil
 		}
@@ -289,6 +338,84 @@ func (c *Controller) OpenURL(target string) error {
 		return lastErr
 	}
 	return fmt.Errorf("open url failed")
+}
+
+// debugGet issues a GET request and drains+closes the body to avoid leaking
+// connections. Used for fire-and-forget debug protocol calls like /json/activate.
+func debugGet(client *http.Client, url string) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
+// findBlankTab returns the target ID of a blank/new-tab page, or empty string
+// if none found. Checks "page" type first, then falls back to "other" type
+// since some Chromium builds report about:blank targets as type "other".
+func (c *Controller) findBlankTab(client *http.Client) string {
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var targets []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return ""
+	}
+
+	// Prefer "page" type targets; fall back to "other" with a blank URL.
+	var fallbackID string
+	for _, t := range targets {
+		if !isBlankURL(t.URL) {
+			continue
+		}
+		if t.Type == "page" {
+			return t.ID
+		}
+		if fallbackID == "" && t.Type == "other" {
+			fallbackID = t.ID
+		}
+	}
+	return fallbackID
+}
+
+// findTabByURL returns the target ID of a tab whose URL matches target, or
+// empty string if none found. Used to deduplicate OpenURL calls.
+func (c *Controller) findTabByURL(client *http.Client, target string) string {
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var targets []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		URL  string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return ""
+	}
+
+	for _, t := range targets {
+		if t.URL == target {
+			return t.ID
+		}
+	}
+	return ""
+}
+
+func isBlankURL(u string) bool {
+	return u == "" || u == "about:blank" ||
+		strings.HasPrefix(u, "chrome://newtab") ||
+		strings.HasPrefix(u, "chrome://new-tab-page")
 }
 
 func trimForLog(value string) string {
@@ -345,4 +472,54 @@ func ensureBinary(name string) error {
 		return fmt.Errorf("missing %s binary", name)
 	}
 	return nil
+}
+
+// cleanCrashState resets Chromium's crash/restore state in the profile so it
+// won't show a "Restore pages?" bubble on next launch. Chromium stores this in
+// Default/Preferences as exit_type and exited_cleanly.
+func cleanCrashState(userDataDir string) {
+	prefsPath := filepath.Join(userDataDir, "Default", "Preferences")
+
+	info, statErr := os.Stat(prefsPath)
+	data, err := os.ReadFile(prefsPath)
+	if err != nil {
+		return // No preferences file yet — fresh profile
+	}
+
+	var prefs map[string]interface{}
+	if err := json.Unmarshal(data, &prefs); err != nil {
+		log.Printf("[browser] cleanCrashState: failed to parse %s: %v", prefsPath, err)
+		return
+	}
+
+	// Set profile.exit_type = "Normal" and profile.exited_cleanly = true
+	profile, ok := prefs["profile"].(map[string]interface{})
+	if !ok {
+		profile = make(map[string]interface{})
+		prefs["profile"] = profile
+	}
+	profile["exit_type"] = "Normal"
+	profile["exited_cleanly"] = true
+
+	updated, err := json.Marshal(prefs)
+	if err != nil {
+		log.Printf("[browser] cleanCrashState: failed to marshal prefs: %v", err)
+		return
+	}
+
+	// Preserve existing file permissions
+	perm := os.FileMode(0o644)
+	if statErr == nil {
+		perm = info.Mode().Perm()
+	}
+
+	// Atomic write: temp file + rename to avoid corruption on crash
+	tmpPath := prefsPath + ".tmp"
+	if err := os.WriteFile(tmpPath, updated, perm); err != nil {
+		log.Printf("[browser] cleanCrashState: failed to write %s: %v", tmpPath, err)
+		return
+	}
+	if err := os.Rename(tmpPath, prefsPath); err != nil {
+		log.Printf("[browser] cleanCrashState: failed to rename %s → %s: %v", tmpPath, prefsPath, err)
+	}
 }

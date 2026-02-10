@@ -38,8 +38,19 @@ func NewCDPClient(debugPort int) *CDPClient {
 	}
 }
 
-// Connect establishes a WebSocket connection to the browser's debug endpoint
+// Connect establishes a WebSocket connection to the browser's debug endpoint.
+// It attaches to the first page target returned by /json/list.
 func (c *CDPClient) Connect() error {
+	return c.connectToTarget("")
+}
+
+// ConnectToTarget establishes a WebSocket connection to a specific target ID.
+// If the target ID is not found among the page targets, it returns an error.
+func (c *CDPClient) ConnectToTarget(targetID string) error {
+	return c.connectToTarget(targetID)
+}
+
+func (c *CDPClient) connectToTarget(preferredTargetID string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -64,14 +75,29 @@ func (c *CDPClient) Connect() error {
 		return fmt.Errorf("failed to decode targets: %w", err)
 	}
 
-	// Find a page target
+	// Find the requested target by ID (any type), or fall back to the first
+	// page target. When a specific target is requested we match on ID alone
+	// because some Chromium builds report about:blank as type "other".
 	var wsURL string
+	var fallbackURL string
+	var fallbackID string
 	for _, t := range targets {
-		if t.Type == "page" {
+		if preferredTargetID != "" && t.ID == preferredTargetID {
 			wsURL = t.WebSocketDebuggerURL
 			c.targetID = t.ID
 			break
 		}
+		if t.Type == "page" && fallbackURL == "" {
+			fallbackURL = t.WebSocketDebuggerURL
+			fallbackID = t.ID
+		}
+	}
+	if wsURL == "" && preferredTargetID != "" {
+		return fmt.Errorf("target %s not found", preferredTargetID)
+	}
+	if wsURL == "" {
+		wsURL = fallbackURL
+		c.targetID = fallbackID
 	}
 	if wsURL == "" {
 		return fmt.Errorf("no page target found")
