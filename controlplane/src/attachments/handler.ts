@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: attachments-v2-fix-claude-mcp-path
+
 import type { Env } from "../types";
 import { isDesktopFeatureDisabledError } from "../storage/drive-cache";
 import { sandboxFetch, sandboxUrl } from "../sandbox/fetch";
@@ -181,9 +183,10 @@ function buildMcpServerConfigs(tools: McpToolSpec[]): Record<string, McpServerCo
     // Skip tools without a name
     if (!tool.name) continue;
 
-    // Handle built-in OrcaBot MCP tool
+    // Skip built-in OrcaBot MCP tool — the sandbox generates this entry at PTY
+    // creation time with the correct env vars (ORCABOT_MCP_URL, etc.) that
+    // mcp-bridge needs. Writing it here with empty env would overwrite those values.
     if (tool.serverUrl === "builtin://mcp-bridge") {
-      servers.orcabot = { command: "mcp-bridge", env: {} };
       continue;
     }
 
@@ -302,7 +305,7 @@ function generateDroidSettingsJson(servers: Record<string, McpServerConfig>): st
 type MpcSettingsFileSpec = { path: string; content: string; contentType: string };
 
 const MCP_SETTINGS_BY_TERMINAL: Record<string, (servers: Record<string, McpServerConfig>) => MpcSettingsFileSpec> = {
-  claude: (servers) => ({ path: "/.claude/settings.json", content: generateClaudeSettingsJson(servers), contentType: "application/json" }),
+  claude: (servers) => ({ path: "/.mcp.json", content: generateClaudeSettingsJson(servers), contentType: "application/json" }),
   opencode: (servers) => ({ path: "/.config/opencode/opencode.json", content: generateOpenCodeSettingsJson(servers), contentType: "application/json" }),
   gemini: (servers) => ({ path: "/.gemini/settings.json", content: generateGeminiSettingsJson(servers), contentType: "application/json" }),
   codex: (servers) => ({ path: "/.codex/config.toml", content: generateCodexConfigToml(servers), contentType: "application/toml" }),

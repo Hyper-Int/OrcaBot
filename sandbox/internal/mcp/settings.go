@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: settings-v2-robust-agent-detect
+// REVISION: settings-v6-mcp-secret
 
 // Package mcp provides MCP (Model Context Protocol) settings generation
 // for agentic coders running in the sandbox.
@@ -10,10 +10,18 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const settingsRevision = "settings-v6-mcp-secret"
+
+func init() {
+	log.Printf("[mcp/settings] REVISION: %s loaded at %s", settingsRevision, time.Now().Format(time.RFC3339))
+}
 
 // MCPTool represents a user-configured MCP tool
 type MCPTool struct {
@@ -106,12 +114,14 @@ func containsWord(cmd, word string) bool {
 
 // GenerateSettingsForAgent creates settings file for a specific agent only.
 // If agentType is AgentTypeUnknown, no settings are generated.
-func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userTools []MCPTool) error {
+// mcpEnv contains env var values to embed in the MCP server config's env field,
+// ensuring mcp-bridge gets them even when the host agent strips parent env vars (Codex).
+func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userTools []MCPTool, mcpEnv map[string]string) error {
 	if agentType == AgentTypeUnknown {
 		return nil // No agent detected, skip settings generation
 	}
 
-	servers := buildServerConfigs(userTools)
+	servers := buildServerConfigs(userTools, mcpEnv)
 
 	switch agentType {
 	case AgentTypeClaude:
@@ -133,9 +143,9 @@ func GenerateSettingsForAgent(workspaceRoot string, agentType AgentType, userToo
 
 // GenerateSettings creates settings files for all supported agentic coders.
 // Deprecated: Use GenerateSettingsForAgent with DetectAgentType for targeted generation.
-func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPTool) error {
+func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPTool, mcpEnv map[string]string) error {
 	// Build the server configs once, reuse for all formats
-	servers := buildServerConfigs(userTools)
+	servers := buildServerConfigs(userTools, mcpEnv)
 
 	// Generate settings for each agent
 	var errs []error
@@ -170,16 +180,31 @@ func GenerateSettings(workspaceRoot string, sessionID string, userTools []MCPToo
 	return nil
 }
 
-// buildServerConfigs converts user tools into MCPServerConfig map
-func buildServerConfigs(userTools []MCPTool) map[string]MCPServerConfig {
+// buildServerConfigs converts user tools into MCPServerConfig map.
+// mcpEnv contains env var values to embed directly in the orcabot MCP server config,
+// so mcp-bridge gets them even when the host agent strips parent env vars (e.g., Codex).
+func buildServerConfigs(userTools []MCPTool, mcpEnv map[string]string) map[string]MCPServerConfig {
 	servers := make(map[string]MCPServerConfig)
 
 	// Add built-in orcabot MCP server (uses mcp-bridge for stdio transport)
-	// Environment variables ORCABOT_SESSION_ID and ORCABOT_MCP_URL are already set in PTY
+	// Embed actual env var values so mcp-bridge works even when the host agent
+	// strips parent env vars (Codex does this). For agents that inherit env vars
+	// (Claude Code, Gemini), these are redundant but harmless.
+	//
+	// SECURITY: ORCABOT_INTEGRATION_TOKEN is deliberately NOT included here.
+	// Following the broker pattern, the token stays in sandbox server memory only.
+	// The MCP server (localhost:8081) looks up the token by pty_id internally.
+	// ORCABOT_MCP_SECRET is a per-PTY nonce for proof-of-possession (not the integration token).
+	bridgeEnv := make(map[string]string)
+	for _, key := range []string{"ORCABOT_SESSION_ID", "ORCABOT_MCP_URL", "MCP_LOCAL_PORT", "ORCABOT_PTY_ID", "ORCABOT_MCP_SECRET"} {
+		if v, ok := mcpEnv[key]; ok && v != "" {
+			bridgeEnv[key] = v
+		}
+	}
 	servers["orcabot"] = MCPServerConfig{
 		Command: "mcp-bridge",
-		Env:     map[string]string{},
-		EnvVars: []string{"ORCABOT_SESSION_ID", "ORCABOT_MCP_URL", "MCP_LOCAL_PORT", "ORCABOT_PTY_ID"},
+		Env:     bridgeEnv,
+		EnvVars: []string{"ORCABOT_SESSION_ID", "ORCABOT_MCP_URL", "MCP_LOCAL_PORT", "ORCABOT_PTY_ID", "ORCABOT_MCP_SECRET"},
 	}
 
 	// Add user-configured MCP tools
@@ -224,19 +249,15 @@ func buildServerConfigs(userTools []MCPTool) map[string]MCPServerConfig {
 	return servers
 }
 
-// generateClaudeSettings merges MCP servers into ~/.claude/settings.json
-// This file also contains hooks, so we must merge rather than overwrite.
+// generateClaudeSettings writes MCP servers to {workspaceRoot}/.mcp.json (project scope).
+// Claude Code reads MCP servers from ~/.claude.json (user scope) or .mcp.json (project scope),
+// NOT from ~/.claude/settings.json (which is only for permissions, hooks, and preferences).
 func generateClaudeSettings(workspaceRoot string, servers map[string]MCPServerConfig) error {
-	claudeDir := filepath.Join(workspaceRoot, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return err
-	}
+	mcpJsonPath := filepath.Join(workspaceRoot, ".mcp.json")
 
-	settingsPath := filepath.Join(claudeDir, "settings.json")
-
-	// Read existing settings or create new
+	// Read existing .mcp.json or create new
 	var settings map[string]interface{}
-	data, err := os.ReadFile(settingsPath)
+	data, err := os.ReadFile(mcpJsonPath)
 	if err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			settings = make(map[string]interface{})
@@ -284,7 +305,7 @@ func generateClaudeSettings(workspaceRoot string, servers map[string]MCPServerCo
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath, data, 0644)
+	return os.WriteFile(mcpJsonPath, data, 0644)
 }
 
 // OpenCodeConfig represents OpenCode's opencode.json structure
@@ -352,6 +373,9 @@ func generateGeminiSettings(workspaceRoot string, servers map[string]MCPServerCo
 		}
 		if len(server.Args) > 0 {
 			entry["args"] = server.Args
+		}
+		if len(server.Env) > 0 {
+			entry["env"] = server.Env
 		}
 		if server.URL != "" {
 			entry["url"] = server.URL

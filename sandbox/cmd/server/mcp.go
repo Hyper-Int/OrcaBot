@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-integration-v21-full-task-schema
+// REVISION: mcp-integration-v23-mcp-secret
 
 package main
 
@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-integration-v21-full-task-schema loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-integration-v23-mcp-secret loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // browserToolToAction maps browser MCP tool names to gateway action names
@@ -47,10 +47,13 @@ var browserToolToAction = map[string]string{
 // This allows agents in terminals to access MCP UI tools without
 // needing to know about authentication tokens.
 
-// validateIntegrationToken validates the caller's integration token against the stored token.
-// The caller must provide X-Integration-Token header matching the token stored for their pty_id.
-// This prevents cross-PTY impersonation within the same sandbox.
-func validateIntegrationToken(w http.ResponseWriter, r *http.Request, session interface{ GetIntegrationToken(string) string }) (ptyID, token string, ok bool) {
+// validateIntegrationAuth validates the per-PTY MCP secret and looks up the stored
+// integration token. The bridge sends X-MCP-Secret (a per-PTY random nonce) as
+// proof-of-possession; the integration token itself never leaves server memory.
+func validateIntegrationAuth(w http.ResponseWriter, r *http.Request, session interface {
+	GetIntegrationToken(string) string
+	GetMCPSecret(string) string
+}) (ptyID, token string, ok bool) {
 	ptyID = r.URL.Query().Get("pty_id")
 	if ptyID == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -62,13 +65,15 @@ func validateIntegrationToken(w http.ResponseWriter, r *http.Request, session in
 		return "", "", false
 	}
 
-	callerToken := r.Header.Get("X-Integration-Token")
-	if callerToken == "" {
+	// Validate MCP secret (proof-of-possession: prevents cross-PTY impersonation)
+	mcpSecret := r.Header.Get("X-MCP-Secret")
+	storedSecret := session.GetMCPSecret(ptyID)
+	if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   true,
-			"message": "E79839: X-Integration-Token header required",
+			"message": "E79839: Invalid MCP authentication",
 		})
 		return "", "", false
 	}
@@ -80,17 +85,6 @@ func validateIntegrationToken(w http.ResponseWriter, r *http.Request, session in
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   true,
 			"message": "E79831: No integration token available for this terminal",
-		})
-		return "", "", false
-	}
-
-	// Constant-time comparison to prevent timing attacks
-	if subtle.ConstantTimeCompare([]byte(callerToken), []byte(storedToken)) != 1 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   true,
-			"message": "E79840: Integration token mismatch",
 		})
 		return "", "", false
 	}
@@ -113,31 +107,18 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 	// MCP clients (Gemini) validate that "tools" is an array.
 	allTools := make([]interface{}, 0)
 
-	// Validate caller's integration token to prevent cross-PTY impersonation.
-	// For tool listing, missing token just means no integration tools (soft fail).
-	// Mismatched token is still an error (suspicious).
+	// Look up integration token by pty_id from server memory (broker pattern).
+	// The bridge only sends pty_id — the token never leaves this process.
+	// Validate MCP secret to prevent cross-PTY impersonation.
 	ptyID := r.URL.Query().Get("pty_id")
 	if ptyID != "" {
-		callerToken := r.Header.Get("X-Integration-Token")
+		mcpSecret := r.Header.Get("X-MCP-Secret")
+		storedSecret := session.GetMCPSecret(ptyID)
+		secretValid := storedSecret != "" && subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) == 1
+
 		storedToken := session.GetIntegrationToken(ptyID)
 
-		// Only proceed if both tokens exist and match
-		tokenValid := callerToken != "" && storedToken != "" &&
-			subtle.ConstantTimeCompare([]byte(callerToken), []byte(storedToken)) == 1
-
-		if callerToken != "" && storedToken != "" && !tokenValid {
-			// Token mismatch - suspicious, deny
-			log.Printf("[mcp-tools] ListTools: ERROR token mismatch for pty_id=%s", ptyID)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   true,
-				"message": "E79840: Integration token mismatch",
-			})
-			return
-		}
-
-		if tokenValid {
+		if storedToken != "" && secretValid {
 			gatewayClient := mcp.NewGatewayClient()
 			integrations, err := gatewayClient.ListIntegrations(ptyID, storedToken)
 			if err != nil {
@@ -247,7 +228,7 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a browser tool - enforce policy via gateway, then execute locally
 	if isBrowserTool(incomingReq.Name) {
 		// Validate caller's integration token (prevents cross-PTY impersonation)
-		_, integrationToken, tokenOk := validateIntegrationToken(w, r, session)
+		_, integrationToken, tokenOk := validateIntegrationAuth(w, r, session)
 		if !tokenOk {
 			return
 		}
@@ -481,7 +462,7 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Validate caller's integration token (prevents cross-PTY impersonation)
-	_, integrationToken, ok := validateIntegrationToken(w, r, session)
+	_, integrationToken, ok := validateIntegrationAuth(w, r, session)
 	if !ok {
 		return
 	}
@@ -579,33 +560,25 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Agent state tools are always available but session-scoped operations require
-	// X-Integration-Token proof-of-possession to prevent escalation attacks.
+	// Agent state tools are always available. Session-scoped operations use the
+	// stored PTY token (broker pattern — token stays in server memory).
+	// Validate MCP secret to prevent cross-PTY impersonation.
 	var authToken string
 	var authType mcp.AuthType = mcp.AuthTypeDashboardToken // Default to dashboard token
 	ptyID := r.URL.Query().Get("pty_id")
 	if ptyID != "" {
-		callerToken := r.Header.Get("X-Integration-Token")
-		storedToken := session.GetIntegrationToken(ptyID)
-		if callerToken != "" && storedToken != "" {
-			// Caller provided a token - validate it matches the stored PTY token
-			if subtle.ConstantTimeCompare([]byte(callerToken), []byte(storedToken)) == 1 {
-				// Token matches - enable session-scoped operations
+		mcpSecret := r.Header.Get("X-MCP-Secret")
+		storedSecret := session.GetMCPSecret(ptyID)
+		secretValid := storedSecret != "" && subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) == 1
+
+		if secretValid {
+			storedToken := session.GetIntegrationToken(ptyID)
+			if storedToken != "" {
 				authToken = storedToken
 				authType = mcp.AuthTypePtyToken
-			} else {
-				// Token mismatch - reject request
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":   true,
-					"message": "E79840: Integration token mismatch",
-				})
-				return
 			}
 		}
-		// If no X-Integration-Token provided, fall through to dashboard token
-		// (session-scoped operations will be disabled)
+		// If secret invalid or no stored token, fall through to dashboard token
 	}
 
 	// Fall back to session MCP token (dashboard-scoped)

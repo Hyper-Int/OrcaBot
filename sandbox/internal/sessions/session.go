@@ -101,6 +101,11 @@ type Session struct {
 	integrationTokens   map[string]string // ptyID -> JWT token
 	integrationTokensMu sync.RWMutex
 
+	// Per-PTY MCP auth nonces: proof-of-possession for localhost MCP requests
+	// REVISION: mcp-secret-v1-nonce
+	mcpSecrets   map[string]string // ptyID -> random nonce
+	mcpSecretsMu sync.RWMutex
+
 	// Execution IDs for schedule/recipe tracking (per-PTY)
 	// REVISION: server-side-cron-v1-execution-tracking
 	executionIDs   map[string]string // ptyID -> schedule_execution ID
@@ -134,6 +139,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		brokerPort:        brokerPort,
 		secrets:           make(map[string]string),
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
+		mcpSecrets:        make(map[string]string), // REVISION: mcp-secret-v1-nonce
 		executionIDs:      make(map[string]string), // REVISION: server-side-cron-v1-execution-tracking
 		knownProviders:    make(map[string]map[string]bool),
 		stateCache:        statecache.NewCache(workspaceRoot),
@@ -480,6 +486,16 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
 	}
 
+	// Generate per-PTY MCP auth nonce (proof-of-possession for localhost MCP requests)
+	// REVISION: mcp-secret-v1-nonce
+	mcpSecret, err := id.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate MCP secret: %w", err)
+	}
+	s.mcpSecretsMu.Lock()
+	s.mcpSecrets[ptyID] = mcpSecret
+	s.mcpSecretsMu.Unlock()
+
 	// Detect agent type BEFORE modifying command with cd prefix
 	// This ensures hooks are still generated correctly
 	agentType := mcp.DetectAgentType(command)
@@ -521,6 +537,7 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	// "copy this URL" mode. The value doesn't need a real X server — our xdg-open
 	// wrapper intercepts the call and routes it to the browser block.
 	envVars["DISPLAY"] = ":0"
+	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
 
 	// Write MCP URL to a well-known file so mcp-bridge can discover it
 	// even when agents (like Codex) don't forward env vars to subprocesses
@@ -535,7 +552,14 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	// Previously we only generated settings for the specific agent command,
 	// which broke MCP for agents launched manually.
 	userTools := s.fetchUserMCPTools()
-	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools); err != nil {
+	mcpEnv := map[string]string{
+		"ORCABOT_SESSION_ID":  s.ID,
+		"ORCABOT_MCP_URL":     envVars["ORCABOT_MCP_URL"],
+		"MCP_LOCAL_PORT":      mcpPort,
+		"ORCABOT_PTY_ID":      ptyID,
+		"ORCABOT_MCP_SECRET":  mcpSecret,
+	}
+	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools, mcpEnv); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings: %v\n", err)
 	}
 
@@ -570,6 +594,10 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		s.mu.Lock()
 		delete(s.ptys, ptyID)
 		s.mu.Unlock()
+		// Clean up MCP secret
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
 	})
 
 	go hub.Run()
@@ -629,6 +657,16 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		}
 	}
 
+	// Generate per-PTY MCP auth nonce (proof-of-possession for localhost MCP requests)
+	// REVISION: mcp-secret-v1-nonce
+	mcpSecret, err := id.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate MCP secret: %w", err)
+	}
+	s.mcpSecretsMu.Lock()
+	s.mcpSecrets[ptyID] = mcpSecret
+	s.mcpSecretsMu.Unlock()
+
 	// Detect agent type BEFORE modifying command with cd prefix
 	// This ensures MCP settings and hooks are still generated correctly
 	agentType := mcp.DetectAgentType(command)
@@ -674,17 +712,33 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
 	// Set DISPLAY so CLIs that check for a graphical environment attempt xdg-open
 	envVars["DISPLAY"] = ":0"
+	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
 
 	// Inject integration token for policy gateway authentication
 	if integrationToken != "" {
 		envVars["ORCABOT_INTEGRATION_TOKEN"] = integrationToken
 	}
 
+	// Write MCP URL to a well-known file so mcp-bridge can discover it
+	// even when agents (like Codex) don't forward env vars to subprocesses
+	orcabotDir := filepath.Join(s.workspace.Root(), ".orcabot")
+	if err := os.MkdirAll(orcabotDir, 0755); err == nil {
+		mcpURLFile := filepath.Join(orcabotDir, "mcp-url")
+		os.WriteFile(mcpURLFile, []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+	}
+
 	// Generate MCP settings file only for the specific agent being launched
 	// Use pre-computed agentType (detected before cd prefix was added to command)
 	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
-		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools); err != nil {
+		mcpEnv := map[string]string{
+			"ORCABOT_SESSION_ID":  s.ID,
+			"ORCABOT_MCP_URL":     envVars["ORCABOT_MCP_URL"],
+			"MCP_LOCAL_PORT":      mcpPort,
+			"ORCABOT_PTY_ID":      ptyID,
+			"ORCABOT_MCP_SECRET":  mcpSecret,
+		}
+		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
 		}
 
@@ -714,10 +768,13 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		s.mu.Lock()
 		delete(s.ptys, ptyID)
 		s.mu.Unlock()
-		// Also clean up integration token
+		// Also clean up integration token and MCP secret
 		s.integrationTokensMu.Lock()
 		delete(s.integrationTokens, ptyID)
 		s.integrationTokensMu.Unlock()
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
 	})
 
 	go hub.Run()
@@ -740,6 +797,14 @@ func (s *Session) GetIntegrationToken(ptyID string) string {
 	s.integrationTokensMu.RLock()
 	defer s.integrationTokensMu.RUnlock()
 	return s.integrationTokens[ptyID]
+}
+
+// GetMCPSecret returns the MCP auth nonce for a PTY.
+// REVISION: mcp-secret-v1-nonce
+func (s *Session) GetMCPSecret(ptyID string) string {
+	s.mcpSecretsMu.RLock()
+	defer s.mcpSecretsMu.RUnlock()
+	return s.mcpSecrets[ptyID]
 }
 
 // GetStateCache returns the state cache for tasks/memory.
