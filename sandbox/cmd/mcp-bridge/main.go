@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-bridge-v7-mcp-secret
+// REVISION: mcp-bridge-v13-args-auth
 // mcp-bridge is a stdio-to-HTTP bridge for MCP.
 // It allows Claude Code (and other MCP clients that use stdio transport)
 // to communicate with the sandbox's HTTP-based MCP server.
@@ -40,7 +40,7 @@ import (
 	"time"
 )
 
-const bridgeRevision = "mcp-bridge-v7-mcp-secret"
+const bridgeRevision = "mcp-bridge-v13-args-auth"
 
 func init() {
 	log.Printf("[mcp-bridge] REVISION: %s loaded at %s", bridgeRevision, time.Now().Format(time.RFC3339))
@@ -82,31 +82,54 @@ var (
 )
 
 func main() {
-	cfg := bridgeConfig{
-		ptyID:     os.Getenv("ORCABOT_PTY_ID"),
-		mcpSecret: os.Getenv("ORCABOT_MCP_SECRET"),
-	}
+	cfg := bridgeConfig{}
 
-	// Diagnostic: log env var presence (not values)
-	log.Printf("[mcp-bridge] env ORCABOT_PTY_ID set: %v (len=%d)", cfg.ptyID != "", len(cfg.ptyID))
-	log.Printf("[mcp-bridge] env ORCABOT_MCP_SECRET set: %v", cfg.mcpSecret != "")
-
-	cfg.mcpURL = os.Getenv("ORCABOT_MCP_URL")
-	if cfg.mcpURL == "" {
-		// Construct from session ID
-		sessionID := os.Getenv("ORCABOT_SESSION_ID")
-		mcpPort := os.Getenv("MCP_LOCAL_PORT")
-		if mcpPort == "" {
-			mcpPort = "8081"
-		}
-		if sessionID != "" {
-			cfg.mcpURL = fmt.Sprintf("http://localhost:%s/sessions/%s/mcp", mcpPort, sessionID)
+	// Priority 1: Command-line args (most reliable — always passed correctly by MCP clients)
+	// Format: --mcp-url=..., --pty-id=..., --mcp-secret=...
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--mcp-url=") {
+			cfg.mcpURL = strings.TrimPrefix(arg, "--mcp-url=")
+		} else if strings.HasPrefix(arg, "--pty-id=") {
+			cfg.ptyID = strings.TrimPrefix(arg, "--pty-id=")
+		} else if strings.HasPrefix(arg, "--mcp-secret=") {
+			cfg.mcpSecret = strings.TrimPrefix(arg, "--mcp-secret=")
 		}
 	}
+	if cfg.ptyID != "" {
+		log.Printf("[mcp-bridge] config from args: ptyID set, mcpSecret set: %v, mcpURL set: %v", cfg.mcpSecret != "", cfg.mcpURL != "")
+	}
 
-	// Fallback: read from config file (for agents like Codex that strip env vars)
+	// Priority 2: Environment variables
+	if cfg.ptyID == "" {
+		cfg.ptyID = os.Getenv("ORCABOT_PTY_ID")
+	}
+	if cfg.mcpSecret == "" {
+		cfg.mcpSecret = os.Getenv("ORCABOT_MCP_SECRET")
+	}
 	if cfg.mcpURL == "" {
-		cfg.mcpURL = readMCPURLFromFile()
+		cfg.mcpURL = os.Getenv("ORCABOT_MCP_URL")
+		if cfg.mcpURL == "" {
+			// Construct from session ID
+			sessionID := os.Getenv("ORCABOT_SESSION_ID")
+			mcpPort := os.Getenv("MCP_LOCAL_PORT")
+			if mcpPort == "" {
+				mcpPort = "8081"
+			}
+			if sessionID != "" {
+				cfg.mcpURL = fmt.Sprintf("http://localhost:%s/sessions/%s/mcp", mcpPort, sessionID)
+			}
+		}
+	}
+
+	// Priority 3: Config files (for agents like Codex that strip env vars)
+	if cfg.ptyID == "" {
+		cfg.ptyID = readPtyIDFallback()
+	}
+	if cfg.mcpURL == "" {
+		cfg.mcpURL = readMCPURLFromFile(cfg.ptyID)
+	}
+	if cfg.mcpSecret == "" {
+		cfg.mcpSecret = readConfigFromFile("mcp-secret", cfg.ptyID)
 	}
 
 	if cfg.mcpURL == "" {
@@ -114,9 +137,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Log final config for diagnostics (ptyID prefix only, never log secrets)
+	ptyPrefix := cfg.ptyID
+	if len(ptyPrefix) > 8 {
+		ptyPrefix = ptyPrefix[:8]
+	}
+	log.Printf("[mcp-bridge] final config: mcpURL=%s ptyID=%s... secretSet=%v", cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "")
 	fmt.Fprintf(os.Stderr, "mcp-bridge: using MCP URL: %s\n", cfg.mcpURL)
-	
-	// Start background tool list monitor (checks for new/removed tools every 5s)
+
+	// Start background tool list monitor (checks for new/removed tools every 10s)
 	go monitorToolChanges(&cfg)
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -282,7 +311,18 @@ func handleToolsList(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 	}
 
 	if resp.StatusCode != 200 {
+		log.Printf("[mcp-bridge] handleToolsList: ERROR status=%d body=%s", resp.StatusCode, string(body))
 		return errorResponse(req.ID, -32000, "Tools endpoint error: "+string(body))
+	}
+
+	// Count tools for diagnostic logging
+	var toolsResp struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &toolsResp); err == nil {
+		log.Printf("[mcp-bridge] handleToolsList: returning %d tools (url=%s)", len(toolsResp.Tools), toolsURL)
+	} else {
+		log.Printf("[mcp-bridge] handleToolsList: response parse failed (len=%d): %v", len(body), err)
 	}
 
 	// Server returns {"tools": [...]} - return as-is
@@ -343,17 +383,22 @@ func handleToolsCall(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 
 // monitorToolChanges polls the tools endpoint and sends notifications/tools/list_changed
 // when the tool set changes (e.g., when an integration is attached or detached).
-// This allows Claude Code to discover new tools without restarting.
 //
-// REVISION: mcp-bridge-v6-remove-token
-// FIX: Establish baseline BEFORE the initialization delay so that tool changes
-// occurring between Claude Code's first tools/list call and the first monitor poll
-// are correctly detected. Previously, lastToolKey was empty ("") and the first poll
-// silently set the baseline without sending a notification — so integrations attached
-// shortly after startup were never discovered.
+// REVISION: mcp-bridge-v12-reduced-notify
+// Strategy: When tools change, send the list_changed notification up to 3 times
+// (every 5s poll = 15s window). This handles the case where the agent is busy when
+// the first notification arrives. Keeping the retry short avoids notification spam
+// that clutters the agent's UI (e.g., Gemini shows "Tools updated" for each one).
+//
+// NOTE: We intentionally do NOT exit the process on tool change. Each terminal
+// has its own PTY ID and MCP secret, but settings files and config files are
+// shared across all terminals in the workspace. If the bridge exits and the
+// client restarts it, the settings file may contain a DIFFERENT terminal's
+// credentials (from the last PTY created), causing auth failures or wrong
+// integration tools. The notification approach is safe for all clients.
 func monitorToolChanges(cfg *bridgeConfig) {
 	// Establish baseline: fetch current tools BEFORE the delay so we capture
-	// what Claude Code approximately received from its initial tools/list call.
+	// what the client approximately received from its initial tools/list call.
 	// If this fails (server not ready yet), baseline stays empty and we'll
 	// send a (harmless) notification on the first successful poll.
 	var lastToolKey string
@@ -367,6 +412,11 @@ func monitorToolChanges(cfg *bridgeConfig) {
 	// Wait for initialization to complete (integrations may be attached during this window)
 	time.Sleep(10 * time.Second)
 
+	// notifyUntil: keep re-sending list_changed until this deadline.
+	// Agents may be busy when the first notification arrives; retrying
+	// ensures they process it when they become idle.
+	var notifyUntil time.Time
+
 	for {
 		names, err := fetchToolNames(cfg)
 		if err != nil {
@@ -376,22 +426,29 @@ func monitorToolChanges(cfg *bridgeConfig) {
 		}
 
 		toolKey := strings.Join(names, ",")
+
 		if toolKey != lastToolKey {
 			oldCount := 0
 			if lastToolKey != "" {
 				oldCount = strings.Count(lastToolKey, ",") + 1
 			}
 			log.Printf("[mcp-bridge] tool list changed: %d -> %d tools", oldCount, len(names))
-			// Send MCP notification (no id field = notification, not request)
+			lastToolKey = toolKey
+			// Start/extend the notification window (15s = ~2 retries at 10s intervals)
+			notifyUntil = time.Now().Add(15 * time.Second)
+		}
+
+		// Send notification if we're within the retry window
+		if time.Now().Before(notifyUntil) {
+			log.Printf("[mcp-bridge] sending list_changed notification (retry window active)")
 			notification := &jsonRPCResponse{
 				JSONRPC: "2.0",
 				Method:  "notifications/tools/list_changed",
 			}
 			safeWriteResponse(notification)
 		}
-		lastToolKey = toolKey
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 }
 
@@ -406,26 +463,56 @@ func errorResponse(id interface{}, code int, message string) *jsonRPCResponse {
 	}
 }
 
-// readMCPURLFromFile reads MCP URL from a well-known config file.
+// readConfigFromFile reads a config value from a per-PTY file under .orcabot/pty/.
 // This is a fallback for agents (like Codex) that don't forward env vars to MCP subprocesses.
-// Checks $HOME/.orcabot/mcp-url first, then /workspace/.orcabot/mcp-url as fallback.
-func readMCPURLFromFile() string {
+// Checks $HOME/.orcabot/pty/{ptyID}/{name} first, then /workspace/.orcabot/pty/{ptyID}/{name}.
+func readConfigFromFile(name, ptyID string) string {
+	if ptyID == "" {
+		return ""
+	}
 	paths := []string{}
 	if home := os.Getenv("HOME"); home != "" {
-		paths = append(paths, filepath.Join(home, ".orcabot", "mcp-url"))
+		paths = append(paths, filepath.Join(home, ".orcabot", "pty", ptyID, name))
 	}
-	// Also check common workspace paths
-	paths = append(paths, "/workspace/.orcabot/mcp-url")
+	paths = append(paths, filepath.Join("/workspace/.orcabot", "pty", ptyID, name))
 
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err == nil {
-			url := strings.TrimSpace(string(data))
-			if url != "" {
-				fmt.Fprintf(os.Stderr, "mcp-bridge: read MCP URL from %s\n", p)
-				return url
+			val := strings.TrimSpace(string(data))
+			if val != "" {
+				log.Printf("[mcp-bridge] read %s from %s", name, p)
+				return val
 			}
 		}
 	}
 	return ""
+}
+
+// readPtyIDFallback reads a best-effort PTY ID pointer for agents that don't pass PTY ID.
+// Checks $HOME/.orcabot/pty-id first, then /workspace/.orcabot/pty-id.
+func readPtyIDFallback() string {
+	paths := []string{}
+	if home := os.Getenv("HOME"); home != "" {
+		paths = append(paths, filepath.Join(home, ".orcabot", "pty-id"))
+	}
+	paths = append(paths, filepath.Join("/workspace/.orcabot", "pty-id"))
+
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err == nil {
+			val := strings.TrimSpace(string(data))
+			if val != "" {
+				log.Printf("[mcp-bridge] read pty-id from %s", p)
+				return val
+			}
+		}
+	}
+	return ""
+}
+
+// readMCPURLFromFile reads MCP URL from a per-PTY config file.
+// Kept for backwards compatibility; delegates to readConfigFromFile.
+func readMCPURLFromFile(ptyID string) string {
+	return readConfigFromFile("mcp-url", ptyID)
 }

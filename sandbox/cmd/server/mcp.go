@@ -1,19 +1,22 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-integration-v23-mcp-secret
+// REVISION: mcp-integration-v27-gemini-secret-fallback
 
 package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
@@ -21,8 +24,24 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-integration-v23-mcp-secret loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-integration-v27-gemini-secret-fallback loaded at %s", time.Now().Format(time.RFC3339))
 }
+
+// batchIntegrationCache holds a dashboard-level cache of all terminal integrations.
+// A single batch call replaces N per-PTY calls, preventing rate-limit storms (E79601).
+type batchIntegrationCache struct {
+	terminals map[string][]mcp.Integration // terminalID -> integrations
+	fetchedAt time.Time
+}
+
+var (
+	dashboardIntegrationCache   = make(map[string]*batchIntegrationCache) // dashboardID -> cache
+	dashboardIntegrationCacheMu sync.Mutex
+	dashboardIntegrationCacheTTL = 15 * time.Second
+	dashboardIntegrationCacheCleanupInterval = 1 * time.Minute
+	dashboardIntegrationCacheStaleAfter = 5 * dashboardIntegrationCacheTTL
+	dashboardIntegrationCacheLastCleanup time.Time
+)
 
 // browserToolToAction maps browser MCP tool names to gateway action names
 // used by enforcePolicy() in the control plane
@@ -41,6 +60,100 @@ var browserToolToAction = map[string]string{
 	"browser_wait":        "browser.navigate",    // Wait is read-only, gate on navigate
 	"browser_evaluate":    "browser.executeJs",
 	"browser_scroll":      "browser.scroll",
+}
+
+// getCachedIntegrations returns cached integrations for a PTY within a dashboard.
+// Uses a dashboard-level batch cache: one API call fetches integrations for ALL
+// terminals in the dashboard, eliminating N per-PTY calls and preventing rate-limit
+// storms (E79601). Falls back to per-PTY fetch if batch fails.
+func getCachedIntegrations(dashboardID, ptyID, storedToken string) *mcp.IntegrationsResponse {
+	// Try batch cache first (one call for all PTYs)
+	if dashboardID != "" {
+		integrations := getCachedBatchIntegrations(dashboardID, ptyID)
+		if integrations != nil {
+			return integrations
+		}
+	}
+
+	// Fallback: per-PTY fetch (used when dashboardID is empty or batch fails)
+	gatewayClient := mcp.NewGatewayClient()
+	integrations, err := gatewayClient.ListIntegrations(ptyID, storedToken)
+	if err != nil {
+		pfx := ptyID
+		if len(pfx) > 8 {
+			pfx = pfx[:8]
+		}
+		log.Printf("[mcp-tools] ListIntegrations per-PTY fallback error for ptyID=%s: %v", pfx, err)
+		return nil
+	}
+	return integrations
+}
+
+// getCachedBatchIntegrations checks the dashboard-level batch cache and returns
+// integrations for a specific PTY. If cache is stale, fetches all terminal
+// integrations for the dashboard in a single API call.
+func getCachedBatchIntegrations(dashboardID, ptyID string) *mcp.IntegrationsResponse {
+	now := time.Now()
+	dashboardIntegrationCacheMu.Lock()
+	cleanupDashboardIntegrationCacheLocked(now)
+	entry, exists := dashboardIntegrationCache[dashboardID]
+	if exists && now.Sub(entry.fetchedAt) < dashboardIntegrationCacheTTL {
+		// Cache hit — return integrations for this specific PTY
+		integrations := entry.terminals[ptyID]
+		dashboardIntegrationCacheMu.Unlock()
+		return &mcp.IntegrationsResponse{Integrations: integrations}
+	}
+	dashboardIntegrationCacheMu.Unlock()
+
+	// Cache miss or stale — fetch batch from control plane
+	gatewayClient := mcp.NewGatewayClient()
+	batchResp, err := gatewayClient.BatchListIntegrations(dashboardID)
+	if err != nil {
+		log.Printf("[mcp-tools] BatchListIntegrations error for dashboard=%s: %v", dashboardID, err)
+		// Return stale cache if available
+		if exists {
+			dashboardIntegrationCacheMu.Lock()
+			integrations := entry.terminals[ptyID]
+			dashboardIntegrationCacheMu.Unlock()
+			return &mcp.IntegrationsResponse{Integrations: integrations}
+		}
+		return nil
+	}
+
+	// Update dashboard-level cache
+	dashboardIntegrationCacheMu.Lock()
+	dashboardIntegrationCache[dashboardID] = &batchIntegrationCache{
+		terminals: batchResp.Terminals,
+		fetchedAt: now,
+	}
+	dashboardIntegrationCacheMu.Unlock()
+
+	// Return integrations for the requested PTY
+	integrations := batchResp.Terminals[ptyID]
+	return &mcp.IntegrationsResponse{Integrations: integrations}
+}
+
+// InvalidateDashboardIntegrationCache clears the batch cache for a dashboard,
+// forcing the next ListTools call to re-fetch from the control plane.
+// Called when integration changes are detected (e.g., edge drawn/removed on canvas).
+func InvalidateDashboardIntegrationCache(dashboardID string) {
+	dashboardIntegrationCacheMu.Lock()
+	delete(dashboardIntegrationCache, dashboardID)
+	dashboardIntegrationCacheMu.Unlock()
+	log.Printf("[mcp-tools] Invalidated integration cache for dashboard=%s", dashboardID)
+}
+
+func cleanupDashboardIntegrationCacheLocked(now time.Time) {
+	if now.Sub(dashboardIntegrationCacheLastCleanup) < dashboardIntegrationCacheCleanupInterval {
+		return
+	}
+	cutoff := now.Add(-dashboardIntegrationCacheStaleAfter)
+	for dashboardID, entry := range dashboardIntegrationCache {
+		if entry.fetchedAt.Before(cutoff) {
+			delete(dashboardIntegrationCache, dashboardID)
+		}
+	}
+	dashboardIntegrationCacheLastCleanup = now
 }
 
 // MCP proxy handlers - forward MCP requests to the control plane
@@ -118,13 +231,31 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 
 		storedToken := session.GetIntegrationToken(ptyID)
 
+		// Diagnostic logging: identify exactly which auth check fails (silent failures = invisible bugs)
+		ptyPrefix := ptyID
+		if len(ptyPrefix) > 8 {
+			ptyPrefix = ptyPrefix[:8]
+		}
+		if storedSecret == "" {
+			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s has NO stored MCP secret (server memory empty for this PTY)", ptyPrefix)
+		} else if !secretValid {
+			// Log hashes to identify mismatch source without exposing actual secrets
+			headerHash := sha256.Sum256([]byte(mcpSecret))
+			storedHash := sha256.Sum256([]byte(storedSecret))
+			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s MCP secret MISMATCH (header sha256=%s, stored sha256=%s, header len=%d, stored len=%d)",
+				ptyPrefix, hex.EncodeToString(headerHash[:8]), hex.EncodeToString(storedHash[:8]), len(mcpSecret), len(storedSecret))
+		}
+		if storedToken == "" {
+			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s has NO integration token (PTY created without token?)", ptyPrefix)
+		}
+
 		if storedToken != "" && secretValid {
-			gatewayClient := mcp.NewGatewayClient()
-			integrations, err := gatewayClient.ListIntegrations(ptyID, storedToken)
-			if err != nil {
-				log.Printf("[mcp-tools] ListTools: ERROR listing integrations: %v", err)
-			} else if integrations == nil {
-				log.Printf("[mcp-tools] ListTools: ERROR integrations response is nil")
+			// Use dashboard-level batch cache to avoid rate-limit storms.
+			// A single batch call fetches integrations for ALL terminals in the dashboard,
+			// replacing N per-PTY calls. This prevents E79601 when multiple bridges poll.
+			integrations := getCachedIntegrations(session.DashboardID, ptyID, storedToken)
+			if integrations == nil {
+				log.Printf("[mcp-tools] ListTools: no integrations available for ptyID=%s (fetch failed or empty)", ptyPrefix)
 			} else {
 				var activeProviders []string
 				for _, integration := range integrations.Integrations {
@@ -195,6 +326,7 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return combined tools list
+	log.Printf("[mcp-tools] ListTools: returning %d tools (ptyID=%s)", len(allTools), ptyID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"tools": allTools,

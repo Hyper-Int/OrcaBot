@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v6-working-dir-support
+// REVISION: session-v7-bridge-wrapper
 
 // Package sessions manages session lifecycle.
 //
@@ -39,7 +39,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v6-working-dir-support"
+const sessionRevision = "session-v7-bridge-wrapper"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -539,28 +539,42 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	envVars["DISPLAY"] = ":0"
 	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
 
-	// Write MCP URL to a well-known file so mcp-bridge can discover it
-	// even when agents (like Codex) don't forward env vars to subprocesses
-	orcabotDir := filepath.Join(s.workspace.Root(), ".orcabot")
-	if err := os.MkdirAll(orcabotDir, 0755); err == nil {
-		mcpURLFile := filepath.Join(orcabotDir, "mcp-url")
-		os.WriteFile(mcpURLFile, []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+	// Write MCP config to per-PTY files so mcp-bridge can discover them
+	// even when agents (like Codex) don't forward env vars to subprocesses.
+	// REVISION: mcp-files-v4-wrapper-script
+	orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
+	if err := os.MkdirAll(orcabotPtyDir, 0700); err == nil {
+		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
+		// Compatibility pointer for agents that don't pass PTY ID to subprocesses.
+		os.WriteFile(filepath.Join(s.workspace.Root(), ".orcabot", "pty-id"), []byte(ptyID+"\n"), 0644)
+		// Per-PTY wrapper script: embeds MCP config in the command itself.
+		// This is the most reliable mechanism — the `command` field is universally
+		// supported by all MCP clients, unlike args/env which some clients don't forward.
+		wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s --mcp-secret=%s\n",
+			envVars["ORCABOT_MCP_URL"], ptyID, mcpSecret)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
 	}
 
-	// Generate MCP settings for ALL supported agents so users can run any agent
-	// manually in shell terminals (e.g., type "codex" in a bash terminal).
-	// Previously we only generated settings for the specific agent command,
-	// which broke MCP for agents launched manually.
+	// Generate MCP settings for the specific agent being launched (if detected).
+	// IMPORTANT: Do NOT use GenerateSettings (all agents) here — that overwrites
+	// ALL agent settings files (Gemini, Claude, Codex, etc.) with this PTY's
+	// credentials, breaking MCP secret auth for already-running agents.
+	// REVISION: mcp-settings-v1-no-overwrite-all
 	userTools := s.fetchUserMCPTools()
 	mcpEnv := map[string]string{
-		"ORCABOT_SESSION_ID":  s.ID,
-		"ORCABOT_MCP_URL":     envVars["ORCABOT_MCP_URL"],
-		"MCP_LOCAL_PORT":      mcpPort,
-		"ORCABOT_PTY_ID":      ptyID,
-		"ORCABOT_MCP_SECRET":  mcpSecret,
+		"ORCABOT_SESSION_ID":      s.ID,
+		"ORCABOT_MCP_URL":         envVars["ORCABOT_MCP_URL"],
+		"MCP_LOCAL_PORT":           mcpPort,
+		"ORCABOT_PTY_ID":           ptyID,
+		"ORCABOT_MCP_SECRET":       mcpSecret,
+		"ORCABOT_BRIDGE_COMMAND":   filepath.Join(orcabotPtyDir, "run-bridge"),
 	}
-	if err := mcp.GenerateSettings(s.workspace.Root(), s.ID, userTools, mcpEnv); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings: %v\n", err)
+	if agentType != mcp.AgentTypeUnknown {
+		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
+		}
 	}
 
 	// Generate agent stop hooks only for the specific agent being launched
@@ -719,12 +733,22 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		envVars["ORCABOT_INTEGRATION_TOKEN"] = integrationToken
 	}
 
-	// Write MCP URL to a well-known file so mcp-bridge can discover it
-	// even when agents (like Codex) don't forward env vars to subprocesses
-	orcabotDir := filepath.Join(s.workspace.Root(), ".orcabot")
-	if err := os.MkdirAll(orcabotDir, 0755); err == nil {
-		mcpURLFile := filepath.Join(orcabotDir, "mcp-url")
-		os.WriteFile(mcpURLFile, []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+	// Write MCP config to per-PTY files so mcp-bridge can discover them
+	// even when agents (like Codex) don't forward env vars to subprocesses.
+	// REVISION: mcp-files-v4-wrapper-script
+	orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
+	if err := os.MkdirAll(orcabotPtyDir, 0700); err == nil {
+		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
+		// Compatibility pointer for agents that don't pass PTY ID to subprocesses.
+		os.WriteFile(filepath.Join(s.workspace.Root(), ".orcabot", "pty-id"), []byte(ptyID+"\n"), 0644)
+		// Per-PTY wrapper script: embeds MCP config in the command itself.
+		// This is the most reliable mechanism — the `command` field is universally
+		// supported by all MCP clients, unlike args/env which some clients don't forward.
+		wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s --mcp-secret=%s\n",
+			envVars["ORCABOT_MCP_URL"], ptyID, mcpSecret)
+		os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
 	}
 
 	// Generate MCP settings file only for the specific agent being launched
@@ -732,11 +756,12 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
 		mcpEnv := map[string]string{
-			"ORCABOT_SESSION_ID":  s.ID,
-			"ORCABOT_MCP_URL":     envVars["ORCABOT_MCP_URL"],
-			"MCP_LOCAL_PORT":      mcpPort,
-			"ORCABOT_PTY_ID":      ptyID,
-			"ORCABOT_MCP_SECRET":  mcpSecret,
+			"ORCABOT_SESSION_ID":      s.ID,
+			"ORCABOT_MCP_URL":         envVars["ORCABOT_MCP_URL"],
+			"MCP_LOCAL_PORT":           mcpPort,
+			"ORCABOT_PTY_ID":           ptyID,
+			"ORCABOT_MCP_SECRET":       mcpSecret,
+			"ORCABOT_BRIDGE_COMMAND":   filepath.Join(orcabotPtyDir, "run-bridge"),
 		}
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)

@@ -45,7 +45,7 @@ EMAIL_FROM = "OrcaBot <noreply@orcabot.com>"
 name = "RATE_LIMITER"
 type = "ratelimit"
 namespace_id = "1"
-simple = { limit = 50, period = 60 }  # 50 requests per minute per IP
+simple = { limit = 200, period = 60 }  # 200 requests per minute per IP
 
 # Rate limiting - authenticated (generous)
 [[unsafe.bindings]]

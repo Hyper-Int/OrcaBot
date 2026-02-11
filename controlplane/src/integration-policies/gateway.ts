@@ -1134,6 +1134,65 @@ export async function handleListTerminalIntegrations(
   });
 }
 
+/**
+ * Batch list integrations for ALL terminals in a dashboard.
+ * Returns integrations grouped by terminal_id in a single DB query.
+ *
+ * GET /internal/dashboards/:dashboardId/terminal-integrations
+ *
+ * Auth: X-Internal-Token (sandbox internal auth)
+ *
+ * Response:
+ *   {
+ *     terminals: {
+ *       [terminalId]: [{ provider, activePolicyId, accountEmail }]
+ *     }
+ *   }
+ *
+ * REVISION: batch-integrations-v1
+ */
+export async function handleBatchListTerminalIntegrations(
+  request: Request,
+  env: Env,
+  dashboardId: string
+): Promise<Response> {
+  // Auth: require internal token
+  const internalToken = request.headers.get('X-Internal-Token');
+  if (!internalToken || internalToken !== env.INTERNAL_API_TOKEN) {
+    return Response.json(
+      { error: 'AUTH_DENIED', reason: 'Invalid or missing internal token' },
+      { status: 401 }
+    );
+  }
+
+  // Single query for all terminals in this dashboard
+  const integrations = await env.DB.prepare(`
+    SELECT terminal_id, provider, active_policy_id, account_email
+    FROM terminal_integrations
+    WHERE dashboard_id = ? AND deleted_at IS NULL
+  `).bind(dashboardId).all<{
+    terminal_id: string;
+    provider: string;
+    active_policy_id: string | null;
+    account_email: string | null;
+  }>();
+
+  // Group by terminal_id
+  const terminals: Record<string, Array<{ provider: string; activePolicyId: string | null; accountEmail: string | null }>> = {};
+  for (const row of integrations.results) {
+    if (!terminals[row.terminal_id]) {
+      terminals[row.terminal_id] = [];
+    }
+    terminals[row.terminal_id].push({
+      provider: row.provider,
+      activePolicyId: row.active_policy_id,
+      accountEmail: row.account_email,
+    });
+  }
+
+  return Response.json({ terminals });
+}
+
 // ============================================
 // Response Formatting for LLM Consumption
 // ============================================

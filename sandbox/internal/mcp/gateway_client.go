@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-client-v4-multi-auth
+// REVISION: gateway-client-v5-batch-integrations
 package mcp
 
 import (
@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	log.Printf("[gateway-client] REVISION: gateway-client-v4-multi-auth loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[gateway-client] REVISION: gateway-client-v5-batch-integrations loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // AuthType indicates how to authenticate with the control plane
@@ -111,6 +111,50 @@ func (c *GatewayClient) ListIntegrations(ptyID, integrationToken string) (*Integ
 	}
 
 	var result IntegrationsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// BatchIntegrationsResponse is the response from the batch terminal integrations endpoint
+type BatchIntegrationsResponse struct {
+	Terminals map[string][]Integration `json:"terminals"`
+}
+
+// BatchListIntegrations returns integrations for ALL terminals in a dashboard in a single call.
+// Uses X-Internal-Token auth (not per-PTY token) since it's a dashboard-wide query.
+func (c *GatewayClient) BatchListIntegrations(dashboardID string) (*BatchIntegrationsResponse, error) {
+	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+	if internalToken == "" {
+		return nil, fmt.Errorf("INTERNAL_API_TOKEN not set")
+	}
+
+	url := fmt.Sprintf("%s/internal/dashboards/%s/terminal-integrations", c.controlPlaneURL, dashboardID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp ExecuteResponse
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		if errResp.Error != "" {
+			return nil, fmt.Errorf("%s: %s", errResp.Error, errResp.Reason)
+		}
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var result BatchIntegrationsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

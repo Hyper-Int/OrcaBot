@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: settings-v6-mcp-secret
+// REVISION: settings-v7-wrapper-command
 
 // Package mcp provides MCP (Model Context Protocol) settings generation
 // for agentic coders running in the sandbox.
@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const settingsRevision = "settings-v6-mcp-secret"
+const settingsRevision = "settings-v7-wrapper-command"
 
 func init() {
 	log.Printf("[mcp/settings] REVISION: %s loaded at %s", settingsRevision, time.Now().Format(time.RFC3339))
@@ -201,8 +201,31 @@ func buildServerConfigs(userTools []MCPTool, mcpEnv map[string]string) map[strin
 			bridgeEnv[key] = v
 		}
 	}
+	// Pass critical config as command-line args AND env. Some MCP clients
+	// (Gemini CLI) don't propagate the env block to subprocesses correctly.
+	// Args are always passed reliably to the subprocess.
+	// REVISION: mcp-settings-v3-wrapper-command
+	var bridgeArgs []string
+	if v := mcpEnv["ORCABOT_MCP_URL"]; v != "" {
+		bridgeArgs = append(bridgeArgs, "--mcp-url="+v)
+	}
+	if v := mcpEnv["ORCABOT_PTY_ID"]; v != "" {
+		bridgeArgs = append(bridgeArgs, "--pty-id="+v)
+	}
+	if v := mcpEnv["ORCABOT_MCP_SECRET"]; v != "" {
+		bridgeArgs = append(bridgeArgs, "--mcp-secret="+v)
+	}
+	// Use per-PTY wrapper script as command if available. The wrapper embeds
+	// all config in the command itself, making it work regardless of whether
+	// the MCP client forwards args/env to subprocesses. Falls back to bare
+	// "mcp-bridge" for local development or when wrapper isn't generated.
+	bridgeCommand := "mcp-bridge"
+	if cmd := mcpEnv["ORCABOT_BRIDGE_COMMAND"]; cmd != "" {
+		bridgeCommand = cmd
+	}
 	servers["orcabot"] = MCPServerConfig{
-		Command: "mcp-bridge",
+		Command: bridgeCommand,
+		Args:    bridgeArgs,
 		Env:     bridgeEnv,
 		EnvVars: []string{"ORCABOT_SESSION_ID", "ORCABOT_MCP_URL", "MCP_LOCAL_PORT", "ORCABOT_PTY_ID", "ORCABOT_MCP_SECRET"},
 	}

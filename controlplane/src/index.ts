@@ -581,7 +581,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       || path === '/auth/config'
       || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)
-      || /^\/integrations\/[^/]+\/connect$/.test(path);
+      || /^\/integrations\/[^/]+\/connect$/.test(path)
+      || path.startsWith('/internal/'); // Internal routes have their own auth (PTY tokens, internal tokens)
 
     if (!skipIpRateLimit) {
       const ipLimitResult = await checkRateLimitIp(request, env);
@@ -2392,6 +2393,18 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'internal' && segments[1] === 'terminals' && segments.length === 4 && segments[3] === 'integrations' && method === 'GET') {
     const { handleListTerminalIntegrations } = await import('./integration-policies/gateway');
     return handleListTerminalIntegrations(
+      request,
+      env,
+      segments[2]
+    );
+  }
+
+  // GET /internal/dashboards/:dashboardId/terminal-integrations - Batch list all terminal integrations
+  // REVISION: batch-integrations-v1-route
+  // Security: X-Internal-Token header (sandbox internal auth)
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 4 && segments[3] === 'terminal-integrations' && method === 'GET') {
+    const { handleBatchListTerminalIntegrations } = await import('./integration-policies/gateway');
+    return handleBatchListTerminalIntegrations(
       request,
       env,
       segments[2]
