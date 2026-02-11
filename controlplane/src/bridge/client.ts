@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: bridge-client-v2-outbound-send
-const MODULE_REVISION = 'bridge-client-v2-outbound-send';
+// REVISION: bridge-client-v3-hybrid-handshake
+const MODULE_REVISION = 'bridge-client-v3-hybrid-handshake';
 console.log(`[bridge-client] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -101,5 +101,17 @@ export class BridgeClient {
       throw new Error(`Bridge sendMessage failed: ${resp.status} ${body}`);
     }
     return resp.json() as Promise<{ ok: boolean; messageId?: string }>;
+  }
+
+  /** Trigger a handshake for hybrid mode (refreshes the 24h Business API window) */
+  async triggerHandshake(sessionId: string): Promise<{ ok: boolean; timestamp?: string }> {
+    const resp = await this.bridgeFetch(`/sessions/${encodeURIComponent(sessionId)}/handshake`, {
+      method: 'POST',
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new Error(`Bridge triggerHandshake failed: ${resp.status} ${body}`);
+    }
+    return resp.json() as Promise<{ ok: boolean; timestamp?: string }>;
   }
 }

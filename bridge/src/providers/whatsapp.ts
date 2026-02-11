@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-provider-v7-normalize-e164-jid
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v7-normalize-e164-jid loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v8-hybrid-mode
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v8-hybrid-mode loaded at ${new Date().toISOString()}`);
 
 import makeWASocket, {
   DisconnectReason,
@@ -25,6 +25,17 @@ const MAX_RECONNECT_RETRIES = 8;
 const BASE_RECONNECT_DELAY_MS = 3_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 
+/** Handshake sentinel — never delivered to terminals */
+const HANDSHAKE_TEXT = '__orcabot_handshake__';
+const HANDSHAKE_REPLY = 'Connected to OrcaBot';
+const HANDSHAKE_MESSAGES = new Set([HANDSHAKE_TEXT, HANDSHAKE_REPLY]);
+
+export interface HybridConfig {
+  hybridMode?: boolean;
+  /** Business phone JID, e.g. "15551234567@s.whatsapp.net" */
+  businessPhoneJid?: string;
+}
+
 export class WhatsAppProvider implements BridgeProvider {
   private sock: WASocket | null = null;
   private currentQr: string | null = null;
@@ -42,6 +53,7 @@ export class WhatsAppProvider implements BridgeProvider {
     private userId: string,
     private dataDir: string,
     private sessionManager: SessionManager,
+    private config?: HybridConfig,
   ) {
     // Auth dir scoped by sessionId (not just userId) to prevent credential
     // collisions when the same user has multiple WhatsApp blocks/connections.
@@ -96,6 +108,13 @@ export class WhatsAppProvider implements BridgeProvider {
           this.reconnectAttempts = 0;
           this.sessionManager.updateSessionStatus(this.sessionId, 'connected');
           console.log(`[whatsapp] Session ${this.sessionId} connected`);
+
+          // In hybrid mode, initiate handshake with business number
+          if (this.config?.hybridMode && this.config.businessPhoneJid) {
+            this.performHandshake().catch(err => {
+              console.error(`[whatsapp] Handshake failed for session ${this.sessionId}:`, err);
+            });
+          }
         }
 
         if (connection === 'close') {
@@ -144,8 +163,24 @@ export class WhatsAppProvider implements BridgeProvider {
         if (type !== 'notify') return;
 
         for (const msg of messages) {
-          if (msg.key.fromMe) continue;
           if (!msg.message) continue;
+
+          if (msg.key.fromMe) {
+            // In hybrid mode, capture outgoing messages sent TO the Orcabot business number
+            if (this.config?.hybridMode && this.config.businessPhoneJid) {
+              const remoteJid = msg.key.remoteJid;
+              if (remoteJid === this.config.businessPhoneJid) {
+                const text = this.extractText(msg);
+                if (text && !HANDSHAKE_MESSAGES.has(text.trim())) {
+                  const normalized = this.normalizeOutgoingMessage(msg);
+                  if (normalized) {
+                    void this.sessionManager.forwardMessage(this.sessionId, normalized);
+                  }
+                }
+              }
+            }
+            continue;
+          }
 
           const normalized = this.normalizeMessage(msg);
           if (normalized) {
@@ -197,6 +232,77 @@ export class WhatsAppProvider implements BridgeProvider {
 
   getQrCode(): string | null {
     return this.currentQr;
+  }
+
+  /** Trigger a handshake with the business number (used for 24h window refresh) */
+  async triggerHandshake(): Promise<boolean> {
+    if (!this.config?.hybridMode || !this.config.businessPhoneJid) return false;
+    await this.performHandshake();
+    return true;
+  }
+
+  /** Send handshake message to business number and notify control plane */
+  private async performHandshake(): Promise<void> {
+    if (!this.sock || !this.config?.businessPhoneJid) return;
+
+    console.log(`[whatsapp] Initiating handshake with ${this.config.businessPhoneJid} for session ${this.sessionId}`);
+
+    try {
+      await this.sock.sendMessage(this.config.businessPhoneJid, { text: HANDSHAKE_TEXT });
+      console.log(`[whatsapp] Handshake message sent for session ${this.sessionId}`);
+
+      // Resolve the user's own phone number from the connected socket
+      const myJid = this.sock.user?.id || '';
+      const userPhone = myJid.replace(/@s\.whatsapp\.net$/, '').replace(/:\d+$/, '');
+
+      // Notify control plane of handshake
+      const handshakeNotification: NormalizedMessage = {
+        provider: 'whatsapp',
+        webhookId: this.sessionId,
+        platformMessageId: `handshake-${Date.now()}`,
+        senderId: userPhone || '__system__',
+        senderName: this.sock.user?.name || 'system',
+        channelId: '__handshake__',
+        text: HANDSHAKE_TEXT,
+        metadata: {
+          source: 'bridge_handshake',
+          isHandshake: true,
+          userPhone,
+          businessPhoneJid: this.config.businessPhoneJid,
+        },
+      };
+      await this.sessionManager.forwardMessage(this.sessionId, handshakeNotification);
+    } catch (err) {
+      console.error(`[whatsapp] Failed to send handshake message for session ${this.sessionId}:`, err);
+    }
+  }
+
+  /** Normalize an outgoing message (user → Orcabot business number) for control plane */
+  private normalizeOutgoingMessage(msg: WAMessage): NormalizedMessage | null {
+    const jid = msg.key.remoteJid;
+    if (!jid) return null;
+
+    const text = this.extractText(msg);
+    if (!text) return null;
+
+    // Sender is the connected user themselves
+    const myJid = this.sock?.user?.id || '';
+    const cleanSenderId = myJid.replace(/@s\.whatsapp\.net$/, '').replace(/:\d+$/, '');
+
+    return {
+      provider: 'whatsapp',
+      webhookId: this.sessionId,
+      platformMessageId: msg.key.id || `${Date.now()}`,
+      senderId: cleanSenderId,
+      senderName: this.sock?.user?.name || cleanSenderId,
+      channelId: cleanSenderId, // Use sender's number as channel (for subscription routing)
+      text,
+      metadata: {
+        source: 'bridge_outgoing',
+        isOutgoing: true,
+        targetJid: jid,
+      },
+    };
   }
 
   private normalizeMessage(msg: WAMessage): NormalizedMessage | null {

@@ -1,8 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v26-bridge-sub-scoped-by-item
-console.log(`[integration-gateway] REVISION: gateway-v26-bridge-sub-scoped-by-item loaded at ${new Date().toISOString()}`);
+// REVISION: gateway-v27-hybrid-24h-window
+const MODULE_REVISION = 'gateway-v27-hybrid-24h-window';
+console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
  * Integration Policy Gateway Execute Handler
@@ -878,6 +879,19 @@ export async function handleGatewayExecute(
       if (!body.args.phone_number_id) {
         body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
       }
+      // Auto-fill recipient from hybrid subscription's linked phone when agent doesn't specify one
+      if (!body.args.to) {
+        const hybridSub = await env.DB.prepare(`
+          SELECT user_phone FROM messaging_subscriptions
+          WHERE dashboard_id = ? AND user_id = ? AND provider = 'whatsapp'
+            AND hybrid_mode = 1 AND status IN ('pending', 'active') AND user_phone IS NOT NULL
+          LIMIT 1
+        `).bind(dashboardId, userId).first<{ user_phone: string }>();
+        if (hybridSub?.user_phone) {
+          body.args.to = hybridSub.user_phone;
+          console.log(`[gateway] Auto-filled WhatsApp recipient from hybrid subscription: ${hybridSub.user_phone}`);
+        }
+      }
     } else {
       return Response.json(
         { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
@@ -992,6 +1006,38 @@ export async function handleGatewayExecute(
           body.args.phone_number_id = meta.phone_number_id;
         }
       } catch { /* ignore parse errors */ }
+    }
+  }
+
+  // 9e. Hybrid WhatsApp: check 24h Business API window and trigger re-handshake if expiring
+  if (provider === 'whatsapp' && !ti.user_integration_id && env.WHATSAPP_BUSINESS_PHONE) {
+    try {
+      const hybridSub = await env.DB.prepare(`
+        SELECT webhook_id, hybrid_handshake_at FROM messaging_subscriptions
+        WHERE dashboard_id = ? AND user_id = ? AND provider = 'whatsapp'
+          AND hybrid_mode = 1 AND status = 'active'
+        LIMIT 1
+      `).bind(dashboardId, userId).first<{ webhook_id: string; hybrid_handshake_at: string | null }>();
+
+      if (hybridSub?.hybrid_handshake_at) {
+        const handshakeAge = Date.now() - new Date(hybridSub.hybrid_handshake_at).getTime();
+        const TWENTY_THREE_HOURS_MS = 23 * 60 * 60 * 1000;
+        if (handshakeAge > TWENTY_THREE_HOURS_MS) {
+          console.log(`[gateway] Hybrid 24h window expiring for ${hybridSub.webhook_id}, triggering re-handshake`);
+          // Fire-and-forget: don't block the outbound send
+          if (env.BRIDGE_URL && env.BRIDGE_INTERNAL_TOKEN) {
+            import('../bridge/client').then(({ BridgeClient }) => {
+              const bridge = new BridgeClient(env.BRIDGE_URL!, env.BRIDGE_INTERNAL_TOKEN!);
+              bridge.triggerHandshake(hybridSub.webhook_id).catch((err) => {
+                console.error(`[gateway] Re-handshake failed for ${hybridSub.webhook_id}:`, err);
+              });
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      // Non-fatal: don't block outbound if window check fails
+      console.error('[gateway] Hybrid window check error:', err);
     }
   }
 

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v38-item-target-gate
-const MODULE_REVISION = 'messaging-webhook-v38-item-target-gate';
+// REVISION: messaging-webhook-v39-hybrid-handshake
+const MODULE_REVISION = 'messaging-webhook-v39-hybrid-handshake';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -824,7 +824,10 @@ export async function handleInboundWebhook(
       WHERE provider = 'whatsapp' AND channel_id = ? AND status = 'active'
         AND (chat_id IS NULL OR chat_id = ?)
     `).bind(phoneNumberId, chatId).all();
-    subscriptions = results.results || [];
+    // Filter out hybrid subscriptions — bridge handles inbound for those (prevents double-delivery)
+    subscriptions = (results.results || []).filter(
+      (s: Record<string, unknown>) => !s.hybrid_mode,
+    );
   } else if (provider === 'matrix') {
     // Matrix uses chat_id (room_id) for routing
     const chatId = message.channelId;
@@ -1542,7 +1545,58 @@ export async function handleBridgeInbound(
     return Response.json({ error: 'E79440: provider, webhookId, and text are required' }, { status: 400 });
   }
 
-  // 3. Look up subscription by webhook_id
+  // 3. Handle handshake notifications from hybrid mode bridge
+  if (body.metadata?.isHandshake === true) {
+    const sub = await env.DB.prepare(`
+      SELECT * FROM messaging_subscriptions
+      WHERE webhook_id = ? AND provider = ? AND status IN ('pending', 'active')
+      LIMIT 1
+    `).bind(body.webhookId, body.provider).first<Record<string, unknown>>();
+
+    if (!sub) return Response.json({ ok: true });
+
+    // Store user phone from handshake metadata
+    const userPhone = (body.metadata.userPhone as string) || null;
+    if (userPhone && !sub.user_phone) {
+      ctx.waitUntil(
+        env.DB.prepare(`
+          UPDATE messaging_subscriptions SET user_phone = ?, updated_at = datetime('now')
+          WHERE id = ? AND user_phone IS NULL
+        `).bind(userPhone, sub.id).run(),
+      );
+    }
+
+    // Reply via Business API: "Connected to OrcaBot"
+    const replyPhone = userPhone || (sub.user_phone as string);
+    if (env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID && replyPhone) {
+      ctx.waitUntil((async () => {
+        try {
+          const { executeWhatsAppAction } = await import('../integration-policies/api-clients/whatsapp');
+          await executeWhatsAppAction('whatsapp.send_message', {
+            phone_number_id: env.WHATSAPP_PHONE_NUMBER_ID,
+            to: replyPhone,
+            text: 'Connected to OrcaBot',
+          }, env.WHATSAPP_ACCESS_TOKEN!);
+          console.log(`[bridge-inbound] Handshake reply sent to ${replyPhone}`);
+        } catch (err) {
+          console.error('[bridge-inbound] Handshake reply failed:', err);
+        }
+      })());
+    }
+
+    // Update handshake timestamp + mark active
+    ctx.waitUntil(
+      env.DB.prepare(`
+        UPDATE messaging_subscriptions
+        SET hybrid_handshake_at = datetime('now'), status = 'active', updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(sub.id).run(),
+    );
+
+    return Response.json({ ok: true, handshake: 'completed' });
+  }
+
+  // 4. Look up subscription by webhook_id
   const sub = await env.DB.prepare(`
     SELECT * FROM messaging_subscriptions
     WHERE webhook_id = ? AND provider = ? AND status IN ('pending', 'active')
@@ -1554,7 +1608,17 @@ export async function handleBridgeInbound(
     return Response.json({ ok: true }); // Don't reveal subscription existence
   }
 
-  // 4. Build NormalizedMessage and reuse existing pipeline
+  // 5. Store user's phone on first bridge message for handshake routing
+  if (!sub.user_phone && body.senderId && body.senderId !== '__system__' && body.senderId !== 'unknown') {
+    ctx.waitUntil(
+      env.DB.prepare(`
+        UPDATE messaging_subscriptions SET user_phone = ?, updated_at = datetime('now')
+        WHERE id = ? AND user_phone IS NULL
+      `).bind(body.senderId, sub.id).run(),
+    );
+  }
+
+  // 6. Build NormalizedMessage and reuse existing pipeline
   const message: NormalizedMessage = {
     platformMessageId: body.platformMessageId || `bridge-${crypto.randomUUID()}`,
     senderId: body.senderId || 'unknown',
