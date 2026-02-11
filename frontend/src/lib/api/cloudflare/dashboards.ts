@@ -414,6 +414,23 @@ export async function openDashboardBrowser(dashboardId: string, url: string): Pr
   await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/open`, { url });
 }
 
+// ===== Sandbox Keep-alive =====
+
+/**
+ * Ping the sandbox to prevent Fly auto-stop.
+ * Returns true if sandbox is alive, false otherwise.
+ */
+export async function sandboxKeepalive(dashboardId: string): Promise<boolean> {
+  try {
+    const res = await apiPost<{ alive: boolean }>(
+      `${API.cloudflare.dashboards}/${dashboardId}/sandbox/keepalive`
+    );
+    return res.alive;
+  } catch {
+    return false;
+  }
+}
+
 // ===== Browser Automation API =====
 
 /**

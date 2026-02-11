@@ -1841,6 +1841,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     );
   }
 
+  // POST /dashboards/:id/sandbox/keepalive - Keep sandbox alive (prevents Fly auto-stop)
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'sandbox' && segments[3] === 'keepalive' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.sandboxKeepalive(env, segments[1], auth.user!.id);
+  }
+
   // GET /sessions/:id - Get session
   if (segments[0] === 'sessions' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);

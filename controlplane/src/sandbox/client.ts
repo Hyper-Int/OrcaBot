@@ -27,10 +27,14 @@ export class SandboxClient {
     this.token = token || '';
   }
 
-  // Health check
-  async health(): Promise<boolean> {
+  // Health check (optionally pinned to a specific Fly machine)
+  async health(machineId?: string): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`);
+      const headers: HeadersInit = {};
+      if (machineId) {
+        headers['X-Sandbox-Machine-ID'] = machineId;
+      }
+      const res = await fetch(`${this.baseUrl}/health`, { headers });
       return res.ok;
     } catch {
       return false;
