@@ -77,7 +77,7 @@ import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -2539,6 +2539,41 @@ export default function DashboardPage() {
       }
     }
   }, [collabState.items, collabState.sessions, collabState.edges, collabState.connectionState, queryClient, dashboardId, setEdges]);
+
+  // REVISION: sandbox-keepalive-v1-frontend-hold
+  // Keep sandbox alive for 5 minutes after the last terminal session closes.
+  // Pings the control plane every 30s which forwards to the sandbox health endpoint,
+  // generating Fly traffic that prevents auto_stop_machines from killing the VM.
+  // Stops naturally when: user closes tab (unmount), 5 min elapsed, or new session starts.
+  const sandboxKeepaliveClosedAtRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    const hasActiveSessions = sessions.some(
+      (s) => s.status === "active" || s.status === "creating"
+    );
+    if (hasActiveSessions) {
+      // Active sessions keep sandbox alive via terminal WebSocket traffic
+      sandboxKeepaliveClosedAtRef.current = null;
+      return;
+    }
+    // No active sessions — if we had sessions before, start keepalive timer
+    if (sessions.length === 0) return; // Never had sessions, nothing to keep alive
+    if (!sandboxKeepaliveClosedAtRef.current) {
+      sandboxKeepaliveClosedAtRef.current = Date.now();
+    }
+    const KEEPALIVE_DURATION_MS = 5 * 60 * 1000;
+    const KEEPALIVE_INTERVAL_MS = 30_000;
+    // Immediate first ping
+    sandboxKeepalive(dashboardId).catch(() => {});
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - (sandboxKeepaliveClosedAtRef.current ?? Date.now());
+      if (elapsed > KEEPALIVE_DURATION_MS) {
+        clearInterval(interval);
+        return;
+      }
+      sandboxKeepalive(dashboardId).catch(() => clearInterval(interval));
+    }, KEEPALIVE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [dashboardId, sessions]);
 
   // Item delete handler
   const handleItemDelete = async (itemId: string) => {

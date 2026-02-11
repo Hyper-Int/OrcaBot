@@ -410,6 +410,19 @@ func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) err
 
 	settings["ui"] = ui
 
+	// REVISION: gemini-autoupdate-v1-disable
+	// Disable Gemini CLI's auto-update. It runs "npm install -g @google/gemini-cli@latest"
+	// as a detached background process, which can fail mid-way in the sandbox (network
+	// issues, disk space, npm cache state) and remove the gemini binary entirely.
+	// Updates should only happen via Docker image rebuilds.
+	general, ok := settings["general"].(map[string]interface{})
+	if !ok {
+		general = make(map[string]interface{})
+	}
+	general["enableAutoUpdate"] = false
+	general["enableAutoUpdateNotification"] = false
+	settings["general"] = general
+
 	// Mirror auth-related fields from ~/.gemini/settings.json into the system override.
 	// When a user runs "gemini login", Gemini CLI writes the auth method to settings.json.
 	// Since Gemini CLI also overwrites settings.json on startup (potentially resetting auth),

@@ -1250,6 +1250,12 @@ export async function stоpSessiоn(
 
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
+  // REVISION: preserve-sandbox-v1-stop-keeps-sandbox
+  // Preserve the sandbox (and dashboard_sandboxes mapping) when stopping the last session.
+  // This keeps the Fly machine pinned so restarts reuse the same machine (avoids
+  // routing to a different machine that may lack agent binaries like gemini).
+  // Fly auto_stop_machines handles cleanup when idle; stale-sandbox 404 recovery
+  // in createSession handles cases where the machine was auto-stopped.
   try {
     const otherSessions = await env.DB.prepare(`
       SELECT COUNT(1) as count FROM sessions
@@ -1257,21 +1263,17 @@ export async function stоpSessiоn(
     `).bind(session.dashboard_id, sessionId).first<{ count: number }>();
 
     if (!otherSessions || otherSessions.count === 0) {
-      // Capture workspace file listing before destroying the sandbox
+      // Capture workspace snapshot for recovery, but preserve the sandbox.
       await captureWorkspaceSnapshot(
         env,
         session.dashboard_id as string,
         session.sandbox_session_id as string,
         session.sandbox_machine_id as string
       );
+    }
 
-      await sandbox.deleteSession(session.sandbox_session_id as string, session.sandbox_machine_id as string);
-      await env.DB.prepare(`
-        DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-      `).bind(session.dashboard_id).run();
-    } else if (session.pty_id) {
-      // Other sessions still active — only delete this session's PTY
-      // (kills the PTY process and its children: talkito, claude, gemini, codex, etc.)
+    // Always just delete this session's PTY (not the sandbox session)
+    if (session.pty_id) {
       await sandbox.deletePty(session.sandbox_session_id as string, session.pty_id as string);
     }
   } catch {
@@ -1307,6 +1309,38 @@ export async function stоpSessiоn(
   }));
 
   return new Response(null, { status: 204 });
+}
+
+// REVISION: sandbox-keepalive-v1-prevent-autostop
+/**
+ * Ping the sandbox to keep the Fly machine alive.
+ * Called by the frontend while the dashboard is open after the last terminal closes,
+ * preventing Fly auto_stop_machines from killing the sandbox for up to 5 minutes.
+ * When the user closes the browser tab, pings stop and Fly auto-stops naturally.
+ */
+export async function sandboxKeepalive(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string
+): Promise<Response> {
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, userId).first<{ role: string }>();
+
+  if (!access) {
+    return Response.json({ error: 'E79750: Not found or no access' }, { status: 404 });
+  }
+
+  const sandboxInfo = await getDashbоardSandbоx(env, dashboardId);
+  if (!sandboxInfo?.sandbox_session_id) {
+    return Response.json({ error: 'E79751: No sandbox for this dashboard' }, { status: 404 });
+  }
+
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const healthy = await sandbox.health(sandboxInfo.sandbox_machine_id || undefined);
+
+  return Response.json({ alive: healthy });
 }
 
 /**
