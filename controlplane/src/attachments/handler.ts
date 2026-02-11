@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: attachments-v2-fix-claude-mcp-path
+// REVISION: attachments-v3-skip-empty-mcp-write
 
 import type { Env } from "../types";
 import { isDesktopFeatureDisabledError } from "../storage/drive-cache";
@@ -304,11 +304,14 @@ function generateDroidSettingsJson(servers: Record<string, McpServerConfig>): st
 
 type MpcSettingsFileSpec = { path: string; content: string; contentType: string };
 
+// Write user MCP tools to override/system config paths that agents don't overwrite on startup.
+// The sandbox writes the orcabot bridge config to the primary paths; the control plane only
+// writes user-configured MCP tools (and only when there are any — see early return above).
 const MCP_SETTINGS_BY_TERMINAL: Record<string, (servers: Record<string, McpServerConfig>) => MpcSettingsFileSpec> = {
   claude: (servers) => ({ path: "/.mcp.json", content: generateClaudeSettingsJson(servers), contentType: "application/json" }),
   opencode: (servers) => ({ path: "/.config/opencode/opencode.json", content: generateOpenCodeSettingsJson(servers), contentType: "application/json" }),
-  gemini: (servers) => ({ path: "/.gemini/settings.json", content: generateGeminiSettingsJson(servers), contentType: "application/json" }),
-  codex: (servers) => ({ path: "/.codex/config.toml", content: generateCodexConfigToml(servers), contentType: "application/toml" }),
+  gemini: (servers) => ({ path: "/.orcabot/gemini-system-settings.json", content: generateGeminiSettingsJson(servers), contentType: "application/json" }),
+  codex: (servers) => ({ path: "/etc/codex/config.toml", content: generateCodexConfigToml(servers), contentType: "application/toml" }),
   droid: (servers) => ({ path: "/.factory/mcp.json", content: generateDroidSettingsJson(servers), contentType: "application/json" }),
 };
 
@@ -326,6 +329,14 @@ async function writeMcpSettings(
   }
 
   const servers = buildMcpServerConfigs(tools);
+
+  // If no user MCP tools remain after filtering (builtin://mcp-bridge is skipped),
+  // don't write the file — the sandbox already generates correct MCP configs with
+  // env vars. Writing an empty config here would overwrite the sandbox's settings.
+  if (Object.keys(servers).length === 0) {
+    return;
+  }
+
   const encoder = new TextEncoder();
   const { path, content, contentType } = settingsGenerator(servers);
 
