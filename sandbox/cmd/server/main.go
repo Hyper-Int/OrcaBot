@@ -233,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Mirror sync
 	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrоrSync)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mirror/cleanup", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrorCleanup)))
 
 	// WebSocket for PTYs - auth checked via token, origin validated by upgrader
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleWebSocket)))

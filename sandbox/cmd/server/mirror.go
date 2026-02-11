@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: mirror-cleanup-v2-intermediate-dir-cleanup
 
 package main
 
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mirror"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
@@ -240,4 +242,82 @@ func writeMirrоrLоcalManifest(path string, manifest *mirror.Manifest) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// validMirrorCleanupProviders restricts which providers can be cleaned up.
+var validMirrorCleanupProviders = map[string]bool{
+	"drive":    true,
+	"github":   true,
+	"box":      true,
+	"onedrive": true,
+}
+
+type mirrorCleanupRequest struct {
+	Provider   string `json:"provider"`
+	FolderPath string `json:"folder_path"`
+}
+
+func (s *Server) handleMirrorCleanup(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	var req mirrorCleanupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Provider == "" || req.FolderPath == "" {
+		http.Error(w, "E79750: provider and folder_path required", http.StatusBadRequest)
+		return
+	}
+	if !validMirrorCleanupProviders[req.Provider] {
+		http.Error(w, "E79751: invalid provider", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY: Normalize the path and enforce containment within the provider directory.
+	// This prevents paths like "github/../notes" from escaping the provider scope.
+	root := session.Wоrkspace().Root()
+	providerDir := filepath.Join(root, req.Provider)
+	cleaned := filepath.Clean(filepath.FromSlash(req.FolderPath))
+	if cleaned == "." || strings.HasPrefix(cleaned, "..") {
+		http.Error(w, "E79752: invalid folder_path", http.StatusBadRequest)
+		return
+	}
+	// folder_path must be a subdirectory of the provider, not the provider root itself.
+	// e.g. "box/MyFolder" is valid, but "box" alone would wipe all Box mirrors.
+	if !strings.HasPrefix(cleaned, req.Provider+string(os.PathSeparator)) {
+		http.Error(w, "E79752: folder_path must be a subdirectory of provider", http.StatusBadRequest)
+		return
+	}
+	target := filepath.Join(root, cleaned)
+	if !pathWithinRoot(providerDir, target) {
+		http.Error(w, "E79753: folder_path escapes provider directory", http.StatusBadRequest)
+		return
+	}
+
+	if err := os.RemoveAll(target); err != nil {
+		log.Printf("[mirror-cleanup] failed to remove %s: %v", target, err)
+		http.Error(w, "E79754: cleanup failed", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[mirror-cleanup] removed %s (provider=%s)", target, req.Provider)
+
+	// Remove empty parent directories up to (but not including) the workspace root.
+	// For 3-level paths like github/owner/repo, after removing "repo" we also need
+	// to remove the empty "owner" dir, then the empty "github" dir.
+	for dir := filepath.Dir(target); dir != root && pathWithinRoot(providerDir, dir); dir = filepath.Dir(dir) {
+		if err := os.Remove(dir); err != nil {
+			break // directory not empty or other error — stop climbing
+		}
+		log.Printf("[mirror-cleanup] removed empty parent %s", dir)
+	}
+	// Also try to remove the provider dir itself if it's now empty
+	if providerDir != target {
+		if err := os.Remove(providerDir); err == nil {
+			log.Printf("[mirror-cleanup] removed empty provider dir %s", providerDir)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"ok":true}`))
 }
