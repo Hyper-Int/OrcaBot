@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-bridge-v4-tool-change-notify
+// REVISION: mcp-bridge-v7-mcp-secret
 // mcp-bridge is a stdio-to-HTTP bridge for MCP.
 // It allows Claude Code (and other MCP clients that use stdio transport)
 // to communicate with the sandbox's HTTP-based MCP server.
@@ -11,7 +11,7 @@
 //
 // Features:
 // - Translates JSON-RPC over stdio to HTTP calls to sandbox MCP server
-// - Passes integration auth (pty_id + token) for integration tool discovery
+// - Passes pty_id for integration tool discovery (token stays server-side)
 // - Monitors for tool list changes and sends notifications/tools/list_changed
 //   so the LLM discovers newly attached integrations without restarting
 //
@@ -19,8 +19,8 @@
 //   - ORCABOT_MCP_URL: Base URL for MCP API (e.g., http://localhost:8081/sessions/{id}/mcp)
 //   - ORCABOT_SESSION_ID: Session ID (used to construct URL if ORCABOT_MCP_URL not set)
 //   - MCP_LOCAL_PORT: Port for local MCP server (default: 8081)
-//   - ORCABOT_PTY_ID: PTY ID for integration tool listing and gateway auth
-//   - ORCABOT_INTEGRATION_TOKEN: Integration token for gateway auth
+//   - ORCABOT_PTY_ID: PTY ID for integration tool listing
+//   - ORCABOT_MCP_SECRET: Per-PTY auth nonce for MCP request proof-of-possession
 package main
 
 import (
@@ -40,7 +40,7 @@ import (
 	"time"
 )
 
-const bridgeRevision = "mcp-bridge-v4-tool-change-notify"
+const bridgeRevision = "mcp-bridge-v7-mcp-secret"
 
 func init() {
 	log.Printf("[mcp-bridge] REVISION: %s loaded at %s", bridgeRevision, time.Now().Format(time.RFC3339))
@@ -69,9 +69,9 @@ type jsonRPCError struct {
 
 // bridgeConfig holds env-derived configuration for the bridge
 type bridgeConfig struct {
-	mcpURL           string
-	ptyID            string
-	integrationToken string
+	mcpURL    string
+	ptyID     string
+	mcpSecret string // per-PTY auth nonce for proof-of-possession
 }
 
 var (
@@ -83,13 +83,13 @@ var (
 
 func main() {
 	cfg := bridgeConfig{
-		ptyID:            os.Getenv("ORCABOT_PTY_ID"),
-		integrationToken: os.Getenv("ORCABOT_INTEGRATION_TOKEN"),
+		ptyID:     os.Getenv("ORCABOT_PTY_ID"),
+		mcpSecret: os.Getenv("ORCABOT_MCP_SECRET"),
 	}
 
-	// Diagnostic: log env var presence (not values) to verify token injection
+	// Diagnostic: log env var presence (not values)
 	log.Printf("[mcp-bridge] env ORCABOT_PTY_ID set: %v (len=%d)", cfg.ptyID != "", len(cfg.ptyID))
-	log.Printf("[mcp-bridge] env ORCABOT_INTEGRATION_TOKEN set: %v (len=%d)", cfg.integrationToken != "", len(cfg.integrationToken))
+	log.Printf("[mcp-bridge] env ORCABOT_MCP_SECRET set: %v", cfg.mcpSecret != "")
 
 	cfg.mcpURL = os.Getenv("ORCABOT_MCP_URL")
 	if cfg.mcpURL == "" {
@@ -203,6 +203,14 @@ func handleInitialize(req *jsonRPCRequest) *jsonRPCResponse {
 	}
 }
 
+// setMCPAuthHeader sets the per-PTY auth nonce header on an HTTP request.
+// This proves the caller is the authorized mcp-bridge for this PTY.
+func setMCPAuthHeader(req *http.Request, cfg *bridgeConfig) {
+	if cfg.mcpSecret != "" {
+		req.Header.Set("X-MCP-Secret", cfg.mcpSecret)
+	}
+}
+
 // buildToolsURL constructs the tools endpoint URL with pty_id query parameter
 func buildToolsURL(cfg *bridgeConfig, path string) string {
 	toolsURL := cfg.mcpURL + path
@@ -210,13 +218,6 @@ func buildToolsURL(cfg *bridgeConfig, path string) string {
 		toolsURL += "?pty_id=" + url.QueryEscape(cfg.ptyID)
 	}
 	return toolsURL
-}
-
-// setIntegrationHeaders adds the X-Integration-Token header if available
-func setIntegrationHeaders(req *http.Request, cfg *bridgeConfig) {
-	if cfg.integrationToken != "" {
-		req.Header.Set("X-Integration-Token", cfg.integrationToken)
-	}
 }
 
 // fetchToolNames fetches the current tool list and returns sorted tool names.
@@ -227,7 +228,7 @@ func fetchToolNames(cfg *bridgeConfig) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	setIntegrationHeaders(httpReq, cfg)
+	setMCPAuthHeader(httpReq, cfg)
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -267,7 +268,7 @@ func handleToolsList(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 	if err != nil {
 		return errorResponse(req.ID, -32000, "Failed to create request: "+err.Error())
 	}
-	setIntegrationHeaders(httpReq, cfg)
+	setMCPAuthHeader(httpReq, cfg)
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -315,7 +316,7 @@ func handleToolsCall(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 		return errorResponse(req.ID, -32000, "Failed to create request: "+err.Error())
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	setIntegrationHeaders(httpReq, cfg)
+	setMCPAuthHeader(httpReq, cfg)
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -343,11 +344,28 @@ func handleToolsCall(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 // monitorToolChanges polls the tools endpoint and sends notifications/tools/list_changed
 // when the tool set changes (e.g., when an integration is attached or detached).
 // This allows Claude Code to discover new tools without restarting.
+//
+// REVISION: mcp-bridge-v6-remove-token
+// FIX: Establish baseline BEFORE the initialization delay so that tool changes
+// occurring between Claude Code's first tools/list call and the first monitor poll
+// are correctly detected. Previously, lastToolKey was empty ("") and the first poll
+// silently set the baseline without sending a notification — so integrations attached
+// shortly after startup were never discovered.
 func monitorToolChanges(cfg *bridgeConfig) {
-	// Wait before first poll to let initialization complete
-	time.Sleep(10 * time.Second)
-
+	// Establish baseline: fetch current tools BEFORE the delay so we capture
+	// what Claude Code approximately received from its initial tools/list call.
+	// If this fails (server not ready yet), baseline stays empty and we'll
+	// send a (harmless) notification on the first successful poll.
 	var lastToolKey string
+	if names, err := fetchToolNames(cfg); err == nil {
+		lastToolKey = strings.Join(names, ",")
+		log.Printf("[mcp-bridge] tool monitor: baseline established with %d tools", len(names))
+	} else {
+		log.Printf("[mcp-bridge] tool monitor: baseline fetch failed (will retry): %v", err)
+	}
+
+	// Wait for initialization to complete (integrations may be attached during this window)
+	time.Sleep(10 * time.Second)
 
 	for {
 		names, err := fetchToolNames(cfg)
@@ -358,8 +376,12 @@ func monitorToolChanges(cfg *bridgeConfig) {
 		}
 
 		toolKey := strings.Join(names, ",")
-		if lastToolKey != "" && toolKey != lastToolKey {
-			log.Printf("[mcp-bridge] tool list changed: %d -> %d tools", strings.Count(lastToolKey, ",")+1, len(names))
+		if toolKey != lastToolKey {
+			oldCount := 0
+			if lastToolKey != "" {
+				oldCount = strings.Count(lastToolKey, ",") + 1
+			}
+			log.Printf("[mcp-bridge] tool list changed: %d -> %d tools", oldCount, len(names))
 			// Send MCP notification (no id field = notification, not request)
 			notification := &jsonRPCResponse{
 				JSONRPC: "2.0",
