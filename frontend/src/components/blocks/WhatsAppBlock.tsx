@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v9-taller-no-footer
+// REVISION: whatsapp-block-v10-hybrid-mode
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v9-taller-no-footer";
+const MODULE_REVISION = "whatsapp-block-v10-hybrid-mode";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -296,10 +296,11 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
       }
 
       // Detect existing personal subscription (bridge connection with webhook_id starting with 'bridge_')
+      // Works for both pure bridge mode and hybrid mode (platform configured + bridge linked)
       const personalSub = mySubs.find(
         s => !s.channel_id && !s.chat_id && (s.status === "pending" || s.status === "active"),
       );
-      if (personalSub && !platformCfg.configured) {
+      if (personalSub) {
         setPersonalSubId(personalSub.id);
         setPersonalStatus(personalSub.status === "active" ? "connected" : "connecting");
       }
@@ -354,6 +355,22 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
       startQrPolling(personalSubId);
     }
   }, [personalSubId, personalStatus, startQrPolling]);
+
+  // Auto-start bridge connection when platform is configured (hybrid mode)
+  const autoConnectTriggered = React.useRef(false);
+  React.useEffect(() => {
+    if (
+      platformConfig?.configured &&
+      !personalSubId &&
+      !connecting &&
+      !loading &&
+      dashboardId &&
+      !autoConnectTriggered.current
+    ) {
+      autoConnectTriggered.current = true;
+      handleConnectPersonal();
+    }
+  }, [platformConfig, personalSubId, connecting, loading, dashboardId]);
 
   const handleRefresh = async () => {
     if (!dashboardId) return;
@@ -435,7 +452,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
         {integration?.accountName || "WhatsApp"}
       </div>
       <div className="flex items-center gap-1">
-        {integration?.connected && (
+        {(integration?.connected || (personalSubId && personalStatus === "connected")) && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
           </Button>
@@ -456,7 +473,13 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
                 Disconnect WhatsApp
               </DropdownMenuItem>
             )}
-            {!integration?.connected && (
+            {personalSubId && personalStatus === "connected" && (
+              <DropdownMenuItem onClick={handleDisconnectPersonal} className="text-red-500">
+                <Smartphone className="w-3.5 h-3.5 mr-2" />
+                Unlink Phone
+              </DropdownMenuItem>
+            )}
+            {!integration?.connected && !personalSubId && (
               <DropdownMenuItem onClick={() => { /* focus token input */ }}>
                 <WhatsAppIcon className="w-3.5 h-3.5 mr-2" />
                 Connect WhatsApp
@@ -544,31 +567,43 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     );
   }
 
-  // If platform WhatsApp is configured, skip the manual connection form
-  // and go directly to the QR code view
-  if (platformConfig?.configured && platformConfig.displayPhone) {
-    const waDigits = platformConfig.displayPhone.replace(/\D/g, "");
-    const waLink = `https://wa.me/${waDigits}`;
-    return (
-      <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
-        <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
-        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
-          {header}
-          <div className="flex flex-col items-center justify-center flex-1 p-4">
-            <div className="rounded-lg overflow-hidden border border-[var(--border)] mb-3 p-2 bg-white">
-              <QRCodeSVG value={waLink} size={140} level="M" />
+  // Platform WhatsApp configured — hybrid-aware UI
+  if (platformConfig?.configured) {
+    // Hybrid mode: personal phone linked + Business API configured
+    if (personalSubId && personalStatus === "connected") {
+      return (
+        <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
+          <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
+          <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+            {header}
+            <div className="flex flex-col items-center justify-center flex-1 p-4">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: `${WHATSAPP_GREEN}15` }}>
+                <CheckCircle className="w-5 h-5" style={{ color: WHATSAPP_GREEN }} />
+              </div>
+              <p className="text-xs font-medium text-[var(--text-primary)] mb-0.5">Hybrid Mode Active</p>
+              <p className="text-[10px] text-[var(--text-muted)] mb-1">
+                {platformConfig.verifiedName || "OrcaBot"}{platformConfig.displayPhone ? ` \u00b7 ${platformConfig.displayPhone}` : ""}
+              </p>
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+                Reply on your phone. Agent sends via Business API.
+              </p>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDisconnectPersonal}
+                className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
+              >
+                <LogOut className="w-3 h-3" />
+                Unlink Phone
+              </Button>
             </div>
-            <p className="text-xs font-medium text-[var(--text-primary)] mb-0.5">
-              {platformConfig.verifiedName || "OrcaBot"}
-            </p>
-            <p className="text-[10px] text-[var(--text-muted)] mb-1">{platformConfig.displayPhone}</p>
-            <p className="text-[10px] text-[var(--text-muted)] text-center">
-              Scan to chat on WhatsApp. Connect a terminal to read and reply.
-            </p>
           </div>
-        </div>
-      </BlockWrapper>
-    );
+        </BlockWrapper>
+      );
+    }
+
+    // Hybrid QR scanning in progress — falls through to the QR scanning state below
+    // If no personalSubId yet, the auto-connect effect will trigger it
   }
 
   if (!integration?.connected && !personalSubId) {

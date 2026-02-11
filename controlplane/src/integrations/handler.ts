@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v18-mirror-cleanup-intermediate-dirs
+// REVISION: integrations-v19-hybrid-deactivate-conflict
 const integrationsRevision = "integrations-v18-mirror-cleanup-intermediate-dirs";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
@@ -10659,13 +10659,13 @@ export async function connectWhatsAppPersonal(
     return Response.json({ error: 'E79562: Item is not a WhatsApp block' }, { status: 400 });
   }
 
-  // Check for existing personal WhatsApp subscription on this item
+  // Check for existing personal/hybrid WhatsApp subscription on this item
   const existing = await env.DB.prepare(`
-    SELECT id, webhook_id FROM messaging_subscriptions
+    SELECT id, webhook_id, hybrid_mode FROM messaging_subscriptions
     WHERE item_id = ? AND provider = 'whatsapp' AND status IN ('pending', 'active')
-    AND channel_id IS NULL AND chat_id IS NULL
+    AND webhook_id LIKE 'bridge_%'
     LIMIT 1
-  `).bind(body.itemId).first<{ id: string; webhook_id: string }>();
+  `).bind(body.itemId).first<{ id: string; webhook_id: string; hybrid_mode: number }>();
 
   if (existing) {
     // Verify the bridge still has a session — after a bridge restart, the
@@ -10688,15 +10688,17 @@ export async function connectWhatsAppPersonal(
       });
     }
 
-    // Bridge has no session — restart it
+    // Bridge has no session — restart it (with hybrid config if applicable)
     console.log(`[integrations] Stale bridge session for subscription ${existing.id}, restarting`);
     const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
+    const restartIsHybrid = existing.hybrid_mode === 1 && !!env.WHATSAPP_BUSINESS_PHONE;
     try {
       const bridgeResult = await bridge.startSession({
         sessionId: existing.webhook_id,
         userId: auth.user!.id,
         provider: 'whatsapp',
         callbackUrl,
+        config: restartIsHybrid ? { hybridMode: true, businessPhoneJid: `${env.WHATSAPP_BUSINESS_PHONE}@s.whatsapp.net` } : undefined,
       });
       return Response.json({
         subscriptionId: existing.id,
@@ -10712,22 +10714,42 @@ export async function connectWhatsAppPersonal(
     }
   }
 
+  // Detect hybrid mode: platform Business API is configured AND user is connecting personal
+  const isHybridMode = !!(env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID && env.WHATSAPP_BUSINESS_PHONE);
+  const businessPhoneJid = isHybridMode ? `${env.WHATSAPP_BUSINESS_PHONE}@s.whatsapp.net` : undefined;
+
   // Create subscription (no chatId/channelId — receives all messages)
   const subscriptionId = crypto.randomUUID();
   const webhookId = `bridge_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
   const now = new Date().toISOString();
+  const bridgeChannelId = isHybridMode ? env.WHATSAPP_PHONE_NUMBER_ID : null;
+
+  // In hybrid mode, the bridge subscription uses the same channel_id as the
+  // auto-created Business API catch-all subscription. Deactivate any existing
+  // subscription with the same unique key to avoid a UNIQUE constraint violation.
+  await env.DB.prepare(`
+    UPDATE messaging_subscriptions
+    SET status = 'paused', updated_at = ?
+    WHERE dashboard_id = ? AND item_id = ? AND provider = 'whatsapp'
+      AND COALESCE(channel_id, '') = ?
+      AND chat_id IS NULL
+      AND status IN ('pending', 'active')
+      AND webhook_id NOT LIKE 'bridge_%'
+  `).bind(now, body.dashboardId, body.itemId, bridgeChannelId || '').run();
 
   await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider, webhook_id,
-      channel_id, channel_name, chat_id, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'whatsapp', ?, NULL, NULL, NULL, 'pending', ?, ?)
+      channel_id, channel_name, chat_id, status, hybrid_mode, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'whatsapp', ?, ?, NULL, NULL, 'pending', ?, ?, ?)
   `).bind(
     subscriptionId,
     body.dashboardId,
     body.itemId,
     auth.user!.id,
     webhookId,
+    bridgeChannelId, // channel_id for Business API routing in hybrid mode
+    isHybridMode ? 1 : 0,
     now,
     now,
   ).run();
@@ -10743,6 +10765,7 @@ export async function connectWhatsAppPersonal(
       userId: auth.user!.id,
       provider: 'whatsapp',
       callbackUrl,
+      config: isHybridMode ? { hybridMode: true, businessPhoneJid } : undefined,
     });
 
     return Response.json({

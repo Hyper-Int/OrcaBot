@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: bridge-v3-outbound-send
-const MODULE_REVISION = 'bridge-v3-outbound-send';
+// REVISION: bridge-v4-hybrid-handshake
+const MODULE_REVISION = 'bridge-v4-hybrid-handshake';
 console.log(`[bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import express from 'express';
@@ -149,6 +149,31 @@ app.post('/sessions/:sessionId/send', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[bridge] Failed to send message:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Send failed' });
+  }
+});
+
+// POST /sessions/:sessionId/handshake -- Trigger re-handshake for hybrid mode (24h window refresh)
+app.post('/sessions/:sessionId/handshake', requireAuth, async (req, res) => {
+  try {
+    const session = sessionManager.getSession(req.params.sessionId as string);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    if (session.status !== 'connected') {
+      res.status(503).json({ error: `Session not connected (status: ${session.status})` });
+      return;
+    }
+    const provider = session.providerInstance;
+    if (!provider.triggerHandshake) {
+      res.status(400).json({ error: 'Provider does not support handshake' });
+      return;
+    }
+    const result = await provider.triggerHandshake();
+    res.json({ ok: result, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[bridge] Handshake failed:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Handshake failed' });
   }
 });
 

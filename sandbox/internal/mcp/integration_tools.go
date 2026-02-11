@@ -1154,17 +1154,16 @@ var telegramTools = []IntegrationTool{
 var whatsappTools = []IntegrationTool{
 	{
 		Name:        "whatsapp_send_message",
-		Description: "Send a WhatsApp message to a phone number",
+		Description: "Send a WhatsApp message to the linked user. Just provide the text — the recipient is automatically determined from the connected phone. Only specify 'to' if you need to override the default recipient.",
 		Provider:    "whatsapp",
 		Action:      "whatsapp.send_message",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"phone_number_id": {"type": "string", "description": "WhatsApp Business phone number ID (optional for bridge connections)"},
-				"to": {"type": "string", "description": "Recipient phone number (with country code, e.g. +1234567890)"},
-				"text": {"type": "string", "description": "Message text"}
+				"text": {"type": "string", "description": "Message text to send"},
+				"to": {"type": "string", "description": "Override recipient phone number with country code. Usually not needed — auto-filled from the linked phone."}
 			},
-			"required": ["to", "text"]
+			"required": ["text"]
 		}`),
 	},
 	{

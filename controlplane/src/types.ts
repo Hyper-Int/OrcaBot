@@ -54,6 +54,8 @@ export interface Env {
   WHATSAPP_ACCESS_TOKEN?: string;
   /** WhatsApp Business API phone number ID */
   WHATSAPP_PHONE_NUMBER_ID?: string;
+  /** WhatsApp Business phone number in E.164 digits-only (e.g., "15551234567") for hybrid mode */
+  WHATSAPP_BUSINESS_PHONE?: string;
   OAUTH_REDIRECT_BASE?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */

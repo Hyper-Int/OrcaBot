@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-manager-v4-outbound-send
-console.log(`[session-manager] REVISION: session-manager-v4-outbound-send loaded at ${new Date().toISOString()}`);
+// REVISION: session-manager-v5-hybrid-handshake
+console.log(`[session-manager] REVISION: session-manager-v5-hybrid-handshake loaded at ${new Date().toISOString()}`);
 
 import { WhatsAppProvider } from './providers/whatsapp.js';
 
@@ -14,6 +14,7 @@ export interface BridgeProvider {
   getStatus(): 'connecting' | 'connected' | 'disconnected' | 'error';
   getQrCode?(): string | null;
   sendMessage?(jid: string, text: string): Promise<{ messageId: string }>;
+  triggerHandshake?(): Promise<boolean>;
 }
 
 export interface NormalizedMessage {
@@ -195,6 +196,7 @@ export class SessionManager {
           config.userId,
           this.dataDir,
           this,
+          config.config as import('./providers/whatsapp.js').HybridConfig | undefined,
         );
       default:
         throw new Error(`Unsupported provider: ${config.provider}`);

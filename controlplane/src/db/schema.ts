@@ -1104,6 +1104,29 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Backfill may fail if sessions are already cleaned up - not critical.
   }
 
+  // Hybrid WhatsApp mode: Baileys bridge + Business API
+  try {
+    await db.prepare(`
+      ALTER TABLE messaging_subscriptions ADD COLUMN hybrid_mode INTEGER NOT NULL DEFAULT 0
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE messaging_subscriptions ADD COLUMN hybrid_handshake_at TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE messaging_subscriptions ADD COLUMN user_phone TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);
 
