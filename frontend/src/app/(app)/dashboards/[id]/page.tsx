@@ -228,7 +228,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   schedule: { width: 280, height: 220 },
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
-  browser: { width: 680, height: 480 },
+  browser: { width: 800, height: 500 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },

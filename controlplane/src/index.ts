@@ -2192,10 +2192,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const data = await request.json() as {
       sandbox_session_id?: string;
       url?: string;
+      pty_id?: string;
     };
     const sandboxSessionId = typeof data.sandbox_session_id === 'string' ? data.sandbox_session_id : '';
     const url = typeof data.url === 'string' ? data.url : '';
-    return sessions.openBrowserFromSandbоxSessionInternal(env, sandboxSessionId, url);
+    const ptyId = typeof data.pty_id === 'string' ? data.pty_id : undefined;
+    return sessions.openBrowserFromSandbоxSessionInternal(env, sandboxSessionId, url, ptyId);
   }
 
   // POST /internal/sessions/:sessionId/approval-request - Create pending approval (called by sandbox broker)

@@ -44,7 +44,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
   terminal: { width: 480, height: 500 },
-  browser: { width: 680, height: 480 },
+  browser: { width: 800, height: 500 },
 };
 
 interface UseUICommandsOptions {
