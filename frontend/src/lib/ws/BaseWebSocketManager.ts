@@ -1,6 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: ws-connect-timeout-v1
+// REVISION: ws-reconnect-cleanclose-v1
+
+const MODULE_REVISION = "ws-reconnect-cleanclose-v1";
+console.log(`[ws] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
  * Base WebSocket manager with connection state machine and reconnection logic
@@ -32,6 +35,8 @@ export interface WebSocketConfig {
    *  this window, close it and schedule a reconnect. Prevents indefinite hangs
    *  when the server is unreachable (browser WebSocket API has no built-in timeout). */
   connectTimeout?: number;
+  /** Whether to reconnect on clean close events */
+  reconnectOnCleanClose?: boolean;
 }
 
 const DEFAULT_CONFIG: Required<WebSocketConfig> = {
@@ -41,6 +46,7 @@ const DEFAULT_CONFIG: Required<WebSocketConfig> = {
   maxReconnectAttempts: 10,
   heartbeatInterval: 30000,
   connectTimeout: 15000,
+  reconnectOnCleanClose: true,
 };
 
 export type StateChangeHandler = (state: ConnectionState) => void;
@@ -55,6 +61,7 @@ export abstract class BaseWebSocketManager {
   protected reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   protected heartbeatTimeout: ReturnType<typeof setTimeout> | null = null;
   private connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private manualClose = false;
 
   // Event handlers
   protected onStateChangeHandlers: Set<StateChangeHandler> = new Set();
@@ -74,6 +81,7 @@ export abstract class BaseWebSocketManager {
       return;
     }
 
+    this.manualClose = false;
     const newState = this.reconnectAttempts > 0 ? "reconnecting" : "connecting";
     console.log(`[WS] Connecting to ${this.url} (attempt ${this.reconnectAttempts + 1})`);
     this.setState(newState);
@@ -97,6 +105,7 @@ export abstract class BaseWebSocketManager {
     console.log(`[WS] Disconnecting (current state: ${this.state})`);
     this.clearTimers();
     this.reconnectAttempts = 0;
+    this.manualClose = true;
 
     if (this.ws) {
       this.ws.onclose = null; // Prevent reconnection
@@ -209,10 +218,12 @@ export abstract class BaseWebSocketManager {
       this.onDisconnected();
       this.stopHeartbeat();
 
-      if (event.wasClean) {
+      if (this.manualClose) {
         this.setState("disconnected");
-      } else {
+      } else if (!event.wasClean || this.config.reconnectOnCleanClose) {
         this.scheduleReconnect();
+      } else {
+        this.setState("disconnected");
       }
     };
 
