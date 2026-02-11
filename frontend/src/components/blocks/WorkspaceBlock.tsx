@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-block-v13-dev-mode-log
-const MODULE_REVISION = "workspace-block-v13-dev-mode-log";
+// REVISION: workspace-block-v14-faster-sync-progress
+const MODULE_REVISION = "workspace-block-v14-faster-sync-progress";
 console.log(`[WorkspaceBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 console.log(`[WorkspaceBlock] DEV_MODE_ENABLED=${DEV_MODE_ENABLED} loaded at ${new Date().toISOString()}`);
 
@@ -210,6 +210,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [onedrivePath, setOnedrivePath] = React.useState<OnedriveFolder[]>([]);
   const [onedriveParentId, setOnedriveParentId] = React.useState("root");
   const [onedriveLoading, setOnedriveLoading] = React.useState(false);
+  const githubImportingRef = React.useRef(false);
   const previewFetchRef = React.useRef(0);
   const integrationLoadedRef = React.useRef<string | null>(null);
   const integrationLoadingRef = React.useRef(false);
@@ -531,7 +532,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       const status = await getGithubSyncStatus(data.dashboardId);
       setGithubStatus(status);
       const syncing = status.status === "syncing_cache" || status.status === "syncing_workspace";
-      setGithubSyncing(syncing);
+      // During import, the backend may briefly report 'idle' before the sync starts.
+      // Don't kill the poll loop — keep githubSyncing true until the import finishes.
+      if (syncing || !githubImportingRef.current) {
+        setGithubSyncing(syncing);
+      }
       // If cache sync is partial (batched), trigger next batch automatically.
       // Each poll is a separate HTTP request so CF subrequest limits reset.
       if (status.status === "syncing_cache") {
@@ -539,7 +544,9 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
       }
     } catch {
       setGithubStatus(null);
-      setGithubSyncing(false);
+      if (!githubImportingRef.current) {
+        setGithubSyncing(false);
+      }
     }
   }, [data.dashboardId, user]);
 
@@ -830,7 +837,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     if (!githubSyncing) return;
     const interval = setInterval(() => {
       void loadGithubStatus();
-    }, 2500);
+    }, 500);
     return () => clearInterval(interval);
   }, [githubSyncing, loadGithubStatus]);
 
@@ -898,14 +905,21 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const handleSelectGithubRepo = React.useCallback(async (repo: GithubRepo) => {
     if (!data.dashboardId) return;
     try {
+      // Clear stale status from any previous repo and start polling immediately.
+      // setGithubRepo is a long call (backend downloads up to 40 files before returning),
+      // but it updates DB progress incrementally, so polls during the await will see progress.
+      setGithubStatus(null);
+      setGithubSyncing(true);
       await setGithubRepo(data.dashboardId, repo);
+      // Refresh final state after the initial batch completes
+      void loadGithubStatus();
       await loadGithubIntegration();
-      await loadGithubStatus();
       await loadGithubHistory();
       setGithubPickerOpen(false);
       // Notify parent to auto-attach GitHub to connected terminals
       data.onStorageLinked?.("github");
     } catch (error) {
+      setGithubSyncing(false);
       setFileError(error instanceof Error ? error.message : "Failed to link GitHub repo");
     }
   }, [data.dashboardId, loadGithubIntegration, loadGithubStatus, loadGithubHistory, data.onStorageLinked]);
@@ -913,10 +927,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const handleConfirmGithubRepo = React.useCallback(async () => {
     if (!githubSelected) return;
     setGithubImporting(true);
+    githubImportingRef.current = true;
     try {
       await handleSelectGithubRepo(githubSelected);
     } finally {
       setGithubImporting(false);
+      githubImportingRef.current = false;
     }
   }, [githubSelected, handleSelectGithubRepo]);
 
