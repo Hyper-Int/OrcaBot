@@ -1,16 +1,24 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: workspace-v2-path-traversal-normalize
 
 package fs
 
 import (
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+const workspaceRevision = "workspace-v2-path-traversal-normalize"
+
+func init() {
+	log.Printf("[workspace] REVISION: %s loaded at %s", workspaceRevision, time.Now().Format(time.RFC3339))
+}
 
 var (
 	ErrPathTraversal = errors.New("path traversal not allowed")
@@ -52,13 +60,13 @@ func (w *Workspace) Root() string {
 // resolvePath safely resolves a path within the workspace
 // Returns an error if the path would escape the workspace
 func (w *Workspace) resоlvePath(path string) (string, error) {
-	// First check: reject any path containing ..
-	if strings.Contains(path, "..") {
-		return "", ErrPathTraversal
-	}
-
 	// Clean the path (removes redundant slashes, etc.)
 	cleaned := filepath.Clean(path)
+	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
+		if part == ".." {
+			return "", ErrPathTraversal
+		}
+	}
 
 	// Remove leading slash for joining
 	cleaned = strings.TrimPrefix(cleaned, "/")

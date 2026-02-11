@@ -1,9 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v2-bugreport
-
-// REVISION: index-v12-fix-guest-unique-email
-console.log(`[controlplane] REVISION: index-v12-fix-guest-unique-email loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v3-embed-ssrf-guardrails
+console.log(`[controlplane] REVISION: controlplane-v3-embed-ssrf-guardrails loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -87,6 +85,8 @@ function isOriginAllоwed(origin: string | null, allowedOrigins: Set<string> | n
 const EMBED_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const EMBED_FETCH_TIMEOUT_MS = 5_000;
 const EMBED_MAX_REDIRECTS = 5;
+const EMBED_DNS_TIMEOUT_MS = 3_000;
+const EMBED_DNS_ENDPOINT = 'https://cloudflare-dns.com/dns-query';
 
 function cоrsRespоnse(response: Response, origin: string | null, allowedOrigins: Set<string> | null): Response {
   // Don't wrap WebSocket upgrade responses - they have a special webSocket property
@@ -120,12 +120,8 @@ function isPrivateHоstname(hostname: string): boolean {
     return true;
   }
 
-  if (lower.startsWith('[') && lower.endsWith(']')) {
-    const ipv6 = lower.slice(1, -1);
-    if (ipv6 === '::1') return true;
-    if (ipv6.startsWith('fc') || ipv6.startsWith('fd')) return true; // fc00::/7
-    if (ipv6.startsWith('fe80')) return true; // fe80::/10
-    return false;
+  if (isPrivateIp(lower)) {
+    return true;
   }
 
   const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
@@ -144,6 +140,88 @@ function isPrivateHоstname(hostname: string): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   return false;
+}
+
+function isIpv4Literal(value: string): boolean {
+  return /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(value);
+}
+
+function isIpv6Literal(value: string): boolean {
+  return /^[0-9a-f:[\]]+$/i.test(value) && value.includes(':');
+}
+
+function isPrivateIp(value: string): boolean {
+  if (isIpv6Literal(value)) {
+    const ipv6 = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
+    const lower = ipv6.toLowerCase();
+    if (lower.startsWith("::ffff:")) {
+      const mapped = lower.slice("::ffff:".length);
+      if (isPrivateIp(mapped)) {
+        return true;
+      }
+    }
+    if (ipv6 === '::1') return true;
+    if (ipv6.startsWith('fc') || ipv6.startsWith('fd')) return true; // fc00::/7
+    if (ipv6.startsWith('fe80')) return true; // fe80::/10
+    return false;
+  }
+  if (!isIpv4Literal(value)) {
+    return false;
+  }
+  const octets = value.split('.').map((part) => Number(part));
+  if (octets.some((octet) => Number.isNaN(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+async function resolveDns(hostname: string, type: 'A' | 'AAAA'): Promise<string[]> {
+  const url = `${EMBED_DNS_ENDPOINT}?name=${encodeURIComponent(hostname)}&type=${type}`;
+  const response = await fetchWithTimeout(
+    url,
+    { headers: { Accept: 'application/dns-json' } },
+    EMBED_DNS_TIMEOUT_MS
+  );
+  if (!response.ok) {
+    throw new Error('E79738: DNS lookup failed');
+  }
+  const data = await response.json() as { Answer?: Array<{ data: string; type: number }> };
+  if (!data.Answer) {
+    return [];
+  }
+  const allowedType = type === 'A' ? 1 : 28;
+  return data.Answer
+    .filter((answer) => answer.type === allowedType)
+    .map((answer) => answer.data);
+}
+
+async function assertPublicHostname(hostname: string): Promise<void> {
+  if (isPrivateHоstname(hostname)) {
+    throw new Error('E79736: URL not allowed');
+  }
+  if (isIpv4Literal(hostname) || isIpv6Literal(hostname)) {
+    return;
+  }
+  // NOTE: This check relies on Cloudflare Workers private-IP egress blocking.
+  // DNS rebinding remains possible between resolution and fetch if run elsewhere.
+  const [ipv4s, ipv6s] = await Promise.all([
+    resolveDns(hostname, 'A'),
+    resolveDns(hostname, 'AAAA'),
+  ]);
+  const ips = [...ipv4s, ...ipv6s];
+  if (ips.length === 0) {
+    throw new Error('E79738: Hostname did not resolve');
+  }
+  if (ips.some((ip) => isPrivateIp(ip))) {
+    throw new Error('E79736: URL not allowed');
+  }
 }
 
 async function fetchWithTimeout(
@@ -171,6 +249,7 @@ function resolveRedirectUrl(current: URL, location: string): URL | null {
 async function fetchEmbedTarget(targetUrl: URL): Promise<{ response: Response; finalUrl: URL }> {
   let current = targetUrl;
   for (let i = 0; i <= EMBED_MAX_REDIRECTS; i++) {
+    await assertPublicHostname(current.hostname);
     let response = await fetchWithTimeout(
       current.toString(),
       { method: 'HEAD', redirect: 'manual' },
@@ -190,9 +269,10 @@ async function fetchEmbedTarget(targetUrl: URL): Promise<{ response: Response; f
         return { response, finalUrl: current };
       }
       const nextUrl = resolveRedirectUrl(current, location);
-      if (!nextUrl || !EMBED_ALLOWED_PROTOCOLS.has(nextUrl.protocol) || isPrivateHоstname(nextUrl.hostname)) {
+      if (!nextUrl || !EMBED_ALLOWED_PROTOCOLS.has(nextUrl.protocol)) {
         throw new Error('E79736: URL not allowed');
       }
+      await assertPublicHostname(nextUrl.hostname);
       current = nextUrl;
       continue;
     }

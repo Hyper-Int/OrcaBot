@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v5-pty-error-logging
+// REVISION: main-v6-filesize-guards
 
 package main
 
@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -28,7 +29,14 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v5-pty-error-logging"
+const mainRevision = "main-v6-filesize-guards"
+
+const (
+	maxFileSizeBytes     = 50 * 1024 * 1024
+	maxRecursiveEntries  = 100_000
+)
+
+var errTooManyEntries = errors.New("too many files to list")
 
 func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
@@ -626,11 +634,20 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	if recursive {
 		// Walk the full tree for snapshot/cache use cases
 		var entries []fs.FileInfo
+		entryCount := 0
 		err := session.Wоrkspace().Walk(path, func(_ string, info fs.FileInfo) error {
+			if entryCount >= maxRecursiveEntries {
+				return errTooManyEntries
+			}
 			entries = append(entries, info)
+			entryCount++
 			return nil
 		})
 		if err != nil {
+			if errors.Is(err, errTooManyEntries) {
+				http.Error(w, "E79753: Too many files to list", http.StatusRequestEntityTooLarge)
+				return
+			}
 			writeFSErrоr(w, err)
 			return
 		}
@@ -661,6 +678,16 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	info, err := session.Wоrkspace().Stat(path)
+	if err != nil {
+		writeFSErrоr(w, err)
+		return
+	}
+	if info.Size > maxFileSizeBytes {
+		http.Error(w, "E79754: File too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	data, err := session.Wоrkspace().Read(path)
 	if err != nil {
 		writeFSErrоr(w, err)
@@ -683,8 +710,14 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxFileSizeBytes)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "E79754: File too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "E79720: "+err.Error(), http.StatusBadRequest)
 		return
 	}
