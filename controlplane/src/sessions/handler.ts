@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v6-integration-persistence
-const sessionsRevision = "sessions-v6-integration-persistence";
+// REVISION: sessions-v7-browser-pty-lookup
+const sessionsRevision = "sessions-v7-browser-pty-lookup";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -995,17 +995,31 @@ export async function openDashbоardBrowser(
 export async function openBrowserFromSandbоxSessionInternal(
   env: EnvWithDriveCache,
   sandboxSessionId: string,
-  url: string
+  url: string,
+  ptyId?: string
 ): Promise<Response> {
   if (!sandboxSessionId || !url) {
     return Response.json({ error: 'E79821: Missing session or URL' }, { status: 400 });
   }
 
-  const session = await env.DB.prepare(`
-    SELECT dashboard_id, item_id FROM sessions WHERE sandbox_session_id = ?
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).bind(sandboxSessionId).first<{ dashboard_id: string; item_id: string }>();
+  // If pty_id is provided, look up the exact session for this terminal.
+  // All terminals in a dashboard share the same sandbox_session_id, so without
+  // pty_id the query returns the most recently created session (wrong terminal).
+  let session: { dashboard_id: string; item_id: string } | null = null;
+  if (ptyId) {
+    session = await env.DB.prepare(`
+      SELECT dashboard_id, item_id FROM sessions WHERE sandbox_session_id = ? AND pty_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).bind(sandboxSessionId, ptyId).first<{ dashboard_id: string; item_id: string }>();
+  }
+  if (!session) {
+    session = await env.DB.prepare(`
+      SELECT dashboard_id, item_id FROM sessions WHERE sandbox_session_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).bind(sandboxSessionId).first<{ dashboard_id: string; item_id: string }>();
+  }
 
   if (!session?.dashboard_id) {
     return Response.json({ error: 'E79820: Session not found' }, { status: 404 });
@@ -1029,16 +1043,26 @@ export async function openBrowserFromSandbоxSessionInternal(
       WHERE id = ?
     `).bind(url, now, browserItemId).run();
   } else {
-    const terminalAnchor = await env.DB.prepare(`
-      SELECT position_x, position_y, width FROM dashboard_items
-      WHERE dashboard_id = ? AND type = 'terminal'
-      ORDER BY updated_at DESC
-      LIMIT 1
-    `).bind(dashboardId).first<{
-      position_x: number | null;
-      position_y: number | null;
-      width: number | null;
-    }>();
+    // Use the specific terminal that triggered the browser open (by item_id),
+    // falling back to the most recently updated terminal if not found.
+    const terminalAnchor = terminalItemId
+      ? await env.DB.prepare(`
+          SELECT position_x, position_y, width FROM dashboard_items WHERE id = ?
+        `).bind(terminalItemId).first<{
+          position_x: number | null;
+          position_y: number | null;
+          width: number | null;
+        }>()
+      : await env.DB.prepare(`
+          SELECT position_x, position_y, width FROM dashboard_items
+          WHERE dashboard_id = ? AND type = 'terminal'
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `).bind(dashboardId).first<{
+          position_x: number | null;
+          position_y: number | null;
+          width: number | null;
+        }>();
     const anchorX = typeof terminalAnchor?.position_x === 'number' ? terminalAnchor.position_x : 140;
     const anchorY = typeof terminalAnchor?.position_y === 'number' ? terminalAnchor.position_y : 140;
     const anchorWidth = typeof terminalAnchor?.width === 'number' ? terminalAnchor.width : 520;
@@ -1056,8 +1080,8 @@ export async function openBrowserFromSandbоxSessionInternal(
       url,
       positionX,
       positionY,
-      520,
-      360,
+      800,
+      500,
       now,
       now
     ).run();

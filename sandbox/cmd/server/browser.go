@@ -1,6 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-v2-pty-id-passthrough
 package main
 
 import (
@@ -73,7 +74,8 @@ func (s *Server) handleBrowserStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type browserOpenRequest struct {
-	URL string `json:"url"`
+	URL   string `json:"url"`
+	PtyID string `json:"pty_id,omitempty"`
 }
 
 func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +98,8 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Notify control plane to create browser item in frontend (async, best-effort)
-	go s.notifyControlPlaneBrowserOpen(sessionID, req.URL)
+	// Pass pty_id so the control plane can identify which terminal triggered the browser
+	go s.notifyControlPlaneBrowserOpen(sessionID, req.URL, req.PtyID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -104,7 +107,7 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 // notifyControlPlaneBrowserOpen notifies the control plane to create/show the browser
 // component in the frontend. This runs async and is best-effort since the xdg-open
 // script inside the PTY cannot access INTERNAL_API_TOKEN (filtered for security).
-func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url string) {
+func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url string, ptyID string) {
 	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
 	internalToken := os.Getenv("INTERNAL_API_TOKEN")
 	if controlplaneURL == "" || internalToken == "" {
@@ -115,6 +118,7 @@ func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url stri
 	payload := map[string]string{
 		"sandbox_session_id": sandboxSessionID,
 		"url":                url,
+		"pty_id":             ptyID,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
