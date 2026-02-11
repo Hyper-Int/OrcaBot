@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-auth-v1-headers
-const MODULE_REVISION = "desktop-auth-v1-headers";
+// REVISION: desktop-auth-v2-sync-user-id
+const MODULE_REVISION = "desktop-auth-v2-sync-user-id";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -49,9 +49,26 @@ function AuthBootstrapper() {
   const hasBootstrapped = React.useRef(false);
 
   React.useEffect(() => {
-    // If already authenticated (from localStorage hydration), just mark as resolved
+    // If already authenticated (from localStorage hydration), just mark as resolved.
+    // In desktop mode, also do a one-time sync to ensure the local user ID matches
+    // the server's DB (the client-generated ID may differ from an older creation).
     if (isAuthenticated) {
       setAuthResolved(true);
+      if (DESKTOP_MODE && !hasBootstrapped.current) {
+        hasBootstrapped.current = true;
+        const authHeaders = getAuthHeaders();
+        fetch(API.cloudflare.usersMe, {
+          headers: { ...authHeaders },
+          credentials: "include",
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data: { user?: User; isAdmin?: boolean } | null) => {
+            if (data?.user && data.user.id !== authHeaders["X-User-ID"]) {
+              setUser(data.user, data.isAdmin ?? false);
+            }
+          })
+          .catch(() => {});
+      }
       return;
     }
 
@@ -68,13 +85,26 @@ function AuthBootstrapper() {
         loginDevMode("Desktop User", "desktop@localhost");
         const authHeaders = getAuthHeaders();
         try {
+          // Create server-side session
           await fetch(`${API.cloudflare.base}/auth/dev/session`, {
             method: "POST",
-            headers: {
-              ...authHeaders,
-            },
+            headers: { ...authHeaders },
             credentials: "include",
           });
+          // Sync actual user from server — the DB user may have a different ID
+          // than the locally-generated one (e.g. created by an older version).
+          // This ensures WebSocket connections (which only send user_id, not email)
+          // use the correct ID that the server recognizes.
+          const meResp = await fetch(API.cloudflare.usersMe, {
+            headers: { ...authHeaders },
+            credentials: "include",
+          });
+          if (meResp.ok) {
+            const meData = (await meResp.json()) as { user?: User; isAdmin?: boolean };
+            if (meData.user && meData.user.id !== authHeaders["X-User-ID"]) {
+              setUser(meData.user, meData.isAdmin ?? false);
+            }
+          }
         } catch {
           // Session creation is best-effort — auth store is already set
         }

@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: auth-middleware-v1-email-fallback
+
 /**
  * Auth Middleware
  *
@@ -139,18 +141,33 @@ async function authenticateDevMоde(
 
   // Auto-create user if not exists (development mode)
   if (!user && userEmail) {
-    const now = new Date().toISOString();
-    await env.DB.prepare(`
-      INSERT INTO users (id, email, name, created_at)
-      VALUES (?, ?, ?, ?)
-    `).bind(userId, userEmail, userName || 'Anonymous', now).run();
+    // Check if a user with this email already exists under a different ID
+    // (can happen when the client-side ID generation changes between versions)
+    const existingByEmail = await env.DB.prepare(`
+      SELECT * FROM users WHERE email = ?
+    `).bind(userEmail).first<DbUser>();
 
-    user = {
-      id: userId,
-      email: userEmail,
-      name: userName || 'Anonymous',
-      createdAt: now,
-    };
+    if (existingByEmail) {
+      user = {
+        id: existingByEmail.id,
+        email: existingByEmail.email,
+        name: existingByEmail.name,
+        createdAt: existingByEmail.created_at,
+      };
+    } else {
+      const now = new Date().toISOString();
+      await env.DB.prepare(`
+        INSERT INTO users (id, email, name, created_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(userId, userEmail, userName || 'Anonymous', now).run();
+
+      user = {
+        id: userId,
+        email: userEmail,
+        name: userName || 'Anonymous',
+        createdAt: now,
+      };
+    }
   }
 
   if (!user) {

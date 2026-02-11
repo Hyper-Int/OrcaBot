@@ -3,6 +3,7 @@
 
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiPut, apiDelete } from "../client";
+import { useAuthStore } from "@/stores/auth-store";
 import type {
   Dashboard,
   DashboardItem,
@@ -540,6 +541,12 @@ export function getCollaborationWsUrl(
 ): string {
   const baseWsUrl = API.cloudflare.ws(dashboardId);
   let url = `${baseWsUrl}?user_id=${encodeURIComponent(userId)}&user_name=${encodeURIComponent(userName)}`;
+  // Include email so the server can resolve the user even if the ID doesn't
+  // match the DB (e.g. desktop mode where the client-generated ID may differ).
+  const email = useAuthStore.getState()?.user?.email;
+  if (email) {
+    url += `&user_email=${encodeURIComponent(email)}`;
+  }
   return url;
 }
 

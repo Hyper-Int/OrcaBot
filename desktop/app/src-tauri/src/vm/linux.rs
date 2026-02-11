@@ -273,6 +273,10 @@ impl VirtualMachine for QemuVM {
         }
     }
 
+    fn pid(&self) -> Option<u32> {
+        self.qemu_process.as_ref().map(|c| c.id())
+    }
+
     fn sandbox_url(&self) -> Option<String> {
         if self.running {
             Some(self.sandbox_url.clone())
