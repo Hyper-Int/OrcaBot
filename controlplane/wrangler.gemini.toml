@@ -41,7 +41,7 @@ EMAIL_FROM = "OrcaBot <noreply@orcabot.com>"
 name = "RATE_LIMITER"
 type = "ratelimit"
 namespace_id = "1"
-simple = { limit = 50, period = 60 }
+simple = { limit = 200, period = 60 }
 
 # Rate limiting - authenticated (generous)
 [[unsafe.bindings]]
