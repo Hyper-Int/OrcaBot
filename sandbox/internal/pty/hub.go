@@ -90,6 +90,17 @@ type AgentStoppedEvent struct {
 	Timestamp   string `json:"timestamp"`   // ISO 8601 timestamp
 }
 
+// ToolsChangedEvent is broadcast when MCP tools change (integrations loaded/removed).
+// The frontend uses this to show a "restart to apply" banner for agents (like Codex CLI)
+// that don't support dynamic tool list updates.
+// REVISION: tools-changed-v1-restart-prompt
+type ToolsChangedEvent struct {
+	Type      string `json:"type"`      // always "tools_changed"
+	OldCount  int    `json:"oldCount"`  // previous tool count
+	NewCount  int    `json:"newCount"`  // new tool count
+	Timestamp string `json:"timestamp"` // ISO 8601 timestamp
+}
+
 // IdleTimeout is how long a hub stays alive with no connected clients.
 // After this duration with zero clients, the hub automatically stops to prevent goroutine leaks.
 const IdleTimeout = 600 * time.Second
@@ -914,6 +925,19 @@ func (h *Hub) BroadcastAgentStopped(event AgentStoppedEvent) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		log.Printf("failed to marshal agent stopped event: %v", err)
+		return
+	}
+	h.broadcastControl(data)
+}
+
+// BroadcastToolsChanged sends a tools_changed event to all clients.
+// Called by the mcp-bridge when integration tools are loaded/removed.
+// REVISION: tools-changed-v1-restart-prompt
+func (h *Hub) BroadcastToolsChanged(event ToolsChangedEvent) {
+	event.Type = "tools_changed"
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("failed to marshal tools changed event: %v", err)
 		return
 	}
 	h.broadcastControl(data)

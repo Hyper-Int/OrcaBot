@@ -1677,6 +1677,14 @@ export function TerminalBlock({
           });
         }
       }, [id]),
+      onToolsChanged: React.useCallback((event: { oldCount: number; newCount: number }) => {
+        // Only show restart banner for Codex CLI which doesn't support
+        // dynamic tool list updates. Claude Code and Gemini CLI handle
+        // notifications/tools/list_changed natively and auto-refresh.
+        if (session?.id && event.newCount !== event.oldCount && terminalType === "codex") {
+          setPendingConfigRestart(true);
+        }
+      }, [session?.id, terminalType]),
     }
   );
 

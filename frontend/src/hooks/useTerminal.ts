@@ -6,7 +6,7 @@
 import * as React from "react";
 import { TerminalWSManager, type TerminalWSConfig } from "@/lib/ws";
 import type { ConnectionState } from "@/lib/ws";
-import type { TurnTakingState, AgentState, AudioEvent, TtsStatusEvent, AgentStoppedEvent } from "@/types/terminal";
+import type { TurnTakingState, AgentState, AudioEvent, TtsStatusEvent, AgentStoppedEvent, ToolsChangedEvent } from "@/types/terminal";
 
 export interface UseTerminalOptions {
   sessionId: string;
@@ -58,6 +58,8 @@ export interface UseTerminalCallbacks {
   onTtsStatus?: (event: TtsStatusEvent) => void;
   /** Called when an agent finishes its turn (from native stop hooks) */
   onAgentStopped?: (event: AgentStoppedEvent) => void;
+  /** Called when MCP tools change (integrations loaded/removed) */
+  onToolsChanged?: (event: ToolsChangedEvent) => void;
 }
 
 const DEFAULT_TURN_TAKING: TurnTakingState = {
@@ -163,6 +165,11 @@ export function useTerminal(
       callbacksRef.current?.onAgentStopped?.(event);
     });
 
+    // Subscribe to tools changed events (from mcp-bridge integration loading)
+    const unsubToolsChanged = manager.onToolsChanged((event) => {
+      callbacksRef.current?.onToolsChanged?.(event);
+    });
+
     // Subscribe to cwd changes (from PTY process directory changes)
     const unsubCwd = manager.onCwdChange((newCwd) => {
       setCwd(newCwd);
@@ -183,6 +190,7 @@ export function useTerminal(
         { name: 'audio', fn: unsubAudio },
         { name: 'ttsStatus', fn: unsubTtsStatus },
         { name: 'agentStopped', fn: unsubAgentStopped },
+        { name: 'toolsChanged', fn: unsubToolsChanged },
         { name: 'cwd', fn: unsubCwd },
       ];
 

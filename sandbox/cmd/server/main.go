@@ -189,6 +189,10 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// Agent stopped - allows agent stop hooks to notify when agent finishes (localhost only)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/agent-stopped", s.handleAgentStopped)
 
+	// Tools changed - allows mcp-bridge to notify when MCP tools change (localhost only)
+	// REVISION: tools-changed-v1-restart-prompt
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.handleToolsChanged)
+
 	// PTY scrollback - returns recent terminal output (localhost only, used by stop hooks as fallback)
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.handleScrollback)
 
@@ -915,6 +919,44 @@ func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
 		session.SetExecutionID(ptyId, "")
 		go s.notifyExecutionPtyCompleted(execId, ptyId, req.Reason, req.LastMessage)
 	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleToolsChanged broadcasts a tools_changed event to all WebSocket clients of a PTY.
+// Called by mcp-bridge when it detects integration tools have been loaded or removed.
+// The frontend uses this to show a "restart to apply" banner for agents that don't
+// support dynamic tool list updates (e.g., Codex CLI).
+// REVISION: tools-changed-v1-restart-prompt
+func (s *Server) handleToolsChanged(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+	hub := session.GetHub(ptyId)
+	if hub == nil {
+		http.Error(w, "E79740: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		OldCount int `json:"oldCount"`
+		NewCount int `json:"newCount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79741: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[tools-changed] PTY %s: tools %d -> %d", ptyId, req.OldCount, req.NewCount)
+
+	hub.BroadcastToolsChanged(pty.ToolsChangedEvent{
+		OldCount:  req.OldCount,
+		NewCount:  req.NewCount,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

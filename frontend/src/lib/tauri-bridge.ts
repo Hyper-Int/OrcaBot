@@ -1,23 +1,32 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v3-processed-field
-const MODULE_REVISION = "tauri-bridge-v3-processed-field";
+// REVISION: tauri-bridge-v4-bundler-safe
+const MODULE_REVISION = "tauri-bridge-v4-bundler-safe";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
 
 import { DESKTOP_MODE } from "@/config/env";
 
+// Use variable-based imports so Turbopack/webpack can't statically resolve them.
+// These modules only exist in Tauri desktop builds, not in Cloudflare/web builds.
+const TAURI_CORE = "@tauri-apps/api/core";
+const TAURI_WEBVIEW = "@tauri-apps/api/webview";
+const TAURI_DIALOG = "@tauri-apps/plugin-dialog";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<any>;
+
 /**
  * Dynamically import Tauri invoke to avoid breaking web/Cloudflare builds.
  * Returns null if not in desktop mode or if Tauri APIs are unavailable.
  */
-async function getTauriInvoke() {
+async function getTauriInvoke(): Promise<TauriInvoke | null> {
   if (!DESKTOP_MODE) return null;
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke;
+    const mod = await import(/* webpackIgnore: true */ TAURI_CORE);
+    return mod.invoke as TauriInvoke;
   } catch {
     return null;
   }
@@ -52,7 +61,7 @@ export interface ImportProgress {
 export async function getWorkspacePath(): Promise<WorkspaceInfo | null> {
   const invoke = await getTauriInvoke();
   if (!invoke) return null;
-  return invoke<WorkspaceInfo>("get_workspace_path");
+  return invoke("get_workspace_path") as Promise<WorkspaceInfo>;
 }
 
 /** Import a folder (or file) from source_path into the workspace. */
@@ -62,18 +71,18 @@ export async function importFolder(
 ): Promise<ImportResult> {
   const invoke = await getTauriInvoke();
   if (!invoke) throw new Error("Not in desktop mode");
-  return invoke<ImportResult>("import_folder", {
+  return invoke("import_folder", {
     sourcePath,
     destSubpath: destSubpath ?? null,
-  });
+  }) as Promise<ImportResult>;
 }
 
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!DESKTOP_MODE) return null;
   try {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({ directory: true, multiple: false });
+    const mod = await import(/* webpackIgnore: true */ TAURI_DIALOG);
+    const selected = await mod.open({ directory: true, multiple: false });
     if (typeof selected === "string") return selected;
     return null;
   } catch {
@@ -89,10 +98,10 @@ export async function onImportProgress(
 ): Promise<(() => void) | null> {
   if (!DESKTOP_MODE) return null;
   try {
-    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-    const unlisten = await getCurrentWebview().listen<ImportProgress>(
+    const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
+    const unlisten = await mod.getCurrentWebview().listen(
       "folder-import-progress",
-      (event) => callback(event.payload)
+      (event: { payload: ImportProgress }) => callback(event.payload)
     );
     return unlisten;
   } catch {
@@ -110,14 +119,15 @@ export async function onDragDrop(
 ): Promise<(() => void) | null> {
   if (!DESKTOP_MODE) return null;
   try {
-    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-    const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-      const payload = event.payload as {
+    const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
+    const unlisten = await mod.getCurrentWebview().onDragDropEvent((event: {
+      payload: {
         type: "over" | "drop" | "cancel";
         paths?: string[];
         position?: { x: number; y: number };
       };
-      callback(payload);
+    }) => {
+      callback(event.payload);
     });
     return unlisten;
   } catch {

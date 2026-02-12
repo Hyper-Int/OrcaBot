@@ -240,6 +240,19 @@ export interface CwdChangedEvent {
 }
 
 /**
+ * Tools changed event (server -> client)
+ * Sent when MCP integration tools are loaded or removed.
+ * The frontend shows a "restart to apply" banner for agents
+ * that don't support dynamic tool list updates (e.g., Codex CLI).
+ */
+export interface ToolsChangedEvent {
+  type: "tools_changed";
+  oldCount: number;
+  newCount: number;
+  timestamp: string; // ISO 8601
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -255,4 +268,5 @@ export type IncomingControlEvent =
   | TtsStatusEvent
   | TalkitoNoticeEvent
   | AgentStoppedEvent
-  | CwdChangedEvent;
+  | CwdChangedEvent
+  | ToolsChangedEvent;

@@ -35,5 +35,5 @@ primary_region = 'sjc'
   path = "/health"
 
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "4096"
+  size = "shared-cpu-4x"
+  memory = "8192"
