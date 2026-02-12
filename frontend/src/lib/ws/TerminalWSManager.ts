@@ -22,6 +22,7 @@ import type {
   TtsStatusEvent,
   TalkitoNoticeEvent,
   AgentStoppedEvent,
+  ToolsChangedEvent,
 } from "@/types/terminal";
 import { API } from "@/config/env";
 import { useAuthStore } from "@/stores/auth-store";
@@ -67,6 +68,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
   private onAudioHandlers: Set<(event: AudioEvent) => void> = new Set();
   private onTtsStatusHandlers: Set<(event: TtsStatusEvent) => void> = new Set();
   private onAgentStoppedHandlers: Set<(event: AgentStoppedEvent) => void> = new Set();
+  private onToolsChangedHandlers: Set<(event: ToolsChangedEvent) => void> = new Set();
   private onCwdChangeHandlers: Set<(cwd: string) => void> = new Set();
 
   constructor(
@@ -262,6 +264,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
   }
 
   /**
+   * Subscribe to tools changed events (from mcp-bridge integration loading)
+   */
+  onToolsChanged(handler: (event: ToolsChangedEvent) => void): () => void {
+    this.onToolsChangedHandlers.add(handler);
+    return () => this.onToolsChangedHandlers.delete(handler);
+  }
+
+  /**
    * Get current TTS status
    */
   getTtsStatus(): TtsStatusEvent | null {
@@ -397,6 +407,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "cwd_changed":
         this.updateCwd(message.cwd);
         break;
+
+      case "tools_changed":
+        this.notifyToolsChanged(message);
+        break;
     }
   }
 
@@ -488,6 +502,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
   private notifyAgentStopped(event: AgentStoppedEvent): void {
     this.onAgentStoppedHandlers.forEach((handler) => handler(event));
+  }
+
+  private notifyToolsChanged(event: ToolsChangedEvent): void {
+    this.onToolsChangedHandlers.forEach((handler) => handler(event));
   }
 
   private updateCwd(cwd: string): void {

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-bridge-v13-args-auth
+// REVISION: mcp-bridge-v19-invalidate-warmup-cache
 // mcp-bridge is a stdio-to-HTTP bridge for MCP.
 // It allows Claude Code (and other MCP clients that use stdio transport)
 // to communicate with the sandbox's HTTP-based MCP server.
@@ -40,7 +40,8 @@ import (
 	"time"
 )
 
-const bridgeRevision = "mcp-bridge-v13-args-auth"
+// REVISION: mcp-bridge-v19-invalidate-warmup-cache
+const bridgeRevision = "mcp-bridge-v19-invalidate-warmup-cache"
 
 func init() {
 	log.Printf("[mcp-bridge] REVISION: %s loaded at %s", bridgeRevision, time.Now().Format(time.RFC3339))
@@ -79,6 +80,14 @@ var (
 	// stdoutMu protects stdout writes so the tool monitor goroutine
 	// and the main request loop don't interleave JSON lines.
 	stdoutMu sync.Mutex
+
+	// warmedTools holds the pre-warmed tools response body (JSON).
+	// Set by the warmup goroutine, consumed by the first handleToolsList call.
+	// This ensures MCP clients that don't support notifications/tools/list_changed
+	// (e.g., Codex CLI) get the full tool list from their first tools/list call.
+	warmedTools   []byte
+	warmedToolsMu sync.Mutex
+	warmedToolsCh = make(chan struct{}) // closed when warmup is done
 )
 
 func main() {
@@ -144,6 +153,15 @@ func main() {
 	}
 	log.Printf("[mcp-bridge] final config: mcpURL=%s ptyID=%s... secretSet=%v", cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "")
 	fmt.Fprintf(os.Stderr, "mcp-bridge: using MCP URL: %s\n", cfg.mcpURL)
+
+	// Pre-warm integration tools in background. MCP clients (especially Codex CLI)
+	// may call tools/list before integrations are loaded (~40s after PTY creation).
+	// This goroutine polls until integrations appear and caches the full response.
+	if cfg.mcpSecret != "" {
+		go warmupTools(&cfg)
+	} else {
+		close(warmedToolsCh) // no warmup needed
+	}
 
 	// Start background tool list monitor (checks for new/removed tools every 10s)
 	go monitorToolChanges(&cfg)
@@ -290,7 +308,100 @@ func fetchToolNames(cfg *bridgeConfig) ([]string, error) {
 	return names, nil
 }
 
+// warmupTools polls the tools endpoint until integration tools appear.
+// Caches the full response so the first handleToolsList call returns immediately
+// with the complete tool set. This is critical for Codex CLI which doesn't
+// handle notifications/tools/list_changed and caches tools from the first call.
+func warmupTools(cfg *bridgeConfig) {
+	defer close(warmedToolsCh)
+
+	// Integration tools take 30-60s to become available after PTY creation.
+	// Poll every 5s for up to 90s.
+	deadline := time.Now().Add(90 * time.Second)
+	baselineCount := 0
+
+	for time.Now().Before(deadline) {
+		body, count := fetchToolsRaw(cfg)
+		if body == nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if baselineCount == 0 {
+			baselineCount = count
+			log.Printf("[mcp-bridge] warmup: baseline %d tools", count)
+		}
+
+		// Integration tools add 6+ tools above the baseline (agent state + UI tools)
+		if count > baselineCount {
+			log.Printf("[mcp-bridge] warmup: integration tools loaded (%d -> %d), caching response", baselineCount, count)
+			warmedToolsMu.Lock()
+			warmedTools = body
+			warmedToolsMu.Unlock()
+			return
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	log.Printf("[mcp-bridge] warmup: timed out after 90s, integration tools not found")
+}
+
+// fetchToolsRaw fetches tools from the server and returns the raw JSON body + count.
+func fetchToolsRaw(cfg *bridgeConfig) ([]byte, int) {
+	toolsURL := buildToolsURL(cfg, "/tools")
+	httpReq, err := http.NewRequest("GET", toolsURL, nil)
+	if err != nil {
+		return nil, 0
+	}
+	setMCPAuthHeader(httpReq, cfg)
+
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, 0
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 {
+		return nil, 0
+	}
+
+	var toolsResp struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &toolsResp); err != nil {
+		return nil, 0
+	}
+	return body, len(toolsResp.Tools)
+}
+
 func handleToolsList(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
+	// Non-blocking check: if warmup already completed, use cached response.
+	// Don't block — Codex CLI has a 10s timeout for MCP startup.
+	select {
+	case <-warmedToolsCh:
+		warmedToolsMu.Lock()
+		cached := warmedTools
+		warmedToolsMu.Unlock()
+		if cached != nil {
+			var toolsResp struct {
+				Tools []json.RawMessage `json:"tools"`
+			}
+			if json.Unmarshal(cached, &toolsResp) == nil {
+				log.Printf("[mcp-bridge] handleToolsList: returning %d warmed-up tools", len(toolsResp.Tools))
+			}
+			return &jsonRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  cached,
+			}
+		}
+	default:
+		// Warmup still running — fall through to live fetch
+	}
+
+	// Live fetch from server (returns whatever's available now)
 	toolsURL := buildToolsURL(cfg, "/tools")
 
 	httpReq, err := http.NewRequest("GET", toolsURL, nil)
@@ -384,18 +495,11 @@ func handleToolsCall(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 // monitorToolChanges polls the tools endpoint and sends notifications/tools/list_changed
 // when the tool set changes (e.g., when an integration is attached or detached).
 //
-// REVISION: mcp-bridge-v12-reduced-notify
-// Strategy: When tools change, send the list_changed notification up to 3 times
-// (every 5s poll = 15s window). This handles the case where the agent is busy when
-// the first notification arrives. Keeping the retry short avoids notification spam
-// that clutters the agent's UI (e.g., Gemini shows "Tools updated" for each one).
-//
-// NOTE: We intentionally do NOT exit the process on tool change. Each terminal
-// has its own PTY ID and MCP secret, but settings files and config files are
-// shared across all terminals in the workspace. If the bridge exits and the
-// client restarts it, the settings file may contain a DIFFERENT terminal's
-// credentials (from the last PTY created), causing auth failures or wrong
-// integration tools. The notification approach is safe for all clients.
+// REVISION: mcp-bridge-v19-invalidate-warmup-cache
+// Strategy: When tools change, send the list_changed notification AND notify the
+// sandbox server via HTTP so it can broadcast a WebSocket event to the frontend.
+// The frontend shows a "restart to apply" banner for agents (like Codex CLI) that
+// don't support dynamic tool list updates.
 func monitorToolChanges(cfg *bridgeConfig) {
 	// Establish baseline: fetch current tools BEFORE the delay so we capture
 	// what the client approximately received from its initial tools/list call.
@@ -433,6 +537,20 @@ func monitorToolChanges(cfg *bridgeConfig) {
 				oldCount = strings.Count(lastToolKey, ",") + 1
 			}
 			log.Printf("[mcp-bridge] tool list changed: %d -> %d tools", oldCount, len(names))
+
+			// Invalidate warmup cache so the next tools/list call does a live fetch.
+			// Without this, agents that re-fetch after notifications/tools/list_changed
+			// (e.g., Gemini CLI, Claude Code) would get stale cached data.
+			warmedToolsMu.Lock()
+			warmedTools = nil
+			warmedToolsMu.Unlock()
+			log.Printf("[mcp-bridge] warmup cache invalidated")
+
+			// Notify sandbox server so it can broadcast a WebSocket event to the frontend.
+			// The frontend shows a "restart to apply" banner for agents that don't
+			// support dynamic tool list updates (e.g., Codex CLI).
+			go notifyToolsChanged(cfg, oldCount, len(names))
+
 			lastToolKey = toolKey
 			// Start/extend the notification window (15s = ~2 retries at 10s intervals)
 			notifyUntil = time.Now().Add(15 * time.Second)
@@ -450,6 +568,37 @@ func monitorToolChanges(cfg *bridgeConfig) {
 
 		time.Sleep(10 * time.Second)
 	}
+}
+
+// notifyToolsChanged calls the sandbox server's tools-changed endpoint.
+// This broadcasts a WebSocket event so the frontend can show a restart prompt.
+// REVISION: mcp-bridge-v19-invalidate-warmup-cache
+func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
+	// Derive the tools-changed URL from mcpURL.
+	// mcpURL is like http://localhost:8081/sessions/{sessionId}/mcp
+	// We need http://localhost:8081/sessions/{sessionId}/ptys/{ptyId}/tools-changed
+	baseURL := strings.TrimSuffix(cfg.mcpURL, "/mcp")
+	toolsChangedURL := fmt.Sprintf("%s/ptys/%s/tools-changed", baseURL, cfg.ptyID)
+
+	body, _ := json.Marshal(map[string]int{
+		"oldCount": oldCount,
+		"newCount": newCount,
+	})
+
+	req, err := http.NewRequest("POST", toolsChangedURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[mcp-bridge] failed to create tools-changed request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("[mcp-bridge] failed to send tools-changed: %v", err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("[mcp-bridge] notified sandbox: tools changed %d -> %d", oldCount, newCount)
 }
 
 func errorResponse(id interface{}, code int, message string) *jsonRPCResponse {
