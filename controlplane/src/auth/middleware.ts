@@ -64,25 +64,26 @@ async function authenticateWithCfAccеss(
     email: string;
     name: string;
     created_at: string;
+    trial_started_at: string | null;
   }
   const dbUser = await env.DB.prepare(`
-    SELECT * FROM users WHERE id = ?
+    SELECT id, email, name, created_at, trial_started_at FROM users WHERE id = ?
   `).bind(userId).first<DbUser>();
 
   let user: User | null = dbUser ? {
     id: dbUser.id,
     email: dbUser.email,
     name: dbUser.name,
-    createdAt: dbUser.created_at,
+    createdAt: dbUser.trial_started_at || dbUser.created_at,
   } : null;
 
   // Auto-create user on first login
   if (!user) {
     const now = new Date().toISOString();
     await env.DB.prepare(`
-      INSERT INTO users (id, email, name, created_at)
-      VALUES (?, ?, ?, ?)
-    `).bind(userId, identity.email, identity.name || identity.email.split('@')[0], now).run();
+      INSERT INTO users (id, email, name, created_at, trial_started_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(userId, identity.email, identity.name || identity.email.split('@')[0], now, now).run();
 
     user = {
       id: userId,
@@ -127,16 +128,17 @@ async function authenticateDevMоde(
     email: string;
     name: string;
     created_at: string;
+    trial_started_at: string | null;
   }
   const dbUser = await env.DB.prepare(`
-    SELECT * FROM users WHERE id = ?
+    SELECT id, email, name, created_at, trial_started_at FROM users WHERE id = ?
   `).bind(userId).first<DbUser>();
 
   let user: User | null = dbUser ? {
     id: dbUser.id,
     email: dbUser.email,
     name: dbUser.name,
-    createdAt: dbUser.created_at,
+    createdAt: dbUser.trial_started_at || dbUser.created_at,
   } : null;
 
   // Auto-create user if not exists (development mode)
@@ -144,7 +146,7 @@ async function authenticateDevMоde(
     // Check if a user with this email already exists under a different ID
     // (can happen when the client-side ID generation changes between versions)
     const existingByEmail = await env.DB.prepare(`
-      SELECT * FROM users WHERE email = ?
+      SELECT id, email, name, created_at, trial_started_at FROM users WHERE email = ?
     `).bind(userEmail).first<DbUser>();
 
     if (existingByEmail) {
@@ -152,14 +154,14 @@ async function authenticateDevMоde(
         id: existingByEmail.id,
         email: existingByEmail.email,
         name: existingByEmail.name,
-        createdAt: existingByEmail.created_at,
+        createdAt: existingByEmail.trial_started_at || existingByEmail.created_at,
       };
     } else {
       const now = new Date().toISOString();
       await env.DB.prepare(`
-        INSERT INTO users (id, email, name, created_at)
-        VALUES (?, ?, ?, ?)
-      `).bind(userId, userEmail, userName || 'Anonymous', now).run();
+        INSERT INTO users (id, email, name, created_at, trial_started_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(userId, userEmail, userName || 'Anonymous', now, now).run();
 
       user = {
         id: userId,

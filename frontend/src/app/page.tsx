@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v6-code-login
+// REVISION: splash-v7-turnstile
 "use client";
 
 import * as React from "react";
@@ -35,16 +35,13 @@ import {
   GoogleFormsIcon,
   SlackIcon,
   DiscordIcon,
-  TelegramIcon,
   WhatsAppIcon,
-  TeamsIcon,
-  MatrixIcon,
 } from "@/components/icons";
 import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
-import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL } from "@/config/env";
+import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL, TURNSTILE_SITE_KEY } from "@/config/env";
 
-const MODULE_REVISION = "splash-v6-code-login";
+const MODULE_REVISION = "splash-v7-turnstile";
 console.log(
   `[splash] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -115,10 +112,7 @@ const allIntegrations: IntegrationItem[] = [
   { name: "ElevenLabs", icon: Volume2 },
   { name: "Deepgram", icon: Mic },
   { name: "Discord", icon: DiscordIcon },
-  { name: "Telegram", icon: TelegramIcon },
   { name: "WhatsApp", icon: WhatsAppIcon },
-  { name: "Microsoft Teams", icon: TeamsIcon },
-  { name: "Matrix", icon: MatrixIcon },
 ];
 
 // Split into two rows for the carousel
@@ -202,11 +196,90 @@ export default function Home() {
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
 
+  // Turnstile bot verification — execute on demand when user clicks login
+  const turnstileWidgetId = React.useRef<string | null>(null);
+  const pendingLogin = React.useRef(false);
+
+  type TurnstileApi = {
+    render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+    execute: (widgetId: string) => void;
+    reset: (widgetId: string) => void;
+  };
+  const getTurnstile = (): TurnstileApi | null =>
+    (window as unknown as { turnstile?: TurnstileApi }).turnstile || null;
+
+  // Load the Turnstile script once
+  React.useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    if (document.getElementById("cf-turnstile-script")) return;
+    const script = document.createElement("script");
+    script.id = "cf-turnstile-script";
+    script.src =
+      "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
+
+  const proceedWithLogin = React.useCallback((token: string) => {
+    const redirectUrl = `${SITE_URL.replace(/\/$/, "")}/`;
+    const loginUrl = `${API.cloudflare.base}/auth/google/login?redirect=${encodeURIComponent(redirectUrl)}&turnstile_token=${encodeURIComponent(token)}`;
+    window.location.assign(loginUrl);
+  }, []);
+
+  // Callback ref: renders the Turnstile widget when the div mounts in the DOM
+  // (which happens after isAuthResolved becomes true)
+  const turnstileCallbackRef = React.useCallback(
+    (el: HTMLDivElement | null) => {
+      if (!el || !TURNSTILE_SITE_KEY || turnstileWidgetId.current) return;
+      const tryRender = () => {
+        const api = getTurnstile();
+        if (!api) return false;
+        turnstileWidgetId.current = api.render(el, {
+          sitekey: TURNSTILE_SITE_KEY,
+          execution: "execute",
+          appearance: "interaction-only",
+          callback: (token: string) => {
+            if (pendingLogin.current) {
+              pendingLogin.current = false;
+              proceedWithLogin(token);
+            }
+          },
+          "error-callback": () => {
+            pendingLogin.current = false;
+            setError("Bot verification failed. Please try again.");
+          },
+          theme: "dark",
+        });
+        return true;
+      };
+      // Script may still be loading — poll until available
+      if (!tryRender()) {
+        const interval = setInterval(() => {
+          if (tryRender()) clearInterval(interval);
+        }, 100);
+      }
+    },
+    [proceedWithLogin]
+  );
+
   const handleGoogleLogin = () => {
     setError("");
-    const redirectUrl = `${SITE_URL.replace(/\/$/, "")}/`;
-    const loginUrl = `${API.cloudflare.base}/auth/google/login?redirect=${encodeURIComponent(redirectUrl)}`;
-    window.location.assign(loginUrl);
+    // No Turnstile configured — go straight to Google
+    if (!TURNSTILE_SITE_KEY) {
+      const redirectUrl = `${SITE_URL.replace(/\/$/, "")}/`;
+      const loginUrl = `${API.cloudflare.base}/auth/google/login?redirect=${encodeURIComponent(redirectUrl)}`;
+      window.location.assign(loginUrl);
+      return;
+    }
+    // Trigger Turnstile challenge — proceedWithLogin called from callback
+    pendingLogin.current = true;
+    const api = getTurnstile();
+    if (api && turnstileWidgetId.current) {
+      api.execute(turnstileWidgetId.current);
+    } else {
+      pendingLogin.current = false;
+      setError("Verification is loading, please try again in a moment.");
+    }
   };
 
   const handleDevLogin = async (e: React.FormEvent) => {
@@ -459,6 +532,17 @@ export default function Home() {
                 >
                   Continue with Google
                 </Button>
+
+                {/* Turnstile bot verification widget */}
+                {TURNSTILE_SITE_KEY && (
+                  <div ref={turnstileCallbackRef} className="flex justify-center" />
+                )}
+
+                {error && (
+                  <p className="text-caption text-[var(--status-error)]">
+                    {error}
+                  </p>
+                )}
 
                 {/* Divider */}
                 <div className="relative py-2">

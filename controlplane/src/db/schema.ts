@@ -893,6 +893,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key ON agent_memory(da
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_memory_unique_key_session ON agent_memory(dashboard_id, session_id, key) WHERE session_id IS NOT NULL;
 
 -- ============================================
+-- User Subscriptions (Stripe billing)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT NOT NULL,
+  stripe_subscription_id TEXT,
+  status TEXT NOT NULL DEFAULT 'incomplete',
+  current_period_end TEXT,
+  cancel_at_period_end INTEGER DEFAULT 0,
+  stripe_trial_end TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_subscriptions_user ON user_subscriptions(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_customer ON user_subscriptions(stripe_customer_id);
+
+-- ============================================
 -- Chat Messages (Orcabot Chat Interface)
 -- ============================================
 
@@ -914,7 +934,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(use
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v5-github-repo-history";
+const SCHEMA_REVISION = "schema-v8-trial-started-at";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1148,6 +1168,23 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE dashboard_sandboxes ADD COLUMN machine_state TEXT NOT NULL DEFAULT 'unknown'
+    `).run();
+  } catch {
+    // Column already exists.
+  }  // Add stripe_trial_end column to user_subscriptions
+  try {
+    await db.prepare(`
+      ALTER TABLE user_subscriptions ADD COLUMN stripe_trial_end TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add trial_started_at column to users — trial countdown starts on first login
+  // after subscription system is deployed, not from original account creation
+  try {
+    await db.prepare(`
+      ALTER TABLE users ADD COLUMN trial_started_at TEXT
     `).run();
   } catch {
     // Column already exists.

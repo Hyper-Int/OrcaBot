@@ -49,7 +49,7 @@ describe('Google OAuth', () => {
     expect(usersTable.length).toBe(0);
   });
 
-  it('rejects Google emails not on the allowlist', async () => {
+  it('allows Google emails not on the allowlist (open registration with trials)', async () => {
     ctx.env.AUTH_ALLOWED_EMAILS = 'allowed@example.com';
 
     await ctx.db.prepare(`
@@ -63,7 +63,7 @@ describe('Google OAuth', () => {
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       ))
       .mockResolvedValueOnce(new Response(
-        JSON.stringify({ sub: 'sub-2', email: 'blocked@example.com', email_verified: true }),
+        JSON.stringify({ sub: 'sub-2', email: 'newuser@example.com', email_verified: true }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       ));
 
@@ -72,11 +72,10 @@ describe('Google OAuth', () => {
     const request = new Request('http://localhost/auth/google/callback?code=code-2&state=state-2');
     const response = await callbackGoogle(request, ctx.env);
 
-    expect(response.status).toBe(200);
-    const body = await response.text();
-    expect(body).toContain('not allowed');
+    // Should redirect (302) on successful sign-in, not block
+    expect(response.status).toBe(302);
 
     const usersTable = ctx.db._tables.get('users') || [];
-    expect(usersTable.length).toBe(0);
+    expect(usersTable.length).toBe(1);
   });
 });

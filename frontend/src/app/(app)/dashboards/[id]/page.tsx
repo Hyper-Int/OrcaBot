@@ -3,9 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v42-metro-edge-pipes
-console.log(`[dashboard] REVISION: dashboard-v42-metro-edge-pipes loaded at ${new Date().toISOString()}`);
-
+// REVISION: dashboard-v43-subscription-paywall
+console.log(`[dashboard] REVISION: dashboard-v43-subscription-paywall loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -76,6 +75,7 @@ import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
+import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive } from "@/lib/api/cloudflare";
@@ -3076,6 +3076,7 @@ export default function DashboardPage() {
 
   return (
     <div className="h-screen flex flex-col bg-[var(--background)]">
+      <PaywallDialog />
       {/* Reconnection banner - shows when disconnected but we have cached data */}
       {isReconnecting && (
         <div className="bg-[var(--status-warning)] text-[var(--background)] px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">

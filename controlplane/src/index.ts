@@ -41,6 +41,8 @@ import * as chat from './chat/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
+import { getSubscriptionStatus, hasActiveAccess } from './subscriptions/check';
+import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
@@ -857,6 +859,25 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   const cfContinent = (request.cf as Record<string, unknown> | undefined)?.continent as string | undefined;
   const preferredRegion = nearestFlyRegion(cfContinent, warmPoolRegions);
 
+  // ============================================
+  // Centralized subscription gate for mutating requests
+  // ============================================
+  // Block all authenticated POST/PUT/PATCH/DELETE requests for expired users,
+  // except for routes that must remain accessible (auth, subscriptions, webhooks, etc.)
+  if (auth.user && method !== 'GET' && method !== 'OPTIONS') {
+    const isExemptRoute =
+      segments[0] === 'auth'              // Auth endpoints (login, logout, session)
+      || segments[0] === 'subscriptions'  // Subscription management (checkout, portal)
+      || segments[0] === 'webhooks'       // Webhooks (Stripe, messaging)
+      || segments[0] === 'internal'       // Internal sandbox routes
+      || (segments[0] === 'users' && segments[1] === 'me'); // User info
+    if (!isExemptRoute) {
+      if (!(await hasActiveAccess(env, auth.user.id, auth.user.email, auth.user.createdAt))) {
+        return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
+      }
+    }
+  }
+
   // GET /auth/config - public auth configuration (no auth required)
   if (segments[0] === 'auth' && segments[1] === 'config' && segments.length === 2 && method === 'GET') {
     return Response.json({
@@ -1185,6 +1206,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'ws') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    // Subscription gate — WS upgrade is GET so the centralized POST gate doesn't cover it
+    if (!(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+      return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
+    }
     return dashboards.cоnnectWebSоcket(
       env,
       segments[1],
@@ -2220,9 +2245,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    const subscription = await getSubscriptionStatus(env, auth.user!.id, auth.user!.email, auth.user!.createdAt);
     return Response.json({
       user: auth.user,
       isAdmin: isAdminEmail(env, auth.user!.email),
+      subscription,
     });
   }
 
@@ -2237,6 +2264,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'sessions' && segments.length === 5 && segments[2] === 'ptys' && segments[4] === 'ws' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    // Subscription gate — PTY WS is GET so the centralized POST gate doesn't cover it
+    if (!(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+      return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
+    }
 
     const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
@@ -2679,6 +2710,34 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'internal' && segments[1] === 'bridge' && segments[2] === 'inbound' && segments.length === 3 && method === 'POST') {
     const { handleBridgeInbound } = await import('./messaging/webhook-handler');
     return handleBridgeInbound(request, env, ctx);
+  }
+
+  // ============================================
+  // Subscription routes (authenticated)
+  // ============================================
+
+  // POST /subscriptions/checkout - Create Stripe Checkout session
+  if (segments[0] === 'subscriptions' && segments[1] === 'checkout' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return subscriptions.createCheckoutSession(request, env, auth.user!.id, auth.user!.email, auth.user!.createdAt);
+  }
+
+  // POST /subscriptions/portal - Create Stripe Customer Portal session
+  if (segments[0] === 'subscriptions' && segments[1] === 'portal' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return subscriptions.createPortalSession(request, env, auth.user!.id);
+  }
+
+  // ============================================
+  // Stripe webhook (unauthenticated — signature-verified)
+  // ============================================
+
+  // POST /webhooks/stripe - Stripe subscription webhook
+  if (segments[0] === 'webhooks' && segments[1] === 'stripe' && segments.length === 2 && method === 'POST') {
+    const { handleStripeWebhook } = await import('./subscriptions/webhook');
+    return handleStripeWebhook(request, env);
   }
 
   // ============================================

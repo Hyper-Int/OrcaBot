@@ -29,34 +29,6 @@ function getAllowedRedirects(env: Env): Set<string> | null {
   );
 }
 
-function parseAllowList(value?: string): Set<string> | null {
-  if (!value) {
-    return null;
-  }
-  const entries = value
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-  return entries.length > 0 ? new Set(entries) : null;
-}
-
-function isAllowedEmail(env: Env, email: string): boolean {
-  const allowEmails = parseAllowList(env.AUTH_ALLOWED_EMAILS);
-  const allowDomains = parseAllowList(env.AUTH_ALLOWED_DOMAINS);
-
-  if (!allowEmails && !allowDomains) {
-    return true;
-  }
-
-  const normalized = email.trim().toLowerCase();
-  if (allowEmails?.has(normalized)) {
-    return true;
-  }
-
-  const domain = normalized.split('@')[1] || '';
-  return Boolean(domain && allowDomains?.has(domain));
-}
-
 function resolvePostLoginRedirect(request: Request, env: Env): string {
   const url = new URL(request.url);
   const redirectParam = url.searchParams.get('redirect');
@@ -154,13 +126,22 @@ async function findOrCreateUser(env: Env, profile: { sub: string; email: string;
     email: string;
     name: string;
     created_at: string;
+    trial_started_at: string | null;
   }
 
   const existing = await env.DB.prepare(`
-    SELECT * FROM users WHERE email = ?
+    SELECT id, email, name, created_at, trial_started_at FROM users WHERE email = ?
   `).bind(profile.email).first<DbUser>();
 
   if (existing) {
+    // Stamp trial_started_at on first login after subscription system deployment.
+    // This gives existing users a fresh 3-day trial instead of treating them as expired.
+    if (!existing.trial_started_at) {
+      const now = new Date().toISOString();
+      await env.DB.prepare(`
+        UPDATE users SET trial_started_at = ? WHERE id = ?
+      `).bind(now, existing.id).run();
+    }
     return existing.id;
   }
 
@@ -169,11 +150,42 @@ async function findOrCreateUser(env: Env, profile: { sub: string; email: string;
   const name = profile.name || profile.email.split('@')[0];
 
   await env.DB.prepare(`
-    INSERT INTO users (id, email, name, created_at)
-    VALUES (?, ?, ?, ?)
-  `).bind(userId, profile.email, name, now).run();
+    INSERT INTO users (id, email, name, created_at, trial_started_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(userId, profile.email, name, now, now).run();
 
   return userId;
+}
+
+async function verifyTurnstileToken(
+  token: string,
+  secretKey: string,
+  request: Request
+): Promise<boolean> {
+  const ip = request.headers.get('CF-Connecting-IP') || '';
+  const response = await fetch(
+    'https://challenges.cloudflare.com/turnstile/v0/siteverify',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        secret: secretKey,
+        response: token,
+        remoteip: ip,
+      }),
+    }
+  );
+  const result = (await response.json()) as {
+    success: boolean;
+    'error-codes'?: string[];
+    hostname?: string;
+  };
+  if (!result.success) {
+    console.error(
+      `[turnstile] verification failed: errors=${JSON.stringify(result['error-codes'] || [])}, hostname=${result.hostname || 'unknown'}`
+    );
+  }
+  return result.success;
 }
 
 export async function loginWithGoogle(
@@ -182,6 +194,24 @@ export async function loginWithGoogle(
 ): Promise<Response> {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     return renderErrorPage('Google OAuth is not configured.');
+  }
+
+  // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
+  if (env.TURNSTILE_SECRET_KEY) {
+    const turnstileToken = new URL(request.url).searchParams.get(
+      'turnstile_token'
+    );
+    if (!turnstileToken) {
+      return renderErrorPage('Bot verification required. Please try again.');
+    }
+    const valid = await verifyTurnstileToken(
+      turnstileToken,
+      env.TURNSTILE_SECRET_KEY,
+      request
+    );
+    if (!valid) {
+      return renderErrorPage('Bot verification failed. Please try again.');
+    }
   }
 
   const state = crypto.randomUUID();
@@ -265,10 +295,6 @@ export async function callbackGoogle(
 
   if (userInfo.email_verified !== true) {
     return renderErrorPage('Google account email is not verified.');
-  }
-
-  if (!isAllowedEmail(env, userInfo.email)) {
-    return renderErrorPage('This Google account is not allowed to sign in.');
   }
 
   const userId = await findOrCreateUser(env, userInfo);
