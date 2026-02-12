@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v13-drag-jitter-guard
-console.log(`[canvas] REVISION: canvas-v13-drag-jitter-guard loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v14-reverse-connection-contexts
+console.log(`[canvas] REVISION: canvas-v14-reverse-connection-contexts loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -27,7 +27,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext } from "@/components/canvas/IntegrationEdge";
+import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext, EdgeReverseContext } from "@/components/canvas/IntegrationEdge";
+import { ConnectedHandlesContext } from "@/contexts/ConnectedHandlesContext";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
@@ -221,6 +222,8 @@ interface CanvasProps {
   onEdgeLabelClick?: (edgeId: string, provider: string) => void;
   /** Called when an edge delete button is clicked */
   onEdgeDelete?: (edgeId: string) => void;
+  /** Called when the reverse-connection button is clicked on an edge */
+  onEdgeReverse?: (edgeId: string) => void;
   /** Called when a drag completes, with before/after positions for undo */
   onDragComplete?: (itemId: string, before: { x: number; y: number }, after: { x: number; y: number }) => void;
   /** Called when drag state changes (start/stop) */
@@ -259,6 +262,7 @@ export function Canvas({
   onDuplicate,
   onEdgeLabelClick,
   onEdgeDelete,
+  onEdgeReverse,
   onDragComplete,
   onDragStateChange,
   onResizeComplete,
@@ -562,11 +566,29 @@ export function Canvas({
     [overlayRoot, viewport, zIndexVersion, bringToFront, getZIndex]
   );
 
+  // Compute which handles are connected per node (for secondary connector rendering)
+  const connectedHandlesMap = React.useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const edge of edgesToRender) {
+      if (edge.sourceHandle) {
+        if (!map.has(edge.source)) map.set(edge.source, new Set());
+        map.get(edge.source)!.add(edge.sourceHandle);
+      }
+      if (edge.targetHandle) {
+        if (!map.has(edge.target)) map.set(edge.target, new Set());
+        map.get(edge.target)!.add(edge.targetHandle);
+      }
+    }
+    return map;
+  }, [edgesToRender]);
+
   return (
     <TerminalOverlayProvider value={overlayContextValue}>
+      <ConnectedHandlesContext.Provider value={connectedHandlesMap}>
       <EdgeConnectorModeContext.Provider value={connectorMode}>
       <EdgeDeleteContext.Provider value={onEdgeDelete ?? null}>
       <EdgeLabelClickContext.Provider value={onEdgeLabelClick ?? null}>
+      <EdgeReverseContext.Provider value={onEdgeReverse ?? null}>
       <div
         className="w-full h-full bg-[var(--background)] relative"
         onMouseMoveCapture={handlePaneMouseMove}
@@ -659,9 +681,11 @@ export function Canvas({
           className="absolute inset-0 z-10 pointer-events-none"
         />
       </div>
+      </EdgeReverseContext.Provider>
       </EdgeLabelClickContext.Provider>
       </EdgeDeleteContext.Provider>
       </EdgeConnectorModeContext.Provider>
+      </ConnectedHandlesContext.Provider>
     </TerminalOverlayProvider>
   );
 }

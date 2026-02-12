@@ -39,6 +39,11 @@
   --accent-secondary: #8b5cf6;
   --accent-terminal: #10b981;
 
+  /* Edge / metro pipe colors */
+  --edge-base: #c0c0c0;
+  --edge-chevron: rgba(0, 0, 0, 0.18);
+  --edge-hover-chevron: rgba(59, 130, 246, 0.5);
+
   /* Presence colors (for user cursors) */
   --presence-red: #ef4444;
   --presence-orange: #f97316;
@@ -120,6 +125,10 @@
   --border: #27272a;
   --border-subtle: #1f1f22;
   --border-strong: #3f3f46;
+
+  /* Edge / metro pipe colors (dark) */
+  --edge-chevron: rgba(255, 255, 255, 0.22);
+  --edge-hover-chevron: rgba(59, 130, 246, 0.5);
 
   /* Shadows (darker for dark mode) */
   --shadow-block: 0 2px 8px rgba(0, 0, 0, 0.4);
@@ -626,4 +635,14 @@ body {
   pointer-events: none;
   border: 2px solid var(--accent-primary);
   opacity: 0.8;
+}
+
+/* ===== Metro Edge Chevron Animation ===== */
+@keyframes metro-chevron-flow {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -12; }
+}
+
+.metro-edge-chevrons {
+  animation: metro-chevron-flow 0.6s linear infinite;
 }
