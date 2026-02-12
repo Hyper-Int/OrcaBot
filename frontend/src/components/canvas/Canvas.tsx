@@ -38,6 +38,7 @@ import { WorkspaceBlock } from "@/components/blocks/WorkspaceBlock";
 import { RecipeBlock } from "@/components/blocks/RecipeBlock";
 import { PromptBlock } from "@/components/blocks/PromptBlock";
 import { ScheduleBlock } from "@/components/blocks/ScheduleBlock";
+import { DecisionBlock } from "@/components/blocks/DecisionBlock";
 import { GmailBlock } from "@/components/blocks/GmailBlock";
 import { CalendarBlock } from "@/components/blocks/CalendarBlock";
 import { ContactsBlock } from "@/components/blocks/ContactsBlock";
@@ -66,6 +67,7 @@ const nodeTypes: NodeTypes = {
   recipe: RecipeBlock,
   prompt: PromptBlock,
   schedule: ScheduleBlock,
+  decision: DecisionBlock,
   gmail: GmailBlock,
   calendar: CalendarBlock,
   contacts: ContactsBlock,

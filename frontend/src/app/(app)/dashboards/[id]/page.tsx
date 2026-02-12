@@ -20,6 +20,7 @@ import {
   Users,
   Settings,
   Share2,
+  GitBranch,
   GitMerge,
   Activity,
   MessageSquare,
@@ -150,6 +151,7 @@ const blockTools: BlockTool[] = [
   { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
   { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
   { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
+  { type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
   // Recipe is not in DB schema yet - uncomment when added:
@@ -225,6 +227,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   note: { width: 200, height: 120 },
   todo: { width: 280, height: 160 },
   prompt: { width: 280, height: 160 },
+  decision: { width: 220, height: 220 },
   schedule: { width: 280, height: 220 },
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
