@@ -8,6 +8,7 @@
 #   wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.production.toml
 #   wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.production.toml
 #   wrangler secret put RESEND_API_KEY -c wrangler.production.toml
+#   wrangler secret put FLY_API_TOKEN -c wrangler.production.toml
 
 name = "orcabot-controlplane"
 main = "src/index.ts"
@@ -31,6 +32,13 @@ DEV_AUTH_ENABLED = "false"
 
 # CORS - Only allow your production frontend
 ALLOWED_ORIGINS = "https://orcabot.com"
+
+# Fly.io per-dashboard machine provisioning
+FLY_APP_NAME = "orcabot-sandbox"
+FLY_REGION = "sjc"
+FLY_MACHINE_IMAGE = "registry.fly.io/orcabot-sandbox:deployment-01KH9V3RAE030QETY40HD6B4YM"
+FLY_PROVISIONING_ENABLED = "true"
+FLY_SANDBOX_CONTROLPLANE_URL = "https://api.orcabot.com"
 
 # OAuth (client IDs only - secrets go in wrangler secret)
 FRONTEND_URL = "https://orcabot.com"

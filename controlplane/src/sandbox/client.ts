@@ -49,9 +49,15 @@ export class SandboxClient {
   }
 
   // Session management
-  async createSessiоn(dashboardId?: string, mcpToken?: string): Promise<SandboxSession> {
+  // REVISION: fly-provisioning-v1-createSession-machineId
+  async createSessiоn(dashboardId?: string, mcpToken?: string, machineId?: string): Promise<SandboxSession> {
     const headers = new Headers(this.authHeaders());
     let body: string | undefined;
+
+    // Pin to a specific Fly machine (for per-dashboard provisioning)
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
 
     // Pass dashboard_id and mcp_token to sandbox so it can proxy MCP calls
     if (dashboardId || mcpToken) {
@@ -63,7 +69,6 @@ export class SandboxClient {
     }
 
     const fetchUrl = `${this.baseUrl}/sessions`;
-    console.log(`[SandboxClient.createSession] POST ${fetchUrl} (baseUrl=${this.baseUrl}, hasToken=${Boolean(this.token)})`);
     let res: Response;
     try {
       res = await fetch(fetchUrl, {
