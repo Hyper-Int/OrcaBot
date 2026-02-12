@@ -368,7 +368,8 @@ export type CollabMessage =
   | { type: 'task_delete'; taskId: string }
   | { type: 'memory_update'; key: string; memory: AgentMemory | null; sessionId: string | null }
   | UICommandMessage
-  | UICommandResultMessage;
+  | UICommandResultMessage
+  | { type: 'inbound_message'; item_id: string; text: string; provider: string; sender_name: string; message_id: string };
 
 // API response types
 export interface ApiResponse<T = unknown> {

@@ -9684,15 +9684,16 @@ export async function disconnectSlack(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Pause subscriptions and clear FK reference BEFORE deleting the integration
+  // to avoid FOREIGN KEY constraint failure.
+  await env.DB.prepare(`
+    UPDATE messaging_subscriptions SET status = 'paused', user_integration_id = NULL, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'slack'
+  `).bind(auth.user!.id).run();
+
   // Delete the user's Slack integration
   await env.DB.prepare(`
     DELETE FROM user_integrations WHERE user_id = ? AND provider = 'slack'
-  `).bind(auth.user!.id).run();
-
-  // Deactivate any messaging subscriptions for this user
-  await env.DB.prepare(`
-    UPDATE messaging_subscriptions SET status = 'paused', updated_at = datetime('now')
-    WHERE user_id = ? AND provider = 'slack'
   `).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });
@@ -10034,13 +10035,15 @@ export async function disconnectDiscord(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Pause subscriptions and clear FK reference BEFORE deleting the integration
+  // to avoid FOREIGN KEY constraint failure.
   await env.DB.prepare(`
-    DELETE FROM user_integrations WHERE user_id = ? AND provider = 'discord'
+    UPDATE messaging_subscriptions SET status = 'paused', user_integration_id = NULL, updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'discord'
   `).bind(auth.user!.id).run();
 
   await env.DB.prepare(`
-    UPDATE messaging_subscriptions SET status = 'paused', updated_at = datetime('now')
-    WHERE user_id = ? AND provider = 'discord'
+    DELETE FROM user_integrations WHERE user_id = ? AND provider = 'discord'
   `).bind(auth.user!.id).run();
 
   return Response.json({ ok: true });

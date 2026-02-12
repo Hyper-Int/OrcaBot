@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v31-fix-drag-position-revert
-console.log(`[dashboard] REVISION: dashboard-v31-fix-drag-position-revert loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v35-no-frontend-double-delivery
+console.log(`[dashboard] REVISION: dashboard-v35-no-frontend-double-delivery loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -82,7 +82,8 @@ import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdg
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
-import { ConnectionDataFlowProvider } from "@/contexts/ConnectionDataFlowContext";
+import { ConnectionDataFlowProvider, useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import type { InboundMessageMessage } from "@/types/collaboration";
 import {
   isIntegrationBlockType,
   getProviderForBlockType,
@@ -171,9 +172,8 @@ const googleTools: BlockTool[] = [
 const messagingTools: BlockTool[] = [
   { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
   { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
-  { type: "telegram", icon: <TelegramIcon className="w-4 h-4" />, label: "Telegram" },
   { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
-  // Teams, Matrix, Google Chat hidden until ready
+  // Telegram, Teams, Matrix, Google Chat hidden until ready
 ];
 
 const terminalTools: BlockTool[] = [
@@ -340,6 +340,50 @@ function findAvailableSpace(
   }
 
   return { x: snap(maxRight + PLACEMENT_GAP * 2), y: snap(topAtMaxRight) };
+}
+
+/**
+ * Bridge component that watches for inbound messaging events (WhatsApp/Slack/Discord)
+ * and fires them through the connection data flow system to connected blocks.
+ * Must be rendered inside ConnectionDataFlowProvider.
+ */
+function InboundMessageBridge({ lastInboundMessage, items }: { lastInboundMessage: InboundMessageMessage | null; items: DashboardItem[] }) {
+  const connectionFlow = useConnectionDataFlow();
+  const firedRef = React.useRef(new Set<string>());
+
+  React.useEffect(() => {
+    if (!lastInboundMessage || !connectionFlow) return;
+    if (firedRef.current.has(lastInboundMessage.message_id)) return;
+    firedRef.current.add(lastInboundMessage.message_id);
+    // Evict old entries to prevent unbounded growth
+    if (firedRef.current.size > 200) {
+      const entries = Array.from(firedRef.current);
+      entries.slice(0, 100).forEach((id) => firedRef.current.delete(id));
+    }
+
+    // Messaging providers (WhatsApp, etc.): terminal delivery is handled server-side
+    // by writePty (text + Enter). Note/prompt delivery is also server-side via deliverToItem.
+    // Skip frontend connection flow to prevent double delivery to terminals.
+    const MESSAGING_PROVIDERS = new Set(["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"]);
+    if (MESSAGING_PROVIDERS.has(lastInboundMessage.provider)) {
+      return;
+    }
+
+    // Apply message filter from the source messaging block's metadata.
+    // Default: 'orcabot' — only forward messages from the OrcaBot chat.
+    // 'everyone' — forward all messages.
+    const sourceItem = items.find(i => i.id === lastInboundMessage.item_id);
+    const messageFilter = (sourceItem?.metadata?.messageFilter as string) || 'orcabot';
+    if (messageFilter === 'orcabot' && !lastInboundMessage.is_orcabot_chat) {
+      return;
+    }
+
+    const payload = { text: lastInboundMessage.text, execute: true };
+    connectionFlow.fireOutput(lastInboundMessage.item_id, "right-out", payload);
+    connectionFlow.fireOutput(lastInboundMessage.item_id, "bottom-out", payload);
+  }, [lastInboundMessage, connectionFlow, items]);
+
+  return null;
 }
 
 export default function DashboardPage() {
@@ -1167,6 +1211,32 @@ export default function DashboardPage() {
       const provider = getProviderForBlockType(integrationItem.type);
       if (!provider) return;
 
+      // Messaging providers use connection flow (edges), not MCP integration.
+      // Edge existence = authorization. No terminal_integrations record or MCP tools needed.
+      // Direction: terminal→messaging = "send", messaging→terminal = "receive"
+      const isMessagingProvider = ["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"].includes(provider);
+      if (isMessagingProvider) {
+        if (action === "attach") {
+          const messagingDirection = sourceItem.type === "terminal" ? "send" : "receive";
+          setEdges((prev) =>
+            prev.map((e) =>
+              e.id === edge.id
+                ? { ...e, type: "integration", data: { provider, messagingDirection } }
+                : e
+            )
+          );
+        } else {
+          setEdges((prev) =>
+            prev.map((e) =>
+              e.id === edge.id
+                ? { ...e, type: "smoothstep", data: undefined }
+                : e
+            )
+          );
+        }
+        return;
+      }
+
       try {
         if (action === "attach") {
           // Browser is special - doesn't need OAuth, but needs URL patterns
@@ -1261,7 +1331,7 @@ export default function DashboardPage() {
             );
             toast.success(toastMessage);
           } else {
-            // OAuth-based integrations - need userIntegrationId
+            // OAuth-based integrations (non-messaging) - need userIntegrationId
             const availableIntegrations = await listAvailableIntegrations(dashboardId, ptyId);
             const userIntegration = availableIntegrations.find(
               (i) => i.provider === provider && i.connected && !i.attached && i.userIntegrationId
@@ -1275,36 +1345,6 @@ export default function DashboardPage() {
               if (alreadyAttached) {
                 toast.info(`${getProviderDisplayName(provider)} is already attached to this terminal`);
                 return;
-              }
-              // WhatsApp can work without OAuth (platform credentials or bridge/QR connection)
-              // — try attaching without userIntegrationId
-              if (provider === "whatsapp") {
-                try {
-                  const result = await attachIntegration(dashboardId, ptyId, {
-                    provider,
-                    policy: createReadOnlyPolicy(provider),
-                  });
-                  setEdges((prev) =>
-                    prev.map((e) =>
-                      e.id === edge.id
-                        ? {
-                            ...e,
-                            type: "integration",
-                            data: { securityLevel: result.securityLevel, provider },
-                          }
-                        : e
-                    )
-                  );
-                  toast.success(`${getProviderDisplayName(provider)} attached to terminal`);
-                  return;
-                } catch (err: unknown) {
-                  // 409 = already attached — edge is already styled from the first successful call, just return
-                  if (err && typeof err === 'object' && 'status' in err && (err as { status: number }).status === 409) {
-                    return;
-                  }
-                  console.error(`[handleIntegrationEdge] WhatsApp attach without OAuth failed:`, err);
-                  // Fall through to show sign-in warning
-                }
               }
               // Not connected via OAuth yet - delete the edge and show warning
               await deleteEdge(dashboardId, edge.id);
@@ -3298,6 +3338,7 @@ export default function DashboardPage() {
             </div>
           )}
           <ConnectionDataFlowProvider edges={edgesToRender}>
+            <InboundMessageBridge lastInboundMessage={collabState.lastInboundMessage} items={items} />
             <Canvas
               items={items}
               sessions={sessions}

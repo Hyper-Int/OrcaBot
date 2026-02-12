@@ -1126,6 +1126,16 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   } catch {
     // Column already exists.
   }
+  // Link subscription to the exact OAuth integration used at creation time.
+  // Without this, outbound send would ambiguously pick one integration when
+  // a user has multiple workspaces/servers connected for the same provider.
+  try {
+    await db.prepare(`
+      ALTER TABLE messaging_subscriptions ADD COLUMN user_integration_id TEXT REFERENCES user_integrations(id)
+    `).run();
+  } catch {
+    // Column already exists.
+  }
 
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);

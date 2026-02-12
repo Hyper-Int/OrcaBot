@@ -383,6 +383,23 @@ export class DashboardDO implements DurableObject {
       return Response.json({ success: true });
     }
 
+    // POST /inbound-message - Broadcast inbound messaging event for connection data flow
+    if (path === '/inbound-message' && request.method === 'POST') {
+      const data = await request.json() as {
+        item_id: string; text: string; provider: string; sender_name: string; message_id: string; is_orcabot_chat?: boolean;
+      };
+      this.broadcast({
+        type: 'inbound_message',
+        item_id: data.item_id,
+        text: data.text,
+        provider: data.provider,
+        sender_name: data.sender_name,
+        message_id: data.message_id,
+        is_orcabot_chat: data.is_orcabot_chat ?? false,
+      });
+      return Response.json({ success: true });
+    }
+
     return new Response('Not found', { status: 404 });
   }
 

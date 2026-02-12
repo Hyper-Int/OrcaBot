@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: discord-block-v1-initial
+// REVISION: discord-block-v3-clean-logging
 
 "use client";
 
-const MODULE_REVISION = "discord-block-v1-initial";
+const MODULE_REVISION = "discord-block-v3-clean-logging";
 console.log(`[DiscordBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -37,6 +37,7 @@ import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { DiscordIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -178,6 +179,8 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
   const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const popupCleanupRef = React.useRef<(() => void) | null>(null);
 
+  const connectionFlow = useConnectionDataFlow();
+
   React.useEffect(() => {
     return () => {
       if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
@@ -185,6 +188,28 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
       popupCleanupRef.current = null;
     };
   }, []);
+
+  // Register input handlers for outbound message sending
+  React.useEffect(() => {
+    if (!connectionFlow || !dashboardId) return;
+
+    const handler = async (payload: { text?: string }) => {
+      if (!payload.text?.trim()) return;
+      try {
+        await apiFetch(`${API.cloudflare.base}/messaging/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dashboardId, itemId: id, text: payload.text }),
+        });
+      } catch (err) {
+        console.error("[DiscordBlock] Outbound send failed:", err);
+      }
+    };
+
+    const c1 = connectionFlow.registerInputHandler(id, "left-in", handler);
+    const c2 = connectionFlow.registerInputHandler(id, "top-in", handler);
+    return () => { c1(); c2(); };
+  }, [id, connectionFlow, dashboardId]);
 
   const handleMinimize = () => {
     const expandedSize = data.size;

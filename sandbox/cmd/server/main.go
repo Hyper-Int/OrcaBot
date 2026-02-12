@@ -480,9 +480,15 @@ func (s *Server) handleDeletePTY(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleWritePty writes text to an existing PTY via HTTP.
-// Used by control plane for server-side automation (schedules, recipes).
+// Used by control plane for server-side automation (schedules, recipes, messaging delivery).
 // Bypasses turn-taking — this is a system-level operation.
-// REVISION: server-side-cron-v1-write-pty
+//
+// When execute=true, uses ExecuteSystem (text + 50ms delay + CR) which gives the terminal
+// time to process the text before submission. This is important for agentic terminals
+// (Claude Code, Gemini CLI, etc.) where the agent prompt needs time to see the input.
+// When execute=false (default), uses WriteSystem (text + CR concatenated) for raw writes.
+//
+// REVISION: messaging-v1-execute-param
 func (s *Server) handleWritePty(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -497,7 +503,8 @@ func (s *Server) handleWritePty(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Execute bool   `json:"execute"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "E79751: Invalid request body", http.StatusBadRequest)
@@ -509,12 +516,21 @@ func (s *Server) handleWritePty(w http.ResponseWriter, r *http.Request) {
 	// immediately after dispatching the command. Only newly created PTYs (handleCreatePTY)
 	// use execution ID tracking with process-exit callbacks.
 
-	// Write text + CR to PTY (bypasses turn-taking for system use)
 	if req.Text != "" {
-		data := []byte(req.Text + "\r")
-		if _, err := hub.WriteSystem(data); err != nil {
-			http.Error(w, "E79752: Failed to write to PTY", http.StatusInternalServerError)
-			return
+		if req.Execute {
+			// Execute mode: text + 50ms delay + CR (for agentic terminals)
+			// Empty userID = system caller, bypasses turn-taking/soft-lock
+			if _, err := hub.Execute("", req.Text); err != nil {
+				http.Error(w, "E79752: Failed to execute on PTY", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// Raw write mode: text + CR concatenated (for shell commands)
+			data := []byte(req.Text + "\r")
+			if _, err := hub.WriteSystem(data); err != nil {
+				http.Error(w, "E79752: Failed to write to PTY", http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 

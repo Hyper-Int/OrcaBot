@@ -2575,6 +2575,16 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return Response.json({ ok: true });
   }
 
+  // POST /messaging/send - Send an outbound message to a messaging channel
+  // Security: Requires dashboard membership (verified inside handler)
+  if (segments[0] === 'messaging' && segments[1] === 'send' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as { dashboardId: string; itemId: string; text: string };
+    const { handleMessagingSend } = await import('./messaging/send');
+    return handleMessagingSend(env, auth.user!.id, data);
+  }
+
   // ============================================
   // Schedule routes
   // ============================================

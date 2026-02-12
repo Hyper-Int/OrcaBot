@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: whatsapp-provider-v8-hybrid-mode
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v8-hybrid-mode loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v11-clean-logging
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v11-clean-logging loaded at ${new Date().toISOString()}`);
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, makeCacheableSignalKeyStore, getContentType, Browsers, } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -29,6 +29,10 @@ export class WhatsAppProvider {
     authDir;
     // Auth state loaded once and reused across reconnects
     authState = null;
+    // WhatsApp LID (Linked ID) for the business phone, resolved at runtime.
+    // Baileys may use opaque LIDs (e.g. "56574013915191@lid") instead of phone JIDs
+    // (e.g. "447400853301@s.whatsapp.net"). We capture the LID during handshake.
+    resolvedBusinessLid = null;
     constructor(sessionId, userId, dataDir, sessionManager, config) {
         this.sessionId = sessionId;
         this.userId = userId;
@@ -80,8 +84,12 @@ export class WhatsAppProvider {
                     this.reconnectAttempts = 0;
                     this.sessionManager.updateSessionStatus(this.sessionId, 'connected');
                     console.log(`[whatsapp] Session ${this.sessionId} connected`);
-                    // In hybrid mode, initiate handshake with business number
+                    // In hybrid mode, resolve business phone LID and initiate handshake
                     if (this.config?.hybridMode && this.config.businessPhoneJid) {
+                        // Proactively resolve the LID for the business phone number
+                        this.resolveBusinessLid().catch(err => {
+                            console.warn(`[whatsapp] LID resolution failed (will capture from handshake):`, err);
+                        });
                         this.performHandshake().catch(err => {
                             console.error(`[whatsapp] Handshake failed for session ${this.sessionId}:`, err);
                         });
@@ -121,25 +129,53 @@ export class WhatsAppProvider {
                 for (const msg of messages) {
                     if (!msg.message)
                         continue;
+                    const remoteJid = msg.key.remoteJid;
+                    const text = this.extractText(msg);
                     if (msg.key.fromMe) {
-                        // In hybrid mode, capture outgoing messages sent TO the Orcabot business number
+                        // In hybrid mode, capture outgoing messages sent TO the OrcaBot business number
                         if (this.config?.hybridMode && this.config.businessPhoneJid) {
-                            const remoteJid = msg.key.remoteJid;
-                            if (remoteJid === this.config.businessPhoneJid) {
-                                const text = this.extractText(msg);
-                                if (text && !HANDSHAKE_MESSAGES.has(text.trim())) {
+                            const isBusinessTarget = remoteJid === this.config.businessPhoneJid
+                                || (this.resolvedBusinessLid && remoteJid === this.resolvedBusinessLid);
+                            if (isBusinessTarget) {
+                                if (text && HANDSHAKE_MESSAGES.has(text.trim())) {
+                                    // Capture LID from handshake for future comparisons
+                                    if (!this.resolvedBusinessLid && remoteJid !== this.config.businessPhoneJid) {
+                                        this.resolvedBusinessLid = remoteJid;
+                                        console.log(`[whatsapp] Captured business LID from handshake: ${this.resolvedBusinessLid}`);
+                                    }
+                                }
+                                else if (text) {
                                     const normalized = this.normalizeOutgoingMessage(msg);
                                     if (normalized) {
                                         void this.sessionManager.forwardMessage(this.sessionId, normalized);
                                     }
                                 }
                             }
+                            else if (!this.resolvedBusinessLid && text && HANDSHAKE_MESSAGES.has(text.trim())) {
+                                this.resolvedBusinessLid = remoteJid;
+                                console.log(`[whatsapp] Captured business LID from handshake: ${this.resolvedBusinessLid}`);
+                            }
                         }
                         continue;
                     }
+                    // In hybrid mode: capture business LID from handshake reply, and
+                    // filter out OrcaBot's own replies (Business API messages echoing back)
+                    if (this.config?.hybridMode) {
+                        const isFromBusiness = remoteJid === this.resolvedBusinessLid
+                            || remoteJid === this.config.businessPhoneJid;
+                        if (isFromBusiness) {
+                            // Capture LID from handshake reply if not yet resolved
+                            if (!this.resolvedBusinessLid && text && HANDSHAKE_MESSAGES.has(text.trim())
+                                && remoteJid && remoteJid !== this.config.businessPhoneJid) {
+                                this.resolvedBusinessLid = remoteJid;
+                                console.log(`[whatsapp] Captured business LID from reply: ${this.resolvedBusinessLid}`);
+                            }
+                            // Skip all messages from the business number (OrcaBot's own replies)
+                            continue;
+                        }
+                    }
                     const normalized = this.normalizeMessage(msg);
                     if (normalized) {
-                        // Fire-and-forget: don't block the event loop on slow callbacks
                         void this.sessionManager.forwardMessage(this.sessionId, normalized);
                     }
                 }
@@ -188,6 +224,27 @@ export class WhatsAppProvider {
             return false;
         await this.performHandshake();
         return true;
+    }
+    /** Resolve the LID (Linked ID) for the business phone number.
+     *  Newer WhatsApp versions use opaque LIDs instead of phone-based JIDs. */
+    async resolveBusinessLid() {
+        if (!this.sock || !this.config?.businessPhoneJid || this.resolvedBusinessLid)
+            return;
+        try {
+            // onWhatsApp checks if a number exists and returns its JID(s)
+            const phone = this.config.businessPhoneJid.replace(/@s\.whatsapp\.net$/, '');
+            const results = await this.sock.onWhatsApp(phone);
+            if (results?.length) {
+                const resolved = results[0].jid;
+                if (resolved && resolved !== this.config.businessPhoneJid) {
+                    this.resolvedBusinessLid = resolved;
+                    console.log(`[whatsapp] Resolved business LID via onWhatsApp: ${this.config.businessPhoneJid} -> ${resolved}`);
+                }
+            }
+        }
+        catch (err) {
+            console.warn(`[whatsapp] onWhatsApp resolution failed:`, err);
+        }
     }
     /** Send handshake message to business number and notify control plane */
     async performHandshake() {
@@ -244,6 +301,7 @@ export class WhatsAppProvider {
             metadata: {
                 source: 'bridge_outgoing',
                 isOutgoing: true,
+                isOrcabotChat: true,
                 targetJid: jid,
             },
         };
@@ -275,6 +333,7 @@ export class WhatsAppProvider {
                 source: 'bridge',
                 pushName,
                 isGroup: jid.endsWith('@g.us'),
+                isOrcabotChat: false,
                 jid,
             },
         };

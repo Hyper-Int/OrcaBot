@@ -3,7 +3,7 @@
 
 "use client";
 
-const INTEGRATION_EDGE_REVISION = "integration-edge-v5-orphan-guard";
+const INTEGRATION_EDGE_REVISION = "integration-edge-v6-messaging-direction";
 console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -20,6 +20,8 @@ import type { SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 export interface IntegrationEdgeData {
   securityLevel?: SecurityLevel;
   provider?: string;
+  /** For messaging edges: direction relative to the terminal */
+  messagingDirection?: "send" | "receive";
 }
 
 /**
@@ -59,6 +61,7 @@ export function IntegrationEdge({
   const edgeData = data as IntegrationEdgeData | undefined;
   const securityLevel = edgeData?.securityLevel;
   const provider = edgeData?.provider;
+  const messagingDirection = edgeData?.messagingDirection;
   const onLabelClick = React.useContext(EdgeLabelClickContext);
   const onDelete = React.useContext(EdgeDeleteContext);
   const connectorMode = React.useContext(EdgeConnectorModeContext);
@@ -97,7 +100,27 @@ export function IntegrationEdge({
     }
   };
 
-  const badgeStyle = getBadgeStyle(securityLevel);
+  // Messaging edges show direction labels instead of security levels
+  const getMessagingBadgeStyle = (direction: "send" | "receive" | undefined) => {
+    switch (direction) {
+      case "send":
+        return {
+          bg: "bg-blue-500/20 border-blue-500/50 text-blue-700",
+          label: "Send",
+        };
+      case "receive":
+        return {
+          bg: "bg-green-500/20 border-green-500/50 text-green-700",
+          label: "Receive",
+        };
+      default:
+        return null;
+    }
+  };
+
+  const badgeStyle = messagingDirection
+    ? getMessagingBadgeStyle(messagingDirection)
+    : getBadgeStyle(securityLevel);
 
   const handleClick = React.useCallback(
     (e: React.MouseEvent) => {

@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: slack-block-v9-channels-no-dashboard-id
+// REVISION: slack-block-v11-clean-logging
 
 "use client";
 
-const MODULE_REVISION = "slack-block-v9-channels-no-dashboard-id";
+const MODULE_REVISION = "slack-block-v11-clean-logging";
 console.log(`[SlackBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -38,6 +38,7 @@ import { API } from "@/config/env";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 
 // ============================================
 // Slack types
@@ -190,6 +191,8 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
   // Track popup-related cleanup so we can tear down on unmount
   const popupCleanupRef = React.useRef<(() => void) | null>(null);
 
+  const connectionFlow = useConnectionDataFlow();
+
   React.useEffect(() => {
     return () => {
       if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
@@ -198,6 +201,28 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
       popupCleanupRef.current = null;
     };
   }, []);
+
+  // Register input handlers for outbound message sending
+  React.useEffect(() => {
+    if (!connectionFlow || !dashboardId) return;
+
+    const handler = async (payload: { text?: string }) => {
+      if (!payload.text?.trim()) return;
+      try {
+        await apiFetch(`${API.cloudflare.base}/messaging/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dashboardId, itemId: id, text: payload.text }),
+        });
+      } catch (err) {
+        console.error("[SlackBlock] Outbound send failed:", err);
+      }
+    };
+
+    const c1 = connectionFlow.registerInputHandler(id, "left-in", handler);
+    const c2 = connectionFlow.registerInputHandler(id, "top-in", handler);
+    return () => { c1(); c2(); };
+  }, [id, connectionFlow, dashboardId]);
 
   const handleMinimize = () => {
     const expandedSize = data.size;
