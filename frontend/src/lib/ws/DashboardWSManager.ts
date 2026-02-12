@@ -271,6 +271,7 @@ export class DashboardWSManager extends BaseWebSocketManager {
       case "task_update":
       case "task_delete":
       case "memory_update":
+      case "inbound_message":
         // These are handled by subscribers via onMessage
         break;
 

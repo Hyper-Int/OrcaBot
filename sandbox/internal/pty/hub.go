@@ -515,20 +515,25 @@ func (h *Hub) Write(userID string, data []byte) (int, error) {
 
 // Execute sends text to PTY followed by CR after a brief delay.
 // The delay allows the terminal to process the text before execution.
-// Only the controller can execute commands.
+//
+// When userID is non-empty, enforces turn-taking and agent soft lock (human input path).
+// When userID is empty, bypasses all gates (system/server-side automation path).
+// REVISION: messaging-v1-system-execute
 func (h *Hub) Execute(userID string, text string) (int, error) {
-	h.mu.RLock()
-	agentMode := h.agentMode
-	agentRunning := h.agentRunning
-	h.mu.RUnlock()
+	// Non-empty userID = human input: enforce turn-taking and agent soft lock
+	if userID != "" {
+		h.mu.RLock()
+		agentMode := h.agentMode
+		agentRunning := h.agentRunning
+		h.mu.RUnlock()
 
-	// In agent mode, block human input while agent is running
-	if agentMode && agentRunning {
-		return 0, nil // Silently drop - agent has exclusive control
-	}
+		if agentMode && agentRunning {
+			return 0, nil // Silently drop - agent has exclusive control
+		}
 
-	if !h.turn.IsController(userID) {
-		return 0, nil // Silently drop input from non-controllers
+		if !h.turn.IsController(userID) {
+			return 0, nil // Silently drop input from non-controllers
+		}
 	}
 
 	// Write text first
@@ -562,6 +567,7 @@ func (h *Hub) WriteAgentSilent(data []byte) (int, error) {
 func (h *Hub) WriteSystem(data []byte) (int, error) {
 	return h.pty.Write(data)
 }
+
 
 // Resize changes the PTY window size and records the dimensions for replay.
 func (h *Hub) Resize(cols, rows uint16) error {

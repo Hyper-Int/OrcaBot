@@ -243,6 +243,20 @@ export interface MemoryUpdateMessage {
 }
 
 /**
+ * Inbound message notification (server -> client)
+ * Triggers connection data flow from messaging block to downstream blocks.
+ */
+export interface InboundMessageMessage {
+  type: "inbound_message";
+  item_id: string;
+  text: string;
+  provider: string;
+  sender_name: string;
+  message_id: string;
+  is_orcabot_chat?: boolean;
+}
+
+/**
  * All incoming collaboration messages
  */
 export type IncomingCollabMessage =
@@ -264,7 +278,8 @@ export type IncomingCollabMessage =
   | TaskCreateMessage
   | TaskUpdateMessage
   | TaskDeleteMessage
-  | MemoryUpdateMessage;
+  | MemoryUpdateMessage
+  | InboundMessageMessage;
 
 /**
  * All outgoing collaboration messages

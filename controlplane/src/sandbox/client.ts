@@ -225,13 +225,16 @@ export class SandboxClient {
   }
 
   // Write text to an existing PTY via HTTP (bypasses turn-taking for system automation)
-  // REVISION: server-side-cron-v1-write-pty
+  // When execute=true, uses ExecuteSystem (text + 50ms delay + CR) for agentic terminals.
+  // When execute=false, uses WriteSystem (text + CR concatenated) for raw shell writes.
+  // REVISION: messaging-v1-execute-param
   async writePty(
     sessionId: string,
     ptyId: string,
     text: string,
     machineId?: string,
     executionId?: string,
+    execute?: boolean,
   ): Promise<void> {
     const headers = new Headers(this.authHeaders());
     headers.set('Content-Type', 'application/json');
@@ -244,7 +247,7 @@ export class SandboxClient {
     const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}/write`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, execute: execute ?? false }),
     });
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '(no body)');

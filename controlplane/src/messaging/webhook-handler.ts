@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v39-hybrid-handshake
-const MODULE_REVISION = 'messaging-webhook-v39-hybrid-handshake';
+// REVISION: messaging-webhook-v46-discord-slash-commands
+const MODULE_REVISION = 'messaging-webhook-v46-discord-slash-commands';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -27,6 +27,9 @@ console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Da
 
 import type { Env, MessagingPolicy } from '../types';
 import { deliverOrWakeAndDrain } from './delivery';
+
+/** Messaging providers use edge-only authorization (no terminal_integrations / MCP tools). */
+const MESSAGING_PROVIDERS = new Set(['whatsapp', 'slack', 'discord', 'teams', 'matrix', 'google_chat']);
 
 // ============================================
 // Types
@@ -286,15 +289,43 @@ function parseDiscordEvent(body: Record<string, unknown>): NormalizedMessage | n
     };
   }
 
-  // Format 2: Interaction webhook (type 2 = APPLICATION_COMMAND with message data)
-  // Some interactions include a resolved message the user acted on
+  // Format 2: Slash command interaction (type 2 = APPLICATION_COMMAND)
+  // User typed /orcabot <message> — extract the message from options.
   if (body.type === 2) {
     const interactionData = body.data as Record<string, unknown> | undefined;
+    const member = body.member as Record<string, unknown> | undefined;
+    const user = (member?.user || body.user) as Record<string, unknown> | undefined;
+
+    // Extract text from slash command options (e.g. /orcabot message:"hello")
+    const options = interactionData?.options as Array<{ name: string; value: string }> | undefined;
+    if (options?.length) {
+      // Concatenate all string option values (typically just one "message" option)
+      const text = options
+        .map(o => (typeof o.value === 'string' ? o.value : String(o.value)))
+        .join(' ')
+        .trim();
+
+      if (text) {
+        return {
+          platformMessageId: (body.id as string) || '',
+          senderId: (user?.id as string) || '',
+          senderName: (user?.username as string) || 'unknown',
+          channelId: (body.channel_id as string) || '',
+          channelName: (body.channel_id as string) || '',
+          text,
+          metadata: {
+            guild_id: body.guild_id,
+            interaction_type: 'slash_command',
+            command_name: interactionData?.name,
+          },
+        };
+      }
+    }
+
+    // Fallback: resolved message (e.g. message command — right-click → Apps → command)
     const resolved = interactionData?.resolved as Record<string, unknown> | undefined;
     const messages = resolved?.messages as Record<string, Record<string, unknown>> | undefined;
-
     if (messages) {
-      // Get the first resolved message
       const firstMessageId = Object.keys(messages)[0];
       if (firstMessageId) {
         const msg = messages[firstMessageId];
@@ -313,7 +344,7 @@ function parseDiscordEvent(body: Record<string, unknown>): NormalizedMessage | n
           text: resolvedContent,
           metadata: {
             guild_id: body.guild_id,
-            interaction_type: 'application_command',
+            interaction_type: 'message_command',
             command_name: interactionData?.name,
           },
         };
@@ -754,6 +785,42 @@ export async function handleInboundWebhook(
   if (provider === 'discord' && body.type === 1) {
     return Response.json({ type: 1 }); // Discord PING acknowledgment
   }
+  // Discord slash command (type 2): must respond within 3 seconds.
+  // We parse, route, and process in the background, then return an immediate ack.
+  if (provider === 'discord' && body.type === 2) {
+    const discordMessage = parseDiscordEvent(body);
+    if (!discordMessage) {
+      // No parseable message — acknowledge silently
+      return Response.json({ type: 4, data: { content: 'No message content found.', flags: 64 } });
+    }
+
+    // Route by channel_id to matching subscriptions (same as the main flow below)
+    const channelId = discordMessage.channelId;
+    if (channelId) {
+      const results = await env.DB.prepare(`
+        SELECT * FROM messaging_subscriptions
+        WHERE provider = 'discord' AND channel_id = ? AND status = 'active'
+      `).bind(channelId).all();
+      const subs = (results.results || []).filter(s => s.status === 'active');
+
+      for (const subscription of subs) {
+        const msgClone: NormalizedMessage = {
+          ...discordMessage,
+          metadata: { ...discordMessage.metadata },
+        };
+        ctx.waitUntil(processSubscriptionMessage(env, 'discord', subscription, msgClone, body, ctx));
+      }
+    }
+
+    // Return ephemeral ack (only visible to the user who ran the command)
+    const userName = discordMessage.senderName || 'User';
+    return Response.json({
+      type: 4,
+      data: {
+        content: `**${userName}**: ${discordMessage.text}`,
+      },
+    });
+  }
   // Google Chat ADDED_TO_SPACE / REMOVED_FROM_SPACE events
   if (provider === 'google_chat' && (body.type === 'ADDED_TO_SPACE' || body.type === 'REMOVED_FROM_SPACE')) {
     return Response.json({ text: '' });
@@ -793,7 +860,6 @@ export async function handleInboundWebhook(
   }
 
   if (!message) {
-    // Not a message event (reaction, typing indicator, etc.) — acknowledge
     return Response.json({ ok: true });
   }
 
@@ -825,7 +891,8 @@ export async function handleInboundWebhook(
         AND (chat_id IS NULL OR chat_id = ?)
     `).bind(phoneNumberId, chatId).all();
     // Filter out hybrid subscriptions — bridge handles inbound for those (prevents double-delivery)
-    subscriptions = (results.results || []).filter(
+    const allWhatsAppSubs = results.results || [];
+    subscriptions = allWhatsAppSubs.filter(
       (s: Record<string, unknown>) => !s.hybrid_mode,
     );
   } else if (provider === 'matrix') {
@@ -873,6 +940,7 @@ export async function handleInboundWebhook(
   }
 
   // Filter to active subscriptions only
+  const beforeActiveFilter = subscriptions.length;
   subscriptions = subscriptions.filter(s => s.status === 'active');
   if (!subscriptions.length) {
     return Response.json({ ok: true });
@@ -929,8 +997,6 @@ async function processSubscriptionMessage(
   body: Record<string, unknown>,
   ctx: ExecutionContext,
 ): Promise<void> {
-  const hookId = (subscription.webhook_id as string) || 'global';
-
   // Resolve channel name and sender name from platform API (best-effort, bounded).
   const RESOLVE_TIMEOUT_MS = 1500;
   if ((provider === 'slack' || provider === 'discord') && message.channelId) {
@@ -959,10 +1025,15 @@ async function processSubscriptionMessage(
   // Enforce subscription channel scoping (Telegram uses chatId, Slack/Discord use channelId).
   // WhatsApp is special: channel_id stores phone_number_id (business number) and
   // chat_id stores sender phone. Both must match their respective incoming values.
+  //
+  // Bridge-sourced messages skip scope check: the webhook_id lookup already provides
+  // 1:1 subscription scoping, and bridge messages don't carry Business API metadata
+  // like phone_number_id.
+  const isBridgeMessage = message.metadata?.source === 'bridge' || message.metadata?.source === 'bridge_outgoing';
   const subChannelId = subscription.channel_id as string | null;
   const subChatId = subscription.chat_id as string | null;
   const subChannelName = subscription.channel_name as string | null;
-  if (subChannelId || subChatId || subChannelName) {
+  if (!isBridgeMessage && (subChannelId || subChatId || subChannelName)) {
     const incomingChannel = message.channelId || '';
     const incomingName = normalizeChannelName(message.channelName || '');
     let scopeMatch = false;
@@ -980,74 +1051,103 @@ async function processSubscriptionMessage(
     } else if (subChannelName) {
       scopeMatch = incomingName === normalizeChannelName(subChannelName);
     }
-    if (!scopeMatch) return; // Wrong channel for this subscription — skip
+    if (!scopeMatch) {
+      return;
+    }
+  }
+
+  // Enforce messageFilter from the messaging block's metadata.
+  // This gates messages server-side before buffering, matching the frontend filter.
+  const messagingItemRow = await env.DB.prepare(
+    'SELECT metadata FROM dashboard_items WHERE id = ?'
+  ).bind(subscription.item_id).first<{ metadata: string }>();
+
+  let itemMetadata: Record<string, unknown> = {};
+  try { itemMetadata = JSON.parse(messagingItemRow?.metadata || '{}'); }
+  catch { /* default to empty */ }
+  const messageFilter = (itemMetadata.messageFilter as string) || 'orcabot';
+
+  if (messageFilter === 'orcabot') {
+    // Bridge messages carry explicit isOrcabotChat flag; Business API webhooks are always orcabot chat
+    const isOrcabotChat = message.metadata?.isOrcabotChat === true;
+    const isBridgeMsg = message.metadata?.source === 'bridge' || message.metadata?.source === 'bridge_outgoing';
+    const isBusinessApiMsg = !isBridgeMsg;
+    if (!isOrcabotChat && !isBusinessApiMsg) {
+      return; // Non-orcabot message filtered by messageFilter setting
+    }
   }
 
   // Enforce inbound policy gate.
-  // Terminal delivery requires an active terminal_integration with a policy that allows the message.
-  // Note/prompt delivery only requires an edge (the edge is the authorization).
-  // If no targets exist at all (no terminals with policies, no notes/prompts), fail-closed.
-  const [terminalPolicies, connectedItems] = await Promise.all([
-    env.DB.prepare(`
+  // Messaging providers: edge = authorization (no terminal_integrations / MCP needed).
+  // Non-messaging providers: terminal_integration with policy required.
+  // If no edges exist at all, fail-closed.
+  //
+  // For messaging providers, only count edges where the messaging block is the SOURCE
+  // (i.e. WhatsApp→Terminal "Receive" edges). A Terminal→WhatsApp "Send" edge only
+  // authorizes outbound delivery, NOT inbound message buffering.
+  const anyEdges = MESSAGING_PROVIDERS.has(provider)
+    ? await env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM dashboard_edges WHERE source_item_id = ?
+      `).bind(subscription.item_id).first<{ cnt: number }>()
+    : await env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM dashboard_edges WHERE source_item_id = ? OR target_item_id = ?
+      `).bind(subscription.item_id, subscription.item_id).first<{ cnt: number }>();
+  const hasAnyEdges = (anyEdges?.cnt || 0) > 0;
+
+  if (MESSAGING_PROVIDERS.has(provider)) {
+    // Messaging: edge = authorization, no terminal policy check
+    if (!hasAnyEdges) return;
+  } else {
+    // Non-messaging: check terminal integration policies
+    const terminalPolicies = await env.DB.prepare(`
       SELECT ip.policy
       FROM dashboard_edges de
       JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
       JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
       JOIN integration_policies ip ON ip.id = ti.active_policy_id
       WHERE de.source_item_id = ?
-    `).bind(provider, subscription.item_id).all<{ policy: string }>(),
-    env.DB.prepare(`
-      SELECT COUNT(*) as cnt FROM dashboard_edges de
-      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
-      WHERE de.source_item_id = ?
-    `).bind(subscription.item_id).first<{ cnt: number }>(),
-  ]);
+    `).bind(provider, subscription.item_id).all<{ policy: string }>();
 
-  const hasItemTargets = (connectedItems?.cnt || 0) > 0;
+    const policies = (terminalPolicies.results || []).map(row => {
+      try { return JSON.parse(row.policy) as MessagingPolicy; }
+      catch { return null; }
+    }).filter((p): p is MessagingPolicy => p !== null);
 
-  const policies = (terminalPolicies.results || []).map(row => {
-    try { return JSON.parse(row.policy) as MessagingPolicy; }
-    catch { return null; }
-  }).filter((p): p is MessagingPolicy => p !== null);
+    if (policies.length > 0) {
+      const allowedByAnyPolicy = policies.some(policy => {
+        if (!policy.canReceive) return false;
 
-  if (policies.length > 0) {
-    const allowedByAnyPolicy = policies.some(policy => {
-      if (!policy.canReceive) return false;
-
-      if (policy.channelFilter) {
-        if (policy.channelFilter.mode === 'allowlist') {
-          const { channelIds, channelNames } = policy.channelFilter;
-          const hasFilter = channelIds?.length || channelNames?.length;
-          if (!hasFilter) return false;
-          if (!channelMatchesFilter(message.channelId, message.channelName, channelIds, channelNames)) {
-            return false;
+        if (policy.channelFilter) {
+          if (policy.channelFilter.mode === 'allowlist') {
+            const { channelIds, channelNames } = policy.channelFilter;
+            const hasFilter = channelIds?.length || channelNames?.length;
+            if (!hasFilter) return false;
+            if (!channelMatchesFilter(message.channelId, message.channelName, channelIds, channelNames)) {
+              return false;
+            }
           }
         }
+
+        if (policy.senderFilter && policy.senderFilter.mode !== 'all') {
+          const { mode, userIds, userNames } = policy.senderFilter;
+          const senderIdMatch = userIds?.includes(message.senderId);
+          const senderNameMatch = userNames?.some(n =>
+            n.toLowerCase() === message.senderName.toLowerCase()
+          );
+          if (mode === 'allowlist' && !senderIdMatch && !senderNameMatch) return false;
+          if (mode === 'blocklist' && (senderIdMatch || senderNameMatch)) return false;
+        }
+
+        return true;
+      });
+
+      if (!allowedByAnyPolicy && !hasAnyEdges) {
+        return;
       }
-
-      if (policy.senderFilter && policy.senderFilter.mode !== 'all') {
-        const { mode, userIds, userNames } = policy.senderFilter;
-        const senderIdMatch = userIds?.includes(message.senderId);
-        const senderNameMatch = userNames?.some(n =>
-          n.toLowerCase() === message.senderName.toLowerCase()
-        );
-        if (mode === 'allowlist' && !senderIdMatch && !senderNameMatch) return false;
-        if (mode === 'blocklist' && (senderIdMatch || senderNameMatch)) return false;
-      }
-
-      return true;
-    });
-
-    if (!allowedByAnyPolicy && !hasItemTargets) {
-      console.log(`[webhook] Inbound denied for subscription ${subscription.id}: no policy allows message from ${message.senderId} in ${message.channelId} and no item targets`);
+    } else if (!hasAnyEdges) {
       return;
     }
-    // If terminal policies deny but item targets exist, allow buffering for item delivery
-  } else if (!hasItemTargets) {
-    console.log(`[webhook] Inbound denied (fail-closed): no terminal policies and no item targets for subscription ${subscription.id} — message dropped`);
-    return;
   }
-  // If no terminal policies but item targets exist, allow through for note/prompt delivery
 
   // Deduplicate and buffer message
   const messageId = crypto.randomUUID();
@@ -1093,6 +1193,32 @@ async function processSubscriptionMessage(
   const messagingItemId = subscription.item_id as string;
   const userId = subscription.user_id as string;
 
+  // Broadcast inbound_message event for frontend connection data flow.
+  // Connected frontends will fire the message through edges to downstream blocks.
+  // This is fire-and-forget — if no clients are connected, nothing happens.
+  try {
+    const doId = env.DASHBOARD.idFromName(dashboardId);
+    const stub = env.DASHBOARD.get(doId);
+    await stub.fetch(new Request('http://do/inbound-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        item_id: messagingItemId,
+        text: message.text,
+        provider,
+        sender_name: message.senderName || message.senderId || 'unknown',
+        message_id: messageId,
+        // Bridge messages carry explicit isOrcabotChat flag; Business API webhook
+        // messages are always from users messaging OrcaBot directly, so default true.
+        is_orcabot_chat: message.metadata?.isOrcabotChat !== undefined
+          ? message.metadata.isOrcabotChat === true
+          : true,
+      }),
+    }));
+  } catch (err) {
+    console.warn(`[webhook] Failed to broadcast inbound_message to DO for dashboard ${dashboardId}:`, err);
+  }
+
   await deliverOrWakeAndDrain(env, dashboardId, messagingItemId, userId, provider).catch(err => {
     console.error(`[webhook] Background delivery failed for dashboard ${dashboardId}:`, err);
   });
@@ -1113,6 +1239,54 @@ async function processSubscriptionMessage(
  * @param webhookBaseUrl - The control plane's external base URL (e.g., https://api.orcabot.com)
  *                         used to construct the webhook callback URL for Telegram.
  */
+/**
+ * Match a user_integration by a key in its JSON metadata column.
+ * Returns the integration ID if exactly one match is found, or the first match otherwise.
+ * Falls back to the first integration for the provider if no metadata match.
+ */
+async function matchIntegrationByMetadata(
+  env: Env,
+  userId: string,
+  provider: string,
+  metaKey: string,
+  metaValue: string | null,
+): Promise<string | null> {
+  const rows = await env.DB.prepare(
+    `SELECT id, metadata FROM user_integrations WHERE user_id = ? AND provider = ?`
+  ).bind(userId, provider).all<{ id: string; metadata: string | null }>();
+
+  const intRows = rows.results || [];
+  if (intRows.length === 0) return null;
+  if (intRows.length === 1) return intRows[0].id;
+
+  // Multiple integrations — match by metadata key
+  if (metaValue) {
+    const matched = matchIntegrationByMetadataSync(intRows, metaKey, metaValue);
+    if (matched) return matched;
+  }
+
+  // No match — return first as last resort
+  return intRows[0].id;
+}
+
+/**
+ * Synchronous helper: find integration whose metadata[key] matches the given value.
+ */
+function matchIntegrationByMetadataSync(
+  rows: Array<{ id: string; metadata: string | null }>,
+  metaKey: string,
+  metaValue: string,
+): string | null {
+  for (const row of rows) {
+    if (!row.metadata) continue;
+    try {
+      const meta = JSON.parse(row.metadata) as Record<string, unknown>;
+      if (meta[metaKey] === metaValue) return row.id;
+    } catch { /* skip malformed JSON */ }
+  }
+  return null;
+}
+
 export async function createSubscription(
   env: Env,
   dashboardId: string,
@@ -1189,51 +1363,101 @@ export async function createSubscription(
     }
   }
 
+  // Resolve user_integration_id for providers with OAuth tokens (Slack, Discord).
+  // This ties the subscription to the exact workspace/server integration used at creation time,
+  // preventing wrong-token selection when a user has multiple integrations for the same provider.
+  let resolvedIntegrationId: string | null = null;
+
   // Resolve team_id for Slack subscriptions.
   // Slack channel IDs are only unique within a workspace, so we MUST store team_id
-  // to prevent cross-workspace misrouting. Auto-resolve from user_integrations metadata
-  // if not explicitly provided. Fail if not resolvable — can't safely route without it.
+  // to prevent cross-workspace misrouting. When a user has multiple Slack workspaces,
+  // we verify the channel exists in the matched workspace via conversations.info.
   let resolvedTeamId: string | null = data.teamId || null;
-  if (provider === 'slack' && !resolvedTeamId) {
-    const integration = await env.DB.prepare(
-      `SELECT access_token, metadata FROM user_integrations WHERE user_id = ? AND provider = 'slack'`
-    ).bind(userId).first<{ access_token: string; metadata: string }>();
+  if (provider === 'slack') {
+    const slackInts = await env.DB.prepare(
+      `SELECT id, access_token, metadata FROM user_integrations WHERE user_id = ? AND provider = 'slack'`
+    ).bind(userId).all<{ id: string; access_token: string; metadata: string | null }>();
 
-    // Try metadata first (fast path for integrations created with team_id)
-    if (integration?.metadata) {
-      try {
-        const meta = JSON.parse(integration.metadata) as { team_id?: string };
-        resolvedTeamId = meta.team_id || null;
-      } catch {
-        // Parse failure — fall through to auth.test
-      }
+    const intRows = slackInts.results || [];
+
+    if (intRows.length === 0) {
+      throw new SubscriptionError(
+        'SLACK_RECONNECT_REQUIRED',
+        'No Slack integration found. Please connect Slack first.',
+      );
     }
 
-    // Fallback: call auth.test to resolve team_id for legacy integrations
-    // that were created before we stored team_id in metadata. Also backfills
-    // the metadata so future calls use the fast path.
-    if (!resolvedTeamId && integration?.access_token) {
-      try {
-        const resp = await fetch('https://slack.com/api/auth.test', {
-          headers: { Authorization: `Bearer ${integration.access_token}` },
-        });
-        if (resp.ok) {
-          const authResult = await resp.json() as { ok: boolean; team_id?: string; team?: string };
-          if (authResult.ok && authResult.team_id) {
-            resolvedTeamId = authResult.team_id;
-            // Backfill metadata so we don't need to call auth.test again
-            const existingMeta = integration.metadata ? JSON.parse(integration.metadata) : {};
-            existingMeta.team_id = authResult.team_id;
-            if (authResult.team) existingMeta.team_name = authResult.team;
-            await env.DB.prepare(
-              `UPDATE user_integrations SET metadata = ?, updated_at = datetime('now') WHERE user_id = ? AND provider = 'slack'`
-            ).bind(JSON.stringify(existingMeta), userId).run();
-            console.log(`[messaging] Backfilled team_id=${authResult.team_id} for legacy Slack integration (user=${userId})`);
-          }
-        }
-      } catch (err) {
-        console.error('[messaging] auth.test fallback failed:', err);
+    // Build a map of integration_id → team_id from metadata (+ backfill via auth.test)
+    const intTeamMap: Array<{ id: string; token: string; teamId: string | null }> = [];
+    for (const row of intRows) {
+      let teamId: string | null = null;
+      if (row.metadata) {
+        try {
+          const meta = JSON.parse(row.metadata) as { team_id?: string };
+          teamId = meta.team_id || null;
+        } catch { /* ignore */ }
       }
+      // Backfill via auth.test for legacy integrations missing team_id
+      if (!teamId && row.access_token) {
+        try {
+          const resp = await fetch('https://slack.com/api/auth.test', {
+            headers: { Authorization: `Bearer ${row.access_token}` },
+          });
+          if (resp.ok) {
+            const authResult = await resp.json() as { ok: boolean; team_id?: string; team?: string };
+            if (authResult.ok && authResult.team_id) {
+              teamId = authResult.team_id;
+              const existingMeta = row.metadata ? JSON.parse(row.metadata) : {};
+              existingMeta.team_id = authResult.team_id;
+              if (authResult.team) existingMeta.team_name = authResult.team;
+              await env.DB.prepare(
+                `UPDATE user_integrations SET metadata = ?, updated_at = datetime('now') WHERE id = ?`
+              ).bind(JSON.stringify(existingMeta), row.id).run();
+              console.log(`[messaging] Backfilled team_id=${authResult.team_id} for Slack integration ${row.id}`);
+            }
+          }
+        } catch (err) {
+          console.error(`[messaging] auth.test backfill failed for integration ${row.id}:`, err);
+        }
+      }
+      intTeamMap.push({ id: row.id, token: row.access_token, teamId });
+    }
+
+    if (resolvedTeamId) {
+      // team_id already provided — match integration by team_id
+      const match = intTeamMap.find((r) => r.teamId === resolvedTeamId);
+      resolvedIntegrationId = match?.id || intTeamMap[0].id;
+    } else if (intRows.length === 1) {
+      // Single integration — no ambiguity
+      resolvedIntegrationId = intTeamMap[0].id;
+      resolvedTeamId = intTeamMap[0].teamId;
+    } else if (data.channelId) {
+      // Multiple integrations, no team_id — verify which workspace owns the channel
+      for (const row of intTeamMap) {
+        if (!row.token) continue;
+        try {
+          const resp = await fetch(`https://slack.com/api/conversations.info?channel=${data.channelId}`, {
+            headers: { Authorization: `Bearer ${row.token}` },
+          });
+          if (resp.ok) {
+            const result = await resp.json() as { ok: boolean; channel?: { id: string } };
+            if (result.ok) {
+              resolvedIntegrationId = row.id;
+              resolvedTeamId = row.teamId;
+              break;
+            }
+          }
+        } catch { /* try next */ }
+      }
+      // Fallback if no workspace claimed the channel
+      if (!resolvedIntegrationId) {
+        resolvedIntegrationId = intTeamMap[0].id;
+        resolvedTeamId = intTeamMap[0].teamId;
+      }
+    } else {
+      // No channel, no team — pick first
+      resolvedIntegrationId = intTeamMap[0].id;
+      resolvedTeamId = intTeamMap[0].teamId;
     }
 
     if (!resolvedTeamId) {
@@ -1241,6 +1465,44 @@ export async function createSubscription(
         'SLACK_RECONNECT_REQUIRED',
         'Slack team could not be identified. Please disconnect and reconnect Slack to continue.',
       );
+    }
+  }
+
+  // Resolve integration ID for Discord.
+  // Discord channels are scoped to a guild. When a user has multiple Discord integrations
+  // (multiple bots/servers), discover which guild owns the channel via the Discord API,
+  // then match the integration whose metadata contains that guild_id.
+  if (provider === 'discord') {
+    const discordInts = await env.DB.prepare(
+      `SELECT id, access_token, metadata FROM user_integrations WHERE user_id = ? AND provider = 'discord'`
+    ).bind(userId).all<{ id: string; access_token: string; metadata: string | null }>();
+
+    const intRows = discordInts.results || [];
+    if (intRows.length === 1) {
+      resolvedIntegrationId = intRows[0].id;
+    } else if (intRows.length > 1 && data.channelId) {
+      // Multiple integrations — discover which guild owns this channel
+      let channelGuildId: string | null = null;
+      for (const row of intRows) {
+        try {
+          const resp = await fetch(`https://discord.com/api/v10/channels/${data.channelId}`, {
+            headers: { Authorization: `Bot ${row.access_token}` },
+          });
+          if (resp.ok) {
+            const ch = await resp.json() as { guild_id?: string };
+            channelGuildId = ch.guild_id || null;
+            break;
+          }
+        } catch { /* try next token */ }
+      }
+      if (channelGuildId) {
+        resolvedIntegrationId = matchIntegrationByMetadataSync(intRows, 'guild_id', channelGuildId);
+      }
+      if (!resolvedIntegrationId) {
+        resolvedIntegrationId = intRows[0].id;
+      }
+    } else if (intRows.length > 1) {
+      resolvedIntegrationId = intRows[0].id;
     }
   }
 
@@ -1311,8 +1573,8 @@ export async function createSubscription(
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider,
       channel_id, channel_name, chat_id, team_id,
-      webhook_id, webhook_secret, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+      webhook_id, webhook_secret, status, user_integration_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
   `).bind(
     id, dashboardId, itemId, userId, provider,
     data.channelId || null,
@@ -1321,7 +1583,38 @@ export async function createSubscription(
     resolvedTeamId,
     webhookId,
     webhookSecret,
+    resolvedIntegrationId,
   ).run();
+
+  // For Discord: register /orcabot slash command as a guild command (instant availability).
+  // Resolve guild_id from the integration metadata or by looking up the channel.
+  if (provider === 'discord' && resolvedIntegrationId) {
+    try {
+      const intRow = await env.DB.prepare(
+        'SELECT metadata FROM user_integrations WHERE id = ?'
+      ).bind(resolvedIntegrationId).first<{ metadata: string | null }>();
+      let guildId: string | null = null;
+      if (intRow?.metadata) {
+        try { guildId = (JSON.parse(intRow.metadata) as Record<string, string>).guild_id || null; } catch { /* */ }
+      }
+      // Fallback: resolve guild_id from channel
+      if (!guildId && data.channelId && env.DISCORD_BOT_TOKEN) {
+        try {
+          const resp = await fetch(`https://discord.com/api/v10/channels/${data.channelId}`, {
+            headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+          });
+          if (resp.ok) {
+            guildId = ((await resp.json()) as { guild_id?: string }).guild_id || null;
+          }
+        } catch { /* */ }
+      }
+      if (guildId) {
+        await ensureDiscordSlashCommand(env, guildId);
+      }
+    } catch (err) {
+      console.warn('[messaging] Failed to register Discord slash command (non-fatal):', err);
+    }
+  }
 
   // For Telegram: register the webhook URL with the Bot API so inbound messages arrive
   if (provider === 'telegram') {
@@ -1392,6 +1685,54 @@ async function registerTelegramWebhook(
   }
 
   console.log(`[subscription] Registered Telegram webhook for user ${userId}: ${callbackUrl}`);
+}
+
+/**
+ * Register the /orcabot slash command for a specific Discord guild.
+ * Guild commands are available instantly (unlike global commands which take up to 1 hour).
+ * Uses the bulk overwrite endpoint which is idempotent — safe to call on every subscription creation.
+ */
+async function ensureDiscordSlashCommand(env: Env, guildId: string): Promise<void> {
+  const botToken = env.DISCORD_BOT_TOKEN;
+  const clientId = env.DISCORD_CLIENT_ID;
+  if (!botToken || !clientId) {
+    throw new Error('DISCORD_BOT_TOKEN and DISCORD_CLIENT_ID required');
+  }
+
+  const commands = [
+    {
+      name: 'orcabot',
+      description: 'Send a message to OrcaBot',
+      type: 1, // CHAT_INPUT (slash command)
+      options: [
+        {
+          name: 'message',
+          description: 'The message to send',
+          type: 3, // STRING
+          required: true,
+        },
+      ],
+    },
+  ];
+
+  const response = await fetch(
+    `https://discord.com/api/v10/applications/${clientId}/guilds/${guildId}/commands`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commands),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Discord guild command registration failed: ${response.status} — ${text}`);
+  }
+
+  console.log(`[subscription] Discord /orcabot slash command registered for guild ${guildId}`);
 }
 
 /**
@@ -1604,7 +1945,6 @@ export async function handleBridgeInbound(
   `).bind(body.webhookId, body.provider).first();
 
   if (!sub) {
-    console.warn(`[bridge-inbound] No active subscription for webhookId=${body.webhookId} provider=${body.provider}`);
     return Response.json({ ok: true }); // Don't reveal subscription existence
   }
 
@@ -1631,7 +1971,9 @@ export async function handleBridgeInbound(
 
   // Process in background (same pattern as webhook handler)
   ctx.waitUntil(
-    processSubscriptionMessage(env, body.provider, sub, message, body as Record<string, unknown>, ctx),
+    processSubscriptionMessage(env, body.provider, sub, message, body as Record<string, unknown>, ctx).catch(err => {
+      console.error(`[bridge-inbound] processSubscriptionMessage failed for sub=${sub.id}:`, err);
+    }),
   );
 
   // Mark subscription as active on first bridge message if still pending

@@ -10,6 +10,7 @@ import type {
   PresenceInfo,
   CursorPosition,
   IncomingCollabMessage,
+  InboundMessageMessage,
   UICommand,
   UICommandResultMessage,
   AgentTask,
@@ -39,6 +40,8 @@ export interface UseCollaborationState {
   error: Error | null;
   /** Last task-related message for components that need real-time updates */
   lastTaskMessage: IncomingCollabMessage | null;
+  /** Last inbound messaging event for triggering connection data flow */
+  lastInboundMessage: InboundMessageMessage | null;
 }
 
 export interface UseCollaborationActions {
@@ -81,6 +84,7 @@ export function useCollaboration(
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [memories, setMemories] = React.useState<AgentMemory[]>([]);
   const [lastTaskMessage, setLastTaskMessage] = React.useState<IncomingCollabMessage | null>(null);
+  const [lastInboundMessage, setLastInboundMessage] = React.useState<InboundMessageMessage | null>(null);
   const [error, setError] = React.useState<Error | null>(null);
 
   // Ensure user exists (dev-auth bootstrap) before connecting to WS
@@ -269,6 +273,10 @@ export function useCollaboration(
         setTasks((prev) => prev.filter((t) => t.id !== message.taskId));
         break;
 
+      case "inbound_message":
+        setLastInboundMessage(message);
+        break;
+
       case "memory_update":
         setMemories((prev) => {
           // Use (key, sessionId) as composite identity to distinguish scopes
@@ -347,6 +355,7 @@ export function useCollaboration(
     tasks,
     memories,
     lastTaskMessage,
+    lastInboundMessage,
     error,
   };
 

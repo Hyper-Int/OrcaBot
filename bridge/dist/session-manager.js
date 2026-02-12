@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: session-manager-v5-hybrid-handshake
-console.log(`[session-manager] REVISION: session-manager-v5-hybrid-handshake loaded at ${new Date().toISOString()}`);
+// REVISION: session-manager-v7-clean-logging
+console.log(`[session-manager] REVISION: session-manager-v7-clean-logging loaded at ${new Date().toISOString()}`);
 import { WhatsAppProvider } from './providers/whatsapp.js';
 // ---------- Session Manager ----------
 export class SessionManager {
@@ -92,7 +92,8 @@ export class SessionManager {
             });
             clearTimeout(timeout);
             if (!resp.ok) {
-                console.error(`[session-manager] Callback failed for session ${sessionId}: ${resp.status}`);
+                const respBody = await resp.text().catch(() => '');
+                console.error(`[session-manager] Callback failed for session ${sessionId}: ${resp.status} ${respBody.slice(0, 200)}`);
             }
             session.lastMessageAt = new Date();
         }

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-delivery-v22-note-prompt-targets
-const MODULE_REVISION = 'messaging-delivery-v22-note-prompt-targets';
+// REVISION: messaging-delivery-v25-directional-edges
+const MODULE_REVISION = 'messaging-delivery-v25-directional-edges';
 console.log(`[messaging-delivery] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -28,6 +28,9 @@ import { SandboxClient } from '../sandbox/client';
 import { createPtyToken } from '../auth/pty-token';
 import { channelMatchesFilter } from './webhook-handler';
 import { formatItem } from '../dashboards/handler';
+
+/** Messaging providers use edge-only authorization (no terminal_integrations / MCP tools). */
+const MESSAGING_PROVIDERS = new Set(['whatsapp', 'slack', 'discord', 'teams', 'matrix', 'google_chat']);
 
 interface BufferedMessage {
   id: string;
@@ -72,16 +75,26 @@ export async function deliverOrWakeAndDrain(
   provider: string,
 ): Promise<void> {
   // 1. Check for eligible targets BEFORE waking the sandbox.
-  // Terminals must have an active terminal_integration with policy for the provider.
+  // Messaging providers: edge = authorization (no terminal_integrations needed).
+  // Non-messaging providers: terminals must have an active terminal_integration with policy.
   // Notes/prompts only need an edge from the messaging block (edge = authorization).
   const [connectedTerminals, connectedItems] = await Promise.all([
-    env.DB.prepare(`
-      SELECT DISTINCT de.target_item_id
-      FROM dashboard_edges de
-      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-      JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-      WHERE de.source_item_id = ?
-    `).bind(provider, messagingItemId).all<{ target_item_id: string }>(),
+    MESSAGING_PROVIDERS.has(provider)
+      // Messaging: only deliver inbound messages to terminals with a messaging→terminal edge.
+      // Terminal→messaging edges are for SENDING (outbound) only; they don't authorize receiving.
+      ? env.DB.prepare(`
+          SELECT DISTINCT de.target_item_id
+          FROM dashboard_edges de
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+          WHERE de.source_item_id = ?
+        `).bind(messagingItemId).all<{ target_item_id: string }>()
+      : env.DB.prepare(`
+          SELECT DISTINCT de.target_item_id
+          FROM dashboard_edges de
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+          JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
+          WHERE de.source_item_id = ?
+        `).bind(provider, messagingItemId).all<{ target_item_id: string }>(),
     env.DB.prepare(`
       SELECT DISTINCT de.target_item_id, di.type
       FROM dashboard_edges de
@@ -96,7 +109,20 @@ export async function deliverOrWakeAndDrain(
   }));
 
   if (!connectedTerminals.results?.length && !itemTargets.length) {
-    console.log(`[delivery] No targets connected to messaging block ${messagingItemId} — messages stay buffered`);
+    // For messaging providers, no edges = message should not have been buffered.
+    // Expire them to prevent stale delivery if an edge is drawn later.
+    if (MESSAGING_PROVIDERS.has(provider)) {
+      console.log(`[delivery] No inbound edges for messaging block ${messagingItemId} — expiring buffered messages`);
+      await env.DB.prepare(`
+        UPDATE inbound_messages SET status = 'expired'
+        WHERE dashboard_id = ? AND status = 'buffered'
+          AND subscription_id IN (
+            SELECT id FROM messaging_subscriptions WHERE item_id = ?
+          )
+      `).bind(dashboardId, messagingItemId).run();
+    } else {
+      console.log(`[delivery] No targets connected to messaging block ${messagingItemId} — messages stay buffered`);
+    }
     return;
   }
 
@@ -435,30 +461,35 @@ async function claimAndFanOut(
         }
       }
 
-      // --- Deliver to terminal PTYs (policy-gated) ---
+      // --- Deliver to terminal PTYs ---
       if (terminalPtys.length && sandbox) {
-        // Re-validate against current per-terminal policies — catches policy changes since buffering.
-        const allTerminalIds = terminalPtys.map(p => p.terminalItemId);
-        const policyResult = await checkPerTerminalPolicy(env, msg, messagingItemId, allTerminalIds);
-
         let remainingPtys: TerminalPty[] = [];
-        if (policyResult === 'all_denied') {
-          console.log(`[delivery] Message ${msg.id} denied by all terminal policies`);
-          // Don't short-circuit — items may have already been delivered above
-        } else if (policyResult === 'no_policy') {
-          console.log(`[delivery] Message ${msg.id} has no terminal policy configured`);
-          // Don't short-circuit — items may have already been delivered above
+
+        if (MESSAGING_PROVIDERS.has(provider)) {
+          // Messaging providers: edge = authorization, no per-terminal policy check
+          remainingPtys = terminalPtys.filter(p => !alreadyDelivered.has(p.terminalItemId));
         } else {
-          remainingPtys = terminalPtys.filter(p =>
-            !alreadyDelivered.has(p.terminalItemId) && policyResult.get(p.terminalItemId) === true
-          );
+          // Non-messaging: re-validate against current per-terminal policies
+          const allTerminalIds = terminalPtys.map(p => p.terminalItemId);
+          const policyResult = await checkPerTerminalPolicy(env, msg, messagingItemId, allTerminalIds);
+
+          if (policyResult === 'all_denied') {
+            console.log(`[delivery] Message ${msg.id} denied by all terminal policies`);
+          } else if (policyResult === 'no_policy') {
+            console.log(`[delivery] Message ${msg.id} has no terminal policy configured`);
+          } else {
+            remainingPtys = terminalPtys.filter(p =>
+              !alreadyDelivered.has(p.terminalItemId) && policyResult.get(p.terminalItemId) === true
+            );
+          }
         }
 
         if (remainingPtys.length) {
           const formattedMessage = formatMessageForPty(msg);
+          const useExecute = MESSAGING_PROVIDERS.has(provider);
           for (const pty of remainingPtys) {
             try {
-              await sandbox.writePty(pty.sessionId, pty.ptyId, formattedMessage, pty.machineId);
+              await sandbox.writePty(pty.sessionId, pty.ptyId, formattedMessage, pty.machineId, undefined, useExecute);
               newlyDelivered.push(pty.terminalItemId);
             } catch (err) {
               console.error(`[delivery] Failed to write message ${msg.id} to terminal ${pty.terminalItemId}:`, err);
@@ -624,10 +655,20 @@ function stripAnsiAndControlChars(text: string): string {
  * Reply with slack_reply_thread tool.
  */
 function formatMessageForPty(msg: BufferedMessage): string {
+  const messageText = stripAnsiAndControlChars(msg.message_text || '(empty)');
+
+  // Messaging providers (WhatsApp, etc.) deliver plain text only — the edge defines
+  // the relationship, and the agent sees the message as direct user input.
+  // No wrapping newlines: writePty appends \r (Enter) to submit to the agent.
+  if (MESSAGING_PROVIDERS.has(msg.provider)) {
+    return messageText;
+  }
+
+  // Non-messaging providers (Slack, etc.) use the full structured format with metadata
+  // so the agent knows the context and can reply via MCP tools.
   const provider = msg.provider.charAt(0).toUpperCase() + msg.provider.slice(1);
   const channelDisplay = stripAnsiAndControlChars(msg.channel_name || msg.channel_id || 'unknown');
   const senderDisplay = stripAnsiAndControlChars(msg.sender_name || msg.sender_id || 'unknown');
-  const messageText = stripAnsiAndControlChars(msg.message_text || '(empty)');
 
   let metadata: Record<string, unknown> = {};
   try {
@@ -682,7 +723,7 @@ function getReplyToolName(provider: string, metadata: Record<string, unknown>): 
       // slack_reply_thread requires thread_ts; for top-level messages use slack_send_message
       return metadata.thread_ts ? 'slack_reply_thread' : 'slack_send_message';
     case 'whatsapp':
-      return 'whatsapp_send_message';
+      return null; // Messaging uses connection flow (edges), not MCP tools
     // Discord, Telegram, and other providers do not yet have MCP tools registered.
     // Uncomment these as tools are added to integration_tools.go:
     // case 'discord': return 'discord_send_message';
@@ -807,15 +848,24 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
 
   for (const row of targets.results) {
     try {
-      // Find all connected targets: terminals (with policy) and note/prompt items
+      // Find all connected targets: terminals and note/prompt items
+      // Messaging providers use edge-only authorization; others require terminal_integrations
       const [connectedTerminals, connectedItems] = await Promise.all([
-        env.DB.prepare(`
-          SELECT DISTINCT de.target_item_id
-          FROM dashboard_edges de
-          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-          JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-          WHERE de.source_item_id = ?
-        `).bind(row.provider, row.messaging_item_id).all<{ target_item_id: string }>(),
+        MESSAGING_PROVIDERS.has(row.provider)
+          // Messaging: only deliver to terminals with a messaging→terminal edge (inbound direction)
+          ? env.DB.prepare(`
+              SELECT DISTINCT de.target_item_id
+              FROM dashboard_edges de
+              JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+              WHERE de.source_item_id = ?
+            `).bind(row.messaging_item_id).all<{ target_item_id: string }>()
+          : env.DB.prepare(`
+              SELECT DISTINCT de.target_item_id
+              FROM dashboard_edges de
+              JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+              JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
+              WHERE de.source_item_id = ?
+            `).bind(row.provider, row.messaging_item_id).all<{ target_item_id: string }>(),
         env.DB.prepare(`
           SELECT DISTINCT de.target_item_id, di.type
           FROM dashboard_edges de

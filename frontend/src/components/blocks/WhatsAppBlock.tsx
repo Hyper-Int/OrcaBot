@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v10-hybrid-mode
+// REVISION: whatsapp-block-v14-skip-business-flash
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v10-hybrid-mode";
+const MODULE_REVISION = "whatsapp-block-v14-skip-business-flash";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -37,6 +37,7 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import { QRCodeSVG } from "qrcode.react";
 import { WhatsAppIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
 
 // ============================================
@@ -181,6 +182,27 @@ async function pollWhatsAppQr(
 
 const WHATSAPP_GREEN = "#25D366";
 
+/** Small inline toggle for message filtering (OrcaBot chat only vs everyone) */
+function MessageFilterToggle({
+  value,
+  onChange,
+}: {
+  value: "orcabot" | "everyone";
+  onChange: (v: "orcabot" | "everyone") => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 text-[10px] nodrag">
+      <span className="text-[var(--text-muted)]">Messages:</span>
+      <button
+        onClick={() => onChange(value === "orcabot" ? "everyone" : "orcabot")}
+        className="px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] hover:bg-[var(--hover)] transition-colors"
+      >
+        {value === "orcabot" ? "OrcaBot chat" : "Everyone"}
+      </button>
+    </div>
+  );
+}
+
 interface WhatsAppData extends Record<string, unknown> {
   content: string;
   size: { width: number; height: number };
@@ -199,9 +221,15 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
   const dashboardId = data.dashboardId;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
+  const messageFilter = (data.metadata?.messageFilter as "orcabot" | "everyone") || "orcabot";
+  const handleFilterChange = React.useCallback((v: "orcabot" | "everyone") => {
+    data.onItemChange?.({ metadata: { ...data.metadata, messageFilter: v } });
+  }, [data]);
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
   const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
   const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const connectionFlow = useConnectionDataFlow();
 
   React.useEffect(() => {
     return () => {
@@ -209,6 +237,28 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
       if (qrPollRef.current) clearInterval(qrPollRef.current);
     };
   }, []);
+
+  // Register input handlers for outbound message sending
+  React.useEffect(() => {
+    if (!connectionFlow || !dashboardId) return;
+
+    const handler = async (payload: { text?: string }) => {
+      if (!payload.text?.trim()) return;
+      try {
+        await apiFetch(`${API.cloudflare.base}/messaging/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dashboardId, itemId: id, text: payload.text }),
+        });
+      } catch (err) {
+        console.error("[WhatsAppBlock] Outbound send failed:", err);
+      }
+    };
+
+    const c1 = connectionFlow.registerInputHandler(id, "left-in", handler);
+    const c2 = connectionFlow.registerInputHandler(id, "top-in", handler);
+    return () => { c1(); c2(); };
+  }, [id, connectionFlow, dashboardId]);
 
   const handleMinimize = () => {
     const expandedSize = data.size;
@@ -584,18 +634,21 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
               <p className="text-[10px] text-[var(--text-muted)] mb-1">
                 {platformConfig.verifiedName || "OrcaBot"}{platformConfig.displayPhone ? ` \u00b7 ${platformConfig.displayPhone}` : ""}
               </p>
-              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-2">
                 Reply on your phone. Agent sends via Business API.
               </p>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={handleDisconnectPersonal}
-                className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
-              >
-                <LogOut className="w-3 h-3" />
-                Unlink Phone
-              </Button>
+              <MessageFilterToggle value={messageFilter} onChange={handleFilterChange} />
+              <div className="mt-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDisconnectPersonal}
+                  className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
+                >
+                  <LogOut className="w-3 h-3" />
+                  Unlink Phone
+                </Button>
+              </div>
             </div>
           </div>
         </BlockWrapper>
@@ -607,6 +660,23 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
   }
 
   if (!integration?.connected && !personalSubId) {
+    // When platform is configured, auto-connect to personal/hybrid will fire shortly.
+    // Show a connecting spinner instead of the Business API form to avoid a brief flash.
+    if (platformConfig?.configured) {
+      return (
+        <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+          <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
+          <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+            {header}
+            <div className="flex flex-col items-center justify-center h-full p-4">
+              <Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)] mb-2" />
+              <p className="text-xs text-[var(--text-muted)]">Connecting...</p>
+            </div>
+          </div>
+        </BlockWrapper>
+      );
+    }
+
     return (
       <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
         <ConnectionHandles nodeId={id} visible={connectorsVisible} onConnectorClick={data.onConnectorClick} />
@@ -738,18 +808,21 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
               <CheckCircle className="w-5 h-5" style={{ color: WHATSAPP_GREEN }} />
             </div>
             <p className="text-xs font-medium text-[var(--text-primary)] mb-1">OrcaBot WhatsApp</p>
-            <p className="text-[10px] text-[var(--text-muted)] text-center mb-4">
+            <p className="text-[10px] text-[var(--text-muted)] text-center mb-2">
               Users message this number on WhatsApp. Connect a terminal to read and reply.
             </p>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDisconnectPersonal}
-              className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
-            >
-              <LogOut className="w-3 h-3" />
-              Disconnect
-            </Button>
+            <MessageFilterToggle value={messageFilter} onChange={handleFilterChange} />
+            <div className="mt-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDisconnectPersonal}
+                className="nodrag gap-1.5 text-[var(--text-muted)] hover:text-red-500"
+              >
+                <LogOut className="w-3 h-3" />
+                Disconnect
+              </Button>
+            </div>
           </div>
         </div>
       </BlockWrapper>
@@ -778,7 +851,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
                 {integration?.accountName || "OrcaBot"}
               </p>
               <p className="text-[10px] text-[var(--text-muted)] mb-1">{waPhoneNumber}</p>
-              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-2">
                 Scan to chat on WhatsApp. Connect a terminal to read and reply.
               </p>
             </>
@@ -790,11 +863,12 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
               <p className="text-xs font-medium text-[var(--text-primary)] mb-1">
                 {integration?.accountName || "WhatsApp Connected"}
               </p>
-              <p className="text-[10px] text-[var(--text-muted)] text-center mb-3">
+              <p className="text-[10px] text-[var(--text-muted)] text-center mb-2">
                 Connect a terminal to read and reply to messages.
               </p>
             </>
           )}
+          <MessageFilterToggle value={messageFilter} onChange={handleFilterChange} />
         </div>
       </div>
     </BlockWrapper>
