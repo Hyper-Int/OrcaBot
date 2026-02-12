@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -1251,7 +1251,7 @@ async function migrateSchedulesTable(db: D1Database): Promise<void> {
 }
 
 // All valid dashboard item types - add new types here
-const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
 
 async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`

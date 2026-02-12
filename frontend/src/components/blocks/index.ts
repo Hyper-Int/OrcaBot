@@ -10,6 +10,7 @@ export { WorkspaceBlock } from "./WorkspaceBlock";
 export { RecipeBlock } from "./RecipeBlock";
 export { PromptBlock } from "./PromptBlock";
 export { ScheduleBlock } from "./ScheduleBlock";
+export { DecisionBlock } from "./DecisionBlock";
 export { GmailBlock } from "./GmailBlock";
 export { CalendarBlock } from "./CalendarBlock";
 export { ContactsBlock } from "./ContactsBlock";
