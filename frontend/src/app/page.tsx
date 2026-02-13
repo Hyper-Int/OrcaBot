@@ -195,6 +195,42 @@ export default function Home() {
   const [accessCode, setAccessCode] = React.useState("");
   const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
+  const openClaudeVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const geminiSecretVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const gmailVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const whatsappVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const chessVideoRef = React.useRef<HTMLVideoElement | null>(null);
+  const videoLoopTimersRef = React.useRef<number[]>([]);
+
+  const handleVideoEnded = React.useCallback(
+    (videoRef: React.RefObject<HTMLVideoElement | null>) => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      // Keep last frame visible, then restart after a short hold.
+      video.pause();
+      const timer = window.setTimeout(() => {
+        videoLoopTimersRef.current = videoLoopTimersRef.current.filter(
+          (id) => id !== timer
+        );
+        const target = videoRef.current;
+        if (!target) return;
+        target.currentTime = 0;
+        void target.play().catch(() => {});
+      }, 5000);
+      videoLoopTimersRef.current.push(timer);
+    },
+    []
+  );
+
+  React.useEffect(() => {
+    return () => {
+      for (const timer of videoLoopTimersRef.current) {
+        window.clearTimeout(timer);
+      }
+      videoLoopTimersRef.current = [];
+    };
+  }, []);
 
   // Turnstile bot verification — execute on demand when user clicks login
   const turnstileWidgetId = React.useRef<string | null>(null);
@@ -475,7 +511,7 @@ export default function Home() {
         {/* CTA area — adapts to auth state */}
         {isAuthResolved && isAuthenticated ? (
           /* Authenticated: Dashboard CTA */
-          <div>
+          <div className="max-w-md mx-auto">
             <div className="flex items-center justify-center mb-4">
               <Button
                 variant="primary"
@@ -491,18 +527,120 @@ export default function Home() {
                 Welcome back, {user.name}
               </p>
             )}
+
+            <section className="mt-10 space-y-8">
+              <p className="text-lg sm:text-xl font-extrabold uppercase tracking-[0.16em] text-[var(--foreground)]">
+                How To
+              </p>
+              <article className="space-y-4 pt-2 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Run Claude Code in an always online secure sandbox with your
+                  subscription plan
+                </h3>
+                <video
+                  ref={openClaudeVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  poster="/videos/open_claude_code-poster.jpg"
+                  onEnded={() => handleVideoEnded(openClaudeVideoRef)}
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                >
+                  <source src="/videos/open_claude_code.webm" type="video/webm" />
+                </video>
+              </article>
+
+              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Keep secrets out of the sandbox so LLM&apos;s cant see them.
+                </h3>
+                <video
+                  ref={geminiSecretVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  poster="/videos/gemini_secret-poster.jpg"
+                  onEnded={() => handleVideoEnded(geminiSecretVideoRef)}
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                >
+                  <source src="/videos/gemini_secret.webm" type="video/webm" />
+                </video>
+              </article>
+
+              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Link up gmail etc with specific policy guards
+                </h3>
+                <video
+                  ref={gmailVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  poster="/videos/gmail-poster.jpg"
+                  onEnded={() => handleVideoEnded(gmailVideoRef)}
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                >
+                  <source src="/videos/gmail.webm" type="video/webm" />
+                </video>
+              </article>
+
+              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Enable two way communication via whatsapp/slack/discord
+                </h3>
+                <video
+                  ref={whatsappVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  poster="/videos/whatsapp-poster.jpg"
+                  onEnded={() => handleVideoEnded(whatsappVideoRef)}
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                >
+                  <source src="/videos/whatsapp.webm" type="video/webm" />
+                </video>
+              </article>
+
+              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Get agentic coders playing chess with each other
+                </h3>
+                <video
+                  ref={chessVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                  poster="/videos/chess-poster.jpg"
+                  onEnded={() => handleVideoEnded(chessVideoRef)}
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                >
+                  <source src="/videos/chess.webm" type="video/webm" />
+                </video>
+              </article>
+
+              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                  Setup an advanced version of a Ralph Wiggum loop.
+                </h3>
+                <img
+                  src="/videos/ralph_wiggins.png"
+                  alt="Ralph Wiggum loop setup screenshot"
+                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                  loading="lazy"
+                />
+              </article>
+            </section>
           </div>
         ) : isAuthResolved ? (
           /* Unauthenticated: Login options */
           <div className="max-w-md mx-auto">
             {!showDevLogin && !showRegisterInterest && !showCodeLogin ? (
               <div className="space-y-4">
-                {/* Private beta notice */}
-                <p className="text-caption text-[var(--foreground-muted)]">
-                  OrcaBot is currently in private beta. Sign in below if you
-                  have been invited.
-                </p>
-
                 {/* Google OAuth — primary CTA */}
                 <Button
                   variant="primary"
@@ -556,17 +694,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Register Interest */}
-                <Button
-                  variant="ghost"
-                  size="md"
-                  className="w-full"
-                  onClick={() => setShowRegisterInterest(true)}
-                  leftIcon={<Mail className="w-4 h-4" />}
-                >
-                  Register Interest
-                </Button>
-
                 {/* Code Login */}
                 {codeLoginEnabled && (
                   <Button
@@ -609,6 +736,120 @@ export default function Home() {
                     Privacy Policy
                   </a>
                 </p>
+
+                <section className="mt-10 space-y-8">
+                  <p className="text-lg sm:text-xl font-extrabold uppercase tracking-[0.16em] text-[var(--foreground)]">
+                    How To
+                  </p>
+                  <article className="space-y-4 pt-2 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Run Claude Code in an always online secure sandbox with your
+                      subscription plan
+                    </h3>
+                    <video
+                      ref={openClaudeVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      preload="metadata"
+                      poster="/videos/open_claude_code-poster.jpg"
+                      onEnded={() => handleVideoEnded(openClaudeVideoRef)}
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                    >
+                      <source
+                        src="/videos/open_claude_code.webm"
+                        type="video/webm"
+                      />
+                    </video>
+                  </article>
+
+                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Keep secrets out of the sandbox so LLM&apos;s cant see them.
+                    </h3>
+                    <video
+                      ref={geminiSecretVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      preload="metadata"
+                      poster="/videos/gemini_secret-poster.jpg"
+                      onEnded={() => handleVideoEnded(geminiSecretVideoRef)}
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                    >
+                      <source
+                        src="/videos/gemini_secret.webm"
+                        type="video/webm"
+                      />
+                    </video>
+                  </article>
+
+                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Link up gmail etc with specific policy guards
+                    </h3>
+                    <video
+                      ref={gmailVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      preload="metadata"
+                      poster="/videos/gmail-poster.jpg"
+                      onEnded={() => handleVideoEnded(gmailVideoRef)}
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                    >
+                      <source src="/videos/gmail.webm" type="video/webm" />
+                    </video>
+                  </article>
+
+                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Enable two way communication via whatsapp/slack/discord
+                    </h3>
+                    <video
+                      ref={whatsappVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      preload="metadata"
+                      poster="/videos/whatsapp-poster.jpg"
+                      onEnded={() => handleVideoEnded(whatsappVideoRef)}
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                    >
+                      <source src="/videos/whatsapp.webm" type="video/webm" />
+                    </video>
+                  </article>
+
+                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Get agentic coders playing chess with each other
+                    </h3>
+                    <video
+                      ref={chessVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      preload="metadata"
+                      poster="/videos/chess-poster.jpg"
+                      onEnded={() => handleVideoEnded(chessVideoRef)}
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                    >
+                      <source src="/videos/chess.webm" type="video/webm" />
+                    </video>
+                  </article>
+
+                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
+                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
+                      Setup an advanced version of a Ralph Wiggum loop.
+                    </h3>
+                    <img
+                      src="/videos/ralph_wiggins.png"
+                      alt="Ralph Wiggum loop setup screenshot"
+                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+                      loading="lazy"
+                    />
+                  </article>
+                </section>
               </div>
             ) : showRegisterInterest ? (
               /* Register Interest form */
