@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v5-markdown
+// REVISION: chat-input-focus-v1-remove-blue-outline
 
 "use client";
 
@@ -11,7 +11,7 @@
  * Messages appear in a popover above the input.
  */
 
-const CHAT_PANEL_REVISION = "chat-v5-markdown";
+const CHAT_PANEL_REVISION = "chat-input-focus-v1-remove-blue-outline";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -283,7 +283,7 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
             placeholder="Ask Orcabot..."
             disabled={isStreaming}
             className={cn(
-              "flex-1 bg-transparent border-0 outline-none",
+              "flex-1 bg-transparent border-0 outline-none focus-visible:outline-none",
               "text-xs placeholder:text-muted-foreground",
               "disabled:opacity-50"
             )}
