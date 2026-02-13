@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v35-no-frontend-double-delivery
-console.log(`[dashboard] REVISION: dashboard-v35-no-frontend-double-delivery loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v42-metro-edge-pipes
+console.log(`[dashboard] REVISION: dashboard-v42-metro-edge-pipes loaded at ${new Date().toISOString()}`);
 
 
 import * as React from "react";
@@ -143,8 +143,8 @@ const toFlowEdge = (edge: DashboardEdge): Edge => ({
   sourceHandle: edge.sourceHandle,
   targetHandle: edge.targetHandle,
   type: "integration",
-  animated: true,
-  style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+  animated: false,
+  style: { stroke: "var(--edge-base)", strokeWidth: 4 },
 });
 
 // Only include types that exist in the DB schema
@@ -547,6 +547,9 @@ export default function DashboardPage() {
   const mutationsInFlightRef = React.useRef(0);
   // Track recently deleted item IDs (to prevent refetches from bringing them back)
   const recentlyDeletedItemsRef = React.useRef<Set<string>>(new Set());
+  // Track recently deleted edge IDs (prevents sync effect from re-adding edges
+  // when a query refetch arrives before the server-side DELETE completes)
+  const recentlyDeletedEdgeIdsRef = React.useRef<Set<string>>(new Set());
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
@@ -754,14 +757,10 @@ export default function DashboardPage() {
   // Pan/zoom so a newly-placed block is visible
   const ensureVisible = React.useCallback(
     (position: { x: number; y: number }, size: { width: number; height: number }) => {
-      console.log("[ensureVisible] called with position:", position, "size:", size);
       // Defer to next frame so the optimistic node is rendered into the flow
       requestAnimationFrame(() => {
         const instance = reactFlowInstanceRef.current;
-        if (!instance) {
-          console.warn("[ensureVisible] no ReactFlow instance");
-          return;
-        }
+        if (!instance) return;
 
         const vp = viewportRef.current;
         const zoom = vp.zoom || 1;
@@ -781,9 +780,6 @@ export default function DashboardPage() {
         const blockBottom = position.y + size.height;
         const margin = 48;
 
-        console.log("[ensureVisible] viewport:", { viewLeft, viewTop, viewRight, viewBottom, zoom });
-        console.log("[ensureVisible] block bounds:", { x: position.x, y: position.y, blockRight, blockBottom });
-
         // Check if the block is already fully within the visible area
         if (
           position.x >= viewLeft + margin &&
@@ -791,11 +787,8 @@ export default function DashboardPage() {
           blockRight <= viewRight - margin &&
           blockBottom <= viewBottom - margin
         ) {
-          console.log("[ensureVisible] block already visible, skipping pan");
           return; // already visible
         }
-
-        console.log("[ensureVisible] block not fully visible, will pan/zoom");
 
         // Compute bounding box of all existing items + the new block
         let minX = position.x;
@@ -816,27 +809,20 @@ export default function DashboardPage() {
           boundsWidth * zoom <= usableWidth && boundsHeight * zoom <= containerHeight;
 
         if (fitsAtCurrentZoom) {
-          // Everything fits at the current zoom — just pan (no zoom change)
           const centerX = (minX + maxX) / 2;
           const centerY = (minY + maxY) / 2;
-          // setCenter centers the viewport on the given flow coordinate at the given zoom
-          // Offset the center rightward by half the sidebar inset so the visible
-          // center (not the DOM center) is used.
           const offsetX = sidebarInset / 2 / zoom;
-          console.log("[ensureVisible] panning to center:", { centerX: centerX + offsetX, centerY, zoom });
           instance.setCenter(centerX + offsetX, centerY, { zoom, duration: 300 });
         } else {
-          // Need to zoom out — compute the maximum zoom that fits, capped at current
           const neededZoom = Math.min(
             usableWidth / boundsWidth,
             containerHeight / boundsHeight,
-            zoom, // never zoom in
+            zoom,
           );
           const clampedZoom = Math.max(0.1, neededZoom);
           const centerX = (minX + maxX) / 2;
           const centerY = (minY + maxY) / 2;
           const offsetX = sidebarInset / 2 / clampedZoom;
-          console.log("[ensureVisible] zooming out to:", { centerX: centerX + offsetX, centerY, zoom: clampedZoom });
           instance.setCenter(centerX + offsetX, centerY, { zoom: clampedZoom, duration: 300 });
         }
       });
@@ -941,8 +927,8 @@ export default function DashboardPage() {
               sourceHandle: item.sourceHandle,
               targetHandle: item.targetHandle,
               type: "smoothstep",
-              animated: true,
-              style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+              animated: false,
+              style: { stroke: "var(--edge-base)", strokeWidth: 4 },
             },
           ];
         });
@@ -1093,15 +1079,27 @@ export default function DashboardPage() {
       return createEdge(dashboardId, payload);
     },
     onSuccess: (createdEdge, variables) => {
-      // Replace temp edge with real server edge (swap temp ID → real ID)
+      // If this edge (or its temp ID) was deleted while the create was in-flight,
+      // don't re-add it — just clean up the temp edge and bail out.
+      const deletedIds = recentlyDeletedEdgeIdsRef.current;
+      if (deletedIds.has(createdEdge.id) || (variables._tempEdgeId && deletedIds.has(variables._tempEdgeId))) {
+        if (variables._tempEdgeId) {
+          setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
+        }
+        return;
+      }
+
+      // Replace temp edge with real server edge (swap temp ID → real ID).
+      // Also remove any duplicate with the server ID — the collab WebSocket
+      // may have already added it before this onSuccess fires.
       if (variables._tempEdgeId) {
-        setEdges((prev) =>
-          prev.map((e) =>
-            e.id === variables._tempEdgeId
-              ? { ...e, ...toFlowEdge(createdEdge), data: e.data }
-              : e
-          )
-        );
+        setEdges((prev) => {
+          const tempEdge = prev.find((e) => e.id === variables._tempEdgeId);
+          const cleaned = prev.filter(
+            (e) => e.id !== variables._tempEdgeId && e.id !== createdEdge.id
+          );
+          return [...cleaned, { ...toFlowEdge(createdEdge), data: tempEdge?.data }];
+        });
       }
 
       queryClient.setQueryData(
@@ -1147,6 +1145,17 @@ export default function DashboardPage() {
       }
     },
     onError: (error, variables) => {
+      // UNIQUE constraint = edge already exists on server — not a real error.
+      // Still clean up the temp edge since the server already has the real one.
+      if (error.message?.includes("UNIQUE constraint")) {
+        console.log("[createEdgeMutation] Edge already exists on server, cleaning up temp edge");
+        if (variables._tempEdgeId) {
+          setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
+        }
+        // Refetch to get the server's authoritative edge
+        queryClient.invalidateQueries({ queryKey: ["dashboard", dashboardId] });
+        return;
+      }
       // Remove temp edge on failure
       if (variables._tempEdgeId) {
         setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
@@ -1172,7 +1181,10 @@ export default function DashboardPage() {
 
       const sourceItem = currentItems.find((i) => i.id === edge.sourceItemId);
       const targetItem = currentItems.find((i) => i.id === edge.targetItemId);
-      if (!sourceItem || !targetItem) return;
+      if (!sourceItem || !targetItem) {
+        console.log(`[handleIntegrationEdge] ${action}: items not found for edge=${edge.id} srcId=${edge.sourceItemId} tgtId=${edge.targetItemId} itemIds=${currentItems.map(i=>i.id).join(",")}`);
+        return;
+      }
 
       // Determine which is the integration and which is the terminal
       let integrationItem: DashboardItem | null = null;
@@ -2005,7 +2017,12 @@ export default function DashboardPage() {
   // Delete edge function for useUICommands
   const deleteEdgeFn = React.useCallback(
     async (edgeId: string) => {
-      // Look up the edge before deleting to handle auto-detach
+      // ── Synchronous phase (runs in the same tick as the click event) ──
+      // All state and cache mutations happen here, BEFORE any awaits, so the
+      // edge disappears from the UI immediately.
+      mutationsInFlightRef.current++;
+      recentlyDeletedEdgeIdsRef.current.add(edgeId);
+
       const data = queryClient.getQueryData<{
         dashboard: Dashboard;
         items: DashboardItem[];
@@ -2015,31 +2032,82 @@ export default function DashboardPage() {
       }>(["dashboard", dashboardId]);
       const edgeToDelete = data?.edges?.find((e) => e.id === edgeId);
 
-      // Remove from local state immediately (optimistic)
-      setEdges((prev) => prev.filter((e) => e.id !== edgeId));
-
-      // Only call server API if the edge exists in query data (has a real server ID)
-      if (edgeToDelete) {
-        try {
-          await deleteEdge(dashboardId, edgeId);
-        } catch (err) {
-          console.warn("Failed to delete edge from server:", err);
-        }
-        queryClient.setQueryData(
-          ["dashboard", dashboardId],
-          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
-            if (!oldData) return oldData;
-            return {
-              ...oldData,
-              edges: oldData.edges.filter((e) => e.id !== edgeId),
-            };
+      // Mark reverse edges as recently deleted — server cascade-deletes them
+      const edgeIdsToRemove = [edgeId];
+      if (edgeToDelete && data?.edges) {
+        for (const e of data.edges) {
+          if (
+            e.id !== edgeId &&
+            e.sourceItemId === edgeToDelete.targetItemId &&
+            e.targetItemId === edgeToDelete.sourceItemId
+          ) {
+            recentlyDeletedEdgeIdsRef.current.add(e.id);
+            edgeIdsToRemove.push(e.id);
           }
-        );
-        // Auto-detach integration when edge between integration and terminal is removed
-        handleIntegrationEdge(
-          { id: edgeToDelete.id, sourceItemId: edgeToDelete.sourceItemId, targetItemId: edgeToDelete.targetItemId },
-          "detach"
-        );
+        }
+      }
+
+      const removeSet = new Set(edgeIdsToRemove);
+      // Remove by ID — and also remove any duplicate edges that share the same
+      // connection (source/target/handles) but have a different ID (temp vs server UUID).
+      setEdges((prev) => {
+        const edgeRef = prev.find((e) => e.id === edgeId);
+        return prev.filter((e) => {
+          if (removeSet.has(e.id)) return false;
+          // Catch temp-ID / server-UUID duplicates for the same connection
+          if (edgeRef && e.id !== edgeId &&
+              e.source === edgeRef.source && e.target === edgeRef.target &&
+              e.sourceHandle === edgeRef.sourceHandle && e.targetHandle === edgeRef.targetHandle) {
+            recentlyDeletedEdgeIdsRef.current.add(e.id);
+            return false;
+          }
+          return true;
+        });
+      });
+
+      queryClient.setQueryData(
+        ["dashboard", dashboardId],
+        (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            edges: oldData.edges.filter((e) => !removeSet.has(e.id)),
+          };
+        }
+      );
+
+      // ── Async phase (runs after the click handler returns) ──
+
+      // Cancel any in-flight dashboard queries so a stale refetch doesn't
+      // overwrite the cache we just cleaned.
+      await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
+
+      // Auto-detach integrations for all removed edges
+      if (data?.edges) {
+        for (const id of edgeIdsToRemove) {
+          const edge = data.edges.find((e) => e.id === id);
+          if (edge) {
+            handleIntegrationEdge(
+              { id: edge.id, sourceItemId: edge.sourceItemId, targetItemId: edge.targetItemId },
+              "detach"
+            );
+          }
+        }
+      }
+
+      try {
+        await deleteEdge(dashboardId, edgeId);
+      } catch (err) {
+        if (!(err instanceof Error && err.message.includes("404"))) {
+          console.warn("[deleteEdgeFn] server delete failed:", err);
+        }
+      } finally {
+        mutationsInFlightRef.current--;
+        setTimeout(() => {
+          for (const id of edgeIdsToRemove) {
+            recentlyDeletedEdgeIdsRef.current.delete(id);
+          }
+        }, 5000);
       }
     },
     [dashboardId, queryClient, handleIntegrationEdge, setEdges]
@@ -2367,6 +2435,59 @@ export default function DashboardPage() {
     [edgesFromData, items, recordAction, deleteEdgeFn]
   );
 
+  // Create a reverse edge (swap source/target, flip handle suffixes)
+  // Uses functional setEdges to read current state (avoids stale closure)
+  const handleCreateReverseEdge = React.useCallback(
+    (edgeId: string) => {
+      let mutationData: {
+        sourceItemId: string;
+        targetItemId: string;
+        sourceHandle: string;
+        targetHandle: string;
+        _tempEdgeId: string;
+      } | null = null;
+
+      setEdges((prev) => {
+        const edge = prev.find((e) => e.id === edgeId);
+        if (!edge || !edge.sourceHandle || !edge.targetHandle) return prev;
+
+        const reverseSourceHandle = edge.targetHandle.replace("-in", "-out");
+        const reverseTargetHandle = edge.sourceHandle.replace("-out", "-in");
+        const reverseEdgeId = `edge-${edge.target}-${edge.source}-${reverseSourceHandle}-${reverseTargetHandle}`;
+
+        if (prev.some((e) => e.id === reverseEdgeId)) return prev;
+
+        mutationData = {
+          sourceItemId: edge.target,
+          targetItemId: edge.source,
+          sourceHandle: reverseSourceHandle,
+          targetHandle: reverseTargetHandle,
+          _tempEdgeId: reverseEdgeId,
+        };
+
+        return [
+          ...prev,
+          {
+            id: reverseEdgeId,
+            source: edge.target,
+            target: edge.source,
+            sourceHandle: reverseSourceHandle,
+            targetHandle: reverseTargetHandle,
+            type: "integration",
+            animated: false,
+            style: { stroke: "var(--edge-base)", strokeWidth: 4 },
+          },
+        ];
+      });
+
+      // Persist to server (after setEdges completes)
+      if (mutationData) {
+        createEdgeMutation.mutate(mutationData);
+      }
+    },
+    [setEdges, createEdgeMutation]
+  );
+
   const handleConnectorClick = React.useCallback(
     (nodeId: string, handleId: string, kind: "source" | "target") => {
       if (role === "viewer") return;
@@ -2431,8 +2552,8 @@ export default function DashboardPage() {
               sourceHandle: source.handleId,
               targetHandle: target.handleId,
               type: "integration",
-              animated: true,
-              style: { stroke: "var(--accent-primary)", strokeWidth: 2 },
+              animated: false,
+              style: { stroke: "var(--edge-base)", strokeWidth: 4 },
             },
           ];
         });
@@ -2492,15 +2613,50 @@ export default function DashboardPage() {
     prevCollabEdgesRef.current = currentEdges;
 
     if (addedEdges.length > 0 || removedEdges.length > 0) {
+      // Mark server-confirmed deletions so the sync effect won't re-add
+      // them from a stale refetch that may still be in flight.
+      for (const edge of removedEdges) {
+        recentlyDeletedEdgeIdsRef.current.add(edge.id);
+        setTimeout(() => recentlyDeletedEdgeIdsRef.current.delete(edge.id), 5000);
+      }
+
       setEdges((prev) => {
         const next = prev.filter((edge) => !removedEdges.some((removed) => removed.id === edge.id));
+        const deletedIds = recentlyDeletedEdgeIdsRef.current;
         addedEdges.forEach((edge) => {
-          if (!next.some((existing) => existing.id === edge.id)) {
+          if (!next.some((existing) => existing.id === edge.id) && !deletedIds.has(edge.id)) {
             next.push(toFlowEdge(edge));
           }
         });
         return next;
       });
+
+      // Also update query cache so the edge sync effect doesn't re-add
+      // edges that were just removed by a collab WebSocket event.
+      if (removedEdges.length > 0) {
+        const removedEdgeIds = new Set(removedEdges.map((e) => e.id));
+        queryClient.setQueryData(
+          ["dashboard", dashboardId],
+          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+            if (!oldData) return oldData;
+            const filtered = oldData.edges.filter((e) => !removedEdgeIds.has(e.id));
+            if (filtered.length === oldData.edges.length) return oldData;
+            return { ...oldData, edges: filtered };
+          }
+        );
+      }
+      if (addedEdges.length > 0) {
+        queryClient.setQueryData(
+          ["dashboard", dashboardId],
+          (oldData: { dashboard: Dashboard; items: DashboardItem[]; sessions: Session[]; edges: DashboardEdge[]; role: string } | undefined) => {
+            if (!oldData) return oldData;
+            const existingIds = new Set(oldData.edges.map((e) => e.id));
+            const newEdges = addedEdges.filter((e) => !existingIds.has(e.id));
+            if (newEdges.length === 0) return oldData;
+            return { ...oldData, edges: [...oldData.edges, ...newEdges] };
+          }
+        );
+      }
     }
 
     if (removedItemIds.length > 0) {
@@ -2741,7 +2897,6 @@ export default function DashboardPage() {
     // Build lookup for enriched data from dataFlow edges
     const dataFlowMap = new Map(edgesFromDataFlow.map((edge) => [edge.id, edge]));
     setEdges((prev) => {
-      const existingIds = new Set(prev.map((edge) => edge.id));
       let changed = false;
       const next: typeof prev = [];
 
@@ -2755,20 +2910,22 @@ export default function DashboardPage() {
         // Enrich existing edge with provider/securityLevel if missing
         const dataFlowEdge = dataFlowMap.get(edge.id);
         if (dataFlowEdge?.data && (!edge.data?.securityLevel || !edge.data?.provider)) {
-          const enriched = {
-            ...edge,
-            data: { ...edge.data, ...dataFlowEdge.data },
-          };
-          next.push(enriched);
+          next.push({ ...edge, data: { ...edge.data, ...dataFlowEdge.data } });
           changed = true;
         } else {
           next.push(edge);
         }
       }
 
-      // Add new edges from data flow that aren't already in local state
+      // Add new edges from data flow that aren't already in local state.
+      // Use IDs from `next` (after orphan removal) so that edges removed
+      // as orphans can be re-added when their nodes become available again.
+      // Skip edges that are being deleted — a stale refetch may have brought
+      // them back into the query cache before the server DELETE completed.
+      const survivingIds = new Set(next.map((edge) => edge.id));
+      const deletedIds = recentlyDeletedEdgeIdsRef.current;
       for (const edge of edgesFromDataFlow) {
-        if (!existingIds.has(edge.id)) {
+        if (!survivingIds.has(edge.id) && !deletedIds.has(edge.id)) {
           next.push(edge);
           changed = true;
         }
@@ -2805,11 +2962,11 @@ export default function DashboardPage() {
     const base = {
       id: `edge-${pendingConnection.nodeId}-${cursorId}-${pendingConnection.handleId}`,
       type: "step" as const,
-      animated: true,
+      animated: false,
       style: {
-        stroke: "var(--accent-primary)",
-        strokeWidth: 2,
-        strokeDasharray: "4 4",
+        stroke: "var(--edge-base)",
+        strokeWidth: 4,
+        strokeDasharray: "6 6",
       },
     };
 
@@ -3368,6 +3525,7 @@ export default function DashboardPage() {
               onDuplicate={role === "viewer" ? undefined : handleDuplicate}
               onEdgeLabelClick={role === "viewer" ? undefined : handleEdgeLabelClick}
               onEdgeDelete={role === "viewer" ? undefined : deleteEdgeWithUndo}
+              onEdgeReverse={role === "viewer" ? undefined : handleCreateReverseEdge}
               onDragComplete={role === "viewer" ? undefined : handleDragComplete}
               onDragStateChange={handleDragStateChange}
               onResizeComplete={role === "viewer" ? undefined : handleResizeComplete}

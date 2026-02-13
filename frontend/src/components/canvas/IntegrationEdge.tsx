@@ -3,17 +3,18 @@
 
 "use client";
 
-const INTEGRATION_EDGE_REVISION = "integration-edge-v6-messaging-direction";
+// REVISION: integration-edge-v15-metro-hover-only
+const INTEGRATION_EDGE_REVISION = "integration-edge-v15-metro-hover-only";
 console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
-  BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  useEdges,
   type EdgeProps,
 } from "@xyflow/react";
-import { X } from "lucide-react";
+import { X, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 
@@ -46,8 +47,23 @@ export const EdgeDeleteContext = React.createContext<
  */
 export const EdgeConnectorModeContext = React.createContext<boolean>(false);
 
+/**
+ * Context for creating reverse edges.
+ * Provided by Canvas, consumed by IntegrationEdge.
+ */
+export const EdgeReverseContext = React.createContext<
+  ((edgeId: string) => void) | null
+>(null);
+
+/** Standard handle ID pattern — excludes decision block handles like bottomleft-out */
+const STANDARD_HANDLE_RE = /^(left|right|top|bottom)-(in|out)$/;
+
 export function IntegrationEdge({
   id,
+  source,
+  target,
+  sourceHandleId,
+  targetHandleId,
   sourceX,
   sourceY,
   targetX,
@@ -64,9 +80,31 @@ export function IntegrationEdge({
   const messagingDirection = edgeData?.messagingDirection;
   const onLabelClick = React.useContext(EdgeLabelClickContext);
   const onDelete = React.useContext(EdgeDeleteContext);
+  const onReverse = React.useContext(EdgeReverseContext);
   const connectorMode = React.useContext(EdgeConnectorModeContext);
   const [hovered, setHovered] = React.useState(false);
-  const showDelete = hovered || connectorMode;
+  const showActions = hovered || connectorMode;
+  const highlighted = hovered; // Edge color only changes on hover, not connector mode
+
+  // Check if reverse edge exists
+  const allEdges = useEdges();
+  const canReverse = Boolean(
+    sourceHandleId && targetHandleId &&
+    STANDARD_HANDLE_RE.test(sourceHandleId) &&
+    STANDARD_HANDLE_RE.test(targetHandleId)
+  );
+  const hasReverse = React.useMemo(() => {
+    if (!canReverse || !sourceHandleId || !targetHandleId) return true;
+    const revSourceHandle = targetHandleId.replace("-in", "-out");
+    const revTargetHandle = sourceHandleId.replace("-out", "-in");
+    return allEdges.some(
+      (e) =>
+        e.source === target &&
+        e.target === source &&
+        e.sourceHandle === revSourceHandle &&
+        e.targetHandle === revTargetHandle
+    );
+  }, [allEdges, canReverse, source, target, sourceHandleId, targetHandleId]);
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -142,16 +180,27 @@ export function IntegrationEdge({
     [onDelete, id]
   );
 
+  const handleReverse = React.useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (onReverse) {
+        onReverse(id);
+      }
+    },
+    [onReverse, id]
+  );
+
   // Guard: if source/target node is missing, coordinates are NaN — don't render
   if (isNaN(sourceX) || isNaN(sourceY) || isNaN(targetX) || isNaN(targetY)) {
     return null;
   }
 
+  const baseStroke = highlighted ? "var(--accent-primary)" : "var(--edge-base)";
+  const chevronStroke = highlighted ? "var(--edge-hover-chevron)" : "var(--edge-chevron)";
+
   return (
     <>
-      {/* Invisible wider path for easier hover detection.
-          pointer-events:all overrides React Flow's visibleStroke default
-          so the transparent stroke still captures mouse events. */}
+      {/* Invisible wider path for easier hover detection */}
       <path
         d={edgePath}
         fill="none"
@@ -161,15 +210,37 @@ export function IntegrationEdge({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       />
-      <BaseEdge
-        path={edgePath}
-        markerEnd={markerEnd}
+      {/* Base pipe — solid grey, rounded caps */}
+      <path
+        d={edgePath}
+        fill="none"
+        strokeLinecap="round"
         style={{
-          ...style,
-          stroke: showDelete ? "var(--accent-primary)" : style?.stroke,
+          stroke: baseStroke,
+          strokeWidth: Number(style?.strokeWidth ?? 4),
+          transition: "stroke 0.2s ease",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Chevron overlay — animated flowing dots */}
+      <path
+        d={edgePath}
+        fill="none"
+        strokeLinecap="round"
+        strokeDasharray="2 10"
+        className="metro-edge-chevrons"
+        style={{
+          stroke: chevronStroke,
+          strokeWidth: Number(style?.strokeWidth ?? 4) + 1,
+          pointerEvents: "none",
+          transition: "stroke 0.2s ease",
         }}
       />
       <EdgeLabelRenderer>
+        {/* Stop pointer event propagation so React Flow doesn't intercept
+            clicks as pane clicks / selection / dragging. Without this,
+            pointerdown/pointerup are consumed by React Flow and the
+            button onClick never fires. */}
         <div
           style={{
             position: "absolute",
@@ -177,10 +248,11 @@ export function IntegrationEdge({
             pointerEvents: "all",
           }}
           className="nodrag nopan"
+          onPointerDown={(e) => e.stopPropagation()}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
         >
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             {badgeStyle && (
               <div
                 className={cn(
@@ -195,18 +267,34 @@ export function IntegrationEdge({
                 {badgeStyle.label}
               </div>
             )}
+            {canReverse && !hasReverse && onReverse && (
+              <button
+                onClick={handleReverse}
+                className={cn(
+                  "flex items-center justify-center w-7 h-7 cursor-pointer",
+                  "transition-opacity",
+                  showActions ? "opacity-100" : "opacity-0 pointer-events-none"
+                )}
+                title="Create reverse connection"
+              >
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--background)] border border-blue-500/50 shadow-sm text-blue-500 hover:bg-blue-500/20">
+                  <ArrowLeftRight className="w-3 h-3" />
+                </span>
+              </button>
+            )}
             {onDelete && (
               <button
                 onClick={handleDelete}
                 className={cn(
-                  "flex items-center justify-center rounded-full transition-all",
-                  showDelete
-                    ? "w-5 h-5 opacity-100 bg-[var(--background)] border border-red-500/50 shadow-sm text-red-500 hover:bg-red-500/20 cursor-pointer"
-                    : "w-5 h-5 opacity-0 pointer-events-none"
+                  "flex items-center justify-center w-7 h-7 cursor-pointer",
+                  "transition-opacity",
+                  showActions ? "opacity-100" : "opacity-0 pointer-events-none"
                 )}
                 title="Delete connection"
               >
-                <X className="w-3 h-3" />
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--background)] border border-red-500/50 shadow-sm text-red-500 hover:bg-red-500/20">
+                  <X className="w-3 h-3" />
+                </span>
               </button>
             )}
           </div>
