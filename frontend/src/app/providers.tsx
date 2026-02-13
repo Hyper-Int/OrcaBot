@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-auth-v2-sync-user-id
-const MODULE_REVISION = "desktop-auth-v2-sync-user-id";
+// REVISION: desktop-auth-v3-subscription-status
+const MODULE_REVISION = "desktop-auth-v3-subscription-status";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -14,7 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
-import type { User } from "@/types";
+import type { User, SubscriptionInfo } from "@/types";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -62,9 +62,11 @@ function AuthBootstrapper() {
           credentials: "include",
         })
           .then((r) => (r.ok ? r.json() : null))
-          .then((data: { user?: User; isAdmin?: boolean } | null) => {
-            if (data?.user && data.user.id !== authHeaders["X-User-ID"]) {
-              setUser(data.user, data.isAdmin ?? false);
+          .then((data: { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo } | null) => {
+            if (data?.user) {
+              if (data.user.id !== authHeaders["X-User-ID"] || data.subscription) {
+                setUser(data.user, data.isAdmin ?? false, data.subscription);
+              }
             }
           })
           .catch(() => {});
@@ -100,9 +102,11 @@ function AuthBootstrapper() {
             credentials: "include",
           });
           if (meResp.ok) {
-            const meData = (await meResp.json()) as { user?: User; isAdmin?: boolean };
-            if (meData.user && meData.user.id !== authHeaders["X-User-ID"]) {
-              setUser(meData.user, meData.isAdmin ?? false);
+            const meData = (await meResp.json()) as { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo };
+            if (meData.user) {
+              if (meData.user.id !== authHeaders["X-User-ID"] || meData.subscription) {
+                setUser(meData.user, meData.isAdmin ?? false, meData.subscription);
+              }
             }
           }
         } catch {
@@ -119,9 +123,9 @@ function AuthBootstrapper() {
         if (!isActive) return;
 
         if (response.ok) {
-          const data = (await response.json()) as { user?: User; isAdmin?: boolean };
+          const data = (await response.json()) as { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo };
           if (data.user) {
-            setUser(data.user, data.isAdmin ?? false);
+            setUser(data.user, data.isAdmin ?? false, data.subscription);
             return;
           }
         }

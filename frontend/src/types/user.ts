@@ -13,6 +13,18 @@ export interface User {
 }
 
 /**
+ * Subscription status
+ */
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired' | 'exempt';
+
+export interface SubscriptionInfo {
+  status: SubscriptionStatus;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+/**
  * Auth state for the store
  */
 export interface AuthState {

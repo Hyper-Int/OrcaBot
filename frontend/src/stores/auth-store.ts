@@ -5,7 +5,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { User } from "@/types";
+import type { User, SubscriptionInfo } from "@/types";
 import { generateId } from "@/lib/utils";
 
 interface AuthState {
@@ -14,6 +14,7 @@ interface AuthState {
   isAdmin: boolean;
   isLoading: boolean;
   isAuthResolved: boolean;
+  subscription: SubscriptionInfo | null;
 }
 
 interface AuthActions {
@@ -35,7 +36,7 @@ interface AuthActions {
   /**
    * Set authenticated user (OAuth bootstrap)
    */
-  setUser: (user: User | null, isAdmin?: boolean) => void;
+  setUser: (user: User | null, isAdmin?: boolean, subscription?: SubscriptionInfo | null) => void;
 
   /**
    * Mark auth resolution status
@@ -68,6 +69,7 @@ export const useAuthStore = create<AuthStore>()(
       isAdmin: false,
       isLoading: false,
       isAuthResolved: false,
+      subscription: null,
 
       // Actions
       loginDevMode: (name: string, email: string) => {
@@ -93,6 +95,7 @@ export const useAuthStore = create<AuthStore>()(
           isAdmin: false,
           isLoading: false,
           isAuthResolved: true,
+          subscription: null,
         });
       },
 
@@ -100,14 +103,17 @@ export const useAuthStore = create<AuthStore>()(
         set({ isLoading: loading });
       },
 
-      setUser: (user: User | null, isAdmin?: boolean) => {
-        set({
+      setUser: (user: User | null, isAdmin?: boolean, subscription?: SubscriptionInfo | null) => {
+        set((prev) => ({
           user,
           isAuthenticated: Boolean(user),
           isAdmin: isAdmin ?? false,
           isLoading: false,
           isAuthResolved: true,
-        });
+          // Preserve existing subscription when not explicitly provided.
+          // undefined = "not specified" → keep previous; null = "explicitly clear".
+          subscription: subscription === undefined ? (user ? prev.subscription : null) : subscription,
+        }));
       },
 
       setAuthResolved: (resolved: boolean) => {
@@ -120,6 +126,7 @@ export const useAuthStore = create<AuthStore>()(
         user: state.user,
         isAuthenticated: state.isAuthenticated,
         isAdmin: state.isAdmin,
+        subscription: state.subscription,
         // Note: isAuthResolved is intentionally NOT persisted - it should be
         // computed fresh each page load to avoid race conditions with hydration
       }),

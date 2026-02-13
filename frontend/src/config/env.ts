@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v4-github-history
-const MODULE_REVISION = "desktop-env-v4-github-history";
+// REVISION: desktop-env-v5-subscriptions
+const MODULE_REVISION = "desktop-env-v5-subscriptions";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -21,6 +21,9 @@ export const SITE_URL =
 
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
+
+export const TURNSTILE_SITE_KEY =
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || "";
 
 // Desktop mode detection uses three layers (in order of reliability):
 // 1. Cookie "orcabot-desktop=1" — set by middleware on every response in desktop mode
@@ -189,6 +192,9 @@ export const API = {
     formsResponses: `${CLOUDFLARE_API_URL}/integrations/google/forms/responses`,
     formsLink: `${CLOUDFLARE_API_URL}/integrations/google/forms/link`,
     formsDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/forms/disconnect`,
+    // Subscriptions
+    subscriptionCheckout: `${CLOUDFLARE_API_URL}/subscriptions/checkout`,
+    subscriptionPortal: `${CLOUDFLARE_API_URL}/subscriptions/portal`,
     // Chat
     chat: `${CLOUDFLARE_API_URL}/chat`,
     chatMessage: `${CLOUDFLARE_API_URL}/chat/message`,

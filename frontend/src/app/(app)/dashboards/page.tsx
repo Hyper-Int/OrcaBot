@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-header-v1-hide-user
-const MODULE_REVISION = "desktop-header-v1-hide-user";
+// REVISION: desktop-header-v4-poll-all-paid-statuses
+const MODULE_REVISION = "desktop-header-v4-poll-all-paid-statuses";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -49,6 +49,8 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
+import { PaywallDialog } from "@/components/subscription/PaywallDialog";
+import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { API, DESKTOP_MODE } from "@/config/env";
 import {
   listDashboards,
@@ -67,7 +69,7 @@ import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 export default function DashboardsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user, logout, isAuthenticated, isAuthResolved, isAdmin } = useAuthStore();
+  const { user, logout, isAuthenticated, isAuthResolved, isAdmin, setUser } = useAuthStore();
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
@@ -92,6 +94,57 @@ export default function DashboardsPage() {
       router.push("/login");
     }
   }, [isAuthenticated, isAuthResolved, router]);
+
+  // Handle ?subscription=success — poll /users/me until subscription is active
+  // (Stripe webhook may arrive after user is redirected back)
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("subscription") !== "success") return;
+
+    // Remove the query param immediately
+    const url = new URL(window.location.href);
+    url.searchParams.delete("subscription");
+    window.history.replaceState({}, "", url.toString());
+
+    let cancelled = false;
+    const POLL_INTERVALS = [0, 2000, 3000, 5000, 5000]; // immediate, then 2s, 3s, 5s, 5s
+
+    const pollForActive = async () => {
+      for (let attempt = 0; attempt < POLL_INTERVALS.length; attempt++) {
+        if (cancelled) return;
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVALS[attempt]));
+        }
+        if (cancelled) return;
+
+        try {
+          const r = await fetch(API.cloudflare.usersMe, { credentials: "include" });
+          if (!r.ok) continue;
+          const data = (await r.json()) as {
+            user?: { id: string; email: string; name: string; createdAt?: string };
+            isAdmin?: boolean;
+            subscription?: import("@/types").SubscriptionInfo;
+          } | null;
+          if (!data?.user) continue;
+
+          const status = data.subscription?.status;
+          if (status === "active" || status === "trialing" || status === "past_due" || status === "exempt") {
+            setUser(data.user, data.isAdmin ?? false, data.subscription);
+            toast.success("Subscription activated! Welcome to OrcaBot.");
+            return;
+          }
+        } catch {
+          // Network error — try again
+        }
+      }
+      // Exhausted retries — update state with whatever we have and show info
+      toast.info("Your payment is being processed. It may take a moment to activate.");
+    };
+
+    void pollForActive();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch dashboards
   const {
@@ -292,6 +345,7 @@ export default function DashboardsPage() {
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
+      <PaywallDialog />
       {/* Header */}
       <header className="border-b border-[var(--border)] bg-[var(--background-elevated)]">
         <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
@@ -304,6 +358,7 @@ export default function DashboardsPage() {
             <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
           </div>
             <div className="flex items-center gap-4">
+              <TrialBanner />
               {isAdmin && (
                 <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
                   <Button

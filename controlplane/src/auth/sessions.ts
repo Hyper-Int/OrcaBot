@@ -41,7 +41,8 @@ export async function getUserForSession(
       users.id as id,
       users.email as email,
       users.name as name,
-      users.created_at as created_at
+      users.created_at as created_at,
+      users.trial_started_at as trial_started_at
     FROM user_sessions
     JOIN users ON users.id = user_sessions.user_id
     WHERE user_sessions.id = ? AND user_sessions.expires_at > datetime('now')
@@ -50,6 +51,7 @@ export async function getUserForSession(
     email: string;
     name: string;
     created_at: string;
+    trial_started_at: string | null;
   }>();
 
   if (!record) {
@@ -60,7 +62,9 @@ export async function getUserForSession(
     id: record.id,
     email: record.email,
     name: record.name,
-    createdAt: record.created_at,
+    // Use trial_started_at for trial countdown (falls back to created_at for users
+    // who haven't logged in since the subscription system was deployed)
+    createdAt: record.trial_started_at || record.created_at,
   };
 }
 

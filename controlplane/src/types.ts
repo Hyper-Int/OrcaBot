@@ -104,6 +104,28 @@ export interface Env {
   /** Comma-separated Fly regions for warm pool distribution (e.g., "sjc,ams").
    *  If not set, falls back to FLY_REGION for all warm machines. */
   FLY_WARM_POOL_REGIONS?: string;
+  /** Stripe secret key for billing API calls.
+   *  Set via: wrangler secret put STRIPE_SECRET_KEY */
+  STRIPE_SECRET_KEY?: string;
+  /** Stripe webhook signing secret for verifying webhook payloads.
+   *  Set via: wrangler secret put STRIPE_WEBHOOK_SECRET */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /** Stripe Price ID for the $20/month subscription plan.
+   *  Set via: wrangler secret put STRIPE_PRICE_ID */
+  STRIPE_PRICE_ID?: string;
+  /** Cloudflare Turnstile secret key for bot verification on login.
+   *  Set via: wrangler secret put TURNSTILE_SECRET_KEY */
+  TURNSTILE_SECRET_KEY?: string;
+}
+
+// Subscription types
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'canceled' | 'expired' | 'exempt';
+
+export interface SubscriptionInfo {
+  status: SubscriptionStatus;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
 }
 
 // User types
