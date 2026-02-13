@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v1-machines-api-client
-const MODULE_REVISION = 'fly-provisioning-v1-machines-api-client';
+// REVISION: fly-provisioning-v2-list-volumes
+const MODULE_REVISION = 'fly-provisioning-v2-list-volumes';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -175,6 +175,21 @@ export class FlyMachinesClient {
       const body = await res.text().catch(() => '(no body)');
       throw new FlyApiError(`Failed to delete volume: ${res.status}`, res.status, body);
     }
+  }
+
+  /**
+   * List all volumes in the app.
+   */
+  async listVolumes(): Promise<FlyVolume[]> {
+    const url = `${this.baseUrl}/v1/apps/${this.appName}/volumes`;
+    const res = await this.request('GET', url);
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '(no body)');
+      throw new FlyApiError(`Failed to list volumes: ${res.status}`, res.status, body);
+    }
+
+    return res.json() as Promise<FlyVolume[]>;
   }
 
   // ── Machines ─────────────────────────────────────────────────────
