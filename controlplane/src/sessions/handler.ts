@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v9-warm-pool
-const sessionsRevision = "sessions-v9-warm-pool";
+// REVISION: sessions-v10-geo-warm-pool
+const sessionsRevision = "sessions-v10-geo-warm-pool";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -36,6 +36,60 @@ function getMirrorTableName(provider: string): string | null {
 
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+// Map of Fly regions to their continent for geo-matching
+const FLY_REGION_CONTINENTS: Record<string, string> = {
+  // North America
+  sjc: 'NA', lax: 'NA', sea: 'NA', ord: 'NA', iad: 'NA', atl: 'NA', dfw: 'NA', den: 'NA', yyz: 'NA', yul: 'NA', mia: 'NA',
+  // Europe
+  ams: 'EU', lhr: 'EU', cdg: 'EU', fra: 'EU', waw: 'EU', mad: 'EU', arn: 'EU', otp: 'EU',
+  // South America
+  gru: 'SA', scl: 'SA', bog: 'SA', eze: 'SA',
+  // Asia Pacific
+  nrt: 'AS', hkg: 'AS', sin: 'AS', bom: 'AS', maa: 'AS', syd: 'OC',
+  // Africa
+  jnb: 'AF',
+};
+
+/**
+ * Pick the nearest configured Fly region based on CF continent code.
+ * CF provides continent as: AF, AN, AS, EU, NA, OC, SA.
+ * Returns the best match from the configured warm pool regions.
+ */
+export function nearestFlyRegion(cfContinent: string | undefined, warmPoolRegions: string[]): string | undefined {
+  if (!cfContinent || warmPoolRegions.length === 0) return undefined;
+
+  // Warn about unconfigured regions (geo-matching won't work for them)
+  for (const r of warmPoolRegions) {
+    if (!(r in FLY_REGION_CONTINENTS)) {
+      console.warn(`[nearestFlyRegion] Region "${r}" not in FLY_REGION_CONTINENTS map — geo-matching disabled for this region`);
+    }
+  }
+
+  // Prefer a region on the same continent
+  const sameContinent = warmPoolRegions.filter(r => {
+    const rc = FLY_REGION_CONTINENTS[r];
+    return rc === cfContinent;
+  });
+  if (sameContinent.length > 0) return sameContinent[0];
+
+  // Fallback affinity: EU/AF → EU regions, SA → NA regions, AS/OC → NA regions (until we add Asia)
+  const affinityMap: Record<string, string[]> = {
+    AF: ['EU', 'NA'],
+    SA: ['NA', 'EU'],
+    AS: ['OC', 'NA'],
+    OC: ['AS', 'NA'],
+    AN: ['SA', 'NA'],
+  };
+  const fallbacks = affinityMap[cfContinent] || [];
+  for (const fallbackContinent of fallbacks) {
+    const match = warmPoolRegions.find(r => FLY_REGION_CONTINENTS[r] === fallbackContinent);
+    if (match) return match;
+  }
+
+  // Last resort: first configured region
+  return warmPoolRegions[0];
 }
 
 interface TerminalContent {
@@ -173,7 +227,8 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
 export async function ensureDashbоardSandbоx(
   env: EnvWithDriveCache,
   dashboardId: string,
-  userId: string
+  userId: string,
+  preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | Response> {
   const access = await env.DB.prepare(`
     SELECT role FROM dashboard_members
@@ -214,7 +269,7 @@ export async function ensureDashbоardSandbоx(
             DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
           `).bind(dashboardId).run();
           // Fall through to provisioning below
-          return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+          return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
         }
         // For other Fly API errors, mark state as stale and fall through to session validation
         console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
@@ -246,7 +301,7 @@ export async function ensureDashbоardSandbоx(
   }
 
   // ── Create new sandbox ───────────────────────────────────────────
-  return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+  return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
 }
 
 /**
@@ -257,14 +312,15 @@ export async function ensureDashbоardSandbоx(
 async function ensureDashbоardSandbоxCreate(
   env: EnvWithDriveCache,
   dashboardId: string,
-  flyProvisioningEnabled: boolean
+  flyProvisioningEnabled: boolean,
+  preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
   const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
 
   if (flyProvisioningEnabled) {
-    return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now);
+    return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now, preferredRegion);
   }
 
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
@@ -312,16 +368,17 @@ async function provisionDedicatedMachine(
   dashboardId: string,
   sandbox: SandboxClient,
   mcpToken: string,
-  now: string
+  now: string,
+  preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
 
   // Try warm pool first (instant provisioning)
-  const warmResult = await claimWarmMachine(env, fly, dashboardId, sandbox, mcpToken, now);
+  const warmResult = await claimWarmMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion);
   if (warmResult) return warmResult;
 
   // Fall back to cold provisioning
-  return coldProvisionMachine(env, fly, dashboardId, sandbox, mcpToken, now);
+  return coldProvisionMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion);
 }
 
 /**
@@ -333,12 +390,24 @@ async function claimWarmMachine(
   dashboardId: string,
   sandbox: SandboxClient,
   mcpToken: string,
-  now: string
+  now: string,
+  preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | null> {
-  // Claim a warm machine: SELECT then DELETE (avoids RETURNING which may not be supported in all D1 versions)
-  const warm = await env.DB.prepare(`
-    SELECT machine_id, volume_id FROM warm_machines LIMIT 1
-  `).first<{ machine_id: string; volume_id: string }>();
+  // Claim a warm machine: prefer one in the user's region, fall back to any available
+  let warm: { machine_id: string; volume_id: string } | null = null;
+
+  if (preferredRegion) {
+    warm = await env.DB.prepare(`
+      SELECT machine_id, volume_id FROM warm_machines WHERE region = ? LIMIT 1
+    `).bind(preferredRegion).first<{ machine_id: string; volume_id: string }>();
+  }
+
+  // Fall back to any region (any warm machine beats cold provisioning)
+  if (!warm) {
+    warm = await env.DB.prepare(`
+      SELECT machine_id, volume_id FROM warm_machines LIMIT 1
+    `).first<{ machine_id: string; volume_id: string }>();
+  }
 
   if (!warm) return null;
 
@@ -418,9 +487,10 @@ async function coldProvisionMachine(
   dashboardId: string,
   sandbox: SandboxClient,
   mcpToken: string,
-  now: string
+  now: string,
+  preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
-  const region = env.FLY_REGION || 'sjc';
+  const region = preferredRegion || env.FLY_REGION || 'sjc';
 
   // Auto-discover image from existing machines (Fly uses deployment-specific tags, not :latest)
   let image = env.FLY_MACHINE_IMAGE || '';
@@ -857,7 +927,8 @@ export async function createSessiоn(
   dashboardId: string,
   itemId: string,
   userId: string,
-  userName: string
+  userName: string,
+  preferredRegion?: string
 ): Promise<Response> {
   // Check access
   const access = await env.DB.prepare(`
@@ -924,7 +995,7 @@ export async function createSessiоn(
     if (!sandboxSessionId) {
       const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
         && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
-      const created = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+      const created = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
       sandboxSessionId = created.sandboxSessionId;
       sandboxMachineId = created.sandboxMachineId;
     }
@@ -963,7 +1034,7 @@ export async function createSessiоn(
       // Create fresh sandbox session (uses Fly provisioning if enabled)
       const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
         && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
-      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
       sandboxSessionId = freshResult.sandboxSessionId;
       sandboxMachineId = freshResult.sandboxMachineId;
 
@@ -1140,9 +1211,10 @@ export async function createSessiоn(
 export async function startDashbоardBrowser(
   env: EnvWithDriveCache,
   dashboardId: string,
-  userId: string
+  userId: string,
+  preferredRegion?: string
 ): Promise<Response> {
-  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId);
+  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
   if (sandboxInfo instanceof Response) {
     return sandboxInfo;
   }
@@ -1192,9 +1264,10 @@ export async function startDashbоardBrowser(
 export async function stоpDashbоardBrowser(
   env: EnvWithDriveCache,
   dashboardId: string,
-  userId: string
+  userId: string,
+  preferredRegion?: string
 ): Promise<Response> {
-  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId);
+  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
   if (sandboxInfo instanceof Response) {
     return sandboxInfo;
   }
@@ -1211,9 +1284,10 @@ export async function stоpDashbоardBrowser(
 export async function getDashbоardBrowserStatus(
   env: EnvWithDriveCache,
   dashboardId: string,
-  userId: string
+  userId: string,
+  preferredRegion?: string
 ): Promise<Response> {
-  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId);
+  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
   if (sandboxInfo instanceof Response) {
     return sandboxInfo;
   }
@@ -1236,9 +1310,10 @@ export async function openDashbоardBrowser(
   env: EnvWithDriveCache,
   dashboardId: string,
   userId: string,
-  url: string
+  url: string,
+  preferredRegion?: string
 ): Promise<Response> {
-  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId);
+  const sandboxInfo = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
   if (sandboxInfo instanceof Response) {
     return sandboxInfo;
   }
