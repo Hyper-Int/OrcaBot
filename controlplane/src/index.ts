@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v6-reap-untracked-machines
-console.log(`[controlplane] REVISION: controlplane-v6-reap-untracked-machines loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v7-geo-warm-pool
+console.log(`[controlplane] REVISION: controlplane-v7-geo-warm-pool loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -22,6 +22,7 @@ import {
 } from './storage/drive-cache';
 import * as dashboards from './dashboards/handler';
 import * as sessions from './sessions/handler';
+import { nearestFlyRegion } from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
@@ -561,18 +562,46 @@ const WARM_POOL_TARGET = 2;
 /**
  * Replenish warm machine pool.
  * Creates at most 1 machine per cron tick to avoid bursts.
+ * Distributes machines across FLY_WARM_POOL_REGIONS for geo-proximity.
  * Warm machines have autostop enabled so they hibernate when idle.
  */
 async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
   try {
-    const count = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM warm_machines`).first<{ cnt: number }>();
-    const currentCount = count?.cnt || 0;
-
-    if (currentCount >= WARM_POOL_TARGET) return;
-
     const { FlyMachinesClient } = await import('./sandbox/fly-machines');
     const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
-    const region = env.FLY_REGION || 'sjc';
+
+    // Parse warm pool regions (fall back to single default region)
+    const warmPoolRegions = env.FLY_WARM_POOL_REGIONS
+      ? env.FLY_WARM_POOL_REGIONS.split(',').map(r => r.trim()).filter(Boolean)
+      : [env.FLY_REGION || 'sjc'];
+
+    // Count only machines in configured regions (ignore stale machines from old configs)
+    const regionCounts = await env.DB.prepare(
+      `SELECT region, COUNT(*) as cnt FROM warm_machines GROUP BY region`
+    ).all<{ region: string; cnt: number }>();
+
+    const configuredRegionSet = new Set(warmPoolRegions);
+    const countByRegion: Record<string, number> = {};
+    let configuredCount = 0;
+    for (const row of regionCounts.results || []) {
+      countByRegion[row.region] = row.cnt;
+      if (configuredRegionSet.has(row.region)) {
+        configuredCount += row.cnt;
+      }
+    }
+
+    if (configuredCount >= WARM_POOL_TARGET) return;
+
+    // Pick region with fewest warm machines (round-robin style)
+    let region = warmPoolRegions[0];
+    let minCount = countByRegion[region] || 0;
+    for (const r of warmPoolRegions) {
+      const c = countByRegion[r] || 0;
+      if (c < minCount) {
+        minCount = c;
+        region = r;
+      }
+    }
 
     // Discover image from existing machines
     let image = env.FLY_MACHINE_IMAGE || '';
@@ -613,7 +642,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         INSERT INTO warm_machines (machine_id, volume_id, region) VALUES (?, ?, ?)
       `).bind(machine.id, volume.id, region).run();
 
-      console.log(`[warmPool] Replenished pool (${currentCount + 1}/${WARM_POOL_TARGET})`);
+      console.log(`[warmPool] Replenished pool in ${region} (${configuredCount + 1}/${WARM_POOL_TARGET})`);
     } catch (innerErr) {
       // Clean up partially created resources
       if (machineId) {
@@ -820,6 +849,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
+
+  // Compute preferred Fly region from user's CF edge location
+  const warmPoolRegions = env.FLY_WARM_POOL_REGIONS
+    ? env.FLY_WARM_POOL_REGIONS.split(',').map(r => r.trim()).filter(Boolean)
+    : [];
+  const cfContinent = (request.cf as Record<string, unknown> | undefined)?.continent as string | undefined;
+  const preferredRegion = nearestFlyRegion(cfContinent, warmPoolRegions);
 
   // GET /auth/config - public auth configuration (no auth required)
   if (segments[0] === 'auth' && segments[1] === 'config' && segments.length === 2 && method === 'GET') {
@@ -1902,28 +1938,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'items' && segments[4] === 'session' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name);
+    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion);
   }
 
   // POST /dashboards/:id/browser/start - Start dashboard browser
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'start' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.startDashbоardBrowser(env, segments[1], auth.user!.id);
+    return sessions.startDashbоardBrowser(env, segments[1], auth.user!.id, preferredRegion);
   }
 
   // POST /dashboards/:id/browser/stop - Stop dashboard browser
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'stop' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.stоpDashbоardBrowser(env, segments[1], auth.user!.id);
+    return sessions.stоpDashbоardBrowser(env, segments[1], auth.user!.id, preferredRegion);
   }
 
   // GET /dashboards/:id/browser/status - Browser status
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'status' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.getDashbоardBrowserStatus(env, segments[1], auth.user!.id);
+    return sessions.getDashbоardBrowserStatus(env, segments[1], auth.user!.id, preferredRegion);
   }
 
   // POST /dashboards/:id/browser/open - Open URL in browser
@@ -1932,7 +1968,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const data = await request.json() as { url?: string };
     const url = typeof data.url === 'string' ? data.url : '';
-    return sessions.openDashbоardBrowser(env, segments[1], auth.user!.id, url);
+    return sessions.openDashbоardBrowser(env, segments[1], auth.user!.id, url, preferredRegion);
   }
 
   // POST /dashboards/:id/browser/* - Proxy browser control (screenshot, click, type, etc.)

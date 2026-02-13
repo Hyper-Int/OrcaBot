@@ -101,6 +101,9 @@ export interface Env {
   FLY_PROVISIONING_ENABLED?: string;
   /** URL sandbox machines use to reach control plane (e.g., "https://api.orcabot.com") */
   FLY_SANDBOX_CONTROLPLANE_URL?: string;
+  /** Comma-separated Fly regions for warm pool distribution (e.g., "sjc,ams").
+   *  If not set, falls back to FLY_REGION for all warm machines. */
+  FLY_WARM_POOL_REGIONS?: string;
 }
 
 // User types
