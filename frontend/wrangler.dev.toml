@@ -1,0 +1,21 @@
+# Dev deployment for dev.orcabot.com
+# Deploy with: npm run workers:build && npx wrangler deploy -c wrangler.dev.toml
+
+name = "orcabot-frontend-dev"
+compatibility_date = "2024-09-23"
+
+main = ".open-next/worker.js"
+
+# Compatibility flags for Next.js
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# API endpoint for dev control plane
+NEXT_PUBLIC_API_URL = "https://api.dev.orcabot.com"
+NEXT_PUBLIC_SITE_URL = "https://dev.orcabot.com"
+NEXT_PUBLIC_DEV_MODE_ENABLED = "false"
+NEXT_PUBLIC_OPTIMISTIC_UPDATE = "true"
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"

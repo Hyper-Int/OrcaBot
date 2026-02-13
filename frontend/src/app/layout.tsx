@@ -17,9 +17,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OrcaBot - Agentic AI Coding Agent Orchestration on the Web",
+  title: "OrcaBot - Agentic AI Orchestration",
   description:
-    "A collaborative workspace for Agentic AI coding agent orchestration on the web.",
+    "Run AI agents in secure sandboxes. Multiplayer dashboards, built-in browser, secrets protection, and persistent background processes.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
@@ -29,6 +29,29 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   manifest: "/site.webmanifest",
+  openGraph: {
+    title: "OrcaBot - Agentic AI Orchestration",
+    description:
+      "Run AI agents in secure sandboxes. Multiplayer dashboards, built-in browser, secrets protection, and persistent background processes.",
+    url: "https://orcabot.com",
+    siteName: "OrcaBot",
+    images: [
+      {
+        url: "https://orcabot.com/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "OrcaBot - Agentic AI Orchestration",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OrcaBot - Agentic AI Orchestration",
+    description:
+      "Run AI agents in secure sandboxes. Multiplayer dashboards, built-in browser, secrets protection, and persistent background processes.",
+    images: ["https://orcabot.com/og-image.png"],
+  },
 };
 
 export default function RootLayout({

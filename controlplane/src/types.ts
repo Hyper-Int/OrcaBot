@@ -32,6 +32,7 @@ export interface Env {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   AUTH_ALLOWED_EMAILS?: string;
+  AUTH_LOGIN_RESTRICTED?: string;
   AUTH_ALLOWED_DOMAINS?: string;
   ADMIN_EMAILS?: string;
   GOOGLE_API_KEY?: string;

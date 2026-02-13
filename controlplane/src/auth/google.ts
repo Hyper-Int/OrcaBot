@@ -297,6 +297,17 @@ export async function callbackGoogle(
     return renderErrorPage('Google account email is not verified.');
   }
 
+  // When login is restricted, only emails in AUTH_ALLOWED_EMAILS may sign in.
+  // Fail closed: if the allowlist is missing or empty, reject all logins.
+  if (env.AUTH_LOGIN_RESTRICTED === 'true') {
+    const allowed = new Set(
+      (env.AUTH_ALLOWED_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
+    );
+    if (!allowed.has(userInfo.email.trim().toLowerCase())) {
+      return renderErrorPage('Your email is not authorised to access this deployment.');
+    }
+  }
+
   const userId = await findOrCreateUser(env, userInfo);
 
   // Process any pending dashboard invitations for this email
