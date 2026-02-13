@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v5-warm-pool
-console.log(`[controlplane] REVISION: controlplane-v5-warm-pool loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v6-reap-untracked-machines
+console.log(`[controlplane] REVISION: controlplane-v6-reap-untracked-machines loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -501,9 +501,10 @@ export default {
       if (expiredCount > 0) {
         console.log(`[scheduled] Cleaned up ${expiredCount} expired memory entries`);
       }
-      // Fly machine management: orphan cleanup + warm pool replenishment
+      // Fly machine management: orphan cleanup + warm pool replenishment + reap untracked
       if (envWithBindings.FLY_API_TOKEN && envWithBindings.FLY_APP_NAME) {
         await cleanupOrphanedFlyResources(envWithBindings);
+        await reapUntrackedFlyResources(envWithBindings);
         await replenishWarmPool(envWithBindings);
       }
     } catch (error) {
@@ -625,6 +626,105 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
     }
   } catch (e) {
     console.error(`[warmPool] Replenishment error: ${e}`);
+  }
+}
+
+/**
+ * Reap Fly machines and volumes not tracked in any DB table.
+ * Cross-references the Fly API machine list against dashboard_sandboxes and warm_machines.
+ * Machines not in either table (and older than 15 minutes) are destroyed.
+ * Also cleans up orphaned volumes (not attached and not tracked in DB).
+ * Limits to 3 destroys per tick to avoid Fly API rate limits.
+ */
+async function reapUntrackedFlyResources(env: EnvWithBindings): Promise<void> {
+  try {
+    const { FlyMachinesClient } = await import('./sandbox/fly-machines');
+    const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+
+    // Get all machines from Fly
+    const machines = await fly.listMachines();
+
+    // Get all tracked machine IDs from both DB tables
+    const [dashboardRows, warmRows] = await Promise.all([
+      env.DB.prepare(`SELECT sandbox_machine_id FROM dashboard_sandboxes WHERE sandbox_machine_id != ''`)
+        .all<{ sandbox_machine_id: string }>(),
+      env.DB.prepare(`SELECT machine_id FROM warm_machines`)
+        .all<{ machine_id: string }>(),
+    ]);
+
+    const trackedMachineIds = new Set<string>();
+    for (const row of dashboardRows.results || []) {
+      trackedMachineIds.add(row.sandbox_machine_id);
+    }
+    for (const row of warmRows.results || []) {
+      trackedMachineIds.add(row.machine_id);
+    }
+
+    const GRACE_PERIOD_MS = 15 * 60 * 1000; // 15 minutes — skip in-flight provisioning
+    const MAX_DESTROYS_PER_TICK = 3;
+    const now = Date.now();
+    let destroyed = 0;
+
+    for (const machine of machines) {
+      if (destroyed >= MAX_DESTROYS_PER_TICK) break;
+      if (trackedMachineIds.has(machine.id)) continue;
+
+      // Only reap machines created by our provisioning (name starts with "orcabot-")
+      if (!machine.name.startsWith('orcabot-')) continue;
+
+      // Grace period: don't destroy recently created machines (may be in-flight)
+      const createdAt = new Date(machine.created_at).getTime();
+      if (now - createdAt < GRACE_PERIOD_MS) continue;
+
+      try {
+        await fly.destroyMachine(machine.id, true);
+        console.log(`[reap] Destroyed untracked machine ${machine.id} (${machine.name}, state=${machine.state}, age=${Math.round((now - createdAt) / 60000)}m)`);
+        destroyed++;
+      } catch (e) {
+        console.error(`[reap] Failed to destroy machine ${machine.id}: ${e}`);
+      }
+    }
+
+    // Clean up orphaned volumes (not tracked in DB and not attached to any machine)
+    const volumes = await fly.listVolumes();
+
+    const [dashboardVolRows, warmVolRows] = await Promise.all([
+      env.DB.prepare(`SELECT fly_volume_id FROM dashboard_sandboxes WHERE fly_volume_id != ''`)
+        .all<{ fly_volume_id: string }>(),
+      env.DB.prepare(`SELECT volume_id FROM warm_machines`)
+        .all<{ volume_id: string }>(),
+    ]);
+
+    const trackedVolumeIds = new Set<string>();
+    for (const row of dashboardVolRows.results || []) {
+      trackedVolumeIds.add(row.fly_volume_id);
+    }
+    for (const row of warmVolRows.results || []) {
+      trackedVolumeIds.add(row.volume_id);
+    }
+
+    for (const volume of volumes) {
+      if (destroyed >= MAX_DESTROYS_PER_TICK) break;
+      if (trackedVolumeIds.has(volume.id)) continue;
+      if (volume.attached_machine_id) continue; // Still attached — machine destroy may be pending
+
+      const createdAt = new Date(volume.created_at).getTime();
+      if (now - createdAt < GRACE_PERIOD_MS) continue;
+
+      try {
+        await fly.deleteVolume(volume.id);
+        console.log(`[reap] Deleted orphaned volume ${volume.id} (${volume.name}, age=${Math.round((now - createdAt) / 60000)}m)`);
+        destroyed++;
+      } catch (e) {
+        console.error(`[reap] Failed to delete volume ${volume.id}: ${e}`);
+      }
+    }
+
+    if (destroyed > 0) {
+      console.log(`[reap] Reaped ${destroyed} untracked Fly resource(s) this tick`);
+    }
+  } catch (e) {
+    console.error(`[reap] Untracked resource reap error: ${e}`);
   }
 }
 
