@@ -5,11 +5,12 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v2-explicit-edge-delete
+// REVISION: dashboards-v3-fly-machine-cleanup
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { populateFromTemplate } from '../templates/handler';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
+import { FlyMachinesClient } from '../sandbox/fly-machines';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -282,6 +283,39 @@ export async function deleteDashbоard(
   await env.DB.prepare(`DELETE FROM user_secrets WHERE dashboard_id = ?`)
     .bind(dashboardId)
     .run();
+
+  // Destroy Fly machine and volume for this dashboard (best-effort)
+  if (env.FLY_API_TOKEN && env.FLY_APP_NAME) {
+    try {
+      const sandboxRow = await env.DB.prepare(`
+        SELECT sandbox_machine_id, fly_volume_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_machine_id: string; fly_volume_id: string }>();
+      if (sandboxRow?.sandbox_machine_id) {
+        const fly = new FlyMachinesClient(env.FLY_APP_NAME, env.FLY_API_TOKEN);
+        try {
+          await fly.stopMachine(sandboxRow.sandbox_machine_id);
+        } catch (e) {
+          console.log(`[deleteDashboard] Machine stop failed (may already be stopped): ${e}`);
+        }
+        try {
+          await fly.destroyMachine(sandboxRow.sandbox_machine_id, true);
+          console.log(`[deleteDashboard] Destroyed machine ${sandboxRow.sandbox_machine_id}`);
+        } catch (e) {
+          console.error(`[deleteDashboard] Failed to destroy machine ${sandboxRow.sandbox_machine_id}: ${e}`);
+        }
+        if (sandboxRow.fly_volume_id) {
+          try {
+            await fly.deleteVolume(sandboxRow.fly_volume_id);
+            console.log(`[deleteDashboard] Deleted volume ${sandboxRow.fly_volume_id}`);
+          } catch (e) {
+            console.error(`[deleteDashboard] Failed to delete volume ${sandboxRow.fly_volume_id}: ${e}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[deleteDashboard] Fly cleanup error: ${e}`);
+    }
+  }
 
   // Delete the dashboard (cascades to: dashboard_members, dashboard_invitations,
   // dashboard_items, dashboard_edges, sessions, dashboard_sandboxes, drive_mirrors,

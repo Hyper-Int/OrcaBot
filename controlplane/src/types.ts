@@ -88,6 +88,19 @@ export interface Env {
   /** Shared access code for code-based login (hackathon / demo access).
    *  Set via: wrangler secret put ACCESS_CODE */
   ACCESS_CODE?: string;
+  /** Fly.io API token for per-dashboard machine provisioning.
+   *  Set via: wrangler secret put FLY_API_TOKEN */
+  FLY_API_TOKEN?: string;
+  /** Fly app name for sandbox machines (e.g., "orcabot-sandbox") */
+  FLY_APP_NAME?: string;
+  /** Default region for new Fly machines (e.g., "sjc") */
+  FLY_REGION?: string;
+  /** Docker image for sandbox machines (e.g., "registry.fly.io/orcabot-sandbox:latest") */
+  FLY_MACHINE_IMAGE?: string;
+  /** Feature flag: set to "true" to enable per-dashboard machine provisioning */
+  FLY_PROVISIONING_ENABLED?: string;
+  /** URL sandbox machines use to reach control plane (e.g., "https://api.orcabot.com") */
+  FLY_SANDBOX_CONTROLPLANE_URL?: string;
 }
 
 // User types

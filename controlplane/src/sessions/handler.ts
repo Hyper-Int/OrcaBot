@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v7-browser-pty-lookup
-const sessionsRevision = "sessions-v7-browser-pty-lookup";
+// REVISION: sessions-v9-warm-pool
+const sessionsRevision = "sessions-v9-warm-pool";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -19,6 +19,7 @@ import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
+import { FlyMachinesClient, FlyMachineNotFoundError } from '../sandbox/fly-machines';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
 // SECURITY: Never interpolate provider names directly into SQL - always use this map
@@ -146,10 +147,13 @@ function fоrmatDashbоardItem(row: Record<string, unknown>): DashboardItem {
 
 async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string) {
   return env.DB.prepare(`
-    SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+    SELECT sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state
+    FROM dashboard_sandboxes WHERE dashboard_id = ?
   `).bind(dashboardId).first<{
     sandbox_session_id: string;
     sandbox_machine_id: string;
+    fly_volume_id: string;
+    machine_state: string;
   }>();
 }
 
@@ -180,8 +184,46 @@ export async function ensureDashbоardSandbоx(
     return Response.json({ error: 'E79201: Not found or no access' }, { status: 404 });
   }
 
+  // Feature flag: use per-dashboard Fly machine provisioning
+  const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+    && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+
   const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
+
+  // ── Handle existing sandbox ──────────────────────────────────────
   if (existingSandbox?.sandbox_session_id) {
+    // If provisioning is enabled and we have a machine ID, check machine state
+    if (flyProvisioningEnabled && existingSandbox.sandbox_machine_id) {
+      const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+      try {
+        const machine = await fly.getMachine(existingSandbox.sandbox_machine_id);
+        if (machine.state === 'stopped' || machine.state === 'suspended') {
+          // Wake the stopped machine
+          console.log(`[ensureDashboardSandbox] Starting stopped machine ${existingSandbox.sandbox_machine_id} for dashboard ${dashboardId}`);
+          await fly.startMachine(existingSandbox.sandbox_machine_id);
+          await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 30);
+          await env.DB.prepare(`
+            UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
+          `).bind(dashboardId).run();
+        }
+      } catch (err) {
+        if (err instanceof FlyMachineNotFoundError) {
+          // Machine was destroyed externally — clear and reprovision below
+          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} not found, clearing for reprovision`);
+          await env.DB.prepare(`
+            DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+          `).bind(dashboardId).run();
+          // Fall through to provisioning below
+          return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+        }
+        // For other Fly API errors, mark state as stale and fall through to session validation
+        console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
+        await env.DB.prepare(`
+          UPDATE dashboard_sandboxes SET machine_state = 'unknown' WHERE dashboard_id = ?
+        `).bind(dashboardId).run().catch(() => {});
+      }
+    }
+
     // Validate session still exists on sandbox (may be stale after redeploy)
     const checkRes = await sandboxFetch(
       env,
@@ -203,11 +245,29 @@ export async function ensureDashbоardSandbоx(
     `).bind(dashboardId).run();
   }
 
+  // ── Create new sandbox ───────────────────────────────────────────
+  return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+}
+
+/**
+ * Internal: create a new sandbox for a dashboard.
+ * When Fly provisioning is enabled, creates a dedicated machine + volume.
+ * Otherwise, uses the shared SANDBOX_URL (legacy behavior).
+ */
+async function ensureDashbоardSandbоxCreate(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  flyProvisioningEnabled: boolean
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
-  // Mint a dashboard-scoped token for MCP proxy calls
   const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
-  // Pass dashboard_id and mcp_token so sandbox can proxy MCP UI calls
+
+  if (flyProvisioningEnabled) {
+    return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now);
+  }
+
+  // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
   const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
@@ -231,6 +291,258 @@ export async function ensureDashbоardSandbоx(
     sandboxSessionId: sandboxSession.id,
     sandboxMachineId: sandboxSession.machineId || '',
   };
+}
+
+/**
+ * Provision a dedicated Fly machine + volume for a dashboard.
+ *
+ * Flow:
+ * 1. Create a Fly volume for /workspace
+ * 2. Create a Fly machine with the volume mounted
+ * 3. Wait for the machine to start
+ * 4. Create a sandbox session on the new machine (pinned via X-Sandbox-Machine-ID)
+ * 5. Store in dashboard_sandboxes
+ *
+ * On race condition (two terminals starting simultaneously):
+ * - The INSERT OR IGNORE with PRIMARY KEY on dashboard_id ensures only one wins
+ * - The loser cleans up its resources and uses the winner's row
+ */
+async function provisionDedicatedMachine(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  sandbox: SandboxClient,
+  mcpToken: string,
+  now: string
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+
+  // Try warm pool first (instant provisioning)
+  const warmResult = await claimWarmMachine(env, fly, dashboardId, sandbox, mcpToken, now);
+  if (warmResult) return warmResult;
+
+  // Fall back to cold provisioning
+  return coldProvisionMachine(env, fly, dashboardId, sandbox, mcpToken, now);
+}
+
+/**
+ * Try to claim a pre-provisioned warm machine for instant dashboard assignment.
+ */
+async function claimWarmMachine(
+  env: EnvWithDriveCache,
+  fly: FlyMachinesClient,
+  dashboardId: string,
+  sandbox: SandboxClient,
+  mcpToken: string,
+  now: string
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | null> {
+  // Claim a warm machine: SELECT then DELETE (avoids RETURNING which may not be supported in all D1 versions)
+  const warm = await env.DB.prepare(`
+    SELECT machine_id, volume_id FROM warm_machines LIMIT 1
+  `).first<{ machine_id: string; volume_id: string }>();
+
+  if (!warm) return null;
+
+  const { machine_id: machineId, volume_id: volumeId } = warm;
+  const deleted = await env.DB.prepare(`
+    DELETE FROM warm_machines WHERE machine_id = ?
+  `).bind(machineId).run();
+
+  // Another request claimed it first — no warm machine for us
+  if (deleted.meta.changes === 0) return null;
+
+  try {
+    // Start the machine if it's stopped (warm machines auto-stop when idle)
+    const machine = await fly.getMachine(machineId);
+    if (machine.state === 'stopped') {
+      await fly.startMachine(machineId);
+      await fly.waitForState(machineId, 'started', 30);
+    } else if (machine.state !== 'started') {
+      console.log(`[claimWarmMachine] Warm machine ${machineId} in unexpected state: ${machine.state}, falling back to cold`);
+      // Clean up the bad warm machine
+      await cleanupFlyResources(fly, machineId, volumeId);
+      return null;
+    }
+
+    // Create sandbox session pinned to this machine
+    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
+
+    // Clean up lost+found (ext4 creates this on new volumes)
+    try {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      headers.set('Authorization', `Bearer ${env.SANDBOX_INTERNAL_TOKEN}`);
+      headers.set('X-Sandbox-Machine-ID', machineId);
+      await fetch(`${env.SANDBOX_URL}/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
+        method: 'DELETE',
+        headers,
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+
+    // Store in DB
+    const insertResult = await env.DB.prepare(`
+      INSERT OR IGNORE INTO dashboard_sandboxes
+        (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, created_at)
+      VALUES (?, ?, ?, ?, 'started', ?)
+    `).bind(dashboardId, sandboxSession.id, machineId, volumeId, now).run();
+
+    if (insertResult.meta.changes === 0) {
+      const winner = await getDashbоardSandbоx(env, dashboardId);
+      await cleanupFlyResources(fly, machineId, volumeId, sandbox, sandboxSession.id);
+      if (winner?.sandbox_session_id) {
+        return {
+          sandboxSessionId: winner.sandbox_session_id,
+          sandboxMachineId: winner.sandbox_machine_id || '',
+        };
+      }
+    }
+
+    return {
+      sandboxSessionId: sandboxSession.id,
+      sandboxMachineId: machineId,
+    };
+  } catch (err) {
+    console.error(`[claimWarmMachine] Failed to use warm machine ${machineId}: ${err}`);
+    // Destroy the broken warm machine, fall back to cold provisioning
+    await cleanupFlyResources(fly, machineId, volumeId);
+    return null;
+  }
+}
+
+/**
+ * Cold-provision a new Fly machine with volume from scratch.
+ */
+async function coldProvisionMachine(
+  env: EnvWithDriveCache,
+  fly: FlyMachinesClient,
+  dashboardId: string,
+  sandbox: SandboxClient,
+  mcpToken: string,
+  now: string
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
+  const region = env.FLY_REGION || 'sjc';
+
+  // Auto-discover image from existing machines (Fly uses deployment-specific tags, not :latest)
+  let image = env.FLY_MACHINE_IMAGE || '';
+  if (!image || image.endsWith(':latest')) {
+    const discovered = await fly.discoverImage();
+    if (discovered) {
+      image = discovered;
+    } else if (!image) {
+      throw new Error('No FLY_MACHINE_IMAGE configured and no existing machines to discover image from');
+    }
+  }
+
+  let volumeId = '';
+  let machineId = '';
+
+  try {
+    // Step 1: Create volume
+    const volumeSuffix = crypto.randomUUID().slice(0, 6);
+    const volumeName = `orcabot_ws_${dashboardId.slice(0, 8).replace(/-/g, '')}_${volumeSuffix}`;
+    const volume = await fly.createVolume(volumeName, region, 10);
+    volumeId = volume.id;
+
+    // Step 2: Create machine with volume
+    const machineConfig = FlyMachinesClient.buildMachineConfig({
+      dashboardId,
+      volumeId,
+      image,
+      region,
+      env: {
+        SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
+        CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
+        INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN,
+        ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
+      },
+    });
+
+    const machine = await fly.createMachine(machineConfig);
+    machineId = machine.id;
+
+    // Step 3: Wait for machine to be ready
+    await fly.waitForState(machineId, 'started', 90);
+
+    // Step 4: Create sandbox session pinned to the new machine
+    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
+
+    // Step 4b: Clean up lost+found (ext4 creates this on new volumes)
+    try {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      headers.set('Authorization', `Bearer ${env.SANDBOX_INTERNAL_TOKEN}`);
+      headers.set('X-Sandbox-Machine-ID', machineId);
+      await fetch(`${env.SANDBOX_URL}/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
+        method: 'DELETE',
+        headers,
+      });
+    } catch {
+      // Best-effort cleanup
+    }
+
+    // Step 5: Store in DB (FK can fail if dashboard was deleted during provisioning)
+    let insertResult;
+    try {
+      insertResult = await env.DB.prepare(`
+        INSERT OR IGNORE INTO dashboard_sandboxes
+          (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, created_at)
+        VALUES (?, ?, ?, ?, 'started', ?)
+      `).bind(dashboardId, sandboxSession.id, machineId, volumeId, now).run();
+    } catch (dbErr) {
+      // FK constraint = dashboard was deleted during provisioning; clean up
+      console.error(`[coldProvisionMachine] Dashboard ${dashboardId} no longer exists, cleaning up machine ${machineId}`);
+      await cleanupFlyResources(fly, machineId, volumeId, sandbox, sandboxSession.id);
+      throw new Error('Dashboard was deleted during provisioning');
+    }
+
+    // Handle race condition: another request won the insert
+    if (insertResult.meta.changes === 0) {
+      const winner = await getDashbоardSandbоx(env, dashboardId);
+      await cleanupFlyResources(fly, machineId, volumeId, sandbox, sandboxSession.id);
+      if (winner?.sandbox_session_id) {
+        return {
+          sandboxSessionId: winner.sandbox_session_id,
+          sandboxMachineId: winner.sandbox_machine_id || '',
+        };
+      }
+    }
+
+    return {
+      sandboxSessionId: sandboxSession.id,
+      sandboxMachineId: machineId,
+    };
+  } catch (err) {
+    const bodyDetail = (err as any)?.responseBody ? ` | body: ${(err as any).responseBody}` : '';
+    console.error(`[coldProvisionMachine] Failed for dashboard ${dashboardId}: ${err}${bodyDetail}`);
+    await cleanupFlyResources(fly, machineId, volumeId);
+    throw err;
+  }
+}
+
+/**
+ * Best-effort cleanup of Fly resources on failure or race condition.
+ */
+async function cleanupFlyResources(
+  fly: FlyMachinesClient,
+  machineId: string,
+  volumeId: string,
+  sandbox?: SandboxClient,
+  sessionId?: string
+): Promise<void> {
+  if (sessionId && sandbox) {
+    try { await sandbox.deleteSession(sessionId, machineId); } catch (e) {
+      console.error(`[cleanupFlyResources] Failed to delete session ${sessionId}: ${e}`);
+    }
+  }
+  if (machineId) {
+    try { await fly.destroyMachine(machineId, true); } catch (e) {
+      console.error(`[cleanupFlyResources] Failed to destroy machine ${machineId}: ${e}`);
+    }
+  }
+  if (volumeId) {
+    try { await fly.deleteVolume(volumeId); } catch (e) {
+      console.error(`[cleanupFlyResources] Failed to delete volume ${volumeId}: ${e}`);
+    }
+  }
 }
 
 function driveManifestKey(dashboardId: string): string {
@@ -605,37 +917,16 @@ export async function createSessiоn(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir } = terminalConfig;
-    console.log(`[createSession] itemId=${itemId} bootCommand=${JSON.stringify(bootCommand)} workingDir=${JSON.stringify(workingDir)} contentPreview=${JSON.stringify(String(item.content).slice(0, 200))}`);
     const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
     let sandboxSessionId = existingSandbox?.sandbox_session_id || '';
     let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
 
     if (!sandboxSessionId) {
-      // Mint a dashboard-scoped token for MCP proxy calls
-      const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
-      // Pass dashboard_id and mcp_token so sandbox can proxy MCP UI calls
-      const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
-      const insertResult = await env.DB.prepare(`
-        INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
-        VALUES (?, ?, ?, ?)
-      `).bind(dashboardId, sandboxSession.id, sandboxSession.machineId || '', now).run();
-
-      if (insertResult.meta.changes === 0) {
-        const reused = await getDashbоardSandbоx(env, dashboardId);
-        if (reused?.sandbox_session_id) {
-          sandboxSessionId = reused.sandbox_session_id;
-          sandboxMachineId = reused.sandbox_machine_id || '';
-        } else {
-          sandboxSessionId = sandboxSession.id;
-          sandboxMachineId = sandboxSession.machineId || '';
-        }
-        if (sandboxSessionId !== sandboxSession.id) {
-          await sandbox.deleteSession(sandboxSession.id, sandboxSession.machineId);
-        }
-      } else {
-        sandboxSessionId = sandboxSession.id;
-        sandboxMachineId = sandboxSession.machineId || '';
-      }
+      const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+        && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+      const created = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+      sandboxSessionId = created.sandboxSessionId;
+      sandboxMachineId = created.sandboxMachineId;
     }
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
@@ -652,7 +943,6 @@ export async function createSessiоn(
 
     let pty: { id: string };
     try {
-      console.log(`[createSession] calling createPty: sandboxSessionId=${sandboxSessionId} userId=${userId} bootCommand=${JSON.stringify(bootCommand)} workingDir=${JSON.stringify(workingDir)} machineId=${sandboxMachineId} ptyId=${ptyId}`);
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken,
@@ -670,16 +960,12 @@ export async function createSessiоn(
         DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
       `).bind(dashboardId).run();
 
-      // Create fresh sandbox session
-      const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
-      const freshSandbox = await sandbox.createSessiоn(dashboardId, mcpToken);
-      sandboxSessionId = freshSandbox.id;
-      sandboxMachineId = freshSandbox.machineId || '';
-
-      await env.DB.prepare(`
-        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
-        VALUES (?, ?, ?, ?)
-      `).bind(dashboardId, sandboxSessionId, sandboxMachineId, now).run();
+      // Create fresh sandbox session (uses Fly provisioning if enabled)
+      const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+        && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled);
+      sandboxSessionId = freshResult.sandboxSessionId;
+      sandboxMachineId = freshResult.sandboxMachineId;
 
       // Regenerate integration token with fresh sandbox session ID
       const freshIntegrationToken = await createPtyToken(
@@ -715,9 +1001,7 @@ export async function createSessiоn(
           AND terminal_id != ?
       `).bind(pty.id, itemId, dashboardId, pty.id).run();
 
-      if (migrated.meta.changes > 0) {
-        console.log(`[createSession] Migrated ${migrated.meta.changes} integration(s) for item=${itemId} to ptyId=${pty.id}`);
-      }
+      // migrated.meta.changes integration(s) updated
     } catch (err) {
       // Non-fatal: if migration fails, integrations will need to be re-attached manually.
       console.error('[createSession] Failed to migrate integrations:', err);

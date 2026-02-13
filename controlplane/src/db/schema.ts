@@ -1137,6 +1137,32 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
+  // Per-dashboard Fly machine provisioning: track volume and machine state
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_sandboxes ADD COLUMN fly_volume_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_sandboxes ADD COLUMN machine_state TEXT NOT NULL DEFAULT 'unknown'
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Warm machine pool for instant dashboard provisioning
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS warm_machines (
+      machine_id TEXT PRIMARY KEY,
+      volume_id TEXT NOT NULL,
+      region TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);
 

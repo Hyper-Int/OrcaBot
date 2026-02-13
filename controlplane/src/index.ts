@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v3-embed-ssrf-guardrails
-console.log(`[controlplane] REVISION: controlplane-v3-embed-ssrf-guardrails loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v5-warm-pool
+console.log(`[controlplane] REVISION: controlplane-v5-warm-pool loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -501,6 +501,11 @@ export default {
       if (expiredCount > 0) {
         console.log(`[scheduled] Cleaned up ${expiredCount} expired memory entries`);
       }
+      // Fly machine management: orphan cleanup + warm pool replenishment
+      if (envWithBindings.FLY_API_TOKEN && envWithBindings.FLY_APP_NAME) {
+        await cleanupOrphanedFlyResources(envWithBindings);
+        await replenishWarmPool(envWithBindings);
+      }
     } catch (error) {
       if (isDesktopFeatureDisabledError(error)) {
         return;
@@ -509,6 +514,119 @@ export default {
     }
   },
 };
+
+/**
+ * Clean up orphaned Fly machines/volumes.
+ * Safety net: finds dashboard_sandboxes rows where the dashboard no longer exists
+ * (shouldn't happen due to CASCADE delete, but protects against stale resources).
+ */
+async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> {
+  try {
+    const orphans = await env.DB.prepare(`
+      SELECT ds.dashboard_id, ds.sandbox_machine_id, ds.fly_volume_id
+      FROM dashboard_sandboxes ds
+      LEFT JOIN dashboards d ON ds.dashboard_id = d.id
+      WHERE d.id IS NULL AND ds.sandbox_machine_id != ''
+    `).all<{ dashboard_id: string; sandbox_machine_id: string; fly_volume_id: string }>();
+
+    if (!orphans.results || orphans.results.length === 0) return;
+
+    const { FlyMachinesClient } = await import('./sandbox/fly-machines');
+    const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+
+    for (const orphan of orphans.results) {
+      try { await fly.destroyMachine(orphan.sandbox_machine_id, true); } catch (e) {
+        console.error(`[cleanup] Failed to destroy machine ${orphan.sandbox_machine_id}: ${e}`);
+      }
+      if (orphan.fly_volume_id) {
+        try { await fly.deleteVolume(orphan.fly_volume_id); } catch (e) {
+          console.error(`[cleanup] Failed to delete volume ${orphan.fly_volume_id}: ${e}`);
+        }
+      }
+      await env.DB.prepare(`DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?`)
+        .bind(orphan.dashboard_id).run();
+    }
+
+    if (orphans.results.length > 0) {
+      console.log(`[cleanup] Cleaned up ${orphans.results.length} orphaned Fly resource(s)`);
+    }
+  } catch (e) {
+    console.error(`[cleanup] Orphan cleanup error: ${e}`);
+  }
+}
+
+const WARM_POOL_TARGET = 2;
+
+/**
+ * Replenish warm machine pool.
+ * Creates at most 1 machine per cron tick to avoid bursts.
+ * Warm machines have autostop enabled so they hibernate when idle.
+ */
+async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
+  try {
+    const count = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM warm_machines`).first<{ cnt: number }>();
+    const currentCount = count?.cnt || 0;
+
+    if (currentCount >= WARM_POOL_TARGET) return;
+
+    const { FlyMachinesClient } = await import('./sandbox/fly-machines');
+    const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+    const region = env.FLY_REGION || 'sjc';
+
+    // Discover image from existing machines
+    let image = env.FLY_MACHINE_IMAGE || '';
+    if (!image || image.endsWith(':latest')) {
+      const discovered = await fly.discoverImage();
+      if (discovered) image = discovered;
+      else if (!image) return;
+    }
+
+    // Create volume + machine (track IDs for cleanup on failure)
+    const volumeSuffix = crypto.randomUUID().slice(0, 6);
+    const volumeName = `orcabot_ws_warm_${volumeSuffix}`;
+    let volumeId = '';
+    let machineId = '';
+
+    try {
+      const volume = await fly.createVolume(volumeName, region, 10);
+      volumeId = volume.id;
+
+      const machineConfig = FlyMachinesClient.buildMachineConfig({
+        dashboardId: `warm-${volumeSuffix}`,
+        volumeId,
+        image,
+        region,
+        env: {
+          SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
+          CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
+          INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN || '',
+          ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
+        },
+      });
+
+      const machine = await fly.createMachine(machineConfig);
+      machineId = machine.id;
+      await fly.waitForState(machine.id, 'started', 90);
+
+      await env.DB.prepare(`
+        INSERT INTO warm_machines (machine_id, volume_id, region) VALUES (?, ?, ?)
+      `).bind(machine.id, volume.id, region).run();
+
+      console.log(`[warmPool] Replenished pool (${currentCount + 1}/${WARM_POOL_TARGET})`);
+    } catch (innerErr) {
+      // Clean up partially created resources
+      if (machineId) {
+        try { await fly.destroyMachine(machineId, true); } catch { /* best-effort */ }
+      }
+      if (volumeId) {
+        try { await fly.deleteVolume(volumeId); } catch { /* best-effort */ }
+      }
+      throw innerErr;
+    }
+  } catch (e) {
+    console.error(`[warmPool] Replenishment error: ${e}`);
+  }
+}
 
 async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const url = new URL(request.url);
@@ -1909,6 +2027,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
+      console.error(`[files] E79737: sessionId=${segments[1]} userId=${auth.user!.id} — not found in sessions table or user not in dashboard_members`);
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
     }
 
