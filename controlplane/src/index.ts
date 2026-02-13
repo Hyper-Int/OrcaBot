@@ -41,7 +41,7 @@ import * as chat from './chat/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
-import { getSubscriptionStatus, hasActiveAccess } from './subscriptions/check';
+import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
@@ -864,8 +864,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // ============================================
   // Block all authenticated POST/PUT/PATCH/DELETE requests for expired users,
   // except for routes that must remain accessible (auth, subscriptions, webhooks, etc.)
-  // Skip entirely in dev mode (localhost / desktop) — no billing enforced.
-  if (auth.user && method !== 'GET' && method !== 'OPTIONS' && env.DEV_AUTH_ENABLED !== 'true') {
+  // Skip in dev mode (localhost / desktop) or restricted-login deployments (if email is allowed).
+  const skipBilling = env.DEV_AUTH_ENABLED === 'true'
+    || (env.AUTH_LOGIN_RESTRICTED === 'true' && !!auth.user && isExemptEmail(env, auth.user.email));
+  if (auth.user && method !== 'GET' && method !== 'OPTIONS' && !skipBilling) {
     const isExemptRoute =
       segments[0] === 'auth'              // Auth endpoints (login, logout, session)
       || segments[0] === 'subscriptions'  // Subscription management (checkout, portal)
@@ -1208,7 +1210,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     // Subscription gate — WS upgrade is GET so the centralized POST gate doesn't cover it
-    if (env.DEV_AUTH_ENABLED !== 'true' && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+    const wsSkipBilling = env.DEV_AUTH_ENABLED === 'true'
+      || (env.AUTH_LOGIN_RESTRICTED === 'true' && isExemptEmail(env, auth.user!.email));
+    if (!wsSkipBilling && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
     return dashboards.cоnnectWebSоcket(
@@ -2246,8 +2250,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    // In dev/desktop mode, skip Stripe DB lookup — always exempt
-    const subscription = env.DEV_AUTH_ENABLED === 'true'
+    // In dev/desktop mode or restricted-login deployments (if email allowed), skip Stripe DB lookup
+    const meSkipBilling = env.DEV_AUTH_ENABLED === 'true'
+      || (env.AUTH_LOGIN_RESTRICTED === 'true' && isExemptEmail(env, auth.user!.email));
+    const subscription = meSkipBilling
       ? { status: 'exempt' as const, trialEndsAt: null, currentPeriodEnd: null, cancelAtPeriodEnd: false }
       : await getSubscriptionStatus(env, auth.user!.id, auth.user!.email, auth.user!.createdAt);
     return Response.json({
@@ -2269,7 +2275,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     // Subscription gate — PTY WS is GET so the centralized POST gate doesn't cover it
-    if (env.DEV_AUTH_ENABLED !== 'true' && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+    const ptySkipBilling = env.DEV_AUTH_ENABLED === 'true'
+      || (env.AUTH_LOGIN_RESTRICTED === 'true' && isExemptEmail(env, auth.user!.email));
+    if (!ptySkipBilling && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
 

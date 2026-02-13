@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v7-turnstile
+// REVISION: splash-v8-howto-cleanup
 "use client";
 
 import * as React from "react";
@@ -16,9 +16,6 @@ import {
   Lock,
   ChevronRight,
   Zap,
-  Mail,
-  ArrowLeft,
-  Check,
   Users,
   SlidersHorizontal,
   Eye,
@@ -41,7 +38,7 @@ import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL, TURNSTILE_SITE_KEY } from "@/config/env";
 
-const MODULE_REVISION = "splash-v7-turnstile";
+const MODULE_REVISION = "splash-v8-howto-cleanup";
 console.log(
   `[splash] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -58,7 +55,7 @@ const features = [
     icon: Shield,
     title: "Sandboxed Virtual Machines",
     description:
-      "Every session runs in an isolated Linux VM. Your code executes safely in a contained environment — nothing touches your local machine.",
+      "Every session runs in an isolated Linux VM. Your code executes safely in a contained environment. Nothing touches your local machine.",
     accent: "var(--status-success)",
   },
   {
@@ -86,7 +83,7 @@ const features = [
     icon: Store,
     title: "Templates & Recipes",
     description:
-      "Start from a library of ready-made dashboard templates for common tasks — agentic coding, automation, and enterprise tooling setups.",
+      "Start from a library of ready-made dashboard templates for common tasks: agentic coding, automation, and enterprise tooling setups.",
     accent: "var(--foreground-muted)",
   },
 ];
@@ -136,7 +133,7 @@ const oauthIntegrations = [
   {
     title: "Google Calendar",
     description:
-      "Agents can check your schedule and create events — useful for scheduling deployments, setting reminders, or coordinating team workflows.",
+      "Agents can check your schedule and create events. Useful for scheduling deployments, setting reminders, or coordinating team workflows.",
   },
   {
     title: "GitHub",
@@ -169,7 +166,7 @@ export default function Home() {
     }
   }, [router]);
 
-  // Don't render splash content in desktop mode — just show blank while redirecting
+  // Don't render splash content in desktop mode, just show blank while redirecting
   if (DESKTOP_MODE) {
     return null;
   }
@@ -188,51 +185,12 @@ export default function Home() {
   // Login form state
   const [showDevLogin, setShowDevLogin] = React.useState(false);
   const [showCodeLogin, setShowCodeLogin] = React.useState(false);
-  const [showRegisterInterest, setShowRegisterInterest] = React.useState(false);
-  const [registrationSuccess, setRegistrationSuccess] = React.useState(false);
   const [name, setName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [accessCode, setAccessCode] = React.useState("");
-  const [note, setNote] = React.useState("");
   const [error, setError] = React.useState("");
-  const openClaudeVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const geminiSecretVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const gmailVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const whatsappVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const chessVideoRef = React.useRef<HTMLVideoElement | null>(null);
-  const videoLoopTimersRef = React.useRef<number[]>([]);
 
-  const handleVideoEnded = React.useCallback(
-    (videoRef: React.RefObject<HTMLVideoElement | null>) => {
-      const video = videoRef.current;
-      if (!video) return;
-
-      // Keep last frame visible, then restart after a short hold.
-      video.pause();
-      const timer = window.setTimeout(() => {
-        videoLoopTimersRef.current = videoLoopTimersRef.current.filter(
-          (id) => id !== timer
-        );
-        const target = videoRef.current;
-        if (!target) return;
-        target.currentTime = 0;
-        void target.play().catch(() => {});
-      }, 5000);
-      videoLoopTimersRef.current.push(timer);
-    },
-    []
-  );
-
-  React.useEffect(() => {
-    return () => {
-      for (const timer of videoLoopTimersRef.current) {
-        window.clearTimeout(timer);
-      }
-      videoLoopTimersRef.current = [];
-    };
-  }, []);
-
-  // Turnstile bot verification — execute on demand when user clicks login
+  // Turnstile bot verification: execute on demand when user clicks login
   const turnstileWidgetId = React.useRef<string | null>(null);
   const pendingLogin = React.useRef(false);
 
@@ -288,7 +246,7 @@ export default function Home() {
         });
         return true;
       };
-      // Script may still be loading — poll until available
+      // Script may still be loading, poll until available
       if (!tryRender()) {
         const interval = setInterval(() => {
           if (tryRender()) clearInterval(interval);
@@ -300,14 +258,14 @@ export default function Home() {
 
   const handleGoogleLogin = () => {
     setError("");
-    // No Turnstile configured — go straight to Google
+    // No Turnstile configured, go straight to Google
     if (!TURNSTILE_SITE_KEY) {
       const redirectUrl = `${SITE_URL.replace(/\/$/, "")}/`;
       const loginUrl = `${API.cloudflare.base}/auth/google/login?redirect=${encodeURIComponent(redirectUrl)}`;
       window.location.assign(loginUrl);
       return;
     }
-    // Trigger Turnstile challenge — proceedWithLogin called from callback
+    // Trigger Turnstile challenge, proceedWithLogin called from callback
     pendingLogin.current = true;
     const api = getTurnstile();
     if (api && turnstileWidgetId.current) {
@@ -385,7 +343,7 @@ export default function Home() {
         return;
       }
 
-      // Session cookie is set — redirect and let AuthBootstrapper pick up the session
+      // Session cookie is set, redirect and let AuthBootstrapper pick up the session
       window.location.assign("/dashboards");
     } catch (err) {
       setError("Login failed. Please try again.");
@@ -395,52 +353,12 @@ export default function Home() {
     }
   };
 
-  const handleRegisterInterest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-
-    if (!email.trim() || !email.includes("@")) {
-      setError("Valid email is required");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch(`${API.cloudflare.base}/register-interest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: email.trim(),
-          note: note.trim() || undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to register interest");
-      }
-
-      setRegistrationSuccess(true);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to register interest. Please try again."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const resetLoginForms = () => {
     setShowDevLogin(false);
     setShowCodeLogin(false);
-    setShowRegisterInterest(false);
-    setRegistrationSuccess(false);
     setName("");
     setEmail("");
     setAccessCode("");
-    setNote("");
     setError("");
   };
 
@@ -494,21 +412,17 @@ export default function Home() {
         </div>
 
         <h1 className="text-display text-[var(--foreground)] mb-4">
-          Agentic AI Coding.
-          <br />
-          <span className="text-[var(--accent-primary)]">
-            Orchestrated on the Web.
-          </span>
+          Agentic AI Orchestration.
         </h1>
 
         <p className="text-body text-[var(--foreground-muted)] max-w-2xl mx-auto mb-8 leading-relaxed">
-          OrcaBot is a web-based platform for running AI coding agents in
+          OrcaBot is a web-based platform for running AI agents in
           sandboxed virtual machines. Create multiplayer dashboards, connect
-          integrations like Gmail and Google Drive, and let AI agents help you
-          build software — all from your browser.
+          integrations like Gmail and Google Drive, and let AI agents work
+          on your behalf, all from your browser.
         </p>
 
-        {/* CTA area — adapts to auth state */}
+        {/* CTA area, adapts to auth state */}
         {isAuthResolved && isAuthenticated ? (
           /* Authenticated: Dashboard CTA */
           <div className="max-w-md mx-auto">
@@ -528,120 +442,14 @@ export default function Home() {
               </p>
             )}
 
-            <section className="mt-10 space-y-8">
-              <p className="text-lg sm:text-xl font-extrabold uppercase tracking-[0.16em] text-[var(--foreground)]">
-                How To
-              </p>
-              <article className="space-y-4 pt-2 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Run Claude Code in an always online secure sandbox with your
-                  subscription plan
-                </h3>
-                <video
-                  ref={openClaudeVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  poster="/videos/open_claude_code-poster.jpg"
-                  onEnded={() => handleVideoEnded(openClaudeVideoRef)}
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                >
-                  <source src="/videos/open_claude_code.webm" type="video/webm" />
-                </video>
-              </article>
-
-              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Keep secrets out of the sandbox so LLM&apos;s cant see them.
-                </h3>
-                <video
-                  ref={geminiSecretVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  poster="/videos/gemini_secret-poster.jpg"
-                  onEnded={() => handleVideoEnded(geminiSecretVideoRef)}
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                >
-                  <source src="/videos/gemini_secret.webm" type="video/webm" />
-                </video>
-              </article>
-
-              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Link up gmail etc with specific policy guards
-                </h3>
-                <video
-                  ref={gmailVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  poster="/videos/gmail-poster.jpg"
-                  onEnded={() => handleVideoEnded(gmailVideoRef)}
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                >
-                  <source src="/videos/gmail.webm" type="video/webm" />
-                </video>
-              </article>
-
-              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Enable two way communication via whatsapp/slack/discord
-                </h3>
-                <video
-                  ref={whatsappVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  poster="/videos/whatsapp-poster.jpg"
-                  onEnded={() => handleVideoEnded(whatsappVideoRef)}
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                >
-                  <source src="/videos/whatsapp.webm" type="video/webm" />
-                </video>
-              </article>
-
-              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Get agentic coders playing chess with each other
-                </h3>
-                <video
-                  ref={chessVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  preload="metadata"
-                  poster="/videos/chess-poster.jpg"
-                  onEnded={() => handleVideoEnded(chessVideoRef)}
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                >
-                  <source src="/videos/chess.webm" type="video/webm" />
-                </video>
-              </article>
-
-              <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                  Setup an advanced version of a Ralph Wiggum loop.
-                </h3>
-                <img
-                  src="/videos/ralph_wiggins.png"
-                  alt="Ralph Wiggum loop setup screenshot"
-                  className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                  loading="lazy"
-                />
-              </article>
-            </section>
+            <HowToSection />
           </div>
         ) : isAuthResolved ? (
           /* Unauthenticated: Login options */
           <div className="max-w-md mx-auto">
-            {!showDevLogin && !showRegisterInterest && !showCodeLogin ? (
+            {!showDevLogin && !showCodeLogin ? (
               <div className="space-y-4">
-                {/* Google OAuth — primary CTA */}
+                {/* Google OAuth, primary CTA */}
                 <Button
                   variant="primary"
                   size="lg"
@@ -737,218 +545,8 @@ export default function Home() {
                   </a>
                 </p>
 
-                <section className="mt-10 space-y-8">
-                  <p className="text-lg sm:text-xl font-extrabold uppercase tracking-[0.16em] text-[var(--foreground)]">
-                    How To
-                  </p>
-                  <article className="space-y-4 pt-2 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Run Claude Code in an always online secure sandbox with your
-                      subscription plan
-                    </h3>
-                    <video
-                      ref={openClaudeVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      preload="metadata"
-                      poster="/videos/open_claude_code-poster.jpg"
-                      onEnded={() => handleVideoEnded(openClaudeVideoRef)}
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                    >
-                      <source
-                        src="/videos/open_claude_code.webm"
-                        type="video/webm"
-                      />
-                    </video>
-                  </article>
-
-                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Keep secrets out of the sandbox so LLM&apos;s cant see them.
-                    </h3>
-                    <video
-                      ref={geminiSecretVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      preload="metadata"
-                      poster="/videos/gemini_secret-poster.jpg"
-                      onEnded={() => handleVideoEnded(geminiSecretVideoRef)}
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                    >
-                      <source
-                        src="/videos/gemini_secret.webm"
-                        type="video/webm"
-                      />
-                    </video>
-                  </article>
-
-                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Link up gmail etc with specific policy guards
-                    </h3>
-                    <video
-                      ref={gmailVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      preload="metadata"
-                      poster="/videos/gmail-poster.jpg"
-                      onEnded={() => handleVideoEnded(gmailVideoRef)}
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                    >
-                      <source src="/videos/gmail.webm" type="video/webm" />
-                    </video>
-                  </article>
-
-                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Enable two way communication via whatsapp/slack/discord
-                    </h3>
-                    <video
-                      ref={whatsappVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      preload="metadata"
-                      poster="/videos/whatsapp-poster.jpg"
-                      onEnded={() => handleVideoEnded(whatsappVideoRef)}
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                    >
-                      <source src="/videos/whatsapp.webm" type="video/webm" />
-                    </video>
-                  </article>
-
-                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Get agentic coders playing chess with each other
-                    </h3>
-                    <video
-                      ref={chessVideoRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      preload="metadata"
-                      poster="/videos/chess-poster.jpg"
-                      onEnded={() => handleVideoEnded(chessVideoRef)}
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                    >
-                      <source src="/videos/chess.webm" type="video/webm" />
-                    </video>
-                  </article>
-
-                  <article className="space-y-4 pt-5 md:w-[150%] md:-ml-[25%]">
-                    <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight">
-                      Setup an advanced version of a Ralph Wiggum loop.
-                    </h3>
-                    <img
-                      src="/videos/ralph_wiggins.png"
-                      alt="Ralph Wiggum loop setup screenshot"
-                      className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
-                      loading="lazy"
-                    />
-                  </article>
-                </section>
+                <HowToSection />
               </div>
-            ) : showRegisterInterest ? (
-              /* Register Interest form */
-              registrationSuccess ? (
-                <div className="text-center space-y-4">
-                  <div className="w-16 h-16 mx-auto rounded-full bg-[var(--status-success)]/10 flex items-center justify-center">
-                    <Check className="w-8 h-8 text-[var(--status-success)]" />
-                  </div>
-                  <h2 className="text-heading text-[var(--foreground)]">
-                    Thanks for registering!
-                  </h2>
-                  <p className="text-body text-[var(--foreground-muted)]">
-                    We&apos;ve sent a confirmation to your email. We&apos;ll be
-                    in touch soon!
-                  </p>
-                  <Button
-                    variant="ghost"
-                    onClick={resetLoginForms}
-                    leftIcon={<ArrowLeft className="w-4 h-4" />}
-                  >
-                    Back
-                  </Button>
-                </div>
-              ) : (
-                <form
-                  onSubmit={handleRegisterInterest}
-                  className="space-y-4 text-left"
-                >
-                  <div className="p-4 rounded-lg bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20">
-                    <p className="text-caption text-[var(--accent-primary)] flex items-center gap-2">
-                      <Mail className="w-4 h-4" />
-                      Register your interest
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor="interest-email"
-                      className="text-caption text-[var(--foreground-muted)]"
-                    >
-                      Email
-                    </label>
-                    <Input
-                      id="interest-email"
-                      type="email"
-                      placeholder="your@email.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      autoFocus
-                    />
-                    <p className="text-micro text-[var(--foreground-subtle)]">
-                      Use a Google account email for easier access later
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor="interest-note"
-                      className="text-caption text-[var(--foreground-muted)]"
-                    >
-                      Note (optional)
-                    </label>
-                    <textarea
-                      id="interest-note"
-                      placeholder="Tell us a bit about how you'd like to use OrcaBot..."
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      rows={3}
-                      className="w-full px-3 py-2 text-body bg-[var(--background)] border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]/50 focus:border-[var(--accent-primary)] resize-none"
-                    />
-                  </div>
-
-                  {error && (
-                    <p className="text-caption text-[var(--status-error)]">
-                      {error}
-                    </p>
-                  )}
-
-                  <div className="flex gap-3 pt-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={resetLoginForms}
-                      className="flex-1"
-                    >
-                      Back
-                    </Button>
-                    <Button
-                      type="submit"
-                      variant="primary"
-                      className="flex-1"
-                      isLoading={isLoading}
-                      disabled={!email.trim() || !email.includes("@")}
-                    >
-                      Register
-                    </Button>
-                  </div>
-                </form>
-              )
             ) : showCodeLogin ? (
               /* Access Code Login form */
               <form
@@ -1082,7 +680,7 @@ export default function Home() {
             ) : null}
           </div>
         ) : (
-          /* Auth resolving — loading spinner */
+          /* Auth resolving, loading spinner */
           <div className="flex items-center justify-center py-4">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-[var(--accent-primary)] border-t-transparent" />
           </div>
@@ -1100,7 +698,7 @@ export default function Home() {
               OrcaBot is a <strong className="text-[var(--foreground)]">web-based orchestration platform</strong> for
               AI coding agents. It provides sandboxed Linux virtual machines where AI agents
               like Claude Code, Codex, and Gemini CLI can write, run, and test code on your
-              behalf — all accessible through your browser.
+              behalf, all accessible through your browser.
             </p>
             <p>
               OrcaBot is <strong className="text-[var(--foreground)]">not an AI provider</strong>.
@@ -1110,8 +708,8 @@ export default function Home() {
               exfiltrating them.
             </p>
             <p>
-              Users create <strong className="text-[var(--foreground)]">dashboards</strong> — collaborative
-              workspaces similar to Figma boards — where they can place terminals, notes,
+              Users create <strong className="text-[var(--foreground)]">dashboards</strong>, collaborative
+              workspaces similar to Figma boards, where they can place terminals, notes,
               browser previews, and integration blocks. Multiple team members can view and
               interact with the same dashboard in real-time.
             </p>
@@ -1154,7 +752,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* OAuth integration details — for Google verification */}
+      {/* OAuth integration details, for Google verification */}
       <div className="relative z-10 max-w-5xl mx-auto px-6 py-12">
         <h2 className="text-h2 text-[var(--foreground)] mb-2 text-center">
           Connected Services
@@ -1206,7 +804,7 @@ export default function Home() {
             </div>
             <p className="text-body-sm text-[var(--foreground-muted)] leading-relaxed">
               You explicitly attach integrations to each terminal and define
-              what actions agents can perform — such as which email senders
+              what actions agents can perform, such as which email senders
               agents can read, which repos they can access, or rate limits on
               API calls. No integration is available unless you attach it.
             </p>
@@ -1223,7 +821,7 @@ export default function Home() {
             </div>
             <p className="text-body-sm text-[var(--foreground-muted)] leading-relaxed">
               API keys are never exposed to AI agents. A server-side broker
-              injects credentials at the network layer — agents only see
+              injects credentials at the network layer. Agents only see
               placeholder values. Terminal output is scanned and redacted before
               reaching your browser.
             </p>
@@ -1274,7 +872,7 @@ export default function Home() {
             {
               step: "1",
               title: "Create a Dashboard",
-              desc: "Sign in and create a new dashboard — a shared workspace where you place terminals, notes, browser previews, and integration blocks on an infinite canvas.",
+              desc: "Sign in and create a new dashboard, a shared workspace where you place terminals, notes, browser previews, and integration blocks on an infinite canvas.",
             },
             {
               step: "2",
@@ -1359,7 +957,7 @@ export default function Home() {
       <footer className="relative z-10 border-t border-[var(--border)] py-6">
         <div className="max-w-5xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-micro text-[var(--foreground-disabled)]">
-            OrcaBot — Sandboxed, multiplayer AI coding platform
+            OrcaBot. Sandboxed, multiplayer AI coding platform
           </p>
           <div className="flex items-center gap-4">
             <a
@@ -1501,5 +1099,133 @@ function FeatureCard({
         {feature.description}
       </p>
     </div>
+  );
+}
+
+function HowToVideo({
+  title,
+  description,
+  src,
+  poster,
+}: {
+  title: string;
+  description: string;
+  src: string;
+  poster: string;
+}) {
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const loopTimerRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          void video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      },
+      { threshold: 0.3 }
+    );
+    observer.observe(video);
+
+    return () => {
+      observer.disconnect();
+      if (loopTimerRef.current !== null) {
+        window.clearTimeout(loopTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleEnded = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    loopTimerRef.current = window.setTimeout(() => {
+      loopTimerRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+        void videoRef.current.play().catch(() => {});
+      }
+    }, 5000);
+  };
+
+  return (
+    <article className="space-y-4 md:w-[150%] md:-ml-[25%]">
+      <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight mb-6">
+        {title}
+      </h3>
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        preload="metadata"
+        poster={poster}
+        onEnded={handleEnded}
+        className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+      >
+        <source src={src} type="video/webm" />
+      </video>
+      <p className="text-body text-[var(--foreground-muted)] leading-relaxed mt-8 mb-14">
+        {description}
+      </p>
+    </article>
+  );
+}
+
+function HowToSection() {
+  return (
+    <section className="mt-10 space-y-8">
+      <p className="text-lg sm:text-xl font-extrabold uppercase tracking-[0.16em] text-[var(--foreground)]">
+        See It in Action
+      </p>
+      <HowToVideo
+        title="Run Claude Code in a secure sandbox with your subscription"
+        description="Create a dashboard, add a terminal block, and launch Claude Code. It runs in an isolated Linux VM in the cloud. Your API key is injected server-side so the agent never sees it. Close your laptop and it keeps working."
+        src="/videos/open_claude_code.webm"
+        poster="/videos/open_claude_code-poster.jpg"
+      />
+      <HowToVideo
+        title="Keep secrets out of the sandbox so LLMs can&apos;t see them"
+        description="OrcaBot's secrets broker injects API keys at the network layer, not as environment variables. The agent only sees placeholder values, and any secret that appears in terminal output is automatically redacted before it reaches your browser."
+        src="/videos/gemini_secret.webm"
+        poster="/videos/gemini_secret-poster.jpg"
+      />
+      <HowToVideo
+        title="Connect Gmail and other services with policy-guarded access"
+        description="Drag an integration block onto your dashboard and draw an edge to a terminal. You define the policy: which senders the agent can read, which repos it can access, what actions are allowed. OAuth tokens never leave the control plane."
+        src="/videos/gmail.webm"
+        poster="/videos/gmail-poster.jpg"
+      />
+      <HowToVideo
+        title="Enable two-way communication via WhatsApp, Slack, and Discord"
+        description="Connect a messaging integration so agents can receive instructions and send updates through your existing channels. Useful for monitoring long-running tasks, getting notified of results, or letting teammates interact with agents without opening the dashboard."
+        src="/videos/whatsapp.webm"
+        poster="/videos/whatsapp-poster.jpg"
+      />
+      <HowToVideo
+        title="Get agentic AI to play chess with each other"
+        description="Place multiple terminals on a dashboard and let different AI agents collaborate or compete. Each terminal runs in the same sandbox so agents can share files, communicate through the filesystem, or interact via any protocol you set up."
+        src="/videos/chess.webm"
+        poster="/videos/chess-poster.jpg"
+      />
+      <article className="space-y-4 md:w-[150%] md:-ml-[25%]">
+        <h3 className="text-lg sm:text-xl font-extrabold text-[var(--foreground)] leading-tight mb-6">
+          Set up an advanced Ralph Wiggum loop
+        </h3>
+        <img
+          src="/videos/ralph_wiggum.png"
+          alt="Ralph Wiggum loop setup screenshot"
+          className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
+          loading="lazy"
+        />
+        <p className="text-body text-[var(--foreground-muted)] leading-relaxed mt-8 mb-14">
+          Chain agents together so the output of one becomes the input of another. In this setup, one agent writes code while a second agent reviews it, flags issues, and sends feedback, creating a continuous improvement loop without human intervention.
+        </p>
+      </article>
+    </section>
   );
 }

@@ -1,0 +1,97 @@
+# Dev deployment for dev.orcabot.com
+# Deploy with: wrangler deploy -c wrangler.dev.toml
+#
+# SECRETS (set via wrangler secret):
+#   wrangler secret put SANDBOX_URL -c wrangler.dev.toml
+#   wrangler secret put SANDBOX_INTERNAL_TOKEN -c wrangler.dev.toml
+#   wrangler secret put INTERNAL_API_TOKEN -c wrangler.dev.toml
+#   wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.dev.toml
+#   wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.dev.toml
+#   wrangler secret put SECRETS_ENCRYPTION_KEY -c wrangler.dev.toml
+#   wrangler secret put RESEND_API_KEY -c wrangler.dev.toml
+#   wrangler secret put FLY_API_TOKEN -c wrangler.dev.toml
+#   wrangler secret put AUTH_ALLOWED_EMAILS -c wrangler.dev.toml  (comma-separated)
+
+name = "orcabot-controlplane-dev"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Custom domain - serves the worker at api.dev.orcabot.com
+routes = [
+  { pattern = "api.dev.orcabot.com", custom_domain = true, zone_name = "orcabot.com" }
+]
+
+[vars]
+# Deployment environment
+ENVIRONMENT = "production"
+
+# Authentication - Dev auth DISABLED (public URL, header-based auth would be insecure)
+DEV_AUTH_ENABLED = "false"
+
+# Restrict login to emails in AUTH_ALLOWED_EMAILS only
+AUTH_LOGIN_RESTRICTED = "true"
+# AUTH_ALLOWED_EMAILS set via: wrangler secret put AUTH_ALLOWED_EMAILS -c wrangler.dev.toml
+
+# CORS - Only allow the dev frontend
+ALLOWED_ORIGINS = "https://dev.orcabot.com"
+
+# Fly.io per-dashboard machine provisioning
+FLY_APP_NAME = "orcabot-sandbox"
+FLY_REGION = "sjc"
+FLY_MACHINE_IMAGE = "registry.fly.io/orcabot-sandbox:deployment-01KH9V3RAE030QETY40HD6B4YM"
+FLY_PROVISIONING_ENABLED = "true"
+FLY_SANDBOX_CONTROLPLANE_URL = "https://api.dev.orcabot.com"
+FLY_WARM_POOL_REGIONS = "sjc"
+
+# OAuth (client IDs only - secrets go in wrangler secret)
+FRONTEND_URL = "https://dev.orcabot.com"
+GOOGLE_CLIENT_ID = "800055652303-t2jus6l3rlkle2fd3a0vrtihs974o6ul.apps.googleusercontent.com"
+
+# Email sender for invitation emails
+EMAIL_FROM = "OrcaBot Dev <noreply@orcabot.com>"
+
+# Rate limiting - unauthenticated (strict)
+[[unsafe.bindings]]
+name = "RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1"
+simple = { limit = 200, period = 60 }
+
+# Rate limiting - authenticated (generous)
+[[unsafe.bindings]]
+name = "RATE_LIMITER_AUTH"
+type = "ratelimit"
+namespace_id = "2"
+simple = { limit = 200, period = 60 }
+
+# Durable Objects for real-time collaboration
+[[durable_objects.bindings]]
+name = "DASHBOARD"
+class_name = "DashboardDO"
+
+# Durable Objects for integration policy rate limiting
+[[durable_objects.bindings]]
+name = "RATE_LIMIT_COUNTER"
+class_name = "RateLimitCounter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DashboardDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitCounter"]
+
+# D1 Database - Shared production database
+[[d1_databases]]
+binding = "DB"
+database_name = "orcabot-db-production"
+database_id = "93828ba8-1160-49ec-8d82-6c1bc52800a1"
+
+[[r2_buckets]]
+binding = "DRIVE_CACHE"
+bucket_name = "orcabot-drive-cache"
+
+# Cron triggers for background tasks
+[triggers]
+crons = ["* * * * *"]
