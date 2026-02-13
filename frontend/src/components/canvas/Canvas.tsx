@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v14-reverse-connection-contexts
-console.log(`[canvas] REVISION: canvas-v14-reverse-connection-contexts loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v15-fix-resize-jumping
+console.log(`[canvas] REVISION: canvas-v15-fix-resize-jumping loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -329,8 +329,9 @@ export function Canvas({
   // Track previous item IDs to detect new items
   const prevItemIdsRef = React.useRef<Set<string>>(new Set(items.map(i => i._stableKey || i.id)));
 
-  // Track whether a drag is in progress to prevent node rebuilds mid-drag
+  // Track whether a drag or resize is in progress to prevent node rebuilds mid-interaction
   const isDraggingRef = React.useRef(false);
+  const isResizingRef = React.useRef(false);
   const pendingNodeRebuildRef = React.useRef(false);
 
   // Track drag start position for undo
@@ -387,7 +388,7 @@ export function Canvas({
   // Update nodes when items or sessions change from server
   // Deferred during active drag to prevent mid-drag position jumps
   React.useEffect(() => {
-    if (isDraggingRef.current) {
+    if (isDraggingRef.current || isResizingRef.current) {
       pendingNodeRebuildRef.current = true;
       return;
     }
@@ -414,6 +415,7 @@ export function Canvas({
         if (change.type === "dimensions") {
           // Capture resize start state for undo on first resize event
           if (change.resizing === true && !resizeStartRef.current) {
+            isResizingRef.current = true;
             const node = nodes.find((n) => n.id === change.id);
             if (node) {
               const itemId = (node.data as { itemId?: string })?.itemId || node.id;
@@ -428,42 +430,56 @@ export function Canvas({
             }
           }
 
-          if (change.resizing === false && onItemChange) {
-            // Resize ended - sync to server
-            const node = nodes.find((n) => n.id === change.id);
-            if (node && change.dimensions) {
-              // Use itemId (real ID) for API calls, not node.id (which may be stable key)
-              const itemId = (node.data as { itemId?: string })?.itemId || node.id;
-              const afterSize = {
-                width: Math.round(change.dimensions.width),
-                height: Math.round(change.dimensions.height),
-              };
-              // When resizing from top/left edges, position also changes
-              // Include both size and position to keep the correct corner anchored
-              onItemChange(itemId, {
-                position: node.position,
-                size: afterSize,
-              });
+          if (change.resizing === false) {
+            isResizingRef.current = false;
 
-              // Notify parent of completed resize for undo recording
-              if (onResizeComplete && resizeStartRef.current && resizeStartRef.current.itemId === itemId) {
-                onResizeComplete(
-                  itemId,
-                  { position: resizeStartRef.current.position, size: resizeStartRef.current.size },
-                  { position: { ...node.position }, size: afterSize }
-                );
+            if (onItemChange) {
+              // Resize ended - sync to server
+              const node = nodes.find((n) => n.id === change.id);
+              if (node && change.dimensions) {
+                // Use itemId (real ID) for API calls, not node.id (which may be stable key)
+                const itemId = (node.data as { itemId?: string })?.itemId || node.id;
+                const afterSize = {
+                  width: Math.round(change.dimensions.width),
+                  height: Math.round(change.dimensions.height),
+                };
+                // When resizing from top/left edges, position also changes
+                // Include both size and position to keep the correct corner anchored
+                onItemChange(itemId, {
+                  position: node.position,
+                  size: afterSize,
+                });
+
+                // Notify parent of completed resize for undo recording
+                if (onResizeComplete && resizeStartRef.current && resizeStartRef.current.itemId === itemId) {
+                  onResizeComplete(
+                    itemId,
+                    { position: resizeStartRef.current.position, size: resizeStartRef.current.size },
+                    { position: { ...node.position }, size: afterSize }
+                  );
+                }
               }
             }
             resizeStartRef.current = null;
 
-            if (node?.type === "terminal") {
-              terminalRefs.current.get(node.id)?.fit();
+            // Flush any node rebuilds that were deferred during the resize
+            if (pendingNodeRebuildRef.current) {
+              pendingNodeRebuildRef.current = false;
+              requestAnimationFrame(() => {
+                if (!isDraggingRef.current && !isResizingRef.current) {
+                  rebuildNodes();
+                }
+              });
+            }
+
+            if (nodes.find((n) => n.id === change.id)?.type === "terminal") {
+              terminalRefs.current.get(change.id)?.fit();
             }
           }
         }
       });
     },
-    [onNodesChange, onItemChange, onResizeComplete, nodes, bringToFront]
+    [onNodesChange, onItemChange, onResizeComplete, nodes, bringToFront, rebuildNodes]
   );
 
   const handleNodeDragStart: OnNodeDrag = React.useCallback(

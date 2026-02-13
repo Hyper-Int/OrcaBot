@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v7-geo-warm-pool
-console.log(`[controlplane] REVISION: controlplane-v7-geo-warm-pool loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v8-skip-billing-dev-mode
+console.log(`[controlplane] REVISION: controlplane-v8-skip-billing-dev-mode loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -864,7 +864,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // ============================================
   // Block all authenticated POST/PUT/PATCH/DELETE requests for expired users,
   // except for routes that must remain accessible (auth, subscriptions, webhooks, etc.)
-  if (auth.user && method !== 'GET' && method !== 'OPTIONS') {
+  // Skip entirely in dev mode (localhost / desktop) — no billing enforced.
+  if (auth.user && method !== 'GET' && method !== 'OPTIONS' && env.DEV_AUTH_ENABLED !== 'true') {
     const isExemptRoute =
       segments[0] === 'auth'              // Auth endpoints (login, logout, session)
       || segments[0] === 'subscriptions'  // Subscription management (checkout, portal)
@@ -1207,7 +1208,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     // Subscription gate — WS upgrade is GET so the centralized POST gate doesn't cover it
-    if (!(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+    if (env.DEV_AUTH_ENABLED !== 'true' && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
     return dashboards.cоnnectWebSоcket(
@@ -2245,7 +2246,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const subscription = await getSubscriptionStatus(env, auth.user!.id, auth.user!.email, auth.user!.createdAt);
+    // In dev/desktop mode, skip Stripe DB lookup — always exempt
+    const subscription = env.DEV_AUTH_ENABLED === 'true'
+      ? { status: 'exempt' as const, trialEndsAt: null, currentPeriodEnd: null, cancelAtPeriodEnd: false }
+      : await getSubscriptionStatus(env, auth.user!.id, auth.user!.email, auth.user!.createdAt);
     return Response.json({
       user: auth.user,
       isAdmin: isAdminEmail(env, auth.user!.email),
@@ -2265,7 +2269,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     // Subscription gate — PTY WS is GET so the centralized POST gate doesn't cover it
-    if (!(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+    if (env.DEV_AUTH_ENABLED !== 'true' && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
 
