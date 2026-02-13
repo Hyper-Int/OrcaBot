@@ -31,6 +31,11 @@ interface ConnectionDataFlowContextValue {
     handleId: string,
     handler: InputHandler
   ) => () => void;
+  /**
+   * Send input directly to a node's handle, bypassing edge lookup.
+   * Used by the replay runner to type into terminals without needing edges.
+   */
+  sendDirectInput: (nodeId: string, handleId: string, payload: DataPayload) => void;
 }
 
 const ConnectionDataFlowContext = React.createContext<ConnectionDataFlowContextValue | null>(null);
@@ -97,9 +102,20 @@ export function ConnectionDataFlowProvider({
     [edges]
   );
 
+  const sendDirectInput = React.useCallback(
+    (nodeId: string, handleId: string, payload: DataPayload) => {
+      const key = `${nodeId}:${handleId}`;
+      const handler = handlersRef.current.get(key);
+      if (handler) {
+        handler(payload);
+      }
+    },
+    []
+  );
+
   const value = React.useMemo(
-    () => ({ fireOutput, registerInputHandler }),
-    [fireOutput, registerInputHandler]
+    () => ({ fireOutput, registerInputHandler, sendDirectInput }),
+    [fireOutput, registerInputHandler, sendDirectInput]
   );
 
   return (

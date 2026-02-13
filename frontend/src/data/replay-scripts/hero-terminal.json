@@ -1,0 +1,30 @@
+{
+  "name": "hero-terminal",
+  "description": "Shows adding a Claude Code terminal and connecting Gmail integration",
+  "loopDelayMs": 1500,
+  "initialViewport": { "x": 400, "y": 300, "zoom": 0.75 },
+  "cleanupOnLoop": true,
+  "actions": [
+    { "type": "panCanvas", "x": 400, "y": 300, "zoom": 0.75, "durationMs": 400 },
+    { "type": "wait", "durationMs": 300 },
+
+    { "type": "moveCursor", "x": 200, "y": 200, "durationMs": 500 },
+    { "type": "click" },
+    { "type": "addBlock", "blockType": "terminal", "label": "Claude Code", "position": { "x": 100, "y": 100 }, "alias": "claude1" },
+    { "type": "wait", "durationMs": 1500 },
+
+    { "type": "moveCursor", "x": 340, "y": 350, "durationMs": 600 },
+    { "type": "click" },
+    { "type": "typeTerminal", "alias": "claude1", "text": "Build a REST API with auth", "charDelayMs": 35 },
+    { "type": "wait", "durationMs": 800 },
+
+    { "type": "moveCursor", "x": 700, "y": 200, "durationMs": 500 },
+    { "type": "click" },
+    { "type": "addBlock", "blockType": "gmail", "position": { "x": 650, "y": 100 }, "alias": "gmail1" },
+    { "type": "wait", "durationMs": 500 },
+
+    { "type": "moveCursor", "x": 580, "y": 250, "durationMs": 400 },
+    { "type": "createEdge", "sourceAlias": "claude1", "targetAlias": "gmail1", "sourceHandle": "right-out", "targetHandle": "left-in" },
+    { "type": "wait", "durationMs": 1200 }
+  ]
+}

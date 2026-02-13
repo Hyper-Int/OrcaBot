@@ -104,6 +104,8 @@ import {
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
+import { ReplayRunner } from "@/components/replay/ReplayRunner";
+import type { ReplayRunnerAPI } from "@/components/replay/types";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -392,6 +394,12 @@ export default function DashboardPage() {
   const queryClient = useQueryClient();
   const dashboardId = params.id as string;
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  // Replay script mode — activated via ?replay=script-name
+  const [replayScriptName, setReplayScriptName] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("replay");
+  });
 
   const { user, isAuthenticated, isAuthResolved } = useAuthStore();
 
@@ -2189,6 +2197,52 @@ export default function DashboardPage() {
     ensureVisible(position, size);
   };
 
+  // Replay runner API — exposes dashboard mutations to the scripted replay system
+  const replayAPI = React.useMemo<ReplayRunnerAPI>(() => ({
+    addBlock: async (blockType, label, position) => {
+      const size = defaultSizes[blockType] || { width: 200, height: 120 };
+      let content = blockType === "todo" ? "[]" : "";
+      if (blockType === "terminal") {
+        // Find the terminal tool definition to get preset
+        const tool = terminalTools.find((t) => t.label === label) || terminalTools[0];
+        const originalBoot = tool.terminalPreset?.command ?? "";
+        content = JSON.stringify({
+          name: label || tool.label,
+          subagentIds: [],
+          skillIds: [],
+          agentic: tool.terminalPreset?.agentic ?? false,
+          bootCommand: originalBoot,
+        });
+      }
+      const item = await createItemMutation.mutateAsync({
+        type: blockType as DashboardItemType,
+        content,
+        position,
+        size,
+      });
+      return item.id;
+    },
+    createEdge: async (sourceItemId, targetItemId, sourceHandle, targetHandle) => {
+      await createEdgeFn({
+        sourceItemId,
+        targetItemId,
+        sourceHandle: sourceHandle || "right-out",
+        targetHandle: targetHandle || "left-in",
+      });
+    },
+    deleteItem: async (itemId) => {
+      deleteItemMutation.mutate(itemId);
+    },
+    panTo: (x, y, zoom, duration) => {
+      reactFlowInstanceRef.current?.setCenter(x, y, { zoom: zoom ?? 0.75, duration: duration ?? 800 });
+    },
+    getNodeId: (itemId) => {
+      const item = items.find((i) => i.id === itemId);
+      return item?._stableKey || itemId;
+    },
+    getViewport: () => viewportRef.current,
+  }), [createItemMutation, createEdgeFn, deleteItemMutation, items]);
+
   const handleCreateBrowserBlock = React.useCallback(
     (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
       if (!url) return;
@@ -3533,6 +3587,9 @@ export default function DashboardPage() {
               onTerminalCwdChange={handleTerminalCwdChange}
               reactFlowRef={reactFlowInstanceRef}
             />
+            {replayScriptName && (
+              <ReplayRunner api={replayAPI} scriptName={replayScriptName} />
+            )}
           </ConnectionDataFlowProvider>
           {/* Remote cursors overlay */}
           <CursorOverlay users={presenceUsers} />
