@@ -1884,12 +1884,16 @@ export async function createApprovalRequestInternal(
   }
 
   // Find the dashboard from the sandbox session
+  let dashboardId: string | undefined;
+
   const session = await env.DB.prepare(`
     SELECT dashboard_id FROM sessions WHERE sandbox_session_id = ?
     ORDER BY created_at DESC LIMIT 1
   `).bind(sandboxSessionId).first<{ dashboard_id: string }>();
 
-  if (!session?.dashboard_id) {
+  if (session?.dashboard_id) {
+    dashboardId = session.dashboard_id;
+  } else {
     // Also check dashboard_sandboxes in case no PTY session exists yet
     const sandbox = await env.DB.prepare(`
       SELECT dashboard_id FROM dashboard_sandboxes WHERE sandbox_session_id = ?
@@ -1902,10 +1906,8 @@ export async function createApprovalRequestInternal(
       );
     }
 
-    session.dashboard_id = sandbox.dashboard_id;
+    dashboardId = sandbox.dashboard_id;
   }
-
-  const dashboardId = session.dashboard_id;
 
   // Get the dashboard owner to find their secrets
   const dashboard = await env.DB.prepare(`

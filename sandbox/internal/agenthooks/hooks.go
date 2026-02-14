@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gemini-ui-v1-hide-sandbox-status
+// REVISION: hooks-v2-mcp-secret-auth
 
 package agenthooks
 
@@ -59,8 +59,9 @@ func generateClaudeHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "claude-stop.sh")
 	script := `#!/bin/bash
 # Claude Code stop hook - reads JSON from stdin, posts to sandbox
-# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
+# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
 PORT="${MCP_LOCAL_PORT:-8081}"
+SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/claude-hook-debug.log"
 INPUT=$(cat)
 echo "=== Hook invoked at $(date) ===" >> "$LOGFILE"
@@ -172,7 +173,7 @@ fi
 # Fallback: if transcript didn't have the text, use PTY scrollback
 if [ -z "$LAST_MSG" ]; then
     echo "Transcript fallback: fetching PTY scrollback..." >> "$LOGFILE"
-    SCROLLBACK=$(curl -s "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/scrollback" 2>/dev/null)
+    SCROLLBACK=$(curl -s -H "X-MCP-Secret: $SECRET" "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/scrollback" 2>/dev/null)
     if [ -n "$SCROLLBACK" ]; then
         echo "Raw scrollback (last 500 chars): ...${SCROLLBACK: -500}" >> "$LOGFILE"
         # Claude Code marks assistant responses with ● (bullet)
@@ -216,6 +217,7 @@ fi
 
 curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
   -H "Content-Type: application/json" \
+  -H "X-MCP-Secret: $SECRET" \
   -d "{\"agent\":\"claude-code\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
 `
 
@@ -324,8 +326,9 @@ func generateGeminiHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "gemini-stop.sh")
 	script := `#!/bin/bash
 # Gemini CLI AfterAgent hook
-# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
+# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
 PORT="${MCP_LOCAL_PORT:-8081}"
+SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/gemini-hook-debug.log"
 INPUT=$(cat)
 echo "=== Gemini hook invoked at $(date) ===" >> "$LOGFILE"
@@ -350,6 +353,7 @@ fi
 
 curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
   -H "Content-Type: application/json" \
+  -H "X-MCP-Secret: $SECRET" \
   -d "{\"agent\":\"gemini\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
 echo '{}'  # Gemini requires JSON output
 `
@@ -524,6 +528,7 @@ const handler: HookHandler = async (event) => {
   const sessionId = process.env.ORCABOT_SESSION_ID;
   const ptyId = process.env.ORCABOT_PTY_ID;
   const port = process.env.MCP_LOCAL_PORT || '8081';
+  const mcpSecret = process.env.ORCABOT_MCP_SECRET || '';
   if (!sessionId || !ptyId) {
     console.error('Missing ORCABOT_SESSION_ID or ORCABOT_PTY_ID');
     return;
@@ -534,7 +539,7 @@ const handler: HookHandler = async (event) => {
       "http://localhost:" + port + "/sessions/" + sessionId + "/ptys/" + ptyId + "/agent-stopped",
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-MCP-Secret': mcpSecret },
         body: JSON.stringify({
           agent: 'openclaw',
           lastMessage: typeof lastMsg === 'string' ? lastMsg.slice(0, 4096) : 'Agent completed',
@@ -623,12 +628,14 @@ func generateDroidHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "droid-stop.sh")
 	script := `#!/bin/bash
 # Droid (Factory.ai) Stop hook
-# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
+# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
 PORT="${MCP_LOCAL_PORT:-8081}"
+SECRET="${ORCABOT_MCP_SECRET:-}"
 INPUT=$(cat)
 LAST_MSG=$(echo "$INPUT" | jq -r '.tool_input // "Agent completed"' 2>/dev/null | head -c 4096)
 curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
   -H "Content-Type: application/json" \
+  -H "X-MCP-Secret: $SECRET" \
   -d "{\"agent\":\"droid\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
 `
 
@@ -716,8 +723,9 @@ func generateCodexHooks(workspaceRoot, hooksDir string) error {
 	// Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
 	script := `#!/bin/bash
 # Codex CLI notify hook - receives JSON as first argument
-# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
+# Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
 PORT="${MCP_LOCAL_PORT:-8081}"
+SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/codex-hook-debug.log"
 PAYLOAD="$1"
 echo "=== Codex hook invoked at $(date) ===" >> "$LOGFILE"
@@ -731,6 +739,7 @@ if [ "$EVENT_TYPE" = "agent-turn-complete" ]; then
     echo "Extracted message: $LAST_MSG" >> "$LOGFILE"
     curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
       -H "Content-Type: application/json" \
+      -H "X-MCP-Secret: $SECRET" \
       -d "{\"agent\":\"codex\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
 else
     echo "Ignoring non-completion event" >> "$LOGFILE"

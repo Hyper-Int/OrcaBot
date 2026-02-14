@@ -1,13 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v6-filesize-guards
+// REVISION: main-v7-localhost-event-auth
 
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,7 +30,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v6-filesize-guards"
+const mainRevision = "main-v7-localhost-event-auth"
 
 const (
 	maxFileSizeBytes     = 50 * 1024 * 1024
@@ -160,19 +161,21 @@ func NewServer(sm *sessions.Manager) *Server {
 }
 
 // MCPLocalHandler returns a handler for the localhost-only MCP server.
-// This server runs on 127.0.0.1 only and requires no authentication.
-// Agents running inside the sandbox can connect to this without tokens.
+// This server runs on 127.0.0.1 only.
+// SECURITY: MCP tool endpoints require pty_id + X-MCP-Secret proof-of-possession.
+// Event endpoints (audio, status, agent-stopped, etc.) validate X-MCP-Secret per-PTY.
 func (s *Server) MCPLocalHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check
 	mux.HandleFunc("GET /health", s.handleHеalth)
 
-	// MCP endpoints - no auth required (localhost only)
-	// Agents can set base URL to http://localhost:8081/sessions/{sessionId}/mcp
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.handleMCPListTооls)
-	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.handleMCPCallTооl)
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.handleMCPListItems)
+	// MCP endpoints - require pty_id + X-MCP-Secret on localhost.
+	// The mcp-bridge always sends these. This prevents arbitrary sandbox processes
+	// from using server-held tokens to call MCP tools.
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.requireLocalMCPAuth(s.handleMCPListTооls))
+	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.requireLocalMCPAuth(s.handleMCPCallTооl))
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.requireLocalMCPAuth(s.handleMCPListItems))
 
 	// Browser control - used by xdg-open script for opening URLs
 	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.handleBrowserOpen)
@@ -180,23 +183,62 @@ func (s *Server) MCPLocalHandler() http.Handler {
 	// Helper endpoint: list sessions (so agents can discover their session)
 	mux.HandleFunc("GET /sessions", s.handleListSessions)
 
-	// Audio playback - allows talkito to emit audio events without auth (localhost only)
+	// Audio playback - allows talkito to emit audio events (localhost only, PTY-authed)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.handleAudioEvent)
 
-	// TTS status - allows talkito to emit TTS config status without auth (localhost only)
+	// TTS status - allows talkito to emit TTS config status (localhost only, PTY-authed)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/status", s.handleTtsStatusEvent)
 
-	// Agent stopped - allows agent stop hooks to notify when agent finishes (localhost only)
+	// Agent stopped - allows agent stop hooks to notify when agent finishes (localhost only, PTY-authed)
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/agent-stopped", s.handleAgentStopped)
 
-	// Tools changed - allows mcp-bridge to notify when MCP tools change (localhost only)
+	// Tools changed - allows mcp-bridge to notify when MCP tools change (localhost only, PTY-authed)
 	// REVISION: tools-changed-v1-restart-prompt
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.handleToolsChanged)
 
-	// PTY scrollback - returns recent terminal output (localhost only, used by stop hooks as fallback)
+	// PTY scrollback - returns recent terminal output (localhost only, PTY-authed)
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.handleScrollback)
 
 	return mux
+}
+
+// requireLocalMCPAuth wraps a handler to require pty_id + X-MCP-Secret on the
+// localhost MCP server. This prevents arbitrary sandbox processes from using
+// server-held tokens (MCPToken, INTERNAL_API_TOKEN) to call MCP tools.
+// The external server (port 8080) uses s.auth.RequireAuthFunc instead.
+func (s *Server) requireLocalMCPAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("sessionId")
+		session := s.getSessiоnOrErrоr(w, sessionID)
+		if session == nil {
+			return
+		}
+
+		ptyID := r.URL.Query().Get("pty_id")
+		if ptyID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79848: pty_id query parameter required on localhost MCP server",
+			})
+			return
+		}
+
+		mcpSecret := r.Header.Get("X-MCP-Secret")
+		storedSecret := session.GetMCPSecret(ptyID)
+		if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79849: Invalid MCP authentication",
+			})
+			return
+		}
+
+		next(w, r)
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -286,20 +328,20 @@ func (s *Server) handleHеalth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-// handleListSessions returns all active sessions (for agent discovery on localhost)
+// handleListSessions returns active session IDs (for agent discovery on localhost).
+// SECURITY: Only exposes session IDs, not dashboard IDs or other metadata,
+// to limit information available to arbitrary localhost processes.
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.sessions.List()
 
 	type sessionInfo struct {
-		ID          string `json:"id"`
-		DashboardID string `json:"dashboard_id,omitempty"`
+		ID string `json:"id"`
 	}
 
 	result := make([]sessionInfo, len(sessions))
 	for i, sess := range sessions {
 		result[i] = sessionInfo{
-			ID:          sess.ID,
-			DashboardID: sess.DashboardID,
+			ID: sess.ID,
 		}
 	}
 
@@ -792,6 +834,27 @@ func (s *Server) handleStatFile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(info)
 }
 
+// validateLocalEventAuth validates the MCP secret for localhost event endpoints.
+// This prevents arbitrary sandbox processes from forging PTY events (e.g., agent-stopped
+// which can trigger control-plane completion callbacks).
+// The MCP secret is available as ORCABOT_MCP_SECRET env var in the PTY process.
+//
+// All PTYs have MCP secrets generated at creation time (session.go CreatePTY/CreatePTYWithToken).
+// If storedSecret is empty, the PTY doesn't exist in memory — reject unconditionally.
+func (s *Server) validateLocalEventAuth(w http.ResponseWriter, session *sessions.Session, ptyId string, r *http.Request) bool {
+	mcpSecret := r.Header.Get("X-MCP-Secret")
+	storedSecret := session.GetMCPSecret(ptyId)
+
+	if storedSecret == "" || mcpSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
+		log.Printf("[event-auth] Rejected event for PTY %s: invalid or missing X-MCP-Secret (storedEmpty=%v, headerEmpty=%v)",
+			ptyId, storedSecret == "", mcpSecret == "")
+		http.Error(w, "E79847: Invalid event authentication", http.StatusForbidden)
+		return false
+	}
+
+	return true
+}
+
 // handleAudioEvent broadcasts an audio event to all WebSocket clients of a PTY
 func (s *Server) handleAudioEvent(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
@@ -800,6 +863,10 @@ func (s *Server) handleAudioEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ptyId := r.PathValue("ptyId")
+	if !s.validateLocalEventAuth(w, session, ptyId, r) {
+		return
+	}
+
 	hub := session.GetHub(ptyId)
 	if hub == nil {
 		http.Error(w, "E79730: PTY not found", http.StatusNotFound)
@@ -839,6 +906,10 @@ func (s *Server) handleTtsStatusEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ptyId := r.PathValue("ptyId")
+	if !s.validateLocalEventAuth(w, session, ptyId, r) {
+		return
+	}
+
 	hub := session.GetHub(ptyId)
 	if hub == nil {
 		http.Error(w, "E79732: PTY not found", http.StatusNotFound)
@@ -884,6 +955,8 @@ func (s *Server) handleTtsStatusEvent(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentStopped broadcasts an agent_stopped event to all WebSocket clients of a PTY.
 // This is called by native stop hooks from agentic coders (Claude Code, Gemini CLI, etc.)
+// SECURITY: Validates MCP secret to prevent forged completion callbacks that could
+// trigger control-plane job completions from arbitrary sandbox processes.
 func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -891,6 +964,10 @@ func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ptyId := r.PathValue("ptyId")
+	if !s.validateLocalEventAuth(w, session, ptyId, r) {
+		return
+	}
+
 	hub := session.GetHub(ptyId)
 	if hub == nil {
 		http.Error(w, "E79734: PTY not found", http.StatusNotFound)
@@ -951,6 +1028,10 @@ func (s *Server) handleToolsChanged(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ptyId := r.PathValue("ptyId")
+	if !s.validateLocalEventAuth(w, session, ptyId, r) {
+		return
+	}
+
 	hub := session.GetHub(ptyId)
 	if hub == nil {
 		http.Error(w, "E79740: PTY not found", http.StatusNotFound)
@@ -1043,6 +1124,10 @@ func (s *Server) handleScrollback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ptyId := r.PathValue("ptyId")
+	if !s.validateLocalEventAuth(w, session, ptyId, r) {
+		return
+	}
+
 	hub := session.GetHub(ptyId)
 	if hub == nil {
 		http.Error(w, "E79736: PTY not found", http.StatusNotFound)

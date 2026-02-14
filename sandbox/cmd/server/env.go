@@ -97,16 +97,18 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	// Only clear and rebuild broker configs when secrets are provided.
 	// This preserves configs when only updating plain env vars.
+	// Use session-scoped clear to avoid clobbering other sessions' configs.
 	if len(req.Secrets) > 0 {
-		sessionBroker.ClearConfigs()
+		sessionBroker.ClearConfigsForSession(session.ID)
 	} else if len(req.Unset) > 0 {
-		// Remove configs for secrets being unset
+		// Remove configs for secrets being unset — session-scoped keys prevent
+		// one session from removing another's broker configs.
 		for _, name := range req.Unset {
-			sessionBroker.RemoveConfig("custom/" + name)
+			sessionBroker.RemoveConfigForSession(broker.ConfigKey(session.ID, "custom/"+name), session.ID)
 			// Also try removing as built-in provider
 			providerName, _ := broker.GetProviderByEnvKey(name)
 			if providerName != "" {
-				sessionBroker.RemoveConfig(providerName)
+				sessionBroker.RemoveConfigForSession(broker.ConfigKey(session.ID, providerName), session.ID)
 			}
 		}
 	}
@@ -127,11 +129,12 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 		if providerSpec != nil {
 			// Built-in provider: use hardcoded config
+			// Broker URL includes session ID for config isolation
 			effectiveEnvVars[secretName] = broker.GetDummyValue(providerName)
-			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://localhost:%d/broker/%s",
-				brokerPort, providerName)
+			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+				brokerPort, session.ID, providerName)
 
-			sessionBroker.SetConfig(providerName, &broker.ProviderConfig{
+			sessionBroker.SetConfig(broker.ConfigKey(session.ID, providerName), &broker.ProviderConfig{
 				Name:          providerName,
 				TargetBaseURL: providerSpec.TargetBaseURL,
 				HeaderName:    providerSpec.HeaderName,
@@ -141,12 +144,13 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 			})
 		} else {
 			// Custom secret: use dynamic domain approval
+			// Broker URL includes session ID for config isolation
 			customID := "custom/" + secretName
 			effectiveEnvVars[secretName] = broker.GetCustomDummyValue(secretName)
-			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://localhost:%d/broker/%s",
-				brokerPort, customID)
+			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+				brokerPort, session.ID, customID)
 
-			sessionBroker.SetConfig(customID, &broker.ProviderConfig{
+			sessionBroker.SetConfig(broker.ConfigKey(session.ID, customID), &broker.ProviderConfig{
 				Name:        customID,
 				SecretValue: config.Value,
 				SessionID:   session.ID,
@@ -160,13 +164,15 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	// Only update approved domains if explicitly provided in the request
 	// nil means "don't change", empty array means "clear all"
+	// Use session-scoped clear to avoid revoking other sessions' approvals.
 	if req.ApprovedDomains != nil {
-		sessionBroker.ClearApprovedDomains()
+		sessionBroker.ClearApprovedDomainsForSession(session.ID)
 		for _, approval := range req.ApprovedDomains {
-			sessionBroker.AddApprovedDomain(approval.SecretName, approval.Domain, &broker.ApprovedDomainConfig{
+			sessionBroker.AddApprovedDomain(session.ID, approval.SecretName, approval.Domain, &broker.ApprovedDomainConfig{
 				Domain:       approval.Domain,
 				HeaderName:   approval.HeaderName,
 				HeaderFormat: approval.HeaderFormat,
+				SessionID:    session.ID,
 			})
 		}
 	}

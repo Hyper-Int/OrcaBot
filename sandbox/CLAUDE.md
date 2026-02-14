@@ -211,6 +211,7 @@ The sandbox implements two layers of defense against LLM secret exfiltration.
 - HTTP server running on `localhost:8082` inside each sandbox
 - API keys are NOT set as env vars (only dummy placeholders)
 - Broker injects real keys when forwarding requests
+- **Session-namespaced**: all configs and approved domains keyed by `sessionID:provider` to isolate terminals sharing a VM
 
 Built-in providers (hardcoded allowlist):
 - Anthropic, OpenAI, Google, Gemini
@@ -218,15 +219,17 @@ Built-in providers (hardcoded allowlist):
 - Groq, Together, Fireworks, Mistral, Cohere, Replicate, Hugging Face
 
 Custom secrets use dynamic domain approval:
-- Route: `/broker/custom/{secretName}?target=https://...`
+- Route: `/broker/{sessionID}/custom/{secretName}?target=https://...`
 - Returns 403 with approval request if domain not in allowlist
 - Owner approves via frontend (out-of-band)
+- Approved domains scoped per-session (two sessions can independently approve the same domain)
 
 Security rules:
 - HTTPS only (except localhost in dev mode)
 - No redirect following to different hosts
 - Auth headers stripped from responses
 - Target host must match provider or approved allowlist
+- Broker URL must include correct session ID — no cross-session access
 
 ### Env Setup Flow
 **File:** `cmd/server/env.go`
@@ -298,8 +301,8 @@ DELETE /sessions/:id/file
 POST   /sessions/:id/upload
 
 ### Broker (session-local, localhost:8082)
-/broker/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
-/broker/custom/{secretName}       # Custom secret with ?target= param
+/broker/{sessionID}/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
+/broker/{sessionID}/custom/{secretName}       # Custom secret with ?target= param
 
 ### Testing Custom Secret Domain Approval
 
@@ -307,12 +310,13 @@ To test the broker requesting permission for an unknown domain:
 
 ```bash
 # Inside the sandbox, make a request with a custom secret to an unapproved domain
-curl -X POST "http://localhost:8082/broker/custom/MY_API_KEY?target=https://api.example.com/v1/chat" \
+# Replace {sessionID} with the actual session ID
+curl -X POST "http://localhost:8082/broker/{sessionID}/custom/MY_API_KEY?target=https://api.example.com/v1/chat" \
   -H "Content-Type: application/json" \
   -d '{"message": "test"}'
 
 # Expected response (403): domain requires approval
-# {"error":"domain_not_approved","domain":"api.example.com","secret":"MY_API_KEY","message":"This domain requires owner approval before the secret can be sent."}
+# {"error":"domain_approval_required","domain":"api.example.com","secret":"MY_API_KEY","message":"This domain requires owner approval before the secret can be sent."}
 
 # The broker will also notify the control plane, creating a pending approval request
 # that appears in the frontend for the dashboard owner to approve.
@@ -332,24 +336,27 @@ Agents run as CLI processes inside PTYs.
 **Agent hooks:** When an agent finishes a turn, a stop hook script calls back to the sandbox
 server which broadcasts `agent_stopped` WebSocket events. Each agent type has its own hook
 configuration format — see `internal/agenthooks/hooks.go`.
+- **All hooks must send `X-MCP-Secret: $ORCABOT_MCP_SECRET` header** — unauthenticated callbacks are rejected (fail-closed)
 
 ### MCP Server (Model Context Protocol)
 
 The sandbox exposes an HTTP-based MCP server at `/sessions/:id/mcp/*`.
+
+**Localhost auth (security-critical):** All localhost MCP requests require `pty_id` query param + `X-MCP-Secret` header matching the secret assigned at PTY creation (`ORCABOT_MCP_SECRET` env var). Requests without valid auth are rejected with 403. This prevents rogue processes in the sandbox from using integration tools.
 
 **Tool categories:**
 1. **Browser/UI tools** — Always available (browser_navigate, screenshot, etc.)
 2. **Integration tools** — Only available when an integration is attached to the terminal
 
 **Integration tool discovery flow:**
-1. MCP client calls `tools/list` (optionally with `?pty_id=` query param)
-2. Sandbox reads `ORCABOT_INTEGRATION_TOKEN` from PTY environment
+1. MCP client calls `tools/list` with `?pty_id=` query param + `X-MCP-Secret` header
+2. Sandbox validates MCP secret, reads `ORCABOT_INTEGRATION_TOKEN` from PTY environment
 3. Sandbox calls `GET /internal/terminals/:ptyId/integrations` on control plane
 4. Control plane verifies PTY token, returns list of attached providers
 5. Sandbox adds tool definitions for each attached provider (gmail_*, github_*, etc.)
 
 **Integration tool call flow:**
-1. MCP client calls `tools/call` with tool name + arguments
+1. MCP client calls `tools/call` with tool name + arguments (+ `pty_id` + `X-MCP-Secret`)
 2. Sandbox forwards to `POST /internal/gateway/:provider/execute` with PTY token
 3. Control plane enforces policy, makes API call, filters response
 4. Sandbox wraps result in MCP content format: `{"content": [{"type": "text", "text": "..."}]}`
@@ -455,7 +462,7 @@ internal/agenthooks/
 
 internal/broker/
   Session-local auth broker for API keys.
-  - secrets_broker.go: HTTP server on localhost:8082, request forwarding with key injection
+  - secrets_broker.go: HTTP server on localhost:8082, session-namespaced config/allowlist, request forwarding with key injection
   - providers.go: Provider specs (URLs, headers, allowlists)
 
 internal/ws/

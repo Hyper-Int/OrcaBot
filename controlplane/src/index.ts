@@ -623,6 +623,10 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
       const volume = await fly.createVolume(volumeName, region, 10);
       volumeId = volume.id;
 
+      if (!env.INTERNAL_API_TOKEN) {
+        console.warn('[warmPool] WARNING: INTERNAL_API_TOKEN is empty — sandbox PTY token verification will reject all tokens (fail-closed)');
+      }
+
       const machineConfig = FlyMachinesClient.buildMachineConfig({
         dashboardId: `warm-${volumeSuffix}`,
         volumeId,

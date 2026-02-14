@@ -12,6 +12,7 @@ NEXT_PUBLIC_API_URL = "https://api.orcabot.com"
 NEXT_PUBLIC_SITE_URL = "https://orcabot.com"
 NEXT_PUBLIC_DEV_MODE_ENABLED = "false"
 NEXT_PUBLIC_OPTIMISTIC_UPDATE = "true"
+NEXT_PUBLIC_TURNSTILE_SITE_KEY = "0x4AAAAAACbqZ3ypo0fIBDAt"
 
 [assets]
 directory = ".open-next/assets"

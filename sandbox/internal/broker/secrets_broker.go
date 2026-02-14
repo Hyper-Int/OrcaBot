@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// REVISION: broker-v2-fix-gemini-baseurl
-const brokerRevision = "broker-v2-fix-gemini-baseurl"
+// REVISION: broker-v4-session-namespaced-keys
+const brokerRevision = "broker-v4-session-namespaced-keys"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
@@ -39,6 +39,7 @@ type ApprovedDomainConfig struct {
 	Domain       string
 	HeaderName   string
 	HeaderFormat string
+	SessionID    string // Session that owns this approval (for scoped cleanup)
 }
 
 // SecretsBroker proxies API requests and injects authentication headers.
@@ -69,19 +70,41 @@ func NewSecretsBroker(port int) *SecretsBroker {
 	}
 }
 
-// SetConfig adds or updates a provider configuration.
-func (b *SecretsBroker) SetConfig(provider string, config *ProviderConfig) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.configs[provider] = config
+// ConfigKey builds a session-namespaced key for the config map.
+// Format: "{sessionID}:{provider}" — ensures session A's "anthropic" config
+// cannot be overwritten by session B's "anthropic" config.
+func ConfigKey(sessionID, provider string) string {
+	return sessionID + ":" + provider
 }
 
-// ClearConfigs removes all provider configurations.
+// SetConfig adds or updates a provider configuration.
+// The key must be a session-namespaced key from ConfigKey().
+func (b *SecretsBroker) SetConfig(key string, config *ProviderConfig) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.configs[key] = config
+}
+
+// ClearConfigs removes provider configurations for a specific session.
+// Only clears configs whose SessionID matches, preserving other sessions' configs.
 // Call this before re-setting configs to ensure deleted secrets are removed.
 func (b *SecretsBroker) ClearConfigs() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.configs = make(map[string]*ProviderConfig)
+}
+
+// ClearConfigsForSession removes only the provider configurations belonging to
+// the given session. This prevents one session's env update from clobbering
+// another session's broker configs in multi-session sandboxes.
+func (b *SecretsBroker) ClearConfigsForSession(sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for key, config := range b.configs {
+		if config.SessionID == sessionID {
+			delete(b.configs, key)
+		}
+	}
 }
 
 // RemoveConfig removes a specific provider configuration.
@@ -92,27 +115,33 @@ func (b *SecretsBroker) RemoveConfig(providerID string) {
 	delete(b.configs, providerID)
 }
 
+// RemoveConfigForSession removes a provider configuration only if it belongs
+// to the given session. Prevents one session from removing another's configs.
+func (b *SecretsBroker) RemoveConfigForSession(providerID, sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if config, exists := b.configs[providerID]; exists && config.SessionID == sessionID {
+		delete(b.configs, providerID)
+	}
+}
+
 // SetOnApprovalNeeded sets the callback for domain approval notifications.
 // The callback receives (sessionID, secretName, domain) so it knows which session to notify.
 func (b *SecretsBroker) SetOnApprovalNeeded(fn func(sessionID, secretName, domain string)) {
 	b.onApprovalNeeded = fn
 }
 
-// SetAllowlist updates the approved domains for custom secrets.
-func (b *SecretsBroker) SetAllowlist(secretName string, domains map[string]*ApprovedDomainConfig) {
-	b.allowlistMu.Lock()
-	defer b.allowlistMu.Unlock()
-	b.allowlist[secretName] = domains
-}
-
 // AddApprovedDomain adds a single approved domain for a custom secret.
-func (b *SecretsBroker) AddApprovedDomain(secretName, domain string, config *ApprovedDomainConfig) {
+// The allowlist key is session-namespaced (sessionID:secretName) to prevent
+// cross-session collisions when two sessions use the same custom secret name.
+func (b *SecretsBroker) AddApprovedDomain(sessionID, secretName, domain string, config *ApprovedDomainConfig) {
 	b.allowlistMu.Lock()
 	defer b.allowlistMu.Unlock()
-	if b.allowlist[secretName] == nil {
-		b.allowlist[secretName] = make(map[string]*ApprovedDomainConfig)
+	key := ConfigKey(sessionID, secretName)
+	if b.allowlist[key] == nil {
+		b.allowlist[key] = make(map[string]*ApprovedDomainConfig)
 	}
-	b.allowlist[secretName][domain] = config
+	b.allowlist[key][domain] = config
 }
 
 // ClearApprovedDomains removes all approved domain configurations.
@@ -123,29 +152,54 @@ func (b *SecretsBroker) ClearApprovedDomains() {
 	b.allowlist = make(map[string]map[string]*ApprovedDomainConfig)
 }
 
+// ClearApprovedDomainsForSession removes only approved domain configurations
+// belonging to the given session. Prevents one session's domain update from
+// revoking another session's approvals.
+func (b *SecretsBroker) ClearApprovedDomainsForSession(sessionID string) {
+	b.allowlistMu.Lock()
+	defer b.allowlistMu.Unlock()
+	for secretName, domains := range b.allowlist {
+		for domain, config := range domains {
+			if config.SessionID == sessionID {
+				delete(domains, domain)
+			}
+		}
+		// Remove the secretName key if no domains remain
+		if len(domains) == 0 {
+			delete(b.allowlist, secretName)
+		}
+	}
+}
+
 // ServeHTTP handles broker proxy requests.
-// URL format: /broker/{provider}/... or /broker/custom/{secretName}?target=...
+// URL format: /broker/{sessionID}/{provider}/... or /broker/{sessionID}/custom/{secretName}?target=...
+// The sessionID in the path is used to look up session-namespaced config keys,
+// preventing cross-session config collisions in multi-session sandboxes.
 func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Parse the path: /broker/{provider}/path or /broker/custom/{secretName}
+	// Parse the path: /broker/{sessionID}/{provider}/path or /broker/{sessionID}/custom/{secretName}
 	path := strings.TrimPrefix(r.URL.Path, "/broker/")
-	parts := strings.SplitN(path, "/", 3)
-	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, `{"error":"invalid_path","message":"E79326: Invalid broker path"}`, http.StatusBadRequest)
+	parts := strings.SplitN(path, "/", 4)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		http.Error(w, `{"error":"invalid_path","message":"E79326: Invalid broker path — expected /broker/{sessionID}/{provider}/..."}`, http.StatusBadRequest)
 		return
 	}
 
+	sessionID := parts[0]
+	// Remaining parts after sessionID
+	providerParts := parts[1:]
+
 	var (
-		providerID   string
+		configKey    string
 		targetURL    string
 		headerName   string
 		headerFormat string
 		secretValue  string
 	)
 
-	if parts[0] == "custom" && len(parts) >= 2 {
-		// Custom secret: /broker/custom/{secretName}?target=https://...
-		secretName := parts[1]
-		providerID = "custom/" + secretName
+	if providerParts[0] == "custom" && len(providerParts) >= 2 {
+		// Custom secret: /broker/{sessionID}/custom/{secretName}?target=https://...
+		secretName := providerParts[1]
+		configKey = ConfigKey(sessionID, "custom/"+secretName)
 
 		targetURL = r.URL.Query().Get("target")
 		if targetURL == "" {
@@ -166,7 +220,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Get secret config first (we need session ID for approval callback)
 		b.mu.RLock()
-		config, exists := b.configs[providerID]
+		config, exists := b.configs[configKey]
 		b.mu.RUnlock()
 		if !exists || config.SecretValue == "" {
 			w.Header().Set("Content-Type", "application/json")
@@ -174,10 +228,9 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		secretValue = config.SecretValue
-		sessionID := config.SessionID
 
-		// Check if domain is approved
-		allowedConfig := b.getApprovedDomainConfig(secretName, domain)
+		// Check if domain is approved (session-scoped lookup)
+		allowedConfig := b.getApprovedDomainConfig(sessionID, secretName, domain)
 		if allowedConfig == nil {
 			// Domain not approved - return 403 with approval request
 			w.Header().Set("Content-Type", "application/json")
@@ -189,8 +242,8 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"message": "This domain requires owner approval before the secret can be sent.",
 			})
 			// Notify owner asynchronously with the session ID from the config
-			if b.onApprovalNeeded != nil && sessionID != "" {
-				go b.onApprovalNeeded(sessionID, secretName, domain)
+			if b.onApprovalNeeded != nil && config.SessionID != "" {
+				go b.onApprovalNeeded(config.SessionID, secretName, domain)
 			}
 			return
 		}
@@ -198,20 +251,21 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		headerFormat = allowedConfig.HeaderFormat
 
 	} else {
-		// Built-in provider: /broker/{provider}/path
-		providerID = parts[0]
+		// Built-in provider: /broker/{sessionID}/{provider}/path
+		providerName := providerParts[0]
+		configKey = ConfigKey(sessionID, providerName)
 		pathRemainder := ""
-		if len(parts) > 1 {
-			pathRemainder = "/" + strings.Join(parts[1:], "/")
+		if len(providerParts) > 1 {
+			pathRemainder = "/" + strings.Join(providerParts[1:], "/")
 		}
 
 		b.mu.RLock()
-		config, exists := b.configs[providerID]
+		config, exists := b.configs[configKey]
 		b.mu.RUnlock()
 
 		if !exists {
 			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, fmt.Sprintf(`{"error":"provider_not_configured","message":"E79330: %s not configured","hint":"Add your API key in Environment Variables"}`, providerID), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf(`{"error":"provider_not_configured","message":"E79330: %s not configured","hint":"Add your API key in Environment Variables"}`, providerName), http.StatusNotFound)
 			return
 		}
 
@@ -230,7 +284,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		secretValue = config.SecretValue
 
 		// Verify target host matches expected (prevent SSRF)
-		if !b.hostAllowed(providerID, targetURL) {
+		if !b.hostAllowed(configKey, targetURL) {
 			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":"host_not_allowed","message":"E79331: Target host does not match provider configuration"}`, http.StatusForbidden)
 			return
@@ -284,7 +338,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(outReq)
 	if err != nil {
-		log.Printf("broker: request failed for %s: %v", providerID, err)
+		log.Printf("broker: request failed for %s: %v", configKey, err)
 		w.Header().Set("Content-Type", "application/json")
 		http.Error(w, `{"error":"upstream_failed","message":"E79333: Request to upstream API failed"}`, http.StatusBadGateway)
 		return
@@ -376,11 +430,13 @@ func (b *SecretsBroker) hostAllowed(providerID string, targetURL string) bool {
 }
 
 // getApprovedDomainConfig returns the approved config for a custom secret domain.
-func (b *SecretsBroker) getApprovedDomainConfig(secretName, domain string) *ApprovedDomainConfig {
+// Uses session-namespaced key to isolate approvals per session.
+func (b *SecretsBroker) getApprovedDomainConfig(sessionID, secretName, domain string) *ApprovedDomainConfig {
 	b.allowlistMu.RLock()
 	defer b.allowlistMu.RUnlock()
 
-	domains, exists := b.allowlist[secretName]
+	key := ConfigKey(sessionID, secretName)
+	domains, exists := b.allowlist[key]
 	if !exists {
 		return nil
 	}

@@ -90,7 +90,7 @@ async function hmacVerify(data: string, signature: string, secret: string): Prom
  * @param sandboxId - Sandbox session ID
  * @param dashboardId - Dashboard ID
  * @param userId - User ID who created the PTY
- * @param secret - Signing secret (INTERNAL_API_TOKEN)
+ * @param secret - Signing secret (INTERNAL_API_TOKEN) - MUST be non-empty
  */
 export async function createPtyToken(
   terminalId: string,
@@ -99,6 +99,13 @@ export async function createPtyToken(
   userId: string,
   secret: string
 ): Promise<string> {
+  // SECURITY: Reject empty secrets to prevent trivially forgeable tokens.
+  // An empty HMAC key still produces valid signatures, so anyone could forge
+  // tokens if the signing secret is missing from the environment.
+  if (!secret) {
+    throw new Error('E79850: Cannot create PTY token: signing secret (INTERNAL_API_TOKEN) is empty');
+  }
+
   const now = Math.floor(Date.now() / 1000);
 
   const header = { alg: ALGORITHM, typ: 'JWT' };
@@ -123,11 +130,22 @@ export async function createPtyToken(
 /**
  * Verify and decode a PTY-scoped token
  * Returns the claims if valid, null if invalid
+ *
+ * SECURITY: Rejects empty secrets to prevent fail-open. If INTERNAL_API_TOKEN
+ * is missing from the environment, all token verification must fail rather than
+ * accepting tokens signed with an empty key.
  */
 export async function verifyPtyToken(
   token: string,
   secret: string
 ): Promise<PtyTokenClaims | null> {
+  // SECURITY: Reject empty secrets. HMAC with empty key still produces valid
+  // signatures, so an attacker could forge tokens if the secret is missing.
+  if (!secret) {
+    console.error('[pty-token] CRITICAL: verifyPtyToken called with empty secret — rejecting all tokens. Check INTERNAL_API_TOKEN env var.');
+    return null;
+  }
+
   const parts = token.split('.');
   if (parts.length !== 3) {
     return null;
