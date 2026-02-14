@@ -12,6 +12,8 @@ export interface Env {
   DASHBOARD: DurableObjectNamespace;
   /** Rate limit counter DO for integration policy enforcement */
   RATE_LIMIT_COUNTER: DurableObjectNamespace;
+  /** ASR WebSocket stream proxy DO (Deepgram relay) */
+  ASR_STREAM: DurableObjectNamespace;
   DRIVE_CACHE?: R2Bucket;
   SANDBOX_URL: string;
   /** Desktop-only: D1 shim HTTP endpoint (e.g. http://127.0.0.1:9001). */

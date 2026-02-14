@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v15-fix-resize-jumping
-console.log(`[canvas] REVISION: canvas-v15-fix-resize-jumping loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v17-stable-resize-sanitization
+console.log(`[canvas] REVISION: canvas-v17-stable-resize-sanitization loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -12,6 +12,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  applyNodeChanges,
   useNodesState,
   useEdgesState,
   BackgroundVariant,
@@ -128,16 +129,21 @@ function itemsToNodes(
       ? item.metadata.color as string
       : undefined;
 
+    const safeSize = {
+      width: Math.max(1, Math.round(item.size.width || 1)),
+      height: Math.max(1, Math.round(item.size.height || 1)),
+    };
+
     return {
       id: nodeId,
       type: item.type,
       position: item.position,
       // React Flow v12 requires width/height on node for drag before measurement
-      width: item.size.width,
-      height: item.size.height,
+      width: safeSize.width,
+      height: safeSize.height,
       data: {
         content: item.content,
-        size: item.size,
+        size: safeSize,
         dashboardId: item.dashboardId,
         itemId: item.id, // Pass actual item ID for API calls
         session, // Pass session to terminal blocks
@@ -180,8 +186,8 @@ function itemsToNodes(
           : undefined,
       },
       style: {
-        width: item.size.width,
-        height: item.size.height,
+        width: safeSize.width,
+        height: safeSize.height,
       },
     };
   });
@@ -322,6 +328,10 @@ export function Canvas({
     return [...baseNodes, ...extraNodes];
   }, []);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const nodesRef = React.useRef<Node[]>(initialNodes);
+  React.useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
   const [edges, , onEdgesChange] = useEdgesState<Edge>([]);
   const edgesToRender = controlledEdges ?? edges;
   const edgesChangeHandler = controlledEdges ? onEdgesChangeProp : onEdgesChange;
@@ -402,21 +412,44 @@ export function Canvas({
   // Handle node changes - apply locally, sync dimensions on resize end
   const handleNodesChange: OnNodesChange = React.useCallback(
     (changes: NodeChange[]) => {
-      changes.forEach((change) => {
+      const sanitizedChanges = changes.map((change) => {
+        if (change.type !== "dimensions" || !change.dimensions) {
+          return change;
+        }
+        const node = nodesRef.current.find((n) => n.id === change.id);
+        const fallbackWidth = Math.max(1, Math.round(node?.measured?.width ?? node?.width ?? 100));
+        const fallbackHeight = Math.max(1, Math.round(node?.measured?.height ?? node?.height ?? 60));
+        const rawWidth = Math.round(change.dimensions.width);
+        const rawHeight = Math.round(change.dimensions.height);
+        const width = Number.isFinite(rawWidth) ? Math.max(1, rawWidth) : fallbackWidth;
+        const height = Number.isFinite(rawHeight) ? Math.max(1, rawHeight) : fallbackHeight;
+        return {
+          ...change,
+          dimensions: {
+            ...change.dimensions,
+            width,
+            height,
+          },
+        };
+      });
+
+      sanitizedChanges.forEach((change) => {
         if (change.type === "select" && change.selected) {
           bringToFront(change.id);
         }
       });
 
-      onNodesChange(changes);
+      const nodesAfterChanges = applyNodeChanges(sanitizedChanges, nodesRef.current);
+      nodesRef.current = nodesAfterChanges;
+      onNodesChange(sanitizedChanges);
 
       // Check for dimension changes (from NodeResizer)
-      changes.forEach((change) => {
+      sanitizedChanges.forEach((change) => {
         if (change.type === "dimensions") {
           // Capture resize start state for undo on first resize event
           if (change.resizing === true && !resizeStartRef.current) {
             isResizingRef.current = true;
-            const node = nodes.find((n) => n.id === change.id);
+            const node = nodesAfterChanges.find((n) => n.id === change.id);
             if (node) {
               const itemId = (node.data as { itemId?: string })?.itemId || node.id;
               resizeStartRef.current = {
@@ -435,7 +468,7 @@ export function Canvas({
 
             if (onItemChange) {
               // Resize ended - sync to server
-              const node = nodes.find((n) => n.id === change.id);
+              const node = nodesAfterChanges.find((n) => n.id === change.id);
               if (node && change.dimensions) {
                 // Use itemId (real ID) for API calls, not node.id (which may be stable key)
                 const itemId = (node.data as { itemId?: string })?.itemId || node.id;
@@ -465,21 +498,16 @@ export function Canvas({
             // Flush any node rebuilds that were deferred during the resize
             if (pendingNodeRebuildRef.current) {
               pendingNodeRebuildRef.current = false;
-              requestAnimationFrame(() => {
-                if (!isDraggingRef.current && !isResizingRef.current) {
-                  rebuildNodes();
-                }
-              });
             }
 
-            if (nodes.find((n) => n.id === change.id)?.type === "terminal") {
+            if (nodesAfterChanges.find((n) => n.id === change.id)?.type === "terminal") {
               terminalRefs.current.get(change.id)?.fit();
             }
           }
         }
       });
     },
-    [onNodesChange, onItemChange, onResizeComplete, nodes, bringToFront, rebuildNodes]
+    [onNodesChange, onItemChange, onResizeComplete, bringToFront, rebuildNodes]
   );
 
   const handleNodeDragStart: OnNodeDrag = React.useCallback(

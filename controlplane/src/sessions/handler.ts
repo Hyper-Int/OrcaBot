@@ -834,7 +834,10 @@ export async function clearWorkspaceDev(
           remainingDirs = dirs.length;
         }
 
-        hasMore = remainingFiles > 0 || remainingDirs > 0;
+        // Only claim hasMore if we actually made progress this batch.
+        // Otherwise the frontend loop spins endlessly on undeletable files.
+        const madeProgress = deletedFiles > 0 || deletedDirs > 0;
+        hasMore = madeProgress && (remainingFiles > 0 || remainingDirs > 0);
       }
     } catch (error) {
       console.error('[clearWorkspaceDev] Failed to list workspace files', error);

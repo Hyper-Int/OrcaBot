@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v4-fix-stablekey-tempid
-const TERMINAL_BLOCK_REVISION = "terminal-block-v4-fix-stablekey-tempid";
+// REVISION: terminal-block-v5-global-secrets
+const TERMINAL_BLOCK_REVISION = "terminal-block-v5-global-secrets";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -771,16 +771,16 @@ export function TerminalBlock({
 
   // Secrets queries and mutations
   const secretsQuery = useQuery({
-    queryKey: ["secrets", data.dashboardId],
-    queryFn: () => listSecrets(data.dashboardId),
-    enabled: activePanel === "secrets" && Boolean(data.dashboardId),
+    queryKey: ["secrets", "_global"],
+    queryFn: () => listSecrets("_global"),
+    enabled: activePanel === "secrets",
     staleTime: 60000,
   });
 
   const createSecretMutation = useMutation({
     mutationFn: createSecret,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
       setNewSecretName("");
       setNewSecretValue("");
     },
@@ -789,24 +789,24 @@ export function TerminalBlock({
   const createEnvVarMutation = useMutation({
     mutationFn: createEnvVar,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
       setNewEnvVarName("");
       setNewEnvVarValue("");
     },
   });
 
   const deleteSecretMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) => deleteSecret(id, data.dashboardId),
+    mutationFn: ({ id }: { id: string }) => deleteSecret(id, "_global"),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
     },
   });
 
   const updateProtectionMutation = useMutation({
     mutationFn: ({ id, brokerProtected }: { id: string; brokerProtected: boolean }) =>
-      updateSecretProtection(id, data.dashboardId, brokerProtected),
+      updateSecretProtection(id, "_global", brokerProtected),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["secrets", data.dashboardId] });
+      queryClient.invalidateQueries({ queryKey: ["secrets", "_global"] });
     },
   });
 
@@ -1774,7 +1774,7 @@ export function TerminalBlock({
     setNewSecretValue("");
     try {
       await createSecretMutation.mutateAsync({
-        dashboardId: data.dashboardId,
+        dashboardId: "_global",
         name,
         value,
       });
@@ -1793,7 +1793,7 @@ export function TerminalBlock({
       setNewSecretName(name);
       setNewSecretValue(value);
     }
-  }, [createSecretMutation, data.dashboardId, newSecretName, newSecretValue, isOwner, session?.id, needsRestartForSecrets]);
+  }, [createSecretMutation, newSecretName, newSecretValue, isOwner, session?.id, needsRestartForSecrets]);
 
   const handleDeleteSecret = React.useCallback(
     async (secret: UserSecret) => {
@@ -1822,7 +1822,7 @@ export function TerminalBlock({
     setNewEnvVarValue("");
     try {
       await createEnvVarMutation.mutateAsync({
-        dashboardId: data.dashboardId,
+        dashboardId: "_global",
         name,
         value,
       });
@@ -1841,7 +1841,7 @@ export function TerminalBlock({
       setNewEnvVarName(name);
       setNewEnvVarValue(value);
     }
-  }, [createEnvVarMutation, data.dashboardId, newEnvVarName, newEnvVarValue, isOwner, session?.id, needsRestartForSecrets]);
+  }, [createEnvVarMutation, newEnvVarName, newEnvVarValue, isOwner, session?.id, needsRestartForSecrets]);
 
   // Border color based on state
   const getBorderColor = () => {

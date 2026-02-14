@@ -19,7 +19,7 @@ import { SandboxClient } from '../sandbox/client';
  * @param userId - User who owns the secrets
  * @param dashboardId - Dashboard ID or '_global' for global secrets
  */
-async function autoApplySecretsToSessions(
+export async function autoApplySecretsToSessions(
   env: Env,
   userId: string,
   dashboardId: string
@@ -236,12 +236,23 @@ export async function createSecret(
     return Response.json({ error: 'E79739: Failed to encrypt secret' }, { status: 500 });
   }
 
-  await env.DB.prepare(
-    `INSERT INTO user_secrets (id, user_id, dashboard_id, name, value, description, type, broker_protected, encrypted_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
-  )
-    .bind(id, userId, effectiveDashboardId, data.name, encryptedValue, description, type, brokerProtected)
-    .run();
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_secrets (id, user_id, dashboard_id, name, value, description, type, broker_protected, encrypted_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), datetime('now'))`
+    )
+      .bind(id, userId, effectiveDashboardId, data.name, encryptedValue, description, type, brokerProtected)
+      .run();
+  } catch (error) {
+    // Unique constraint violation — a secret with this name and type already exists
+    if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+      return Response.json(
+        { error: `E79740: A ${type} named "${data.name}" already exists. Delete it first or use a different name.` },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
 
   const row = await env.DB.prepare(
     `SELECT id, user_id, dashboard_id, name, description, type, broker_protected, created_at, updated_at
