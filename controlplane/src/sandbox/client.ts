@@ -1,12 +1,20 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: sandbox-client-v2-fetch-timeouts
+const sandboxClientRevision = "sandbox-client-v2-fetch-timeouts";
+console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
+
 /**
  * Sandbox Client
  *
  * Communicates with the sandbox server (Go backend running on Fly.io or localhost).
  * This is the control plane's interface to the execution plane.
  */
+
+// Default timeout for sandbox requests. Prevents indefinite hangs when Fly proxy
+// can't route to a machine (Fly-Replay loop to a destroyed machine = PR04 error).
+const SANDBOX_FETCH_TIMEOUT_MS = 15_000;
 
 export interface SandboxSession {
   id: string;
@@ -27,6 +35,17 @@ export class SandboxClient {
     this.token = token || '';
   }
 
+  /** Fetch with an AbortController timeout to prevent indefinite hangs. */
+  private async timedFetch(url: string, init?: RequestInit, timeoutMs = SANDBOX_FETCH_TIMEOUT_MS): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   // Health check (optionally pinned to a specific Fly machine)
   async health(machineId?: string): Promise<boolean> {
     try {
@@ -34,7 +53,7 @@ export class SandboxClient {
       if (machineId) {
         headers['X-Sandbox-Machine-ID'] = machineId;
       }
-      const res = await fetch(`${this.baseUrl}/health`, { headers });
+      const res = await this.timedFetch(`${this.baseUrl}/health`, { headers });
       return res.ok;
     } catch {
       return false;
@@ -71,7 +90,7 @@ export class SandboxClient {
     const fetchUrl = `${this.baseUrl}/sessions`;
     let res: Response;
     try {
-      res = await fetch(fetchUrl, {
+      res = await this.timedFetch(fetchUrl, {
         method: 'POST',
         headers,
         body,
@@ -97,7 +116,7 @@ export class SandboxClient {
     if (machineId) {
       headers.set('X-Sandbox-Machine-ID', machineId);
     }
-    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}`, {
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}`, {
       method: 'DELETE',
       headers,
     });
@@ -153,7 +172,7 @@ export class SandboxClient {
       unset: payload.unset,
       apply_now: payload.applyNow,
     };
-    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/env`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -206,7 +225,7 @@ export class SandboxClient {
     if (shouldSendBody) {
       headers.set('Content-Type', 'application/json');
     }
-    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys`, {
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/ptys`, {
       method: 'POST',
       headers,
       body,
@@ -220,7 +239,7 @@ export class SandboxClient {
   }
 
   async deletePty(sessionId: string, ptyId: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}`, {
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}`, {
       method: 'DELETE',
       headers: this.authHeaders(),
     });
@@ -249,7 +268,7 @@ export class SandboxClient {
     if (executionId) {
       headers.set('X-Execution-ID', executionId);
     }
-    const res = await fetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}/write`, {
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}/write`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ text, execute: execute ?? false }),
