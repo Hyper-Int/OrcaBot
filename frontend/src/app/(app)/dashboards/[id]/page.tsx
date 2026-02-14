@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v43-subscription-paywall
-console.log(`[dashboard] REVISION: dashboard-v43-subscription-paywall loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v46-egress-pending-recovery-polling
+console.log(`[dashboard] REVISION: dashboard-v46-egress-pending-recovery-polling loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -32,6 +32,7 @@ import {
   X,
   Undo2,
   Redo2,
+  Shield,
 } from "lucide-react";
 import {
   GmailIcon,
@@ -78,7 +79,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
-import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive } from "@/lib/api/cloudflare";
+import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive, listPendingEgressApprovals } from "@/lib/api/cloudflare";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -102,6 +103,8 @@ import {
   type BrowserPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
+import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
+import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
 
@@ -401,6 +404,7 @@ export default function DashboardPage() {
   const [isExportDialogOpen, setIsExportDialogOpen] = React.useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = React.useState(false);
   const [isBugReportOpen, setIsBugReportOpen] = React.useState(false);
+  const [isEgressAllowlistOpen, setIsEgressAllowlistOpen] = React.useState(false);
   const [edgePolicyEditor, setEdgePolicyEditor] = React.useState<{
     terminalItemId: string; // dashboard item ID (for edge matching)
     ptyId: string;          // pty ID (for control plane API calls)
@@ -408,6 +412,8 @@ export default function DashboardPage() {
   } | null>(null);
   const [metricsHidden, setMetricsHidden] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
+  const [egressPending, setEgressPending] = React.useState<Array<{domain: string; port: number; request_id: string}>>([]);
+
   const [pendingConnection, setPendingConnection] = React.useState<PendingConnection | null>(null);
   const hasPendingConnection = Boolean(pendingConnection);
   const [connectionCursor, setConnectionCursor] = React.useState<{ x: number; y: number } | null>(null);
@@ -424,6 +430,62 @@ export default function DashboardPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
   const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
+
+  // Recover pending egress approvals after reconnect/reload by polling sandbox state.
+  React.useEffect(() => {
+    if (!isAuthenticated || !isAuthResolved || !dashboardId) {
+      setEgressPending([]);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshPending = async () => {
+      try {
+        const pending = await listPendingEgressApprovals(dashboardId);
+        if (!cancelled) {
+          setEgressPending(pending);
+        }
+      } catch {
+        // Keep current in-memory state when refresh fails.
+      }
+    };
+
+    void refreshPending();
+    const interval = window.setInterval(() => {
+      void refreshPending();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [dashboardId, isAuthenticated, isAuthResolved]);
+
+  // Listen for egress events from terminal WebSockets (dispatched by TerminalWSManager).
+  // Egress events are broadcast on PTY hubs, not the collaboration channel.
+  React.useEffect(() => {
+    const handleNeeded = (e: Event) => {
+      const { domain, port, request_id } = (e as CustomEvent).detail;
+      setEgressPending(prev => {
+        if (prev.some(p => p.request_id === request_id)) return prev;
+        return [...prev, { domain, port, request_id }];
+      });
+      toast.warning(`Network access: ${domain}`, {
+        description: "An agent wants to connect to this domain.",
+        duration: 60000,
+      });
+    };
+    const handleResolved = (e: Event) => {
+      const { request_id } = (e as CustomEvent).detail;
+      setEgressPending(prev => prev.filter(p => p.request_id !== request_id));
+    };
+    window.addEventListener("egress_approval_needed", handleNeeded);
+    window.addEventListener("egress_approval_resolved", handleResolved);
+    return () => {
+      window.removeEventListener("egress_approval_needed", handleNeeded);
+      window.removeEventListener("egress_approval_resolved", handleResolved);
+    };
+  }, []);
 
   // UI Guidance state for Orcabot onboarding
   const uiGuidance = useUIGuidance({
@@ -3280,12 +3342,15 @@ export default function DashboardPage() {
               <Tooltip content="Toggle theme">
                 <ThemeToggle />
               </Tooltip>
-              {/* TODO: Settings button hidden until settings panel is implemented */}
-              {/* <Tooltip content="Settings">
-                <Button variant="ghost" size="icon-sm">
-                  <Settings className="w-4 h-4" />
+              <Tooltip content="Network allowlist">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setIsEgressAllowlistOpen(true)}
+                >
+                  <Shield className="w-4 h-4" />
                 </Button>
-              </Tooltip> */}
+              </Tooltip>
               <Tooltip content="Report a bug">
                 <Button
                   variant="ghost"
@@ -3656,6 +3721,20 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* Egress Allowlist Panel */}
+      <EgressAllowlistPanel
+        dashboardId={dashboardId}
+        open={isEgressAllowlistOpen}
+        onOpenChange={setIsEgressAllowlistOpen}
+      />
+
+      {/* Egress Approval Dialog */}
+      <EgressApprovalDialog
+        dashboardId={dashboardId}
+        pending={egressPending}
+        onResolved={(requestId) => setEgressPending(prev => prev.filter(p => p.request_id !== requestId))}
+      />
 
       {/* Orcabot Chat Panel */}
       <ChatPanel dashboardId={dashboardId} onUICommand={uiGuidance.handleCommand} />

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v7-bridge-wrapper
+// REVISION: session-v9-egress-per-session-opt-in
 
 // Package sessions manages session lifecycle.
 //
@@ -39,10 +39,43 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v7-bridge-wrapper"
+const sessionRevision = "session-v9-egress-per-session-opt-in"
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
+}
+
+// applyEgressProxyEnv injects proxy vars when egress proxy is globally enabled
+// (ORCABOT_EGRESS_PROXY_URL set by main.go) OR when the session has per-session opt-in.
+func applyEgressProxyEnv(envVars map[string]string, sessionEgressEnabled bool) {
+	proxyURL := strings.TrimSpace(os.Getenv("ORCABOT_EGRESS_PROXY_URL"))
+	if proxyURL == "" && sessionEgressEnabled {
+		// Per-session opt-in but global is off — use hardcoded proxy URL
+		// (proxy is always started, just not globally advertised)
+		proxyURL = "http://127.0.0.1:8083"
+	}
+	if proxyURL == "" {
+		delete(envVars, "HTTP_PROXY")
+		delete(envVars, "HTTPS_PROXY")
+		delete(envVars, "http_proxy")
+		delete(envVars, "https_proxy")
+		delete(envVars, "NO_PROXY")
+		delete(envVars, "no_proxy")
+		return
+	}
+	envVars["HTTP_PROXY"] = proxyURL
+	envVars["HTTPS_PROXY"] = proxyURL
+	envVars["http_proxy"] = proxyURL
+	envVars["https_proxy"] = proxyURL
+	envVars["NO_PROXY"] = "localhost,127.0.0.1"
+	envVars["no_proxy"] = "localhost,127.0.0.1"
+}
+
+// SetEgressEnabled enables per-session egress proxy opt-in.
+func (s *Session) SetEgressEnabled(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.egressEnabled = enabled
 }
 
 var (
@@ -110,6 +143,9 @@ type Session struct {
 	// REVISION: server-side-cron-v1-execution-tracking
 	executionIDs   map[string]string // ptyID -> schedule_execution ID
 	executionIDsMu sync.RWMutex
+
+	// Per-session egress proxy opt-in (overrides global EGRESS_PROXY_ENABLED=false)
+	egressEnabled bool
 
 	// Drive sync: per-dashboard bidirectional sync with Google Drive
 	// REVISION: drivesync-v1
@@ -539,6 +575,13 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	envVars["DISPLAY"] = ":0"
 	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
 
+	// REVISION: egress-proxy-v2-pty-env-gated
+	// Only set proxy vars if the egress proxy is globally enabled or this session opted in.
+	s.mu.RLock()
+	egressOn := s.egressEnabled
+	s.mu.RUnlock()
+	applyEgressProxyEnv(envVars, egressOn)
+
 	// Write MCP config to per-PTY files so mcp-bridge can discover them
 	// even when agents (like Codex) don't forward env vars to subprocesses.
 	// REVISION: mcp-files-v4-wrapper-script
@@ -564,12 +607,12 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	// REVISION: mcp-settings-v1-no-overwrite-all
 	userTools := s.fetchUserMCPTools()
 	mcpEnv := map[string]string{
-		"ORCABOT_SESSION_ID":      s.ID,
-		"ORCABOT_MCP_URL":         envVars["ORCABOT_MCP_URL"],
-		"MCP_LOCAL_PORT":           mcpPort,
-		"ORCABOT_PTY_ID":           ptyID,
-		"ORCABOT_MCP_SECRET":       mcpSecret,
-		"ORCABOT_BRIDGE_COMMAND":   filepath.Join(orcabotPtyDir, "run-bridge"),
+		"ORCABOT_SESSION_ID":     s.ID,
+		"ORCABOT_MCP_URL":        envVars["ORCABOT_MCP_URL"],
+		"MCP_LOCAL_PORT":         mcpPort,
+		"ORCABOT_PTY_ID":         ptyID,
+		"ORCABOT_MCP_SECRET":     mcpSecret,
+		"ORCABOT_BRIDGE_COMMAND": filepath.Join(orcabotPtyDir, "run-bridge"),
 	}
 	if agentType != mcp.AgentTypeUnknown {
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
@@ -733,6 +776,13 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		envVars["ORCABOT_INTEGRATION_TOKEN"] = integrationToken
 	}
 
+	// REVISION: egress-proxy-v2-pty-env-gated
+	// Only set proxy vars if the egress proxy is globally enabled or this session opted in.
+	s.mu.RLock()
+	egressOn := s.egressEnabled
+	s.mu.RUnlock()
+	applyEgressProxyEnv(envVars, egressOn)
+
 	// Write MCP config to per-PTY files so mcp-bridge can discover them
 	// even when agents (like Codex) don't forward env vars to subprocesses.
 	// REVISION: mcp-files-v4-wrapper-script
@@ -756,12 +806,12 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
 		mcpEnv := map[string]string{
-			"ORCABOT_SESSION_ID":      s.ID,
-			"ORCABOT_MCP_URL":         envVars["ORCABOT_MCP_URL"],
-			"MCP_LOCAL_PORT":           mcpPort,
-			"ORCABOT_PTY_ID":           ptyID,
-			"ORCABOT_MCP_SECRET":       mcpSecret,
-			"ORCABOT_BRIDGE_COMMAND":   filepath.Join(orcabotPtyDir, "run-bridge"),
+			"ORCABOT_SESSION_ID":     s.ID,
+			"ORCABOT_MCP_URL":        envVars["ORCABOT_MCP_URL"],
+			"MCP_LOCAL_PORT":         mcpPort,
+			"ORCABOT_PTY_ID":         ptyID,
+			"ORCABOT_MCP_SECRET":     mcpSecret,
+			"ORCABOT_BRIDGE_COMMAND": filepath.Join(orcabotPtyDir, "run-bridge"),
 		}
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)

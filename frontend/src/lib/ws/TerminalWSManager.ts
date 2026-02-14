@@ -411,6 +411,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
       case "tools_changed":
         this.notifyToolsChanged(message);
         break;
+
+      case "egress_approval_needed":
+      case "egress_approval_resolved":
+        // Egress events are dashboard-global (broadcast to all hubs).
+        // Dispatch as CustomEvent so the dashboard page can handle them
+        // without threading callbacks through Canvas/TerminalBlock.
+        window.dispatchEvent(new CustomEvent(message.type, { detail: message }));
+        break;
     }
   }
 

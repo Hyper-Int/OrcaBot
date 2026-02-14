@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v7-localhost-event-auth
+// REVISION: main-v12-egress-feature-flag
 
 package main
 
@@ -17,6 +17,7 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,17 +25,18 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v7-localhost-event-auth"
+const mainRevision = "main-v12-egress-feature-flag"
 
 const (
-	maxFileSizeBytes     = 50 * 1024 * 1024
-	maxRecursiveEntries  = 100_000
+	maxFileSizeBytes    = 50 * 1024 * 1024
+	maxRecursiveEntries = 100_000
 )
 
 var errTooManyEntries = errors.New("too many files to list")
@@ -60,6 +62,33 @@ func main() {
 
 	sessionManager := sessions.NewManager()
 	server := NewServer(sessionManager)
+
+	// Start egress proxy (HTTP forward proxy for network access control)
+	egressAllowlist := egress.NewAllowlist()
+	egressProxy := egress.NewEgressProxy(egress.DefaultPort, egressAllowlist)
+	egressProxy.SetApprovalCallback(server.broadcastEgressApproval)
+	egressProxy.SetResolutionCallback(server.broadcastEgressResolution)
+	egressProxy.SetAuditCallback(server.forwardEgressAudit)
+	server.egressProxy = egressProxy
+	egressGlobalEnabled := strings.EqualFold(strings.TrimSpace(os.Getenv("EGRESS_PROXY_ENABLED")), "true")
+	if err := egressProxy.Start(); err != nil {
+		_ = os.Unsetenv("ORCABOT_EGRESS_PROXY_URL")
+		log.Printf("[egress-proxy] WARNING: Failed to start egress proxy: %v (PTY processes will not have HTTP_PROXY)", err)
+	} else {
+		proxyURL := "http://127.0.0.1:8083"
+		if egressGlobalEnabled {
+			_ = os.Setenv("ORCABOT_EGRESS_PROXY_URL", proxyURL)
+			log.Printf("[egress-proxy] Started on port %d (globally enabled)", egress.DefaultPort)
+		} else {
+			_ = os.Unsetenv("ORCABOT_EGRESS_PROXY_URL")
+			log.Printf("[egress-proxy] Started on port %d (globally DISABLED — set EGRESS_PROXY_ENABLED=true or use ?egress=1 to opt in)", egress.DefaultPort)
+		}
+		// Best effort startup hydration. For older machines without DASHBOARD_ID env,
+		// handleCreateSession performs lazy hydration when dashboard_id is provided.
+		if err := server.ensureEgressAllowlistLoaded(strings.TrimSpace(os.Getenv("DASHBOARD_ID"))); err != nil {
+			log.Printf("[egress-proxy] Startup allowlist hydration skipped: %v", err)
+		}
+	}
 
 	httpServer := &http.Server{
 		Addr:    ":" + port,
@@ -121,6 +150,12 @@ func main() {
 		log.Printf("MCP local server shutdown error: %v", err)
 	}
 
+	// Stop egress proxy (deny all pending, close listener)
+	if egressProxy != nil {
+		egressProxy.Stop()
+		log.Println("[egress-proxy] Stopped")
+	}
+
 	// Close all sessions (kills PTYs, agents, cleans up workspaces)
 	sessionManager.Shutdоwn()
 
@@ -131,16 +166,19 @@ func main() {
 }
 
 type Server struct {
-	sessions         *sessions.Manager
-	wsRouter         *ws.Router
-	auth             *auth.Middleware
-	machine          string
-	startedAt        time.Time
-	driveMirror      *drive.Mirror
-	driveSyncMu      sync.Mutex
-	driveSyncActive  map[string]bool
-	mirrorSyncMu     sync.Mutex
-	mirrorSyncActive map[string]bool
+	sessions                   *sessions.Manager
+	wsRouter                   *ws.Router
+	auth                       *auth.Middleware
+	machine                    string
+	startedAt                  time.Time
+	driveMirror                *drive.Mirror
+	driveSyncMu                sync.Mutex
+	driveSyncActive            map[string]bool
+	mirrorSyncMu               sync.Mutex
+	mirrorSyncActive           map[string]bool
+	egressProxy                *egress.EgressProxy
+	egressAllowlistMu          sync.Mutex
+	egressAllowlistDashboardID string
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -320,6 +358,12 @@ func (s *Server) Handler() http.Handler {
 	// Audio playback - broadcasts audio events to PTY WebSocket clients
 	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.auth.RequireAuthFunc(s.requireMachine(s.handleAudioEvent)))
 
+	// Egress proxy management
+	mux.HandleFunc("POST /egress/approve", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressApprove)))
+	mux.HandleFunc("POST /egress/revoke", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressRevoke)))
+	mux.HandleFunc("GET /egress/pending", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressPending)))
+	mux.HandleFunc("GET /egress/allowlist", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressAllowlist)))
+
 	return mux
 }
 
@@ -352,8 +396,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 	// Parse optional dashboard_id and mcp_token from request body
 	var req struct {
-		DashboardID string `json:"dashboard_id"`
-		MCPToken    string `json:"mcp_token"` // Dashboard-scoped token for MCP proxy
+		DashboardID  string `json:"dashboard_id"`
+		MCPToken     string `json:"mcp_token"`      // Dashboard-scoped token for MCP proxy
+		EgressEnabled *bool `json:"egress_enabled"` // Per-session egress proxy opt-in
 	}
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -362,8 +407,15 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 			req.MCPToken = ""
 		}
 	}
+	if err := s.ensureEgressAllowlistLoaded(req.DashboardID); err != nil {
+		log.Printf("[egress-proxy] Allowlist hydration skipped for dashboard %q: %v", req.DashboardID, err)
+	}
 
 	session, err := s.sessions.Create(req.DashboardID, req.MCPToken)
+	if err == nil && req.EgressEnabled != nil && *req.EgressEnabled {
+		session.SetEgressEnabled(true)
+		log.Printf("[egress-proxy] Per-session egress opt-in for session %s", session.ID)
+	}
 	if err != nil {
 		http.Error(w, "E79706: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -374,6 +426,72 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 		"id":         session.ID,
 		"machine_id": s.machine,
 	})
+}
+
+// REVISION: egress-allowlist-v2-load-persisted-domains
+// ensureEgressAllowlistLoaded loads persisted egress allowlist domains from the control plane.
+// Safe to call repeatedly; domains are loaded at most once per dashboard.
+func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
+	dashboardID = strings.TrimSpace(dashboardID)
+	if dashboardID == "" {
+		return errors.New("dashboard id missing")
+	}
+	if s.egressProxy == nil {
+		return errors.New("egress proxy not running")
+	}
+
+	s.egressAllowlistMu.Lock()
+	if s.egressAllowlistDashboardID == dashboardID {
+		s.egressAllowlistMu.Unlock()
+		return nil
+	}
+	s.egressAllowlistMu.Unlock()
+
+	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
+	internalToken := strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
+	if controlplaneURL == "" || internalToken == "" {
+		return errors.New("missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+	}
+
+	url := controlplaneURL + "/internal/dashboards/" + dashboardID + "/egress/allowlist"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body))
+	}
+
+	var payload struct {
+		Domains []string `json:"domains"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	allowlist := s.egressProxy.Allowlist()
+	for _, domain := range payload.Domains {
+		domain = strings.TrimSpace(strings.ToLower(domain))
+		if domain == "" {
+			continue
+		}
+		allowlist.AddUserDomain(domain, "persisted-"+dashboardID)
+	}
+
+	s.egressAllowlistMu.Lock()
+	s.egressAllowlistDashboardID = dashboardID
+	s.egressAllowlistMu.Unlock()
+	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains for dashboard %s", len(payload.Domains), dashboardID)
+	return nil
 }
 
 func (s *Server) handleDeleteSessiоn(w http.ResponseWriter, r *http.Request) {
@@ -421,9 +539,16 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
+		EgressEnabled    *bool  `json:"egress_enabled"`    // Per-session egress proxy opt-in
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
+	}
+
+	// Enable egress proxy for this session if requested (late opt-in for existing sessions)
+	if req.EgressEnabled != nil && *req.EgressEnabled {
+		session.SetEgressEnabled(true)
+		log.Printf("[egress-proxy] Per-session egress opt-in via PTY creation for session %s", r.PathValue("sessionId"))
 	}
 
 	// Use CreatePTYWithToken if pty_id or integration_token or working_dir is provided
@@ -1139,4 +1264,194 @@ func (s *Server) handleScrollback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(text))
+}
+
+// forwardEgressAudit sends runtime egress decisions to the control plane audit log.
+// User decisions are logged by the control plane approve endpoint; here we add the
+// runtime-only decisions (default_allowed and timeout).
+func (s *Server) forwardEgressAudit(event egress.AuditEvent) {
+	if event.Decision != egress.DecisionDefault && event.Decision != egress.DecisionTimeout {
+		return
+	}
+
+	dashboardID := strings.TrimSpace(os.Getenv("DASHBOARD_ID"))
+	if dashboardID == "" {
+		s.egressAllowlistMu.Lock()
+		dashboardID = s.egressAllowlistDashboardID
+		s.egressAllowlistMu.Unlock()
+	}
+	if dashboardID == "" {
+		return
+	}
+
+	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
+	internalToken := strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
+	if controlplaneURL == "" || internalToken == "" {
+		return
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"domain":   event.Domain,
+		"port":     event.Port,
+		"decision": event.Decision,
+	})
+	if err != nil {
+		return
+	}
+
+	url := controlplaneURL + "/internal/dashboards/" + dashboardID + "/egress/audit"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", internalToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[egress-audit] failed to post audit event %s %s:%d: %v", event.Decision, event.Domain, event.Port, err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		log.Printf("[egress-audit] control plane returned %d for %s %s:%d: %s", resp.StatusCode, event.Decision, event.Domain, event.Port, string(respBody))
+	}
+}
+
+// broadcastEgressApproval broadcasts an egress approval request to all connected WebSocket clients.
+// Called by the egress proxy when a connection to an unknown domain is held.
+// REVISION: egress-proxy-v1-broadcast
+func (s *Server) broadcastEgressApproval(req egress.ApprovalRequest) {
+	event, _ := json.Marshal(map[string]interface{}{
+		"type":       "egress_approval_needed",
+		"domain":     req.Domain,
+		"port":       req.Port,
+		"request_id": req.RequestID,
+	})
+
+	// Broadcast to ALL hubs across all sessions so all dashboard viewers see it
+	for _, session := range s.sessions.List() {
+		for _, ptyInfo := range session.ListPTYs() {
+			hub := session.GetHub(ptyInfo.ID)
+			if hub != nil {
+				hub.BroadcastRawJSON(event)
+			}
+		}
+	}
+}
+
+// broadcastEgressResolution broadcasts an egress approval resolution to all connected clients.
+// Called by the egress proxy when a held request resolves (approve/deny/timeout).
+func (s *Server) broadcastEgressResolution(res egress.ApprovalResolution) {
+	event, _ := json.Marshal(map[string]interface{}{
+		"type":       "egress_approval_resolved",
+		"domain":     res.Domain,
+		"port":       res.Port,
+		"request_id": res.RequestID,
+		"decision":   res.Decision,
+	})
+
+	for _, session := range s.sessions.List() {
+		for _, ptyInfo := range session.ListPTYs() {
+			hub := session.GetHub(ptyInfo.ID)
+			if hub != nil {
+				hub.BroadcastRawJSON(event)
+			}
+		}
+	}
+}
+
+// handleEgressApprove delivers a user decision for a held egress connection.
+// Called by the control plane after the user responds to the approval dialog.
+func (s *Server) handleEgressApprove(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Domain    string `json:"domain"`
+		RequestID string `json:"request_id"`
+		Decision  string `json:"decision"` // "allow_once", "allow_always", "deny"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79860: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Domain == "" || req.RequestID == "" || req.Decision == "" {
+		http.Error(w, "E79861: domain, request_id, and decision required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Decision != egress.DecisionAllowOnce && req.Decision != egress.DecisionAllowAlways && req.Decision != egress.DecisionDeny {
+		http.Error(w, "E79862: invalid decision value", http.StatusBadRequest)
+		return
+	}
+
+	if s.egressProxy == nil {
+		http.Error(w, "E79863: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+
+	resolved := s.egressProxy.Resolve(req.RequestID, req.Domain, req.Decision)
+	if !resolved {
+		http.Error(w, "E79864: no pending approval for request_id/domain", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEgressRevoke removes a domain from the runtime allowlist.
+// Called by the control plane when a user revokes an always-allowed domain.
+func (s *Server) handleEgressRevoke(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79865: Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Domain == "" {
+		http.Error(w, "E79866: domain required", http.StatusBadRequest)
+		return
+	}
+	if s.egressProxy == nil {
+		http.Error(w, "E79867: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+	s.egressProxy.Allowlist().RemoveUserDomain(req.Domain)
+	log.Printf("[egress] Revoked domain from runtime allowlist: %s", req.Domain)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEgressPending returns the list of currently pending egress approvals.
+func (s *Server) handleEgressPending(w http.ResponseWriter, r *http.Request) {
+	if s.egressProxy == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"pending": []interface{}{}})
+		return
+	}
+
+	pending := s.egressProxy.PendingApprovals()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"pending": pending})
+}
+
+// handleEgressAllowlist returns the current egress allowlist (default + user-approved domains).
+func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
+	if s.egressProxy == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"defaults": []string{},
+			"user":     map[string]string{},
+		})
+		return
+	}
+
+	al := s.egressProxy.Allowlist()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"defaults": al.DefaultPatterns(),
+		"user":     al.UserDomains(),
+	})
 }

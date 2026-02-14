@@ -253,6 +253,30 @@ export interface ToolsChangedEvent {
 }
 
 /**
+ * Egress approval needed event (server -> client)
+ * Broadcast to all terminal WebSockets when the egress proxy holds
+ * a connection to an unknown domain pending user approval.
+ */
+export interface EgressApprovalNeededEvent {
+  type: "egress_approval_needed";
+  domain: string;
+  port: number;
+  request_id: string;
+}
+
+/**
+ * Egress approval resolved event (server -> client)
+ * Broadcast when a held connection is approved, denied, or times out.
+ */
+export interface EgressApprovalResolvedEvent {
+  type: "egress_approval_resolved";
+  domain: string;
+  port: number;
+  request_id: string;
+  decision: string;
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -269,4 +293,6 @@ export type IncomingControlEvent =
   | TalkitoNoticeEvent
   | AgentStoppedEvent
   | CwdChangedEvent
-  | ToolsChangedEvent;
+  | ToolsChangedEvent
+  | EgressApprovalNeededEvent
+  | EgressApprovalResolvedEvent;

@@ -75,6 +75,9 @@ export default function RootLayout({
                       document.documentElement.classList.add('dark');
                     }
                   }
+                  if (new URLSearchParams(window.location.search).get('egress') === '1') {
+                    localStorage.setItem('orcabot_egress_enabled', '1');
+                  }
                 } catch (e) {}
               })();
             `,

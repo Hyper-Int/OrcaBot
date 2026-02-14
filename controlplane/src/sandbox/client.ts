@@ -68,8 +68,8 @@ export class SandboxClient {
   }
 
   // Session management
-  // REVISION: fly-provisioning-v1-createSession-machineId
-  async createSessiоn(dashboardId?: string, mcpToken?: string, machineId?: string): Promise<SandboxSession> {
+  // REVISION: fly-provisioning-v2-egress-opt-in
+  async createSessiоn(dashboardId?: string, mcpToken?: string, machineId?: string, egressEnabled?: boolean): Promise<SandboxSession> {
     const headers = new Headers(this.authHeaders());
     let body: string | undefined;
 
@@ -78,12 +78,13 @@ export class SandboxClient {
       headers.set('X-Sandbox-Machine-ID', machineId);
     }
 
-    // Pass dashboard_id and mcp_token to sandbox so it can proxy MCP calls
-    if (dashboardId || mcpToken) {
+    // Pass dashboard_id, mcp_token, and egress opt-in to sandbox
+    if (dashboardId || mcpToken || egressEnabled) {
       headers.set('Content-Type', 'application/json');
       body = JSON.stringify({
         dashboard_id: dashboardId,
         mcp_token: mcpToken, // Scoped token for MCP proxy calls
+        ...(egressEnabled ? { egress_enabled: true } : {}),
       });
     }
 
@@ -201,9 +202,11 @@ export class SandboxClient {
       workingDir?: string;
       // Schedule execution ID — set at creation time so callback is in place before process starts
       executionId?: string;
+      // Per-session egress proxy opt-in
+      egressEnabled?: boolean;
     }
   ): Promise<SandboxPty> {
-    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir || options?.executionId);
+    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir || options?.executionId || options?.egressEnabled);
     const body = shouldSendBody
       ? JSON.stringify({
           creator_id: creatorId,
@@ -216,6 +219,8 @@ export class SandboxClient {
           working_dir: options?.workingDir,
           // Execution ID for schedule tracking — stored before process starts
           execution_id: options?.executionId,
+          // Egress proxy opt-in (enables proxy for entire session)
+          ...(options?.egressEnabled ? { egress_enabled: true } : {}),
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
@@ -279,4 +284,5 @@ export class SandboxClient {
       throw new Error(`Failed to write to PTY: ${res.status}`);
     }
   }
+
 }

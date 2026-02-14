@@ -2048,7 +2048,9 @@ export function TerminalBlock({
 
     try {
       console.log(`[TerminalBlock] Creating session...`);
-      const newSession = await createSession(data.dashboardId, actualItemId);
+      const egressEnabled = localStorage.getItem("orcabot_egress_enabled") === "1"
+        || new URLSearchParams(window.location.search).get("egress") === "1";
+      const newSession = await createSession(data.dashboardId, actualItemId, egressEnabled ? { egressEnabled: true } : undefined);
       console.log(`[TerminalBlock] Session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
@@ -2117,7 +2119,9 @@ export function TerminalBlock({
 
       // Create new session
       console.log(`[TerminalBlock] Creating new session...`);
-      const newSession = await createSession(data.dashboardId, actualItemId);
+      const egressEnabled = localStorage.getItem("orcabot_egress_enabled") === "1"
+        || new URLSearchParams(window.location.search).get("egress") === "1";
+      const newSession = await createSession(data.dashboardId, actualItemId, egressEnabled ? { egressEnabled: true } : undefined);
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);

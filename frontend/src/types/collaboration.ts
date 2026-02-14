@@ -257,6 +257,29 @@ export interface InboundMessageMessage {
 }
 
 /**
+ * Egress approval needed (server -> client via sandbox broadcast)
+ * Shown when the egress proxy holds a connection to an unknown domain.
+ */
+export interface EgressApprovalNeededMessage {
+  type: "egress_approval_needed";
+  domain: string;
+  port: number;
+  request_id: string;
+}
+
+/**
+ * Egress approval resolved (server -> client via sandbox broadcast)
+ * Sent when a held connection is approved or denied.
+ */
+export interface EgressApprovalResolvedMessage {
+  type: "egress_approval_resolved";
+  domain: string;
+  port: number;
+  request_id: string;
+  decision: string;
+}
+
+/**
  * All incoming collaboration messages
  */
 export type IncomingCollabMessage =
@@ -279,7 +302,9 @@ export type IncomingCollabMessage =
   | TaskUpdateMessage
   | TaskDeleteMessage
   | MemoryUpdateMessage
-  | InboundMessageMessage;
+  | InboundMessageMessage
+  | EgressApprovalNeededMessage
+  | EgressApprovalResolvedMessage;
 
 /**
  * All outgoing collaboration messages

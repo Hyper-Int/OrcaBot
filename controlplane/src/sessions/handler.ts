@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v12-fix-unreachable-sandbox-reprovision
-const sessionsRevision = "sessions-v12-fix-unreachable-sandbox-reprovision";
+// REVISION: sessions-v13-set-dashboard-id-env
+const sessionsRevision = "sessions-v13-set-dashboard-id-env";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -350,18 +350,19 @@ async function ensureDashbоardSandbоxCreate(
   env: EnvWithDriveCache,
   dashboardId: string,
   flyProvisioningEnabled: boolean,
-  preferredRegion?: string
+  preferredRegion?: string,
+  egressEnabled?: boolean
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
   const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
 
   if (flyProvisioningEnabled) {
-    return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now, preferredRegion);
+    return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now, preferredRegion, egressEnabled);
   }
 
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
-  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, undefined, egressEnabled);
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
     VALUES (?, ?, ?, ?)
@@ -406,12 +407,13 @@ async function provisionDedicatedMachine(
   sandbox: SandboxClient,
   mcpToken: string,
   now: string,
-  preferredRegion?: string
+  preferredRegion?: string,
+  egressEnabled?: boolean
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
 
   // Try warm pool first (instant provisioning)
-  const warmResult = await claimWarmMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion);
+  const warmResult = await claimWarmMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion, egressEnabled);
   if (warmResult) return warmResult;
 
   // Fall back to cold provisioning
@@ -428,7 +430,8 @@ async function claimWarmMachine(
   sandbox: SandboxClient,
   mcpToken: string,
   now: string,
-  preferredRegion?: string
+  preferredRegion?: string,
+  egressEnabled?: boolean
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | null> {
   // Claim a warm machine: prefer one in the user's region, fall back to any available
   let warm: { machine_id: string; volume_id: string } | null = null;
@@ -470,7 +473,7 @@ async function claimWarmMachine(
     }
 
     // Create sandbox session pinned to this machine
-    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
+    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);
 
     // Clean up lost+found (ext4 creates this on new volumes)
     try {
@@ -560,6 +563,7 @@ async function coldProvisionMachine(
         SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
         INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN,
+        DASHBOARD_ID: dashboardId,
         ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
       },
     });
@@ -571,7 +575,7 @@ async function coldProvisionMachine(
     await fly.waitForState(machineId, 'started', 90);
 
     // Step 4: Create sandbox session pinned to the new machine
-    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
+    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);
 
     // Step 4b: Clean up lost+found (ext4 creates this on new volumes)
     try {
@@ -965,7 +969,8 @@ export async function createSessiоn(
   itemId: string,
   userId: string,
   userName: string,
-  preferredRegion?: string
+  preferredRegion?: string,
+  egressEnabled?: boolean
 ): Promise<Response> {
   // Check access
   const access = await env.DB.prepare(`
@@ -1058,6 +1063,7 @@ export async function createSessiоn(
           ptyId,
           integrationToken,
           workingDir,
+          egressEnabled,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1065,6 +1071,7 @@ export async function createSessiоn(
           pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
             ptyId,
             integrationToken,
+            egressEnabled,
           });
         } else {
           throw wdErr;
@@ -1091,7 +1098,7 @@ export async function createSessiоn(
       // Create fresh sandbox session (uses Fly provisioning if enabled)
       const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
         && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
-      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
+      const freshResult = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion, egressEnabled);
       sandboxSessionId = freshResult.sandboxSessionId;
       sandboxMachineId = freshResult.sandboxMachineId;
 
@@ -1108,6 +1115,7 @@ export async function createSessiоn(
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken: freshIntegrationToken,
+        egressEnabled,
       });
     }
 

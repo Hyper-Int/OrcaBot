@@ -170,33 +170,41 @@ func (c *Controller) Start() (Status, error) {
 	chromiumCmd.Env = env
 
 	processes := []*exec.Cmd{xvfbCmd, vncCmd, websockifyCmd, chromiumCmd}
+	killAll := func() {
+		for _, cmd := range processes {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		}
+	}
 	for i, cmd := range processes {
 		log.Printf("browser starting %s", cmd.Path)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Start(); err != nil {
 			log.Printf("browser failed to start %s: %v", cmd.Path, err)
-			for _, started := range processes {
-				if started.Process != nil {
-					_ = started.Process.Kill()
-				}
-			}
+			killAll()
 			return Status{}, err
 		}
 		if i == 0 {
-			time.Sleep(200 * time.Millisecond)
+			// Wait for Xvfb to be ready before starting x11vnc
+			time.Sleep(500 * time.Millisecond)
 		}
+	}
+
+	// Wait for x11vnc's VNC port — websockify proxies to it on each client connect.
+	// Without this, the frontend gets "Connection refused" if x11vnc is slow to start.
+	if !waitForPort(vncPort, 10*time.Second) {
+		log.Printf("browser x11vnc port %d did not open", vncPort)
+		killAll()
+		return Status{}, fmt.Errorf("browser vnc server failed to start")
 	}
 
 	if !waitForPort(wsPort, 20*time.Second) {
 		log.Printf("browser websockify port %d did not open (retrying)", wsPort)
 		if !waitForPort(wsPort, 10*time.Second) {
 			log.Printf("browser websockify port %d did not open", wsPort)
-			for _, started := range processes {
-				if started.Process != nil {
-					_ = started.Process.Kill()
-				}
-			}
+			killAll()
 			return Status{}, fmt.Errorf("browser proxy failed to start")
 		}
 	}
