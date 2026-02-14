@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v3-ptyid-session
-const TERMINAL_BLOCK_REVISION = "terminal-block-v3-ptyid-session";
+// REVISION: terminal-block-v4-fix-stablekey-tempid
+const TERMINAL_BLOCK_REVISION = "terminal-block-v4-fix-stablekey-tempid";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -2005,7 +2005,10 @@ export function TerminalBlock({
     prevDraggingRef.current = dragging;
   }, [selected, dragging, id, overlay?.bringToFront]);
 
-  const isTempId = id.startsWith("temp-");
+  // Use data.itemId (actual database ID) — the React Flow node `id` may be
+  // a stable key like "temp-xxx" that persists even after the real ID arrives.
+  const actualItemId = data.itemId || id;
+  const isTempId = actualItemId.startsWith("temp-");
 
   // Auto-connect when terminal is ready and no session exists
   const hasAutoConnectedRef = React.useRef(false);
@@ -2028,7 +2031,7 @@ export function TerminalBlock({
 
   // Create session handler
   const handleConnect = async () => {
-    console.log(`[TerminalBlock] handleConnect called - dashboardId: ${data.dashboardId}, itemId: ${id}`);
+    console.log(`[TerminalBlock] handleConnect called - dashboardId: ${data.dashboardId}, itemId: ${actualItemId}`);
 
     if (isTempId) {
       console.log("[TerminalBlock] Skipping connect for temporary item id.");
@@ -2045,7 +2048,7 @@ export function TerminalBlock({
 
     try {
       console.log(`[TerminalBlock] Creating session...`);
-      const newSession = await createSession(data.dashboardId, id);
+      const newSession = await createSession(data.dashboardId, actualItemId);
       console.log(`[TerminalBlock] Session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
@@ -2114,7 +2117,7 @@ export function TerminalBlock({
 
       // Create new session
       console.log(`[TerminalBlock] Creating new session...`);
-      const newSession = await createSession(data.dashboardId, id);
+      const newSession = await createSession(data.dashboardId, actualItemId);
       console.log(`[TerminalBlock] New session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
@@ -2138,7 +2141,7 @@ export function TerminalBlock({
     } finally {
       setIsCreatingSession(false);
     }
-  }, [data.dashboardId, isReady, session, id, stopSession, markSessionStopped, upsertDashboardSession]);
+  }, [data.dashboardId, isReady, session, actualItemId, stopSession, markSessionStopped, upsertDashboardSession]);
 
   // Show connected message when WebSocket connects
   React.useEffect(() => {

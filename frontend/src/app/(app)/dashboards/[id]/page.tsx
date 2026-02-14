@@ -580,13 +580,32 @@ export default function DashboardPage() {
       return failureCount < 3;
     },
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
-    // Filter out recently deleted items from refetch results to prevent ghost reappearance
+    // Post-process refetched data:
+    // 1. Filter out recently deleted items to prevent ghost reappearance
+    // 2. Preserve _stableKey from existing cache so node IDs stay consistent across refetches
     select: (fetchedData) => {
       const deleted = recentlyDeletedItemsRef.current;
-      if (deleted.size === 0) return fetchedData;
+      // Build map of existing _stableKey values from current cache
+      const existing = queryClient.getQueryData<{
+        items: DashboardItem[];
+      }>(["dashboard", dashboardId]);
+      const stableKeys = new Map<string, string>();
+      if (existing?.items) {
+        for (const item of existing.items) {
+          if (item._stableKey) {
+            stableKeys.set(item.id, item._stableKey);
+          }
+        }
+      }
+      const items = fetchedData.items
+        .filter((item: DashboardItem) => !deleted.has(item.id))
+        .map((item: DashboardItem) => {
+          const sk = stableKeys.get(item.id);
+          return sk ? { ...item, _stableKey: sk } : item;
+        });
       return {
         ...fetchedData,
-        items: fetchedData.items.filter((item: DashboardItem) => !deleted.has(item.id)),
+        items,
         sessions: fetchedData.sessions.filter((session: Session) => !deleted.has(session.itemId)),
         edges: fetchedData.edges.filter(
           (edge: DashboardEdge) => !deleted.has(edge.sourceItemId) && !deleted.has(edge.targetItemId)
@@ -996,6 +1015,13 @@ export default function DashboardPage() {
         }
         return;
       }
+
+      // Track this item so the WebSocket echo doesn't trigger a refetch
+      // (which would lose the _stableKey and cause the node to remount)
+      recentlyCreatedItemsRef.current.add(createdItem.id);
+      setTimeout(() => {
+        recentlyCreatedItemsRef.current.delete(createdItem.id);
+      }, 2000);
 
       queryClient.setQueryData(
         ["dashboard", dashboardId],
