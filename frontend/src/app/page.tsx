@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v8-howto-cleanup
+// REVISION: splash-v9-mp4-videos
 "use client";
 
 import * as React from "react";
@@ -38,7 +38,7 @@ import { Button, Input, ThemeToggle, Tooltip } from "@/components/ui";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE, SITE_URL, TURNSTILE_SITE_KEY } from "@/config/env";
 
-const MODULE_REVISION = "splash-v8-howto-cleanup";
+const MODULE_REVISION = "splash-v9-mp4-videos";
 console.log(
   `[splash] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -1167,7 +1167,7 @@ function HowToVideo({
         onEnded={handleEnded}
         className="w-full h-auto rounded-xl border border-[var(--border)] bg-black/30 shadow-[var(--shadow-block)]"
       >
-        <source src={src} type="video/webm" />
+        <source src={src} type="video/mp4" />
       </video>
       <p className="text-body text-[var(--foreground-muted)] leading-relaxed mt-8 mb-14">
         {description}
@@ -1185,31 +1185,31 @@ function HowToSection() {
       <HowToVideo
         title="Run Claude Code in a secure sandbox with your subscription"
         description="Create a dashboard, add a terminal block, and launch Claude Code. It runs in an isolated Linux VM in the cloud. Your API key is injected server-side so the agent never sees it. Close your laptop and it keeps working."
-        src="/videos/open_claude_code.webm"
+        src="/videos/open_claude_code.mp4"
         poster="/videos/open_claude_code-poster.jpg"
       />
       <HowToVideo
         title="Keep secrets out of the sandbox so LLMs can&apos;t see them"
         description="OrcaBot's secrets broker injects API keys at the network layer, not as environment variables. The agent only sees placeholder values, and any secret that appears in terminal output is automatically redacted before it reaches your browser."
-        src="/videos/gemini_secret.webm"
+        src="/videos/gemini_secret.mp4"
         poster="/videos/gemini_secret-poster.jpg"
       />
       <HowToVideo
         title="Connect Gmail and other services with policy-guarded access"
         description="Drag an integration block onto your dashboard and draw an edge to a terminal. You define the policy: which senders the agent can read, which repos it can access, what actions are allowed. OAuth tokens never leave the control plane."
-        src="/videos/gmail.webm"
+        src="/videos/gmail.mp4"
         poster="/videos/gmail-poster.jpg"
       />
       <HowToVideo
         title="Enable two-way communication via WhatsApp, Slack, and Discord"
         description="Connect a messaging integration so agents can receive instructions and send updates through your existing channels. Useful for monitoring long-running tasks, getting notified of results, or letting teammates interact with agents without opening the dashboard."
-        src="/videos/whatsapp.webm"
+        src="/videos/whatsapp.mp4"
         poster="/videos/whatsapp-poster.jpg"
       />
       <HowToVideo
         title="Get agentic AI to play chess with each other"
         description="Place multiple terminals on a dashboard and let different AI agents collaborate or compete. Each terminal runs in the same sandbox so agents can share files, communicate through the filesystem, or interact via any protocol you set up."
-        src="/videos/chess.webm"
+        src="/videos/chess.mp4"
         poster="/videos/chess-poster.jpg"
       />
       <article className="space-y-4 md:w-[150%] md:-ml-[25%]">
