@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v10-geo-warm-pool
-const sessionsRevision = "sessions-v10-geo-warm-pool";
+// REVISION: sessions-v12-fix-unreachable-sandbox-reprovision
+const sessionsRevision = "sessions-v12-fix-unreachable-sandbox-reprovision";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -279,25 +279,62 @@ export async function ensureDashbоardSandbоx(
       }
     }
 
-    // Validate session still exists on sandbox (may be stale after redeploy)
-    const checkRes = await sandboxFetch(
-      env,
-      `/sessions/${existingSandbox.sandbox_session_id}/ptys`,
-      { machineId: existingSandbox.sandbox_machine_id || undefined }
-    );
+    // Validate session still exists on sandbox (may be stale after redeploy).
+    // Only a definitive 404 (session gone) triggers cleanup. Transient errors
+    // (network flap, 502, timeout) return existing info — the caller's createPty
+    // stale-session catch will handle true failures, and a retry will re-check.
+    try {
+      const checkRes = await sandboxFetch(
+        env,
+        `/sessions/${existingSandbox.sandbox_session_id}/ptys`,
+        { machineId: existingSandbox.sandbox_machine_id || undefined }
+      );
 
-    if (checkRes.ok) {
-      return {
-        sandboxSessionId: existingSandbox.sandbox_session_id,
-        sandboxMachineId: existingSandbox.sandbox_machine_id || '',
-      };
+      if (checkRes.ok) {
+        return {
+          sandboxSessionId: existingSandbox.sandbox_session_id,
+          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
+        };
+      }
+
+      if (checkRes.status === 404) {
+        // Session definitively gone (sandbox process restarted, lost in-memory state)
+        console.log(`[ensureDashboardSandbox] Session ${existingSandbox.sandbox_session_id} not found on sandbox (404), clearing for reprovision`);
+        await env.DB.prepare(`
+          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+        `).bind(dashboardId).run();
+        // Fall through to create new sandbox below
+      } else {
+        // Non-404 error (502, 503, etc.) — could be transient; return existing info
+        // rather than destroying the sandbox record and forcing a full reprovision
+        console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status}, returning existing sandbox (may be transient)`);
+        return {
+          sandboxSessionId: existingSandbox.sandbox_session_id,
+          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
+        };
+      }
+    } catch (fetchErr) {
+      // Timeout (AbortError) means the sandbox is completely unreachable — the Fly
+      // machine is likely gone (destroyed, replaced by deployment, or Fly proxy PR04).
+      // Waiting longer won't help. Delete the stale record and reprovision.
+      const isTimeout = fetchErr instanceof Error &&
+        (fetchErr.name === 'AbortError' || fetchErr.message.includes('The operation was aborted'));
+      if (isTimeout) {
+        console.warn(`[ensureDashboardSandbox] Session validation timed out — sandbox unreachable, clearing for reprovision`);
+        await env.DB.prepare(`
+          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+        `).bind(dashboardId).run();
+        // Fall through to create new sandbox below
+      } else {
+        // Non-timeout error (e.g. connection reset) — could be transient.
+        // Return existing info; caller's createPty will retry or fail.
+        console.warn(`[ensureDashboardSandbox] Session validation threw: ${fetchErr instanceof Error ? fetchErr.message : fetchErr}`);
+        return {
+          sandboxSessionId: existingSandbox.sandbox_session_id,
+          sandboxMachineId: existingSandbox.sandbox_machine_id || '',
+        };
+      }
     }
-
-    // Session is stale - clear it so a fresh one is created below
-    console.log(`Stale sandbox session detected in ensureDashboardSandbox (${existingSandbox.sandbox_session_id}), clearing`);
-    await env.DB.prepare(`
-      DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(dashboardId).run();
   }
 
   // ── Create new sandbox ───────────────────────────────────────────
@@ -988,17 +1025,17 @@ export async function createSessiоn(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir } = terminalConfig;
-    const existingSandbox = await getDashbоardSandbоx(env, dashboardId);
-    let sandboxSessionId = existingSandbox?.sandbox_session_id || '';
-    let sandboxMachineId = existingSandbox?.sandbox_machine_id || '';
 
-    if (!sandboxSessionId) {
-      const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
-        && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
-      const created = await ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
-      sandboxSessionId = created.sandboxSessionId;
-      sandboxMachineId = created.sandboxMachineId;
+    // Use ensureDashboardSandbox which checks machine health via Fly API,
+    // handles destroyed machines (FlyMachineNotFoundError → reprovision),
+    // and validates the session is still reachable on the sandbox.
+    const sandboxResult = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
+    if (sandboxResult instanceof Response) {
+      // Access denied or other error — clean up the creating session record
+      await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
+      return sandboxResult;
     }
+    let { sandboxSessionId, sandboxMachineId } = sandboxResult;
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
     // If the session is stale (sandbox redeployed), clear it and create a fresh one
@@ -1014,19 +1051,39 @@ export async function createSessiоn(
 
     let pty: { id: string };
     try {
-      pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
-        ptyId,
-        integrationToken,
-        workingDir,
-      });
+      // Inner try: handle working directory not found (E79708) — fall back to workspace root.
+      // This happens when reopening an old dashboard whose GitHub mirror / workspace is gone.
+      try {
+        pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
+          ptyId,
+          integrationToken,
+          workingDir,
+        });
+      } catch (wdErr) {
+        if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
+          console.log(`[createSession] Working dir "${workingDir}" not found, falling back to workspace root`);
+          pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
+            ptyId,
+            integrationToken,
+          });
+        } else {
+          throw wdErr;
+        }
+      }
     } catch (err) {
+      // Treat definitively gone (404) or completely unreachable (timeout/abort) as stale.
+      // If the sandbox timed out, the Fly machine is effectively gone — retrying the same
+      // machine won't help. Reprovision to get a working sandbox.
+      // Other errors (502, 409 Fly-Replay) may be transient — let them propagate.
       const isStaleSession = err instanceof Error && err.message.includes('404');
-      if (!isStaleSession) {
+      const isUnreachable = err instanceof Error &&
+        (err.name === 'AbortError' || err.message.includes('The operation was aborted'));
+      if (!isStaleSession && !isUnreachable) {
         throw err;
       }
 
-      // Stale session detected - clear it and create a fresh sandbox
-      console.log(`Stale sandbox session detected (${sandboxSessionId}), creating fresh session`);
+      // Stale/unreachable session — clear it and create a fresh sandbox
+      console.log(`[createSession] Sandbox ${isUnreachable ? 'unreachable (timeout)' : 'stale (404)'} for session ${sandboxSessionId}, reprovisioning`);
       await env.DB.prepare(`
         DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
       `).bind(dashboardId).run();
@@ -1047,11 +1104,10 @@ export async function createSessiоn(
         env.INTERNAL_API_TOKEN
       );
 
-      // Retry PTY creation on fresh session with fresh token
+      // Retry PTY creation on fresh session — omit workingDir (fresh sandbox has empty workspace)
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken: freshIntegrationToken,
-        workingDir,
       });
     }
 
