@@ -591,6 +591,9 @@ func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if cfg.mcpSecret != "" {
+		req.Header.Set("X-MCP-Secret", cfg.mcpSecret)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

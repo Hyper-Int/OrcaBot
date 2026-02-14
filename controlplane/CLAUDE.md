@@ -90,7 +90,7 @@ Fly.io (execution plane – separate repo)
 - Domain approval workflow for custom secrets
 - **Integration policy enforcement** (gateway execute, rate limits, audit)
 - **OAuth token lifecycle** (connect, refresh, encrypt at rest)
-- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth)
+- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth — **fail-closed**: empty `INTERNAL_API_TOKEN` rejects all tokens)
 - **Response filtering** (policy-based filtering before LLM sees data)
 - **API execution** (Gmail, GitHub, Drive, Calendar calls — tokens stay here)
 

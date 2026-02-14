@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-integration-v27-gemini-secret-fallback
+// REVISION: mcp-v28-localhost-auth-hardening
 
 package main
 
@@ -24,7 +24,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-integration-v27-gemini-secret-fallback loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-v28-localhost-auth-hardening loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // batchIntegrationCache holds a dashboard-level cache of all terminal integrations.
@@ -457,7 +457,25 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Not a browser or integration tool - proxy to control plane for UI tools
+	// Not a browser or integration tool - proxy to control plane for UI tools.
+	// SECURITY: Validate MCP secret to prevent ambient authority from arbitrary
+	// localhost processes. Without this check, any process in the sandbox could
+	// call UI tools using the server's stored dashboard token.
+	ptyID := r.URL.Query().Get("pty_id")
+	if ptyID != "" {
+		mcpSecret := r.Header.Get("X-MCP-Secret")
+		storedSecret := session.GetMCPSecret(ptyID)
+		if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79845: Invalid MCP authentication for UI tool call",
+			})
+			return
+		}
+	}
+
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
 
 	if controlplaneURL == "" {
@@ -694,7 +712,8 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 
 	// Agent state tools are always available. Session-scoped operations use the
 	// stored PTY token (broker pattern — token stays in server memory).
-	// Validate MCP secret to prevent cross-PTY impersonation.
+	// SECURITY: Validate MCP secret to prevent cross-PTY impersonation and
+	// ambient authority from arbitrary localhost processes.
 	var authToken string
 	var authType mcp.AuthType = mcp.AuthTypeDashboardToken // Default to dashboard token
 	ptyID := r.URL.Query().Get("pty_id")
@@ -703,17 +722,28 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		storedSecret := session.GetMCPSecret(ptyID)
 		secretValid := storedSecret != "" && subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) == 1
 
-		if secretValid {
-			storedToken := session.GetIntegrationToken(ptyID)
-			if storedToken != "" {
-				authToken = storedToken
-				authType = mcp.AuthTypePtyToken
-			}
+		if !secretValid {
+			// SECURITY: If pty_id is provided but secret is invalid, reject rather
+			// than silently falling back to dashboard token. This prevents local
+			// processes from using pty_id without proof-of-possession.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79846: Invalid MCP authentication for agent state call",
+			})
+			return
 		}
-		// If secret invalid or no stored token, fall through to dashboard token
+
+		storedToken := session.GetIntegrationToken(ptyID)
+		if storedToken != "" {
+			authToken = storedToken
+			authType = mcp.AuthTypePtyToken
+		}
+		// If secret is valid but no stored token, fall through to dashboard token
 	}
 
-	// Fall back to session MCP token (dashboard-scoped)
+	// Fall back to session MCP token (dashboard-scoped) — only when no pty_id provided
 	if authToken == "" {
 		if session.MCPToken != "" {
 			authToken = session.MCPToken

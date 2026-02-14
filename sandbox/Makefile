@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-integration-local run clean docker-build docker-run deploy
+.PHONY: build test test-integration test-integration-local run clean docker-build docker-run deploy drain
 
 # Binary name
 BINARY=orcabot-sandbox
@@ -49,6 +49,12 @@ deploy:
 # Deploy without cache (full rebuild)
 deploy-fresh:
 	fly deploy --no-cache
+
+# Destroy all running sandbox machines (use after deploy to clear stale state)
+drain:
+	@echo "Destroying all orcabot-sandbox machines..."
+	@fly machines list -a orcabot-sandbox --json | jq -r '.[].id' | xargs -I{} fly machines destroy {} -a orcabot-sandbox --force
+	@echo "Done. New terminals will spin up fresh VMs."
 
 # Show Fly app status
 status:

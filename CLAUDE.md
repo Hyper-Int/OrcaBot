@@ -85,15 +85,28 @@ npx wrangler dev
 ### Secrets Protection (Security-Critical)
 Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
 
-1. **Secrets Broker** - API keys are NOT set as env vars. Instead, a session-local broker injects keys server-side. LLMs only see placeholder values.
+1. **Secrets Broker** - API keys are NOT set as env vars. Instead, a session-local broker injects keys server-side. LLMs only see placeholder values. Broker configs and approved domains are **session-namespaced** — two terminals in the same VM cannot see or overwrite each other's keys.
 
 2. **Output Redaction** - Any secret values in PTY output are replaced with asterisks before reaching WebSocket clients.
 
-3. **Domain Allowlisting** - Built-in providers (Anthropic, OpenAI, ElevenLabs, etc.) have hardcoded target domains. Custom secrets require owner approval per-domain.
+3. **Domain Allowlisting** - Built-in providers (Anthropic, OpenAI, ElevenLabs, etc.) have hardcoded target domains. Custom secrets require owner approval per-domain, scoped per-session.
+
+4. **Localhost Auth** - The MCP server and event endpoints on localhost require `X-MCP-Secret` proof-of-possession. Each PTY gets a unique `ORCABOT_MCP_SECRET` env var at creation. This prevents rogue processes in the sandbox from calling MCP tools or faking agent events.
+
+5. **PTY Token Fail-Closed** - `INTERNAL_API_TOKEN` must be non-empty. If it's missing, PTY token verification rejects all tokens rather than accepting them.
+
+Security invariants (non-negotiable):
+- Broker configs keyed by `sessionID:provider` — never global provider name
+- Broker URLs include session ID: `/broker/{sessionID}/{provider}/...`
+- Approved domains keyed by `sessionID:secretName` — never just secret name
+- Empty `INTERNAL_API_TOKEN` = all PTY tokens rejected (fail-closed)
+- Localhost MCP/event endpoints require valid `X-MCP-Secret` (no fail-open)
 
 Key files:
 - `sandbox/internal/broker/` — Broker implementation
+- `sandbox/cmd/server/env.go` — Env setup with session-scoped broker config
 - `controlplane/src/secrets/` — Secrets API + encryption
+- `controlplane/src/auth/pty-token.ts` — PTY token creation/verification (fail-closed)
 - `frontend/src/components/blocks/TerminalBlock.tsx` — Secrets UI
 
 ## OAuth Integrations (Gmail/Drive/GitHub/Calendar)
@@ -163,6 +176,7 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Hook scripts: `sandbox/internal/agenthooks/hooks.go`
 - Supported agents: Claude Code, Gemini CLI, OpenCode, Codex, Droid, OpenClaw
 - Settings files generated per-agent (`.claude/settings.json`, `.gemini/settings.json`, etc.)
+- **All hooks must include `X-MCP-Secret` header** from `ORCABOT_MCP_SECRET` env var — unauthenticated hook callbacks are rejected
 
 ## Key Subsystems
 
