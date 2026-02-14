@@ -122,9 +122,10 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g playwright
 # Strip build-only packages to reduce image size (~300MB savings)
 # build-essential/gcc/g++ were needed for native npm modules; python3-dev for pip install.
 # Neither is needed at runtime.
+# NOTE: Keep /root/.npm — it contains the warmed cache for Claude Code on-demand install.
 RUN apt-get update && apt-get purge -y --auto-remove \
     build-essential cpp gcc g++ make python3-dev \
-    && rm -rf /var/lib/apt/lists/* /root/.npm /tmp/*
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 # Install xdg-open wrapper to route URLs into the sandbox browser
 COPY docker/xdg-open.sh /usr/local/bin/xdg-open
