@@ -916,6 +916,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_subscriptions_stripe_customer ON user
 -- Chat Messages (Orcabot Chat Interface)
 -- ============================================
 
+-- ============================================
+-- Egress Proxy (Network Access Control)
+-- ============================================
+
+-- Egress allowlist (user-approved domains per dashboard)
+CREATE TABLE IF NOT EXISTS egress_allowlist (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_egress_allowlist_dashboard
+  ON egress_allowlist(dashboard_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_allowlist_dashboard_domain_active
+  ON egress_allowlist(dashboard_id, domain)
+  WHERE revoked_at IS NULL;
+
+-- Egress audit log (all proxy decisions)
+CREATE TABLE IF NOT EXISTS egress_audit_log (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('allowed','denied','timeout','default_allowed','allow_once','allow_always','deny')),
+  decided_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_egress_audit_dashboard
+  ON egress_audit_log(dashboard_id, created_at);
+
 -- Chat messages for Orcabot conversational interface
 CREATE TABLE IF NOT EXISTS chat_messages (
   id TEXT PRIMARY KEY,
@@ -934,7 +966,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(use
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v8-trial-started-at";
+const SCHEMA_REVISION = "schema-v10-egress-allowlist-unique-active-domain";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1202,6 +1234,30 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 
   // Migrate schedules table: make recipe_id nullable, add edge-based schedule columns
   await migrateSchedulesTable(db);
+
+  // Clean up legacy duplicate active allowlist rows before creating
+  // the unique active-domain index.
+  try {
+    await db.prepare(`
+      UPDATE egress_allowlist
+      SET revoked_at = datetime('now')
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY dashboard_id, domain
+              ORDER BY created_at ASC, id ASC
+            ) AS rn
+          FROM egress_allowlist
+          WHERE revoked_at IS NULL
+        ) dedupe
+        WHERE rn > 1
+      )
+    `).run();
+  } catch (error) {
+    console.log('[schema] egress allowlist dedupe skipped:', error);
+  }
 
   // Phase 3: Create indexes (now all columns exist from ALTER TABLE migrations above)
   for (const statement of indexStatements) {

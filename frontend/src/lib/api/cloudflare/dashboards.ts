@@ -211,10 +211,13 @@ export async function deleteItem(
  */
 export async function createSession(
   dashboardId: string,
-  itemId: string
+  itemId: string,
+  options?: { egressEnabled?: boolean }
 ): Promise<Session> {
+  const body = options?.egressEnabled ? { egress_enabled: true } : undefined;
   const response = await apiPost<SessionResponse>(
-    `${API.cloudflare.dashboards}/${dashboardId}/items/${itemId}/session`
+    `${API.cloudflare.dashboards}/${dashboardId}/items/${itemId}/session`,
+    body
   );
   return response.session;
 }

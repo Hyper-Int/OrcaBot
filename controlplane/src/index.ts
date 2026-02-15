@@ -38,6 +38,7 @@ import * as mcpUi from './mcp-ui/handler';
 import * as bugReports from './bug-reports/handler';
 import * as agentState from './agent-state/handler';
 import * as chat from './chat/handler';
+import * as egress from './egress/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
@@ -1394,6 +1395,65 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   }
 
   // ============================================
+  // Egress proxy routes (network access control)
+  // ============================================
+
+  // POST /dashboards/:id/egress/approve - User approves/denies held connection
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'approve' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleApproveEgress(request, env, segments[1], auth.user!.id);
+  }
+
+  // GET /dashboards/:id/egress/allowlist - List user-approved domains
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'allowlist' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleListEgressAllowlist(request, env, segments[1]);
+  }
+
+  // GET /dashboards/:id/egress/pending - List currently pending approvals from sandbox
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'pending' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleListPendingEgress(request, env, segments[1]);
+  }
+
+  // DELETE /dashboards/:id/egress/allowlist/:entryId - Revoke approved domain
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'egress' && segments[3] === 'allowlist' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleRevokeEgressDomain(request, env, segments[1], segments[4]);
+  }
+
+  // GET /dashboards/:id/egress/audit - List recent egress decisions
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'audit' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleListEgressAudit(request, env, segments[1]);
+  }
+
+  // ============================================
   // Dashboard member routes
   // ============================================
 
@@ -1972,7 +2032,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'items' && segments[4] === 'session' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion);
+    // Parse optional egress_enabled from request body
+    let egressEnabled: boolean | undefined;
+    try {
+      const body = await request.json() as Record<string, unknown>;
+      if (body.egress_enabled === true) egressEnabled = true;
+    } catch { /* no body or invalid JSON — fine */ }
+    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, egressEnabled);
   }
 
   // POST /dashboards/:id/browser/start - Start dashboard browser
@@ -2516,6 +2582,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
     return sessions.getApprovedDomainsInternal(env, segments[2]);
+  }
+
+  // GET /internal/dashboards/:id/egress/allowlist - Sandbox loads persisted egress allowlist on startup
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'egress' && segments[4] === 'allowlist' && method === 'GET') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return egress.handleInternalGetAllowlist(request, env, segments[2]);
+  }
+
+  // POST /internal/dashboards/:id/egress/audit - Sandbox logs runtime egress decisions
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'egress' && segments[4] === 'audit' && method === 'POST') {
+    const authError = requireInternalAuth(request, env);
+    if (authError) return authError;
+    return egress.handleInternalLogAudit(request, env, segments[2]);
   }
 
   // ============================================
