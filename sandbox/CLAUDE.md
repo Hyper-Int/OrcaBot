@@ -242,6 +242,54 @@ When secrets are applied to a session:
 
 ---
 
+## Network Egress Proxy
+
+An HTTP/HTTPS forward proxy on `localhost:8083` that acts as "Little Snitch for AI Agents". Intercepts all outbound HTTP(S) from PTY processes via `HTTP_PROXY`/`HTTPS_PROXY` env vars.
+
+### How It Works
+- **CONNECT** (HTTPS): Extracts domain from `CONNECT host:port`, checks allowlist
+- **Regular HTTP**: Extracts domain from Host header, checks allowlist
+- **Allowed domains**: Connection proceeds immediately
+- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny.
+- **Timeout**: 60 seconds with no response = deny (fail-closed)
+- **Coalescing**: Multiple connections to the same unknown domain share one approval prompt
+
+### Default Allowlist
+Hardcoded in `internal/egress/allowlist.go`:
+- Package registries (npm, PyPI, crates.io, Maven, Gradle, etc.)
+- Git hosting (GitHub, GitLab, Bitbucket + subdomains)
+- System packages (Debian, Ubuntu, Alpine)
+- CDNs (Cloudflare, CloudFront, Fastly, jsDelivr, unpkg)
+- LLM APIs (Anthropic, OpenAI, ChatGPT, Google, Groq, Together, etc.)
+- Telemetry (Datadog, Sentry)
+- Common dev tools (Node.js, Google storage)
+
+Glob matching: `*.example.com` matches subdomains but NOT `example.com` itself.
+
+### Feature Flag
+- `EGRESS_PROXY_ENABLED=true` env var: Enable globally for all sessions
+- Per-session opt-in: `egress_enabled: true` in session or PTY creation request body
+- Without either, proxy runs but PTYs don't route through it
+
+### Localhost Bypass
+Localhost traffic (`localhost`, `127.0.0.1`, `::1`) always bypasses the proxy:
+- `NO_PROXY=localhost,127.0.0.1` env var (client-side hint)
+- Server-side `isLocalhost()` check in proxy (catches tools that ignore NO_PROXY)
+
+### Key Files
+- `internal/egress/proxy.go` — HTTP/HTTPS forward proxy with connection holding
+- `internal/egress/allowlist.go` — Default + runtime allowlist with glob matching
+- `internal/egress/proxy_test.go` — Unit tests (14 tests, race-safe)
+- `internal/egress/allowlist_test.go` — Allowlist matching tests
+
+### Sandbox Endpoints
+- `POST /egress/approve` — Control plane delivers user decision
+- `POST /egress/revoke` — Remove domain from runtime allowlist
+- `GET /egress/pending` — List pending approvals (for UI sync on reconnect)
+- `GET /egress/allowlist` — Current allowlist (default + user)
+
+---
+
 ## Persistence model
 
 ### Persisted (Postgres)

@@ -95,12 +95,17 @@ Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
 
 5. **PTY Token Fail-Closed** - `INTERNAL_API_TOKEN` must be non-empty. If it's missing, PTY token verification rejects all tokens rather than accepting them.
 
+6. **Network Egress Proxy** ("Little Snitch for AI Agents") - An HTTP/HTTPS forward proxy on `localhost:8083` intercepts all outbound network requests from PTY processes. Known domains (package registries, git hosting, CDNs, LLM APIs) are allowed automatically. Unknown domains are **held** (the connection hangs) while a toast + approval dialog is shown to the user. Options: Allow Once, Always Allow, or Deny. 60-second timeout = deny (fail-closed). User-approved "Always Allow" domains persist per-dashboard in D1.
+
 Security invariants (non-negotiable):
 - Broker configs keyed by `sessionID:provider` — never global provider name
 - Broker URLs include session ID: `/broker/{sessionID}/{provider}/...`
 - Approved domains keyed by `sessionID:secretName` — never just secret name
 - Empty `INTERNAL_API_TOKEN` = all PTY tokens rejected (fail-closed)
 - Localhost MCP/event endpoints require valid `X-MCP-Secret` (no fail-open)
+- Egress proxy fail-closed: 60s timeout = deny; proxy crash = connections fail
+- Localhost always bypasses egress proxy (NO_PROXY + server-side check)
+- Egress decisions come from control plane API (user-authenticated), never from sandbox
 
 Key files:
 - `sandbox/internal/broker/` — Broker implementation
@@ -108,6 +113,16 @@ Key files:
 - `controlplane/src/secrets/` — Secrets API + encryption
 - `controlplane/src/auth/pty-token.ts` — PTY token creation/verification (fail-closed)
 - `frontend/src/components/blocks/TerminalBlock.tsx` — Secrets UI
+- `sandbox/internal/egress/` — Egress proxy + allowlist
+- `controlplane/src/egress/handler.ts` — Egress approval endpoints + audit logging
+- `frontend/src/components/EgressApprovalDialog.tsx` — Approval dialog UI
+- `frontend/src/components/EgressAllowlistPanel.tsx` — Allowlist management UI
+
+### Network Egress Proxy Feature Flag
+The egress proxy is gated behind a feature flag for safe rollout:
+- **Global**: Set `EGRESS_PROXY_ENABLED=true` on the Fly machine to enable for all sessions
+- **Per-user opt-in**: Add `?egress=1` to any OrcaBot URL (persists to localStorage)
+- Without either trigger, the proxy runs but no PTY processes route through it
 
 ## OAuth Integrations (Gmail/Drive/GitHub/Calendar)
 - Control plane provides connect + callback endpoints:

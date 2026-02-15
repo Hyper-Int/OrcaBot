@@ -229,6 +229,22 @@ Frontend does NOT:
 - Make decisions about which domains are safe
 - Decrypt secrets client-side (display only)
 
+### Network Egress Approval
+- Egress events arrive via terminal WebSockets (not collaboration WS)
+- `TerminalWSManager` dispatches `window.CustomEvent` for `egress_approval_needed` / `egress_approval_resolved`
+- Dashboard page listens for CustomEvents and shows toast + approval dialog
+- Approval dialog: Deny / Allow Once / Always Allow (3 buttons)
+- Allowlist panel: Shield icon in title bar, shows user-approved domains with revoke
+- `?egress=1` URL param persists to `localStorage` (`orcabot_egress_enabled`) via inline script in root layout
+- TerminalBlock checks localStorage when creating sessions to pass `egress_enabled: true`
+
+Key files:
+- `src/components/EgressApprovalDialog.tsx` — Approval dialog
+- `src/components/EgressAllowlistPanel.tsx` — Allowlist management panel
+- `src/lib/api/cloudflare/egress.ts` — API client for egress endpoints
+- `src/lib/ws/TerminalWSManager.ts` — CustomEvent dispatch for egress events
+- `src/types/terminal.ts` — Egress event type definitions
+
 ---
 
 ## Session & recovery UX
