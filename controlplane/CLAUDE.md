@@ -202,6 +202,29 @@ When secrets change, `autoApplySecretsToSessions()` pushes updates to all active
 
 ---
 
+## Network Egress Control
+
+The control plane manages user approval decisions and persistent allowlists for the sandbox egress proxy.
+
+### Database Tables
+- `egress_allowlist` — Per-dashboard user-approved domains (domain, created_by, revoked_at)
+- `egress_audit_log` — All egress decisions (domain, port, decision, decided_by)
+
+### User-Facing Endpoints (authenticated)
+- `POST /api/dashboards/:id/egress/approve` — User decision (allow_once/always/deny) → forward to sandbox
+- `GET /api/dashboards/:id/egress/allowlist` — List user-approved domains
+- `DELETE /api/dashboards/:id/egress/allowlist/:entryId` — Revoke a user-approved domain
+- `GET /api/dashboards/:id/egress/pending` — List currently held connections
+
+### Internal Endpoints (sandbox → controlplane)
+- `GET /internal/dashboards/:id/egress/allowlist` — Sandbox loads persisted allowlist on startup
+- `POST /internal/dashboards/:id/egress/audit` — Sandbox forwards runtime audit events
+
+### Key Files
+- `src/egress/handler.ts` — Allowlist CRUD, approval flow, audit logging
+
+---
+
 ## Integration Policy Enforcement
 
 The control plane is the **sole enforcement point** for integration policies. The sandbox
