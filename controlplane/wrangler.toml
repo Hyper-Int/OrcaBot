@@ -62,6 +62,15 @@ new_sqlite_classes = ["DashboardDO"]
 tag = "v2"
 new_sqlite_classes = ["RateLimitCounter"]
 
+# Durable Objects for ASR WebSocket streaming proxy
+[[durable_objects.bindings]]
+name = "ASR_STREAM"
+class_name = "ASRStreamProxy"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ASRStreamProxy"]
+
 # D1 Database for persistent state
 [[d1_databases]]
 binding = "DB"

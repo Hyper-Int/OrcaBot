@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS user_secrets (
 
 CREATE INDEX IF NOT EXISTS idx_user_secrets_user ON user_secrets(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_secrets_dashboard ON user_secrets(dashboard_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_secrets_unique_name ON user_secrets(user_id, dashboard_id, name);
 
 -- OAuth state (short-lived)
 CREATE TABLE IF NOT EXISTS oauth_states (
@@ -1050,6 +1051,100 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     `).run();
   } catch {
     // Index already exists or column doesn't exist yet.
+  }
+
+  // Add unique index on (user_id, dashboard_id, name) for atomic upserts.
+  // A name must be unique per user+dashboard regardless of type — having both a
+  // secret and env_var with the same name causes ambiguous lookups everywhere.
+  // First, deduplicate any pre-existing rows, keeping the most recently updated one.
+  try {
+    await db.prepare(`
+      DELETE FROM user_secrets WHERE id NOT IN (
+        SELECT id FROM (
+          SELECT id,
+            ROW_NUMBER() OVER (
+              PARTITION BY user_id, dashboard_id, name
+              ORDER BY updated_at DESC, created_at DESC, rowid DESC
+            ) AS rn
+          FROM user_secrets
+        ) ranked
+        WHERE rn = 1
+      )
+    `).run();
+  } catch (error) {
+    console.log('[schema] user_secrets dedup skipped:', error);
+  }
+  // Drop and recreate to ensure correct column set (IF NOT EXISTS won't fix
+  // an existing index with the same name but different columns).
+  try {
+    await db.prepare(`DROP INDEX IF EXISTS idx_user_secrets_unique_name`).run();
+  } catch {
+    // Index doesn't exist — fine.
+  }
+  try {
+    await db.prepare(`
+      CREATE UNIQUE INDEX idx_user_secrets_unique_name ON user_secrets(user_id, dashboard_id, name)
+    `).run();
+  } catch {
+    // Index already exists with correct definition.
+  }
+
+  // Migrate legacy _asr_* keys to standard env var names so ASR keys and
+  // terminal secrets share the same row. Rename if standard name doesn't exist
+  // yet; delete the legacy row if it does (standard name takes precedence).
+  for (const [legacy, standard] of [
+    ['_asr_openai', 'OPENAI_API_KEY'],
+    ['_asr_assemblyai', 'ASSEMBLYAI_API_KEY'],
+    ['_asr_deepgram', 'DEEPGRAM_API_KEY'],
+  ]) {
+    try {
+      await db.prepare(`
+        UPDATE user_secrets
+        SET name = ?, description = ?, updated_at = datetime('now')
+        WHERE name = ? AND dashboard_id = '_global' AND type = 'secret'
+          AND NOT EXISTS (
+            SELECT 1 FROM user_secrets s2
+            WHERE s2.user_id = user_secrets.user_id
+              AND s2.dashboard_id = '_global'
+              AND s2.name = ?
+          )
+      `).bind(standard, `${legacy.replace('_asr_', '')} API key`, legacy, standard).run();
+
+      // Delete any remaining legacy rows (user already had the standard name)
+      await db.prepare(`
+        DELETE FROM user_secrets WHERE name = ? AND dashboard_id = '_global' AND type = 'secret'
+      `).bind(legacy).run();
+    } catch (error) {
+      console.log(`[schema] ASR key migration ${legacy} → ${standard} skipped:`, error);
+    }
+  }
+
+  // Migrate dashboard-scoped secrets to global scope.
+  // If a user already has a global secret with the same name, keep the global one
+  // and delete the dashboard-scoped duplicate. Otherwise, move the row to _global.
+  try {
+    // First, update dashboard-scoped secrets to _global where no global duplicate exists
+    await db.prepare(`
+      UPDATE user_secrets
+      SET dashboard_id = '_global', updated_at = datetime('now')
+      WHERE dashboard_id != '_global'
+        AND NOT EXISTS (
+          SELECT 1 FROM user_secrets s2
+          WHERE s2.user_id = user_secrets.user_id
+            AND s2.dashboard_id = '_global'
+            AND s2.name = user_secrets.name
+        )
+    `).run();
+
+    // Then delete any remaining dashboard-scoped secrets (duplicates of global ones)
+    const deleted = await db.prepare(`
+      DELETE FROM user_secrets WHERE dashboard_id != '_global'
+    `).run();
+    if (deleted.meta?.changes && deleted.meta.changes > 0) {
+      console.log(`[schema] Deleted ${deleted.meta.changes} dashboard-scoped secret duplicates (global copy exists)`);
+    }
+  } catch (error) {
+    console.log('[schema] Dashboard-to-global secrets migration skipped:', error);
   }
 
   // Add applied_secret_names column to track which secrets were applied

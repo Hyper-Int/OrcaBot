@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: ws-reconnect-cleanclose-v1
+// REVISION: ws-reconnect-v2-fix-double-reconnect
 
-const MODULE_REVISION = "ws-reconnect-cleanclose-v1";
+const MODULE_REVISION = "ws-reconnect-v2-fix-double-reconnect";
 console.log(`[ws] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -307,8 +307,8 @@ export abstract class BaseWebSocketManager {
       this.connectTimeoutId = null;
       if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
         console.log(`[WS] Connection attempt timed out after ${this.config.connectTimeout}ms`);
+        // Only close — the onclose handler will call scheduleReconnect()
         this.ws.close();
-        this.scheduleReconnect();
       }
     }, this.config.connectTimeout);
   }

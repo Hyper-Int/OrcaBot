@@ -52,6 +52,7 @@ import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
 export { RateLimitCounter } from './rate-limit/DurableObject';
+export { ASRStreamProxy } from './asr/ASRStreamProxy';
 
 // CORS headers (base - origin is added dynamically)
 const CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
@@ -1970,6 +1971,67 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return secrets.dismissPendingApproval(env, auth.user!.id, segments[1]);
+  }
+
+  // ============================================
+  // ASR (Speech Recognition) routes
+  // ============================================
+
+  // GET /asr/keys - List configured ASR provider key status
+  if (segments[0] === 'asr' && segments[1] === 'keys' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { listASRKeys } = await import('./asr/handler');
+    return listASRKeys(env, auth.user!.id);
+  }
+
+  // POST /asr/keys - Store an ASR API key
+  if (segments[0] === 'asr' && segments[1] === 'keys' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as { provider: string; apiKey: string };
+    const { saveASRKey } = await import('./asr/handler');
+    return saveASRKey(env, auth.user!.id, data);
+  }
+
+  // DELETE /asr/keys/:provider - Remove an ASR key
+  if (segments[0] === 'asr' && segments[1] === 'keys' && segments.length === 3 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { deleteASRKey } = await import('./asr/handler');
+    return deleteASRKey(env, auth.user!.id, segments[2]);
+  }
+
+  // POST /asr/assemblyai/token - Vend temporary AssemblyAI token
+  if (segments[0] === 'asr' && segments[1] === 'assemblyai' && segments[2] === 'token' && segments.length === 3 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { getAssemblyAIToken } = await import('./asr/handler');
+    return getAssemblyAIToken(env, auth.user!.id);
+  }
+
+  // POST /asr/openai/transcribe - Proxy OpenAI Whisper transcription
+  if (segments[0] === 'asr' && segments[1] === 'openai' && segments[2] === 'transcribe' && segments.length === 3 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { transcribeOpenAI } = await import('./asr/handler');
+    return transcribeOpenAI(env, auth.user!.id, request);
+  }
+
+  // POST /asr/deepgram/token - Get temporary Deepgram JWT for browser-direct WebSocket
+  if (segments[0] === 'asr' && segments[1] === 'deepgram' && segments[2] === 'token' && segments.length === 3 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { getDeepgramToken } = await import('./asr/handler');
+    return getDeepgramToken(env, auth.user!.id);
+  }
+
+  // POST /asr/deepgram/transcribe - REST fallback for keys without Member scope
+  if (segments[0] === 'asr' && segments[1] === 'deepgram' && segments[2] === 'transcribe' && segments.length === 3 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const { transcribeDeepgram } = await import('./asr/handler');
+    return transcribeDeepgram(env, auth.user!.id, request);
   }
 
   // ============================================

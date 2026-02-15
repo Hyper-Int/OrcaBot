@@ -144,9 +144,18 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
       stopASR();
     } else {
       setAsrError(null);
+      setInterimTranscript("");
       startASR();
     }
   }, [isListening, startASR, stopASR]);
+
+  // Clear stale interim transcript after listening stops
+  React.useEffect(() => {
+    if (!isListening && interimTranscript) {
+      const timer = setTimeout(() => setInterimTranscript(""), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [isListening, interimTranscript]);
 
   // Handle content change with debounce
   const handleContentChange = React.useCallback(
@@ -230,6 +239,8 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   return (
     <BlockWrapper
       selected={selected}
+      minWidth={300}
+      minHeight={145}
       className={cn(
         "p-3 flex flex-col gap-2",
         "bg-slate-100/90 border-slate-200 dark:bg-slate-800/90 dark:border-slate-700",
@@ -291,7 +302,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
               onChange={(e) => handleContentChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => setIsEditing(false)}
-              placeholder="Enter a prompt... Use [input] for upstream data."
+              placeholder={isListening || interimTranscript ? "" : "Enter a prompt... Use [input] for upstream data."}
               title="Prompt text. Use [input] to insert data from connected upstream blocks. Press Cmd/Ctrl+Enter to send."
               style={{
                 backgroundColor: isDark ? "black" : "white",
@@ -326,7 +337,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
             >
               <CodeBlockRenderer
                 content={content}
-                placeholder="Enter a prompt... Use [input] for upstream data."
+                placeholder={isListening || interimTranscript ? "" : "Enter a prompt... Use [input] for upstream data."}
                 className="text-sm"
               />
             </div>
@@ -334,8 +345,10 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
           {/* Interim transcript overlay */}
           {interimTranscript && (
             <div
-              className="absolute bottom-2 left-2 right-2 text-sm text-slate-400 italic pointer-events-none"
-              style={{ opacity: 0.7 }}
+              className={cn(
+                "absolute left-2 right-2 text-sm text-slate-400 italic pointer-events-none truncate",
+                content ? "bottom-1" : "top-2"
+              )}
             >
               {interimTranscript}
             </div>

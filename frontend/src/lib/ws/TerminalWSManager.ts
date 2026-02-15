@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: terminal-ws-v2-email-not-in-url
+const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v2-email-not-in-url";
+console.log(`[TerminalWS] REVISION: ${MODULE_REVISION_TERMINAL_WS} loaded at ${new Date().toISOString()}`);
+
 /**
  * WebSocket manager for terminal PTY streaming and turn-taking
  *
@@ -24,8 +28,9 @@ import type {
   AgentStoppedEvent,
   ToolsChangedEvent,
 } from "@/types/terminal";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE, DEV_MODE_ENABLED } from "@/config/env";
 import { useAuthStore } from "@/stores/auth-store";
+
 
 export interface TerminalWSConfig extends WebSocketConfig {
   userId: string;
@@ -77,9 +82,12 @@ export class TerminalWSManager extends BaseWebSocketManager {
     config: TerminalWSConfig
   ) {
     let url = `${API.cloudflare.terminalWs(sessionId, ptyId)}?user_id=${encodeURIComponent(config.userId)}`;
-    const email = useAuthStore.getState()?.user?.email;
-    if (email) {
-      url += `&user_email=${encodeURIComponent(email)}`;
+    // Include user_email in dev-auth modes for auto-creation (avoids PII in production logs)
+    if (DESKTOP_MODE || DEV_MODE_ENABLED) {
+      const email = useAuthStore.getState()?.user?.email;
+      if (email) {
+        url += `&user_email=${encodeURIComponent(email)}`;
+      }
     }
     super(url, config);
 

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-auth-v3-subscription-status
-const MODULE_REVISION = "desktop-auth-v3-subscription-status";
+// REVISION: auth-v5-revalidate-on-switch
+const MODULE_REVISION = "auth-v5-revalidate-on-switch";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -46,7 +46,10 @@ interface ProvidersProps {
 
 function AuthBootstrapper() {
   const { isAuthenticated, setUser, setAuthResolved, loginDevMode } = useAuthStore();
-  const hasBootstrapped = React.useRef(false);
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  // Track which user ID we last validated — re-runs on user switch, not just once per page
+  const validatedUserRef = React.useRef<string | null>(null);
+  const unauthBootstrappedRef = React.useRef(false);
 
   React.useEffect(() => {
     // If already authenticated (from localStorage hydration), just mark as resolved.
@@ -54,31 +57,55 @@ function AuthBootstrapper() {
     // the server's DB (the client-generated ID may differ from an older creation).
     if (isAuthenticated) {
       setAuthResolved(true);
-      if (DESKTOP_MODE && !hasBootstrapped.current) {
-        hasBootstrapped.current = true;
-        const authHeaders = getAuthHeaders();
-        fetch(API.cloudflare.usersMe, {
-          headers: { ...authHeaders },
-          credentials: "include",
-        })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data: { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo } | null) => {
-            if (data?.user) {
-              if (data.user.id !== authHeaders["X-User-ID"] || data.subscription) {
+      if (validatedUserRef.current !== userId) {
+        validatedUserRef.current = userId;
+        if (DESKTOP_MODE) {
+          const authHeaders = getAuthHeaders();
+          fetch(API.cloudflare.usersMe, {
+            headers: { ...authHeaders },
+            credentials: "include",
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data: { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo } | null) => {
+              if (data?.user) {
+                if (data.user.id !== authHeaders["X-User-ID"] || data.subscription) {
+                  setUser(data.user, data.isAdmin ?? false, data.subscription);
+                }
+              }
+            })
+            .catch(() => {});
+        } else {
+          // Web mode: validate persisted auth against server in the background
+          fetch(API.cloudflare.usersMe, { credentials: "include" })
+            .then((r) => {
+              if (r.status === 401 || r.status === 403) {
+                // Persisted auth is stale/invalid — clear it
+                useAuthStore.getState().logout();
+              } else if (!r.ok) {
+                // Transient server error (500/502/503/429) — ignore, don't log out
+                return undefined;
+              } else {
+                return r.json() as Promise<{ user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo }>;
+              }
+            })
+            .then((data) => {
+              if (data?.user) {
                 setUser(data.user, data.isAdmin ?? false, data.subscription);
               }
-            }
-          })
-          .catch(() => {});
+            })
+            .catch(() => {});
+        }
       }
       return;
     }
 
-    if (hasBootstrapped.current) {
+    if (unauthBootstrappedRef.current) {
       return;
     }
 
-    hasBootstrapped.current = true;
+    unauthBootstrappedRef.current = true;
+    // Reset validated user so post-login validation runs for the new session
+    validatedUserRef.current = null;
     let isActive = true;
 
     const bootstrap = async () => {
@@ -143,7 +170,7 @@ function AuthBootstrapper() {
     return () => {
       isActive = false;
     };
-  }, [isAuthenticated, setUser, setAuthResolved, loginDevMode]);
+  }, [isAuthenticated, userId, setUser, setAuthResolved, loginDevMode]);
 
   return null;
 }
