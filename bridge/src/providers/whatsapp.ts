@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-provider-v14-lid-capture-fix
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v14-lid-capture-fix loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v15-strip-pii-from-logs
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v15-strip-pii-from-logs loaded at ${new Date().toISOString()}`);
 
 import makeWASocket, {
   DisconnectReason,
@@ -176,7 +176,8 @@ export class WhatsAppProvider implements BridgeProvider {
 
           const remoteJid = msg.key.remoteJid;
           const fromMe = msg.key.fromMe;
-          console.log(`[whatsapp] Message: from=${fromMe ? 'me' : remoteJid} jid=${remoteJid}`);
+          // Log message routing without content (privacy: bridge sees all personal messages)
+          console.log(`[whatsapp] Message: from=${fromMe ? 'me' : 'other'} hybrid=${!!this.config?.hybridMode}`);
 
           // Skip non-chat JIDs (newsletters, broadcast lists) — these are not conversations
           if (remoteJid?.endsWith('@newsletter') || remoteJid?.endsWith('@broadcast')) {
@@ -202,7 +203,7 @@ export class WhatsAppProvider implements BridgeProvider {
                 } else if (text) {
                   const normalized = this.normalizeOutgoingMessage(msg);
                   if (normalized) {
-                    console.log(`[whatsapp] Forwarding outgoing to OrcaBot: "${text.slice(0, 50)}"`);
+                    console.log(`[whatsapp] Forwarding outgoing to OrcaBot`);
                     void this.sessionManager.forwardMessage(this.sessionId, normalized);
                   }
                 }
@@ -224,7 +225,7 @@ export class WhatsAppProvider implements BridgeProvider {
             if (!this.resolvedBusinessLid && text && HANDSHAKE_MESSAGES.has(text.trim())
                 && remoteJid && remoteJid !== this.config.businessPhoneJid) {
               this.resolvedBusinessLid = remoteJid;
-              console.log(`[whatsapp] Captured business LID from handshake reply: ${this.resolvedBusinessLid}`);
+              console.log(`[whatsapp] Captured business LID from handshake reply`);
               continue; // Don't forward handshake sentinel
             }
 
@@ -239,7 +240,7 @@ export class WhatsAppProvider implements BridgeProvider {
 
           const normalized = this.normalizeMessage(msg);
           if (normalized) {
-            console.log(`[whatsapp] Forwarding inbound from ${remoteJid}: "${(text || '').slice(0, 50)}"`);
+            console.log(`[whatsapp] Forwarding inbound message`);
             void this.sessionManager.forwardMessage(this.sessionId, normalized);
           }
         }
@@ -271,7 +272,7 @@ export class WhatsAppProvider implements BridgeProvider {
 
     const result = await this.sock.sendMessage(normalizedJid, { text });
     const messageId = result?.key?.id || '';
-    console.log(`[whatsapp] Session ${this.sessionId} sent message to ${normalizedJid}: ${messageId}`);
+    console.log(`[whatsapp] Session ${this.sessionId} sent message: ${messageId}`);
     return { messageId };
   }
 
