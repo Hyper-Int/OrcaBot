@@ -11,9 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 )
+
+// REVISION: hooks-v3-gemini-debug-gated
+const agentHooksRevision = "hooks-v3-gemini-debug-gated"
+
+var agentHooksRevisionLogOnce sync.Once
 
 // GenerateHooksForAgent creates stop hook configurations for the specified agent.
 // It writes shell scripts to /workspace/.orcabot/hooks/ and updates agent config files.
@@ -378,22 +384,34 @@ echo '{}'  # Gemini requires JSON output
 // It also mirrors auth-related fields from ~/.gemini/settings.json into the system override,
 // so the user's chosen auth method (e.g., OAuth from "gemini login") survives CLI restarts.
 func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) error {
-	fmt.Fprintf(os.Stderr, "[DEBUG] mergeGeminiHookSettings called: settingsPath=%s scriptPath=%s\n", settingsPath, scriptPath)
+	agentHooksRevisionLogOnce.Do(func() {
+		fmt.Fprintf(os.Stderr, "[agenthooks] REVISION: %s loaded\n", agentHooksRevision)
+	})
+	debugLogs := os.Getenv("ORCABOT_DEBUG_GEMINI_HOOKS") == "1"
+	if debugLogs {
+		fmt.Fprintf(os.Stderr, "[DEBUG] mergeGeminiHookSettings called: settingsPath=%s scriptPath=%s\n", settingsPath, scriptPath)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Gemini MkdirAll failed: %v\n", err)
+		if debugLogs {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Gemini MkdirAll failed: %v\n", err)
+		}
 		return err
 	}
 
 	var settings map[string]interface{}
 	data, err := os.ReadFile(settingsPath)
 	if err == nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Gemini read existing settings: %s\n", string(data))
+		if debugLogs {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Gemini read existing settings (%d bytes)\n", len(data))
+		}
 		if err := json.Unmarshal(data, &settings); err != nil {
 			settings = make(map[string]interface{})
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Gemini no existing settings, creating new: %v\n", err)
+		if debugLogs {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Gemini no existing settings, creating new: %v\n", err)
+		}
 		settings = make(map[string]interface{})
 	}
 
@@ -426,6 +444,23 @@ func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) err
 	general["enableAutoUpdate"] = false
 	general["enableAutoUpdateNotification"] = false
 	settings["general"] = general
+
+	// REVISION: gemini-foldertrust-v1-disable
+	// Disable Gemini CLI's folder trust prompt. In the sandbox, every reconnection
+	// triggers "Do you trust this folder?" because trustedFolders.json doesn't persist
+	// reliably. Since the sandbox is already an isolated environment, folder trust
+	// adds no security value — disable it entirely.
+	security, ok := settings["security"].(map[string]interface{})
+	if !ok {
+		security = make(map[string]interface{})
+	}
+	folderTrust, ok := security["folderTrust"].(map[string]interface{})
+	if !ok {
+		folderTrust = make(map[string]interface{})
+	}
+	folderTrust["enabled"] = false
+	security["folderTrust"] = folderTrust
+	settings["security"] = security
 
 	// Mirror auth-related fields from ~/.gemini/settings.json into the system override.
 	// When a user runs "gemini login", Gemini CLI writes the auth method to settings.json.
@@ -499,12 +534,18 @@ func mergeGeminiHookSettings(settingsPath, scriptPath, workspaceRoot string) err
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Gemini settings: %s\n", string(data))
+	if debugLogs {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Writing Gemini settings (%d bytes)\n", len(data))
+	}
 	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Gemini WriteFile failed: %v\n", err)
+		if debugLogs {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Gemini WriteFile failed: %v\n", err)
+		}
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote Gemini hooks to %s\n", settingsPath)
+	if debugLogs {
+		fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote Gemini hooks to %s\n", settingsPath)
+	}
 	return nil
 }
 
@@ -776,6 +817,17 @@ fi
 			existingConfig += "\n"
 		}
 		existingConfig += "\n# Disable update check — updates managed via Docker image rebuilds\ncheck_for_updates = false\n"
+	}
+
+	// REVISION: codex-foldertrust-v1-pretrust
+	// Pre-trust /workspace so Codex doesn't show "Do you trust this directory?" on every
+	// reconnection. Trust is stored per-project in config.toml under [projects."/workspace"].
+	// Since the sandbox is already an isolated environment, this is safe.
+	if !strings.Contains(existingConfig, `projects."/workspace"`) {
+		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
+			existingConfig += "\n"
+		}
+		existingConfig += "\n# Pre-trust /workspace — sandbox is already isolated\n[projects.\"/workspace\"]\ntrust_level = \"trusted\"\n"
 	}
 
 	// Check if our script is already in the config

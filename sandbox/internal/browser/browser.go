@@ -5,6 +5,7 @@
 package browser
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,7 +43,8 @@ type Controller struct {
 	processes []*exec.Cmd
 }
 
-const browserRevision = "browser-v4-clean-startup"
+// REVISION: browser-v5-log-filter
+const browserRevision = "browser-v5-log-filter"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -179,8 +181,10 @@ func (c *Controller) Start() (Status, error) {
 	}
 	for i, cmd := range processes {
 		log.Printf("browser starting %s", cmd.Path)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		procName := filepath.Base(cmd.Path)
+		logWriter := newProcessLogWriter(procName)
+		cmd.Stdout = logWriter
+		cmd.Stderr = logWriter
 		if err := cmd.Start(); err != nil {
 			log.Printf("browser failed to start %s: %v", cmd.Path, err)
 			killAll()
@@ -219,6 +223,72 @@ func (c *Controller) Start() (Status, error) {
 
 	log.Printf("browser started display=%d wsPort=%d vncPort=%d", display, wsPort, vncPort)
 	return c.statusLocked(), nil
+}
+
+type processLogWriter struct {
+	proc string
+	buf  []byte
+	mu   sync.Mutex
+}
+
+func newProcessLogWriter(proc string) io.Writer {
+	return &processLogWriter{proc: proc}
+}
+
+func (w *processLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.buf = append(w.buf, p...)
+	for {
+		nl := bytes.IndexByte(w.buf, '\n')
+		if nl == -1 {
+			break
+		}
+		line := bytes.TrimRight(w.buf[:nl], "\r")
+		w.buf = w.buf[nl+1:]
+		w.logLine(string(line))
+	}
+
+	return len(p), nil
+}
+
+func (w *processLogWriter) logLine(line string) {
+	if line == "" {
+		return
+	}
+	if shouldSuppressProcessLine(w.proc, line) {
+		return
+	}
+	log.Printf("browser[%s] %s", w.proc, line)
+}
+
+func shouldSuppressProcessLine(proc, line string) bool {
+	switch proc {
+	case "chromium":
+		if strings.Contains(line, "ERROR:dbus/") ||
+			strings.Contains(line, "Failed to connect to the bus") ||
+			strings.Contains(line, "org.freedesktop.DBus") ||
+			strings.Contains(line, "org.freedesktop.UPower") {
+			return true
+		}
+	case "x11vnc":
+		if strings.Contains(line, `Xlib:  extension "DPMS" missing`) ||
+			strings.Contains(line, "The VNC desktop is:") ||
+			strings.HasPrefix(line, "PORT=") {
+			return true
+		}
+	case "websockify":
+		if strings.Contains(line, "WebSocket server settings:") ||
+			strings.Contains(line, "Listen on :") ||
+			strings.Contains(line, "Web server. Web root:") ||
+			strings.Contains(line, "No SSL/TLS support") ||
+			strings.Contains(line, "proxying from :") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (c *Controller) Stop() {

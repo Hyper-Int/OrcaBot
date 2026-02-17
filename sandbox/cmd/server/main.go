@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v14-auth-debug-logging
+// REVISION: main-v15-internal-token-fingerprint-logging
 
 package main
 
@@ -33,7 +33,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v14-auth-debug-logging"
+const mainRevision = "main-v15-internal-token-fingerprint-logging"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -402,9 +402,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 	// Parse optional dashboard_id and mcp_token from request body
 	var req struct {
-		DashboardID  string `json:"dashboard_id"`
-		MCPToken     string `json:"mcp_token"`      // Dashboard-scoped token for MCP proxy
-		EgressEnabled *bool `json:"egress_enabled"` // Per-session egress proxy opt-in
+		DashboardID   string `json:"dashboard_id"`
+		MCPToken      string `json:"mcp_token"`      // Dashboard-scoped token for MCP proxy
+		EgressEnabled *bool  `json:"egress_enabled"` // Per-session egress proxy opt-in
 	}
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -434,7 +434,7 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// REVISION: egress-allowlist-v2-load-persisted-domains
+// REVISION: egress-allowlist-v3-token-fingerprint
 // ensureEgressAllowlistLoaded loads persisted egress allowlist domains from the control plane.
 // Safe to call repeatedly; domains are loaded at most once per dashboard.
 func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
@@ -474,7 +474,7 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body))
+		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body) + " token=" + tokenFingerprint(internalToken))
 	}
 
 	var payload struct {
@@ -498,6 +498,18 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	s.egressAllowlistMu.Unlock()
 	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains for dashboard %s", len(payload.Domains), dashboardID)
 	return nil
+}
+
+func tokenFingerprint(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "(none)"
+	}
+	n := len(token)
+	if n <= 8 {
+		return fmt.Sprintf("%s(len=%d)", token, n)
+	}
+	return fmt.Sprintf("%s...%s(len=%d)", token[:4], token[n-4:], n)
 }
 
 func (s *Server) handleDeleteSessiоn(w http.ResponseWriter, r *http.Request) {

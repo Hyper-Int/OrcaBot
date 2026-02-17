@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v8-skip-billing-dev-mode
-console.log(`[controlplane] REVISION: controlplane-v8-skip-billing-dev-mode loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v9-reap-volume-delete-clarity
+console.log(`[controlplane] REVISION: controlplane-v9-reap-volume-delete-clarity loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -744,13 +744,16 @@ async function reapUntrackedFlyResources(env: EnvWithBindings): Promise<void> {
       if (destroyed >= MAX_DESTROYS_PER_TICK) break;
       if (trackedVolumeIds.has(volume.id)) continue;
       if (volume.attached_machine_id) continue; // Still attached — machine destroy may be pending
+      const volumeState = (volume.state || '').toLowerCase();
+      // Fly volume deletion is asynchronous; don't spam repeated delete requests.
+      if (volumeState.includes('destroy')) continue;
 
       const createdAt = new Date(volume.created_at).getTime();
       if (now - createdAt < GRACE_PERIOD_MS) continue;
 
       try {
         await fly.deleteVolume(volume.id);
-        console.log(`[reap] Deleted orphaned volume ${volume.id} (${volume.name}, age=${Math.round((now - createdAt) / 60000)}m)`);
+        console.log(`[reap] Requested orphaned volume delete ${volume.id} (${volume.name}, state=${volume.state}, age=${Math.round((now - createdAt) / 60000)}m)`);
         destroyed++;
       } catch (e) {
         console.error(`[reap] Failed to delete volume ${volume.id}: ${e}`);
