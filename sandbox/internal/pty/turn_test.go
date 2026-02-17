@@ -187,25 +187,21 @@ func TestTurnControllerOnExpireCallback(t *testing.T) {
 	tc := NewTurnController()
 	tc.SetGracePeriod(50 * time.Millisecond)
 
-	var expiredUser string
-	var callbackCalled bool
+	expiredCh := make(chan string, 1)
 	tc.SetOnExpire(func(userID string) {
-		callbackCalled = true
-		expiredUser = userID
+		expiredCh <- userID
 	})
 
 	tc.TakeControl("user1")
 	tc.Disconnect("user1")
 
-	// Wait for grace period to expire
-	time.Sleep(100 * time.Millisecond)
-
-	if !callbackCalled {
-		t.Error("expected onExpire callback to be called")
-	}
-
-	if expiredUser != "user1" {
-		t.Errorf("expected expired user to be 'user1', got %q", expiredUser)
+	select {
+	case user := <-expiredCh:
+		if user != "user1" {
+			t.Errorf("expected expired user to be 'user1', got %q", user)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected onExpire callback to be called within 1s")
 	}
 }
 
@@ -213,9 +209,9 @@ func TestTurnControllerOnExpireNotCalledIfReconnected(t *testing.T) {
 	tc := NewTurnController()
 	tc.SetGracePeriod(50 * time.Millisecond)
 
-	var callbackCalled bool
+	expiredCh := make(chan string, 1)
 	tc.SetOnExpire(func(userID string) {
-		callbackCalled = true
+		expiredCh <- userID
 	})
 
 	tc.TakeControl("user1")
@@ -225,11 +221,12 @@ func TestTurnControllerOnExpireNotCalledIfReconnected(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	tc.Reconnect("user1")
 
-	// Wait past the original grace period
-	time.Sleep(50 * time.Millisecond)
-
-	if callbackCalled {
-		t.Error("expected onExpire callback NOT to be called after reconnect")
+	// Wait past the original grace period — callback should NOT fire
+	select {
+	case user := <-expiredCh:
+		t.Errorf("expected onExpire callback NOT to be called after reconnect, got %q", user)
+	case <-time.After(100 * time.Millisecond):
+		// Good — callback was not called
 	}
 
 	if tc.Controller() != "user1" {
