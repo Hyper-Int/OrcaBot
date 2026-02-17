@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v46-egress-pending-recovery-polling
-console.log(`[dashboard] REVISION: dashboard-v46-egress-pending-recovery-polling loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v48-messaging-policy-merge
+console.log(`[dashboard] REVISION: dashboard-v48-messaging-policy-merge loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -80,6 +80,8 @@ import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive, listPendingEgressApprovals } from "@/lib/api/cloudflare";
+import { apiGet } from "@/lib/api/client";
+import { API } from "@/config/env";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -95,12 +97,14 @@ import {
   listTerminalIntegrations,
   listDashboardIntegrationLabels,
   createReadOnlyPolicy,
+  updateIntegrationPolicy,
   getProviderDisplayName,
   type IntegrationProvider,
   type SecurityLevel,
   type TerminalIntegration,
   type IntegrationLabel,
   type BrowserPolicy,
+  type MessagingPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
@@ -1311,31 +1315,11 @@ export default function DashboardPage() {
       const provider = getProviderForBlockType(integrationItem.type);
       if (!provider) return;
 
-      // Messaging providers use connection flow (edges), not MCP integration.
-      // Edge existence = authorization. No terminal_integrations record or MCP tools needed.
-      // Direction: terminal→messaging = "send", messaging→terminal = "receive"
+      // Messaging providers: determine direction for edge labels + policy defaults
       const isMessagingProvider = ["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"].includes(provider);
-      if (isMessagingProvider) {
-        if (action === "attach") {
-          const messagingDirection = sourceItem.type === "terminal" ? "send" : "receive";
-          setEdges((prev) =>
-            prev.map((e) =>
-              e.id === edge.id
-                ? { ...e, type: "integration", data: { provider, messagingDirection } }
-                : e
-            )
-          );
-        } else {
-          setEdges((prev) =>
-            prev.map((e) =>
-              e.id === edge.id
-                ? { ...e, type: "smoothstep", data: undefined }
-                : e
-            )
-          );
-        }
-        return;
-      }
+      const messagingDirection = isMessagingProvider
+        ? (sourceItem.type === "terminal" ? "send" as const : "receive" as const)
+        : undefined;
 
       try {
         if (action === "attach") {
@@ -1431,21 +1415,104 @@ export default function DashboardPage() {
             );
             toast.success(toastMessage);
           } else {
-            // OAuth-based integrations (non-messaging) - need userIntegrationId
+            // OAuth-based integrations - need userIntegrationId
             const availableIntegrations = await listAvailableIntegrations(dashboardId, ptyId);
+
+            // Check if already attached first — terminal_integrations allows only one record
+            // per terminal+provider. The availableIntegrations "attached" flag can miss this
+            // when there are multiple user_integrations for the same provider, so also check
+            // the terminal_integrations list directly.
+            const anyAttached = availableIntegrations.some(
+              (i) => i.provider === provider && i.attached
+            );
+            // If not marked in available list, double-check via terminal_integrations
+            // (covers edge cases like reconnected OAuth = multiple user_integrations rows)
+            let isAlreadyAttached = anyAttached;
+            if (!isAlreadyAttached && isMessagingProvider) {
+              try {
+                const tis = await listTerminalIntegrations(dashboardId, ptyId);
+                isAlreadyAttached = tis.some((i) => i.provider === provider);
+              } catch { /* continue */ }
+            }
+
+            if (isAlreadyAttached) {
+              // For messaging: merge the new direction's capability into the existing policy.
+              // There's one terminal_integration per terminal+provider, shared by send & receive edges.
+              if (isMessagingProvider && messagingDirection) {
+                try {
+                  const integrations = isAlreadyAttached && !anyAttached
+                    ? await listTerminalIntegrations(dashboardId, ptyId) // already fetched above if messaging
+                    : await listTerminalIntegrations(dashboardId, ptyId);
+                  const existing = integrations.find((i) => i.provider === provider);
+                  if (existing?.policy) {
+                    const existingPolicy = existing.policy as MessagingPolicy;
+                    const needsUpdate =
+                      (messagingDirection === "send" && !existingPolicy.canSend) ||
+                      (messagingDirection === "receive" && !existingPolicy.canReceive);
+                    if (needsUpdate) {
+                      const merged = {
+                        ...existingPolicy,
+                        ...(messagingDirection === "send" ? { canSend: true } : { canReceive: true }),
+                      };
+                      await updateIntegrationPolicy(dashboardId, ptyId, provider, { policy: merged });
+                    }
+                  }
+                  // Fetch the current security level for the edge label
+                  const refreshed = await listTerminalIntegrations(dashboardId, ptyId);
+                  const current = refreshed.find((i) => i.provider === provider);
+                  queryClient.invalidateQueries({
+                    queryKey: ["terminal-integrations", dashboardId, ptyId],
+                  });
+                  queryClient.invalidateQueries({
+                    queryKey: ["integration-labels", dashboardId],
+                  });
+                  // Look up channel name for edge label (best-effort)
+                  let channelName: string | undefined;
+                  if (integrationItem) {
+                    try {
+                      const url = new URL(`${API.cloudflare.base}/messaging/subscriptions`);
+                      url.searchParams.set("dashboard_id", dashboardId);
+                      const subs = await apiGet<Array<{ item_id: string; channel_name: string; status: string }>>(url.toString());
+                      const activeSub = subs.find(
+                        (s) => s.item_id === integrationItem!.id && s.status === "active" && s.channel_name
+                      );
+                      if (activeSub) {
+                        channelName = activeSub.channel_name.startsWith("#")
+                          ? activeSub.channel_name
+                          : `#${activeSub.channel_name}`;
+                      }
+                    } catch { /* best-effort */ }
+                  }
+                  setEdges((prev) =>
+                    prev.map((e) =>
+                      e.id === edge.id
+                        ? {
+                            ...e,
+                            type: "integration",
+                            data: {
+                              securityLevel: current?.securityLevel || "elevated",
+                              provider,
+                              messagingDirection,
+                              ...(channelName ? { channelName } : {}),
+                            },
+                          }
+                        : e
+                    )
+                  );
+                } catch (err) {
+                  console.warn(`[handleIntegrationEdge] failed to merge messaging policy:`, err);
+                }
+              } else {
+                toast.info(`${getProviderDisplayName(provider)} is already attached to this terminal`);
+              }
+              return;
+            }
+
+            // Find an unattached OAuth integration for this provider
             const userIntegration = availableIntegrations.find(
               (i) => i.provider === provider && i.connected && !i.attached && i.userIntegrationId
             );
-
             if (!userIntegration) {
-              // Check if already attached
-              const alreadyAttached = availableIntegrations.find(
-                (i) => i.provider === provider && i.attached
-              );
-              if (alreadyAttached) {
-                toast.info(`${getProviderDisplayName(provider)} is already attached to this terminal`);
-                return;
-              }
               // Not connected via OAuth yet - delete the edge and show warning
               await deleteEdge(dashboardId, edge.id);
               setEdges((prev) => prev.filter((e) => e.id !== edge.id));
@@ -1463,25 +1530,62 @@ export default function DashboardPage() {
               return;
             }
 
+            // For messaging "send" edges, enable canSend in addition to the default policy.
+            // Always keep canReceive: true — there's only one terminal_integration per
+            // terminal+provider, so both send and receive edges share the same policy record.
+            let policy;
+            if (messagingDirection === "send") {
+              const readOnly = createReadOnlyPolicy(provider) as MessagingPolicy;
+              policy = { ...readOnly, canSend: true } as MessagingPolicy;
+            } else {
+              policy = createReadOnlyPolicy(provider);
+            }
+
             const result = await attachIntegration(dashboardId, ptyId, {
               provider,
               userIntegrationId: userIntegration.userIntegrationId,
-              policy: createReadOnlyPolicy(provider),
+              policy,
             });
 
-            // Update edge to show security indicator
+            // For messaging edges, look up subscribed channel name (best-effort)
+            let channelName: string | undefined;
+            if (isMessagingProvider && integrationItem) {
+              try {
+                const url = new URL(`${API.cloudflare.base}/messaging/subscriptions`);
+                url.searchParams.set("dashboard_id", dashboardId);
+                const subs = await apiGet<Array<{ item_id: string; channel_name: string; status: string }>>(url.toString());
+                const activeSub = subs.find(
+                  (s) => s.item_id === integrationItem!.id && s.status === "active" && s.channel_name
+                );
+                if (activeSub) {
+                  channelName = activeSub.channel_name.startsWith("#")
+                    ? activeSub.channel_name
+                    : `#${activeSub.channel_name}`;
+                }
+              } catch {
+                // Best-effort — don't block attachment on channel name lookup failure
+              }
+            }
+
+            // Update edge to show security indicator + messaging direction + channel
             setEdges((prev) =>
               prev.map((e) =>
                 e.id === edge.id
                   ? {
                       ...e,
                       type: "integration",
-                      data: { securityLevel: result.securityLevel, provider },
+                      data: {
+                        securityLevel: result.securityLevel,
+                        provider,
+                        ...(messagingDirection ? { messagingDirection } : {}),
+                        ...(channelName ? { channelName } : {}),
+                      },
                     }
                   : e
               )
             );
-            toast.success(`${getProviderDisplayName(provider)} attached to terminal (read-only)`);
+            const dirLabel = messagingDirection ? ` (${messagingDirection})` : " (read-only)";
+            toast.success(`${getProviderDisplayName(provider)} attached to terminal${dirLabel}`);
           }
         } else {
           await detachIntegration(dashboardId, ptyId, provider);
@@ -3715,9 +3819,33 @@ export default function DashboardPage() {
             });
             setEdgePolicyEditor(null);
           }}
-          onPolicyUpdate={(provider, securityLevel) => {
+          onPolicyUpdate={(provider, securityLevel, updatedPolicy) => {
             // Use terminalItemId (dashboard item ID) for edge matching
             handlePolicyUpdate(edgePolicyEditor.terminalItemId, provider, securityLevel);
+
+            // For messaging providers: if canSend was disabled, delete the outgoing "send" edge
+            const MESSAGING_PROVIDERS_SET = new Set(["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"]);
+            if (MESSAGING_PROVIDERS_SET.has(provider) && updatedPolicy) {
+              const mp = updatedPolicy as MessagingPolicy;
+              if (!mp.canSend) {
+                // Find and delete the terminal→messaging "send" edge
+                const termItemId = edgePolicyEditor.terminalItemId;
+                setEdges((prev) => {
+                  const toDelete = prev.find((e) => {
+                    if (e.source !== termItemId) return false;
+                    const targetItem = items.find((i) => i.id === e.target);
+                    if (!targetItem) return false;
+                    return getProviderForBlockType(targetItem.type) === provider;
+                  });
+                  if (toDelete) {
+                    // Delete from backend too (fire-and-forget)
+                    deleteEdge(dashboardId, toDelete.id).catch(() => {});
+                    return prev.filter((e) => e.id !== toDelete.id);
+                  }
+                  return prev;
+                });
+              }
+            }
           }}
         />
       )}

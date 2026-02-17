@@ -98,7 +98,7 @@ export interface Env {
   FLY_APP_NAME?: string;
   /** Default region for new Fly machines (e.g., "sjc") */
   FLY_REGION?: string;
-  /** Docker image for sandbox machines (e.g., "registry.fly.io/orcabot-sandbox:latest") */
+  /** Docker image override for sandbox machines. If unset, auto-discovered from running machines. */
   FLY_MACHINE_IMAGE?: string;
   /** Feature flag: set to "true" to enable per-dashboard machine provisioning */
   FLY_PROVISIONING_ENABLED?: string;
@@ -972,6 +972,8 @@ export interface MessagingPolicy extends BasePolicy {
   canDeleteMessages: boolean;
   canUploadFiles: boolean;
   canReadHistory: boolean;
+  /** When true, only forward thread replies (messages with thread_ts) — not top-level channel messages. */
+  repliesOnly?: boolean;
   rateLimits?: BasePolicy['rateLimits'] & {
     messagesPerMinute?: number;
     messagesPerHour?: number;

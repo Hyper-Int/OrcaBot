@@ -768,9 +768,22 @@ fi
 		existingConfig = string(data)
 	}
 
+	// REVISION: codex-autoupdate-v1-disable
+	// Disable Codex CLI's update check. It prompts interactively on startup
+	// which blocks non-interactive use in the sandbox.
+	if !strings.Contains(existingConfig, "check_for_updates") {
+		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
+			existingConfig += "\n"
+		}
+		existingConfig += "\n# Disable update check — updates managed via Docker image rebuilds\ncheck_for_updates = false\n"
+	}
+
 	// Check if our script is already in the config
 	if strings.Contains(existingConfig, scriptPath) {
-		// Already configured, nothing to do
+		// Already configured, write config (may have added check_for_updates above)
+		if err := os.WriteFile(configPath, []byte(existingConfig), 0644); err != nil {
+			return err
+		}
 		return nil
 	}
 

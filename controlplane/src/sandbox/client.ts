@@ -33,6 +33,11 @@ export class SandboxClient {
     // Remove trailing slash
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.token = token || '';
+    if (!this.token) {
+      console.error(`[SandboxClient] WARNING: no auth token provided — all requests will be unauthenticated`);
+    } else {
+      console.log(`[SandboxClient] initialized with token (len=${this.token.length}, prefix=${this.token.slice(0, 4)})`);
+    }
   }
 
   /** Fetch with an AbortController timeout to prevent indefinite hangs. */

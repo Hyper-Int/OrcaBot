@@ -209,6 +209,12 @@ export function requireInternalAuth(
   }
 
   if (!token || token !== env.INTERNAL_API_TOKEN) {
+    const url = new URL(request.url);
+    const gotLen = token ? token.length : 0;
+    const gotPrefix = token ? token.slice(0, 4) : '(none)';
+    const wantLen = env.INTERNAL_API_TOKEN.length;
+    const wantPrefix = env.INTERNAL_API_TOKEN.slice(0, 4);
+    console.error(`[requireInternalAuth] REJECT ${request.method} ${url.pathname} — token mismatch (got len=${gotLen} prefix=${gotPrefix}, want len=${wantLen} prefix=${wantPrefix})`);
     return Response.json(
       { error: 'E79403: Invalid internal token' },
       { status: 401 }

@@ -26,6 +26,7 @@ import {
   getProviderDisplayName,
   getSecurityLevelColor,
   getSecurityLevelText,
+  createReadOnlyPolicy,
   HIGH_RISK_CAPABILITIES,
 } from "@/lib/api/cloudflare/integration-policies";
 
@@ -444,6 +445,12 @@ const MessagingPolicyEditor: React.FC<{
           description={`Receive inbound messages from ${providerName}`}
         />
         <Toggle
+          label="Replies to bot only"
+          checked={policy.repliesOnly ?? false}
+          onChange={(v) => update("repliesOnly", v)}
+          description="Only forward thread replies (not top-level channel messages)"
+        />
+        <Toggle
           label="Can read history"
           checked={policy.canReadHistory ?? false}
           onChange={(v) => update("canReadHistory", v)}
@@ -589,8 +596,8 @@ interface PolicyEditorDialogProps {
   terminalId: string;
   onClose: () => void;
   onSuccess: () => void;
-  /** Called with new security level after policy update, for syncing edge data */
-  onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel) => void;
+  /** Called with new security level + policy after policy update, for syncing edge data */
+  onPolicyUpdate?: (provider: IntegrationProvider, securityLevel: SecurityLevel, policy?: AnyPolicy) => void;
 }
 
 export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
@@ -601,14 +608,16 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
   onSuccess,
   onPolicyUpdate,
 }) => {
-  const [policy, setPolicy] = React.useState<AnyPolicy>(integration.policy || ({} as AnyPolicy));
+  const [policy, setPolicy] = React.useState<AnyPolicy>(
+    integration.policy || createReadOnlyPolicy(integration.provider)
+  );
 
   const updateMutation = useMutation({
     mutationFn: (data: { policy: AnyPolicy; highRiskConfirmations?: string[] }) =>
       updateIntegrationPolicy(dashboardId, terminalId, integration.provider, data),
     onSuccess: (result) => {
-      // Notify parent to update edge data with new security level
-      onPolicyUpdate?.(integration.provider, result.securityLevel);
+      // Notify parent to update edge data with new security level + policy for side-effects
+      onPolicyUpdate?.(integration.provider, result.securityLevel, policy);
       onSuccess();
       onClose();
     },

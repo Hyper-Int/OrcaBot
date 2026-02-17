@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v12-egress-feature-flag
+// REVISION: main-v14-auth-debug-logging
 
 package main
 
@@ -11,6 +11,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -32,7 +33,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v12-egress-feature-flag"
+const mainRevision = "main-v14-auth-debug-logging"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -285,91 +286,96 @@ func (s *Server) Handler() http.Handler {
 	// Health check - unauthenticated (for load balancer probes)
 	mux.HandleFunc("GET /health", s.handleHеalth)
 
-	// Debug profiling - requires auth + machine pinning
-	mux.HandleFunc("GET /debug/pprof/", s.auth.RequireAuthFunc(s.requireMachine(pprof.Index)))
-	mux.HandleFunc("GET /debug/pprof/cmdline", s.auth.RequireAuthFunc(s.requireMachine(pprof.Cmdline)))
-	mux.HandleFunc("GET /debug/pprof/profile", s.auth.RequireAuthFunc(s.requireMachine(pprof.Profile)))
-	mux.HandleFunc("GET /debug/pprof/symbol", s.auth.RequireAuthFunc(s.requireMachine(pprof.Symbol)))
-	mux.HandleFunc("GET /debug/pprof/trace", s.auth.RequireAuthFunc(s.requireMachine(pprof.Trace)))
+	// Debug profiling - machine routing first, then auth
+	mux.HandleFunc("GET /debug/pprof/", s.requireMachine(s.auth.RequireAuthFunc(pprof.Index)))
+	mux.HandleFunc("GET /debug/pprof/cmdline", s.requireMachine(s.auth.RequireAuthFunc(pprof.Cmdline)))
+	mux.HandleFunc("GET /debug/pprof/profile", s.requireMachine(s.auth.RequireAuthFunc(pprof.Profile)))
+	mux.HandleFunc("GET /debug/pprof/symbol", s.requireMachine(s.auth.RequireAuthFunc(pprof.Symbol)))
+	mux.HandleFunc("GET /debug/pprof/trace", s.requireMachine(s.auth.RequireAuthFunc(pprof.Trace)))
 
-	// All other routes require authentication
+	// All other routes: machine routing runs first (Fly-Replay to correct machine),
+	// then auth checks the token. This ordering is critical because the release machine
+	// (from fly deploy) has no SANDBOX_INTERNAL_TOKEN — auth would fail before Fly-Replay
+	// could redirect to the correct dynamically-provisioned machine.
+
 	// Sessions
-	mux.HandleFunc("POST /sessions", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreateSessiоn)))
-	mux.HandleFunc("DELETE /sessions/{sessionId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeleteSessiоn)))
+	mux.HandleFunc("POST /sessions", s.requireMachine(s.auth.RequireAuthFunc(s.handleCreateSessiоn)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeleteSessiоn)))
 
 	// PTYs
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleListPTYs)))
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.auth.RequireAuthFunc(s.requireMachine(s.handleCreatePTY)))
-	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeletePTY)))
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.auth.RequireAuthFunc(s.requireMachine(s.handleWritePty)))
-	mux.HandleFunc("POST /sessions/{sessionId}/env", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionEnv)))
-	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.auth.RequireAuthFunc(s.requireMachine(s.handleSessionMetrics)))
-	mux.HandleFunc("GET /sessions/{sessionId}/control", s.auth.RequireAuthFunc(s.requireMachine(s.handleControlWebSocket)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/start", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStart)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/stop", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStop)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/status", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserStatus)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserOpen)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/screenshot", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserScreenshot)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/click", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserClick)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/type", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserType)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/evaluate", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserEvaluate)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/content", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserContent)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/html", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserHTML)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/url", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserURL)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/title", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserTitle)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/wait", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserWait)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/navigate", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserNavigate)))
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/scroll", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserScroll)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser/{path...}", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserProxy)))
-	mux.HandleFunc("GET /sessions/{sessionId}/browser", s.auth.RequireAuthFunc(s.requireMachine(s.handleBrowserProxy)))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleListPTYs)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys", s.requireMachine(s.auth.RequireAuthFunc(s.handleCreatePTY)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/ptys/{ptyId}", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeletePTY)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/write", s.requireMachine(s.auth.RequireAuthFunc(s.handleWritePty)))
+	mux.HandleFunc("POST /sessions/{sessionId}/env", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionEnv)))
+	mux.HandleFunc("GET /sessions/{sessionId}/metrics", s.requireMachine(s.auth.RequireAuthFunc(s.handleSessionMetrics)))
+	mux.HandleFunc("GET /sessions/{sessionId}/control", s.requireMachine(s.auth.RequireAuthFunc(s.handleControlWebSocket)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/start", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserStart)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserStop)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/status", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserStatus)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserOpen)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/screenshot", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserScreenshot)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/click", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserClick)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/type", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserType)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/evaluate", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserEvaluate)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/content", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserContent)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/html", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserHTML)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/url", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserURL)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/title", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserTitle)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/wait", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserWait)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/navigate", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserNavigate)))
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/scroll", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserScroll)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser/{path...}", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserProxy)))
+	mux.HandleFunc("GET /sessions/{sessionId}/browser", s.requireMachine(s.auth.RequireAuthFunc(s.handleBrowserProxy)))
 
 	// Mirror sync
-	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrоrSync)))
-	mux.HandleFunc("POST /sessions/{sessionId}/mirror/cleanup", s.auth.RequireAuthFunc(s.requireMachine(s.handleMirrorCleanup)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mirror/sync", s.requireMachine(s.auth.RequireAuthFunc(s.handleMirrоrSync)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mirror/cleanup", s.requireMachine(s.auth.RequireAuthFunc(s.handleMirrorCleanup)))
 
 	// WebSocket for PTYs - auth checked via token, origin validated by upgrader
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleWebSocket)))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/ws", s.requireMachine(s.auth.RequireAuthFunc(s.wsRouter.HandleWebSocket)))
 
 	// Agent
-	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.requireMachine(s.handleStartAgent)))
-	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.auth.RequireAuthFunc(s.requireMachine(s.handleGetAgent)))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.auth.RequireAuthFunc(s.requireMachine(s.handlePauseAgent)))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.auth.RequireAuthFunc(s.requireMachine(s.handleResumeAgent)))
-	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.auth.RequireAuthFunc(s.requireMachine(s.handleStоpAgent)))
-	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.auth.RequireAuthFunc(s.requireMachine(s.wsRouter.HandleAgentWebSocket)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent", s.requireMachine(s.auth.RequireAuthFunc(s.handleStartAgent)))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent", s.requireMachine(s.auth.RequireAuthFunc(s.handleGetAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/pause", s.requireMachine(s.auth.RequireAuthFunc(s.handlePauseAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/resume", s.requireMachine(s.auth.RequireAuthFunc(s.handleResumeAgent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/agent/stop", s.requireMachine(s.auth.RequireAuthFunc(s.handleStоpAgent)))
+	mux.HandleFunc("GET /sessions/{sessionId}/agent/ws", s.requireMachine(s.auth.RequireAuthFunc(s.wsRouter.HandleAgentWebSocket)))
 
 	// Filesystem
-	mux.HandleFunc("GET /sessions/{sessionId}/files", s.auth.RequireAuthFunc(s.requireMachine(s.handleListFiles)))
-	mux.HandleFunc("GET /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handleGetFile)))
-	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handlePutFile)))
-	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.auth.RequireAuthFunc(s.requireMachine(s.handleDeleteFile)))
-	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.auth.RequireAuthFunc(s.requireMachine(s.handleStatFile)))
-	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.auth.RequireAuthFunc(s.requireMachine(s.handleDriveSync)))
+	mux.HandleFunc("GET /sessions/{sessionId}/files", s.requireMachine(s.auth.RequireAuthFunc(s.handleListFiles)))
+	mux.HandleFunc("GET /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handleGetFile)))
+	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handlePutFile)))
+	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeleteFile)))
+	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.requireMachine(s.auth.RequireAuthFunc(s.handleStatFile)))
+	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.requireMachine(s.auth.RequireAuthFunc(s.handleDriveSync)))
 
 	// MCP proxy - allows agents to call MCP UI tools via the control plane
 	// These routes proxy requests to the control plane's internal MCP endpoints
 	// The sandbox automatically injects the dashboard_id from the session
 	// All MCP routes are under /sessions/{sessionId}/mcp/* for consistency
 	// An MCP client should set base URL to http://localhost:PORT/sessions/{sessionId}/mcp
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListTооls)))
-	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPCallTооl)))
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.auth.RequireAuthFunc(s.requireMachine(s.handleMCPListItems)))
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.requireMachine(s.auth.RequireAuthFunc(s.handleMCPListTооls)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.requireMachine(s.auth.RequireAuthFunc(s.handleMCPCallTооl)))
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.requireMachine(s.auth.RequireAuthFunc(s.handleMCPListItems)))
 
 	// Audio playback - broadcasts audio events to PTY WebSocket clients
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.auth.RequireAuthFunc(s.requireMachine(s.handleAudioEvent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.requireMachine(s.auth.RequireAuthFunc(s.handleAudioEvent)))
 
 	// Egress proxy management
-	mux.HandleFunc("POST /egress/approve", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressApprove)))
-	mux.HandleFunc("POST /egress/revoke", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressRevoke)))
-	mux.HandleFunc("GET /egress/pending", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressPending)))
-	mux.HandleFunc("GET /egress/allowlist", s.auth.RequireAuthFunc(s.requireMachine(s.handleEgressAllowlist)))
+	mux.HandleFunc("POST /egress/approve", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressApprove)))
+	mux.HandleFunc("POST /egress/revoke", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressRevoke)))
+	mux.HandleFunc("GET /egress/pending", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressPending)))
+	mux.HandleFunc("GET /egress/allowlist", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressAllowlist)))
 
 	return mux
 }
 
 func (s *Server) handleHеalth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+	fmt.Fprintf(w, `{"status":"ok","revision":"%s"}`, mainRevision)
 }
 
 // handleListSessions returns active session IDs (for agent discovery on localhost).
@@ -596,6 +602,7 @@ func (s *Server) requireMachine(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		log.Printf("[requireMachine] Fly-Replay: %s %s → target=%s (this=%s)", r.Method, r.URL.Path, target, s.machine)
 		w.Header().Set("Fly-Replay", "instance="+target)
 		w.WriteHeader(http.StatusConflict)
 	}

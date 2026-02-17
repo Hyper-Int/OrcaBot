@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: integration-edge-v15-metro-hover-only
-const INTEGRATION_EDGE_REVISION = "integration-edge-v15-metro-hover-only";
+// REVISION: integration-edge-v16-channel-name-label
+const INTEGRATION_EDGE_REVISION = "integration-edge-v16-channel-name-label";
 console.log(`[IntegrationEdge] REVISION: ${INTEGRATION_EDGE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -23,6 +23,8 @@ export interface IntegrationEdgeData {
   provider?: string;
   /** For messaging edges: direction relative to the terminal */
   messagingDirection?: "send" | "receive";
+  /** For messaging edges: subscribed channel name (e.g., "#general") */
+  channelName?: string;
 }
 
 /**
@@ -78,6 +80,7 @@ export function IntegrationEdge({
   const securityLevel = edgeData?.securityLevel;
   const provider = edgeData?.provider;
   const messagingDirection = edgeData?.messagingDirection;
+  const channelName = edgeData?.channelName;
   const onLabelClick = React.useContext(EdgeLabelClickContext);
   const onDelete = React.useContext(EdgeDeleteContext);
   const onReverse = React.useContext(EdgeReverseContext);
@@ -159,6 +162,11 @@ export function IntegrationEdge({
   const badgeStyle = messagingDirection
     ? getMessagingBadgeStyle(messagingDirection)
     : getBadgeStyle(securityLevel);
+
+  // Append channel name to messaging badge label (e.g., "Send · #general")
+  const badgeLabel = badgeStyle
+    ? (channelName ? `${badgeStyle.label} · ${channelName}` : badgeStyle.label)
+    : undefined;
 
   const handleClick = React.useCallback(
     (e: React.MouseEvent) => {
@@ -264,7 +272,7 @@ export function IntegrationEdge({
                 onClick={handleClick}
                 title={onLabelClick ? "Click to edit policy" : undefined}
               >
-                {badgeStyle.label}
+                {badgeLabel}
               </div>
             )}
             {canReverse && !hasReverse && onReverse && (

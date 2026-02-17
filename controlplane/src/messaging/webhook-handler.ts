@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v46-discord-slash-commands
-const MODULE_REVISION = 'messaging-webhook-v46-discord-slash-commands';
+// REVISION: messaging-webhook-v47-replies-only-filter
+const MODULE_REVISION = 'messaging-webhook-v47-replies-only-filter';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -28,7 +28,7 @@ console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Da
 import type { Env, MessagingPolicy } from '../types';
 import { deliverOrWakeAndDrain } from './delivery';
 
-/** Messaging providers use edge-only authorization (no terminal_integrations / MCP tools). */
+/** Messaging providers use edge-based authorization + terminal_integrations for policy (repliesOnly, etc.). */
 const MESSAGING_PROVIDERS = new Set(['whatsapp', 'slack', 'discord', 'teams', 'matrix', 'google_chat']);
 
 // ============================================
@@ -1095,8 +1095,34 @@ async function processSubscriptionMessage(
   const hasAnyEdges = (anyEdges?.cnt || 0) > 0;
 
   if (MESSAGING_PROVIDERS.has(provider)) {
-    // Messaging: edge = authorization, no terminal policy check
+    // Messaging: edge = authorization
     if (!hasAnyEdges) return;
+
+    // Also check terminal_integrations policies for repliesOnly filtering.
+    // Messaging edges now create terminal_integrations records with policies.
+    const msgPolicies = await env.DB.prepare(`
+      SELECT ip.policy
+      FROM dashboard_edges de
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+      JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
+      JOIN integration_policies ip ON ip.id = ti.active_policy_id
+      WHERE de.source_item_id = ?
+    `).bind(provider, subscription.item_id).all<{ policy: string }>();
+
+    const parsedMsgPolicies = (msgPolicies.results || []).map(row => {
+      try { return JSON.parse(row.policy) as MessagingPolicy; }
+      catch { return null; }
+    }).filter((p): p is MessagingPolicy => p !== null);
+
+    // If any policy has repliesOnly=true, filter out top-level channel messages
+    const repliesOnly = parsedMsgPolicies.some(p => p.repliesOnly === true);
+    if (repliesOnly) {
+      const threadTs = message.metadata?.thread_ts;
+      if (!threadTs) {
+        // Top-level channel message — filtered out by repliesOnly policy
+        return;
+      }
+    }
   } else {
     // Non-messaging: check terminal integration policies
     const terminalPolicies = await env.DB.prepare(`
