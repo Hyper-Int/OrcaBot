@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 .PHONY: build test test-integration test-integration-local run clean docker-build docker-run deploy drain invalidate-warm-pool
+=======
+.PHONY: build test test-race test-integration test-integration-local run clean docker-build docker-run deploy drain
+>>>>>>> Stashed changes
 
 # Binary name
 BINARY=orcabot-sandbox
@@ -16,6 +20,10 @@ build:
 # Run unit tests
 test:
 	go test -v ./...
+
+# Run unit tests with race detector (requires Linux; use Docker on macOS)
+test-race:
+	docker run --rm -v "$$(pwd):/build" -w /build golang:1.23-bookworm go test -race -count=1 ./...
 
 # Run integration tests against deployed API
 test-integration:
