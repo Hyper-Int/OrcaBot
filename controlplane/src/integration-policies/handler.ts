@@ -576,16 +576,33 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
       } as BrowserPolicy;
 
     case 'slack':
+      // Slack read-only: can receive thread replies and read history, but not send.
+      // channelFilter uses "all" — the subscribed channel is configured on the messaging block itself.
+      // repliesOnly: true — only thread replies (not top-level channel messages) are forwarded.
+      return {
+        canReceive: true,
+        channelFilter: { mode: 'all' },
+        senderFilter: { mode: 'all' },
+        canSend: false,
+        canReact: false,
+        canEditMessages: false,
+        canDeleteMessages: false,
+        canUploadFiles: false,
+        canReadHistory: true,
+        repliesOnly: true,
+      } as import('../types').MessagingPolicy;
+
     case 'discord':
     case 'telegram':
     case 'whatsapp':
     case 'teams':
     case 'matrix':
     case 'google_chat':
-      // Messaging read-only: can receive and read history, but not send
+      // Messaging read-only: can receive and read history, but not send.
+      // channelFilter uses "all" — the subscribed channel is configured on the messaging block itself.
       return {
         canReceive: true,
-        channelFilter: { mode: 'allowlist', channelIds: [], channelNames: [] },
+        channelFilter: { mode: 'all' },
         senderFilter: { mode: 'all' },
         canSend: false,
         canReact: false,

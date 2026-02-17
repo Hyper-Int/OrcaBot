@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: messaging-v3-readonly-can-receive
+// REVISION: messaging-v4-replies-only
 
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api/client";
 import { API } from "@/config/env";
@@ -309,6 +309,8 @@ export interface MessagingPolicy extends BasePolicy {
   canDeleteMessages: boolean;
   canUploadFiles: boolean;
   canReadHistory: boolean;
+  /** When true, only forward thread replies (messages with thread_ts) — not top-level channel messages. */
+  repliesOnly?: boolean;
 }
 
 export interface SlackPolicy extends MessagingPolicy {
@@ -821,26 +823,25 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
       } as BrowserPolicy;
 
     // Messaging providers — read-only: can receive and read history, but not send.
-    // channelFilter uses allowlist with empty arrays — no messages get through until
-    // the user explicitly configures channels. This is fail-closed at the channel level
-    // while correctly modeling "read-only" as "can receive, can't send" (matching how
-    // read-only works for email/calendar where you can read but not write).
+    // channelFilter uses "all" mode so messages flow immediately when the edge is created.
+    // The subscribed channel is already configured on the messaging block itself.
     case "slack":
       return {
         canReceive: true,
-        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        channelFilter: { mode: "all" as const },
         canSend: false,
         canReact: false,
         canEditMessages: false,
         canDeleteMessages: false,
         canUploadFiles: false,
         canReadHistory: true,
+        repliesOnly: true,
       } as SlackPolicy;
 
     case "discord":
       return {
         canReceive: true,
-        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        channelFilter: { mode: "all" as const },
         canSend: false,
         canReact: false,
         canEditMessages: false,
@@ -852,7 +853,7 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
     case "telegram":
       return {
         canReceive: true,
-        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        channelFilter: { mode: "all" as const },
         canSend: false,
         canReact: false,
         canEditMessages: false,
@@ -867,7 +868,7 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
     case "google_chat":
       return {
         canReceive: true,
-        channelFilter: { mode: "allowlist" as const, channelIds: [], channelNames: [] },
+        channelFilter: { mode: "all" as const },
         canSend: false,
         canReact: false,
         canEditMessages: false,

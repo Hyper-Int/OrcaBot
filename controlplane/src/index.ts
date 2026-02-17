@@ -796,6 +796,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
     return Response.json({
       status: 'ok',
+      revision: 'controlplane-v8-skip-billing-dev-mode',
       sandbox: sandboxHealth.isHealthy ? 'connected' : 'disconnected',
       lastChecked: sandboxHealth.lastCheckAt,
       ...(sandboxHealth.consecutiveFailures > 0 && {

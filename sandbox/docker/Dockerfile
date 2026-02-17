@@ -89,10 +89,10 @@ COPY docker/claude-wrapper.sh /usr/local/bin/claude
 RUN chmod +x /usr/local/bin/claude
 
 # Install Codex CLI (OpenAI)
-RUN npm install -g @openai/codex
+RUN npm cache clean --force && npm install -g @openai/codex@latest
 
 # Install Gemini CLI (Google)
-RUN npm install -g @google/gemini-cli
+RUN npm cache clean --force && npm install -g @google/gemini-cli@latest
 
 # --- Temporarily disabled agents (may re-enable later) ---
 # Keeping Claude Code, Gemini CLI, and Codex CLI for now.

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v13-set-dashboard-id-env
-const sessionsRevision = "sessions-v13-set-dashboard-id-env";
+// REVISION: sessions-v14-applynow-secrets
+const sessionsRevision = "sessions-v14-applynow-secrets";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -417,7 +417,7 @@ async function provisionDedicatedMachine(
   if (warmResult) return warmResult;
 
   // Fall back to cold provisioning
-  return coldProvisionMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion);
+  return coldProvisionMachine(env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion, egressEnabled);
 }
 
 /**
@@ -528,7 +528,8 @@ async function coldProvisionMachine(
   sandbox: SandboxClient,
   mcpToken: string,
   now: string,
-  preferredRegion?: string
+  preferredRegion?: string,
+  egressEnabled?: boolean
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const region = preferredRegion || env.FLY_REGION || 'sjc';
 
@@ -554,6 +555,9 @@ async function coldProvisionMachine(
     volumeId = volume.id;
 
     // Step 2: Create machine with volume
+    const sbToken = env.SANDBOX_INTERNAL_TOKEN;
+    const intToken = env.INTERNAL_API_TOKEN;
+    console.log(`[coldProvisionMachine] token check: SANDBOX_INTERNAL_TOKEN=${sbToken ? `set(len=${sbToken.length},prefix=${sbToken.slice(0,4)})` : 'MISSING'} INTERNAL_API_TOKEN=${intToken ? `set(len=${intToken.length},prefix=${intToken.slice(0,4)})` : 'MISSING'}`);
     const machineConfig = FlyMachinesClient.buildMachineConfig({
       dashboardId,
       volumeId,
@@ -1153,13 +1157,14 @@ export async function createSessiоn(
       const secretNames = Object.keys(secrets);
       if (secretNames.length > 0 || approvedDomains.length > 0) {
         // Convert to the format expected by sandbox: { name: { value, brokerProtected } }
-        // Don't use applyNow - new PTYs will load from .env automatically
+        // applyNow: true because the PTY is already running at this point —
+        // .env was empty when the PTY started, so we must inject env vars into the live shell
         await sandbox.updateEnv(
           sandboxSessionId,
           {
             secrets: secretNames.length > 0 ? secrets : undefined,
             approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-            applyNow: false,
+            applyNow: true,
           },
           sandboxMachineId || undefined
         );

@@ -36,7 +36,6 @@ ALLOWED_ORIGINS = "https://orcabot.com"
 # Fly.io per-dashboard machine provisioning
 FLY_APP_NAME = "orcabot-sandbox"
 FLY_REGION = "sjc"
-FLY_MACHINE_IMAGE = "registry.fly.io/orcabot-sandbox:deployment-01KH9V3RAE030QETY40HD6B4YM"
 FLY_PROVISIONING_ENABLED = "true"
 FLY_SANDBOX_CONTROLPLANE_URL = "https://api.orcabot.com"
 FLY_WARM_POOL_REGIONS = "sjc,ams"

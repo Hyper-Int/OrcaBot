@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v2-list-volumes
-const MODULE_REVISION = 'fly-provisioning-v2-list-volumes';
+// REVISION: fly-provisioning-v3-auto-discover-image
+const MODULE_REVISION = 'fly-provisioning-v3-auto-discover-image';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -244,17 +244,21 @@ export class FlyMachinesClient {
   }
 
   /**
-   * Discover the image from an existing running machine in the app.
+   * Discover the latest deployed image from machines in the app.
+   * Fly image tags use deployment ULIDs (e.g., deployment-01KHMCNMX42...) which are
+   * lexicographically sortable. Sorting by image tag descending gives the latest deploy,
+   * regardless of which machine was created most recently (cron warm pool machines may
+   * be newer than the release machine but carry an older image).
    * Returns undefined if no machines exist or none have a config.image.
    */
   async discoverImage(): Promise<string | undefined> {
     try {
       const machines = await this.listMachines();
-      for (const m of machines) {
-        if (m.config?.image) {
-          return m.config.image;
-        }
-      }
+      const withImage = machines.filter(m => m.config?.image);
+      if (withImage.length === 0) return undefined;
+      // Sort by image tag descending — highest ULID = latest deploy
+      withImage.sort((a, b) => (b.config!.image!).localeCompare(a.config!.image!));
+      return withImage[0].config!.image!;
     } catch {
       // Best-effort: fall back to configured image
     }
