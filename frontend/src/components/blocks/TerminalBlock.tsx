@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v6-agent-prefix
-const TERMINAL_BLOCK_REVISION = "terminal-block-v6-agent-prefix";
+// REVISION: terminal-block-v7-analytics
+const TERMINAL_BLOCK_REVISION = "terminal-block-v7-analytics";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -46,6 +46,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { trackEvent } from "@/lib/analytics";
 import { BlockWrapper } from "./BlockWrapper";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import {
@@ -769,6 +770,14 @@ export function TerminalBlock({
     // Reset working directory validation error
     setWorkingDirError(null);
   }, [session?.id]);
+
+  // Track panel opens for analytics
+  React.useEffect(() => {
+    if (activePanel) {
+      trackEvent("panel.opened", { panelName: activePanel }, data.dashboardId);
+    }
+  }, [activePanel, data.dashboardId]);
+
   const [isCreatingSession, setIsCreatingSession] = React.useState(false);
   const [sessionError, setSessionError] = React.useState<string | null>(null);
 

@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v50-policy-edge-scope-fix
-console.log(`[dashboard] REVISION: dashboard-v50-policy-edge-scope-fix loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v51-analytics
+console.log(`[dashboard] REVISION: dashboard-v51-analytics loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -81,6 +81,7 @@ import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, use
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive, listPendingEgressApprovals } from "@/lib/api/cloudflare";
 import { apiGet } from "@/lib/api/client";
+import { trackEvent } from "@/lib/analytics";
 import { API } from "@/config/env";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
@@ -439,6 +440,16 @@ export default function DashboardPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
   const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
+
+  // Track dashboard open/close for analytics
+  React.useEffect(() => {
+    if (!dashboardId) return;
+    const openedAt = Date.now();
+    trackEvent("dashboard.opened", { dashboardId }, dashboardId);
+    return () => {
+      trackEvent("dashboard.closed", { dashboardId, durationMs: Date.now() - openedAt }, dashboardId);
+    };
+  }, [dashboardId]);
 
   // Recover pending egress approvals after reconnect/reload by polling sandbox state.
   React.useEffect(() => {
@@ -1035,6 +1046,9 @@ export default function DashboardPage() {
     onSuccess: (createdItem, _variables, context) => {
       // Decrement mutations in-flight counter
       mutationsInFlightRef.current--;
+
+      // Track block creation for analytics
+      try { trackEvent("block.created", { blockType: createdItem.type }, dashboardId); } catch {}
 
       if (!OPTIMISTIC_UPDATE_ENABLED) {
         // Track this item ID so WebSocket echo doesn't trigger invalidation
@@ -2184,7 +2198,13 @@ export default function DashboardPage() {
 
       return { previous, previousEdges };
     },
-    onSuccess: (_data, itemId) => {
+    onSuccess: (_data, itemId, context) => {
+      // Track block deletion for analytics
+      try {
+        const deletedItem = (context as { previous?: { items?: DashboardItem[] } })?.previous?.items?.find((i) => i.id === itemId);
+        trackEvent("block.deleted", { blockType: deletedItem?.type ?? "unknown" }, dashboardId);
+      } catch {}
+
       if (!OPTIMISTIC_UPDATE_ENABLED) {
         // When optimistic updates are disabled, directly remove the item from query data
         queryClient.setQueryData(

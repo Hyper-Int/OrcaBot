@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: auth-v5-revalidate-on-switch
-const MODULE_REVISION = "auth-v5-revalidate-on-switch";
+// REVISION: providers-v6-analytics-init
+const MODULE_REVISION = "providers-v6-analytics-init";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -15,6 +15,7 @@ import { Toaster } from "sonner";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import type { User, SubscriptionInfo } from "@/types";
+import { initAnalytics, stopAnalytics, resetQueue } from "@/lib/analytics";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -175,6 +176,23 @@ function AuthBootstrapper() {
   return null;
 }
 
+function AnalyticsBootstrapper() {
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+
+  React.useEffect(() => {
+    initAnalytics();
+    return () => stopAnalytics();
+  }, []);
+
+  // On user identity change (login/logout/switch), drop queued events
+  // to prevent cross-user attribution.
+  React.useEffect(() => {
+    resetQueue();
+  }, [userId]);
+
+  return null;
+}
+
 export function Providers({ children }: ProvidersProps) {
   const queryClient = getQueryClient();
 
@@ -182,6 +200,7 @@ export function Providers({ children }: ProvidersProps) {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={200}>
         <AuthBootstrapper />
+        <AnalyticsBootstrapper />
         {children}
         <Toaster
           position="bottom-right"

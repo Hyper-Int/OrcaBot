@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { getAuthHeaders } from "@/stores/auth-store";
+import { trackEvent } from "@/lib/analytics";
 
 /**
  * Request deduplication cache
@@ -93,6 +94,12 @@ export async function apiFetch<T>(
         "error" in errorData
           ? String((errorData as { error: unknown }).error)
           : `Request failed with status ${response.status}`;
+
+      // Track API errors for analytics (fire-and-forget)
+      try {
+        const endpoint = new URL(url).pathname;
+        trackEvent("error.api", { status: response.status, endpoint, message });
+      } catch { /* analytics never breaks the app */ }
 
       throw new ApiError(response.status, message, errorData);
     }

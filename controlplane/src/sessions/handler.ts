@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v15-skip-approvals
-const sessionsRevision = "sessions-v15-skip-approvals";
+// REVISION: sessions-v17-waituntil-analytics
+const sessionsRevision = "sessions-v17-waituntil-analytics";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -20,6 +20,7 @@ import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
 import { FlyMachinesClient, FlyMachineNotFoundError } from '../sandbox/fly-machines';
+import { detectAgentType, logServerEvent } from '../analytics/handler';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
 // SECURITY: Never interpolate provider names directly into SQL - always use this map
@@ -992,7 +993,8 @@ export async function createSessiоn(
   userId: string,
   userName: string,
   preferredRegion?: string,
-  egressEnabled?: boolean
+  egressEnabled?: boolean,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>
 ): Promise<Response> {
   // Check access
   const access = await env.DB.prepare(`
@@ -1040,11 +1042,31 @@ export async function createSessiоn(
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Create session record first
-  await env.DB.prepare(`
-    INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, sandbox_machine_id, pty_id, status, region, created_at)
-    VALUES (?, ?, ?, ?, ?, '', '', '', 'creating', 'local', ?)
-  `).bind(id, dashboardId, itemId, userId, userName, now).run();
+  // Detect agent type from raw boot command (before talkito wrapping)
+  let rawBootCommand = '';
+  try {
+    if (typeof item.content === 'string' && item.content.trim().startsWith('{')) {
+      const parsed = JSON.parse(item.content.trim()) as { bootCommand?: string };
+      rawBootCommand = typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
+    }
+  } catch { /* ignore parse errors */ }
+  const agentType = detectAgentType(rawBootCommand);
+
+  // Create session record first.
+  // Try with agent_type column; fall back to without if the column doesn't exist yet
+  // (migration may not have run if worker deployed before /init-db).
+  try {
+    await env.DB.prepare(`
+      INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, sandbox_machine_id, pty_id, status, region, agent_type, created_at)
+      VALUES (?, ?, ?, ?, ?, '', '', '', 'creating', 'local', ?, ?)
+    `).bind(id, dashboardId, itemId, userId, userName, agentType, now).run();
+  } catch {
+    // agent_type column likely doesn't exist yet — insert without it
+    await env.DB.prepare(`
+      INSERT INTO sessions (id, dashboard_id, item_id, owner_user_id, owner_name, sandbox_session_id, sandbox_machine_id, pty_id, status, region, created_at)
+      VALUES (?, ?, ?, ?, ?, '', '', '', 'creating', 'local', ?)
+    `).bind(id, dashboardId, itemId, userId, userName, now).run();
+  }
 
   // Create sandbox session and PTY
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
@@ -1280,6 +1302,14 @@ export async function createSessiоn(
     } catch {
       // Best-effort onedrive hydration.
     }
+
+    // Log terminal.created analytics event via waitUntil so Workers doesn't drop it
+    const createdEventPromise = logServerEvent(env.DB, userId, 'terminal.created', dashboardId, {
+      itemId,
+      agentType,
+    }).catch(() => {});
+    if (ctx) ctx.waitUntil(createdEventPromise);
+
 
     return Response.json({ session }, { status: 201 });
   } catch (error) {
@@ -1702,7 +1732,8 @@ export async function updateSessiоnEnv(
 export async function stоpSessiоn(
   env: EnvWithDriveCache,
   sessionId: string,
-  userId: string
+  userId: string,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>
 ): Promise<Response> {
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -1777,6 +1808,17 @@ export async function stоpSessiоn(
     method: 'PUT',
     body: JSON.stringify(updatedSession),
   }));
+
+  // Log terminal.stopped analytics event via waitUntil so Workers doesn't drop it
+  const createdAt = new Date(session.created_at as string).getTime();
+  const stoppedAt = new Date(now).getTime();
+  const durationMs = stoppedAt - createdAt;
+  const stoppedEventPromise = logServerEvent(env.DB, userId, 'terminal.stopped', session.dashboard_id as string, {
+    sessionId,
+    agentType: session.agent_type as string | null,
+    durationMs,
+  }).catch(() => {});
+  if (ctx) ctx.waitUntil(stoppedEventPromise);
 
   return new Response(null, { status: 204 });
 }
