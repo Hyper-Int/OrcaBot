@@ -1789,7 +1789,7 @@ export function TerminalBlock({
   const resolvedTerminalTheme = terminalThemeSetting === "system" ? theme : terminalThemeSetting;
   const terminalTheme = React.useMemo(
     () =>
-      resolvedTerminalTheme === "dark"
+      resolvedTerminalTheme === "dark" || resolvedTerminalTheme === "midnight"
         ? {
             background: "#0a0a0b",
             foreground: "#e6e6e6",

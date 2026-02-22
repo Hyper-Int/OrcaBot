@@ -52,7 +52,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const connectionFlow = useConnectionDataFlow();
   const theme = useThemeStore((s) => s.theme);
-  const isDark = theme === "dark";
+  const isDark = theme === "dark" || theme === "midnight";
   const isMinimized = data.metadata?.minimized === true;
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
   const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);

@@ -138,6 +138,38 @@
   --shadow-cursor: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
+/* ===== Midnight Theme (dark blue canvas, dark components) ===== */
+.midnight {
+  /* Background layers — dark navy canvas, dark components */
+  --background: #0b1a2e;
+  --background-elevated: #101e33;
+  --background-surface: #162744;
+  --background-hover: #1e3354;
+  --background-active: #274068;
+
+  /* Foreground/text colors */
+  --foreground: #e8edf5;
+  --foreground-muted: #94a3c0;
+  --foreground-subtle: #6b7fa0;
+  --foreground-disabled: #4a5e80;
+
+  /* Border colors — blue-tinted */
+  --border: #1e3354;
+  --border-subtle: #162744;
+  --border-strong: #2a4570;
+
+  /* Edge / metro pipe colors */
+  --edge-chevron: rgba(148, 163, 192, 0.25);
+  --edge-hover-chevron: rgba(59, 130, 246, 0.5);
+
+  /* Shadows */
+  --shadow-block: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-block-hover: 0 4px 16px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.7);
+  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.6);
+  --shadow-cursor: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
 /* ===== Tailwind Theme Extension ===== */
 @theme inline {
   /* Colors */
@@ -261,7 +293,8 @@ html {
   color-scheme: light;
 }
 
-html.dark {
+html.dark,
+html.midnight {
   color-scheme: dark;
 }
 
