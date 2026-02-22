@@ -949,6 +949,20 @@ CREATE TABLE IF NOT EXISTS egress_audit_log (
 CREATE INDEX IF NOT EXISTS idx_egress_audit_dashboard
   ON egress_audit_log(dashboard_id, created_at);
 
+-- Analytics events (first-party usage tracking)
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT,
+  event_name TEXT NOT NULL,
+  properties TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_analytics_user_created ON analytics_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_analytics_event_created ON analytics_events(event_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_analytics_dashboard_created ON analytics_events(dashboard_id, created_at);
+
 -- Chat messages for Orcabot conversational interface
 CREATE TABLE IF NOT EXISTS chat_messages (
   id TEXT PRIMARY KEY,
@@ -967,7 +981,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(use
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v10-egress-allowlist-unique-active-domain";
+const SCHEMA_REVISION = "schema-v11-analytics-events";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1317,6 +1331,24 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
+  // Add last_active_at column to users for DAU/WAU/MAU tracking
+  try {
+    await db.prepare(`
+      ALTER TABLE users ADD COLUMN last_active_at TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Add agent_type column to sessions for agent usage tracking
+  try {
+    await db.prepare(`
+      ALTER TABLE sessions ADD COLUMN agent_type TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
   // Warm machine pool for instant dashboard provisioning
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS warm_machines (
@@ -1357,6 +1389,22 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   // Phase 3: Create indexes (now all columns exist from ALTER TABLE migrations above)
   for (const statement of indexStatements) {
     await db.prepare(statement).run();
+  }
+
+  // Analytics indexes on ALTER TABLE columns (must be after ALTER TABLE migrations)
+  try {
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active_at)
+    `).run();
+  } catch {
+    // Index already exists.
+  }
+  try {
+    await db.prepare(`
+      CREATE INDEX IF NOT EXISTS idx_sessions_agent_type ON sessions(agent_type)
+    `).run();
+  } catch {
+    // Index already exists.
   }
 }
 

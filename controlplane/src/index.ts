@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v9-reap-volume-delete-clarity
-console.log(`[controlplane] REVISION: controlplane-v9-reap-volume-delete-clarity loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v10-analytics
+console.log(`[controlplane] REVISION: controlplane-v10-analytics loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -39,6 +39,7 @@ import * as bugReports from './bug-reports/handler';
 import * as agentState from './agent-state/handler';
 import * as chat from './chat/handler';
 import * as egress from './egress/handler';
+import * as analytics from './analytics/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
 import { isAdminEmail } from './auth/admin';
@@ -859,6 +860,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
   }
 
+  // Track user activity (throttled, background, fire-and-forget)
+  if (auth.user) {
+    ctx.waitUntil(analytics.updateLastActive(env.DB, auth.user.id));
+  }
+
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
 
@@ -883,6 +889,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       || segments[0] === 'subscriptions'  // Subscription management (checkout, portal)
       || segments[0] === 'webhooks'       // Webhooks (Stripe, messaging)
       || segments[0] === 'internal'       // Internal sandbox routes
+      || segments[0] === 'analytics'      // Analytics event ingestion
       || (segments[0] === 'users' && segments[1] === 'me'); // User info
     if (!isExemptRoute) {
       if (!(await hasActiveAccess(env, auth.user.id, auth.user.email, auth.user.createdAt))) {
@@ -1004,6 +1011,24 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return chat.clearHistory(request, env, auth.user!.id);
+  }
+
+  // ============================================
+  // Analytics routes
+  // ============================================
+
+  // POST /analytics/events - Ingest frontend analytics events
+  if (segments[0] === 'analytics' && segments[1] === 'events' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return analytics.ingestEvents(env, auth.user!.id, request);
+  }
+
+  // GET /admin/metrics - Admin analytics dashboard
+  if (segments[0] === 'admin' && segments[1] === 'metrics' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return analytics.getAdminMetrics(env, auth.user!.email);
   }
 
   // POST /auth/logout - clear session cookie
@@ -2104,7 +2129,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       const body = await request.json() as Record<string, unknown>;
       if (body.egress_enabled === true) egressEnabled = true;
     } catch { /* no body or invalid JSON — fine */ }
-    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, egressEnabled);
+    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, egressEnabled, ctx);
   }
 
   // POST /dashboards/:id/browser/start - Start dashboard browser
@@ -2403,7 +2428,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'sessions' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return sessions.stоpSessiоn(env, segments[1], auth.user!.id);
+    return sessions.stоpSessiоn(env, segments[1], auth.user!.id, ctx);
   }
 
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
