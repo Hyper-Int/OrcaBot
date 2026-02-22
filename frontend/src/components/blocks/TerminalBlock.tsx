@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v5-global-secrets
-const TERMINAL_BLOCK_REVISION = "terminal-block-v5-global-secrets";
+// REVISION: terminal-block-v6-agent-prefix
+const TERMINAL_BLOCK_REVISION = "terminal-block-v6-agent-prefix";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -58,6 +58,7 @@ import {
   DialogHeader,
   DialogTitle,
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -214,6 +215,7 @@ type TerminalContentState = {
   terminalFontSize?: "auto" | "small" | "medium" | "large" | "xlarge";
   ttsProvider?: string;
   ttsVoice?: string;
+  skipApprovals?: boolean;
 };
 
 // Font size presets - "auto" means dynamic resizing based on terminal width
@@ -444,6 +446,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         terminalFontSize: parsed.terminalFontSize,
         ttsProvider: parsed.ttsProvider,
         ttsVoice: parsed.ttsVoice,
+        skipApprovals: parsed.skipApprovals,
       };
     } catch {
       return { name: content, subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
@@ -1032,6 +1035,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1110,6 +1114,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       if (subagentName) {
@@ -1179,6 +1184,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
     },
@@ -1200,10 +1206,37 @@ export function TerminalBlock({
           terminalFontSize: nextSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
     },
     [data, terminalMeta]
+  );
+
+  const handleSkipApprovalsChange = React.useCallback(
+    (checked: boolean) => {
+      if (!data.onItemChange) return;
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: checked,
+        }),
+      });
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
+    },
+    [data, terminalMeta, session?.id]
   );
 
   const handleTtsChange = React.useCallback(
@@ -1232,6 +1265,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: newProvider,
           ttsVoice: newVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
     },
@@ -1361,6 +1395,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1389,6 +1424,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       if (skillName) {
@@ -1477,6 +1513,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1504,6 +1541,7 @@ export function TerminalBlock({
           terminalFontSize: terminalMeta.terminalFontSize,
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
         }),
       });
       syncSessionAttachments({
@@ -1665,14 +1703,21 @@ export function TerminalBlock({
           description: preview || "Task completed",
         });
 
-        // Fire output to connected blocks (e.g., note blocks, other terminals)
+        // Fire output to connected blocks (e.g., note blocks, other terminals, messaging)
+        // Prepend agent name so recipients know which AI sent the message
         if (connectionFlowRef.current && event.lastMessage) {
+          const AGENT_PREFIX: Record<string, string> = {
+            "claude-code": "Claude", gemini: "Gemini", codex: "Codex",
+            opencode: "OpenCode", droid: "Droid", openclaw: "OpenClaw",
+          };
+          const prefix = AGENT_PREFIX[event.agent];
+          const text = prefix ? `${prefix}: ${event.lastMessage}` : event.lastMessage;
           connectionFlowRef.current.fireOutput(id, "right-out", {
-            text: event.lastMessage,
+            text,
             execute: true,
           });
           connectionFlowRef.current.fireOutput(id, "bottom-out", {
-            text: event.lastMessage,
+            text,
             execute: true,
           });
         }
@@ -3292,6 +3337,7 @@ export function TerminalBlock({
                           terminalFontSize: terminalMeta.terminalFontSize,
                           ttsProvider: terminalMeta.ttsProvider,
                           ttsVoice: terminalMeta.ttsVoice,
+                          skipApprovals: terminalMeta.skipApprovals,
                         }),
                       });
                       if (session?.id) {
@@ -3691,6 +3737,18 @@ export function TerminalBlock({
                     <Volume2 className="w-3 h-3" />
                     <span>TTS Voice</span>
                   </DropdownMenuItem>
+                </>
+              )}
+              {/* Skip Approvals - for Claude Code, Codex, and Gemini */}
+              {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={terminalMeta.skipApprovals ?? false}
+                    onCheckedChange={handleSkipApprovalsChange}
+                  >
+                    Skip Approvals
+                  </DropdownMenuCheckboxItem>
                 </>
               )}
               <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />

@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v48-messaging-policy-merge
-console.log(`[dashboard] REVISION: dashboard-v48-messaging-policy-merge loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v50-policy-edge-scope-fix
+console.log(`[dashboard] REVISION: dashboard-v50-policy-edge-scope-fix loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -105,6 +105,7 @@ import {
   type IntegrationLabel,
   type BrowserPolicy,
   type MessagingPolicy,
+  type AnyPolicy,
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
@@ -414,6 +415,10 @@ export default function DashboardPage() {
     ptyId: string;          // pty ID (for control plane API calls)
     integration: TerminalIntegration;
   } | null>(null);
+  // Track recently-saved policies to avoid D1 replication lag when reopening editor
+  const recentPolicySavesRef = React.useRef<Map<string, {
+    policy: AnyPolicy; securityLevel: string; savedAt: number;
+  }>>(new Map());
   const [metricsHidden, setMetricsHidden] = React.useState(false);
   const [connectorMode, setConnectorMode] = React.useState(false);
   const [egressPending, setEgressPending] = React.useState<Array<{domain: string; port: number; request_id: string}>>([]);
@@ -1257,8 +1262,15 @@ export default function DashboardPage() {
   });
 
   // Handle integration-to-terminal edge creation/deletion
+  // Optional detachContext provides pre-mutation edge data for batch deletes:
+  // - originalEdges: snapshot of edges BEFORE optimistic removal (authoritative)
+  // - deletingEdgeIds: all edge IDs being deleted in this batch
   const handleIntegrationEdge = React.useCallback(
-    async (edge: { id: string; sourceItemId: string; targetItemId: string }, action: "attach" | "detach") => {
+    async (
+      edge: { id: string; sourceItemId: string; targetItemId: string },
+      action: "attach" | "detach",
+      detachContext?: { originalEdges: DashboardEdge[]; deletingEdgeIds: Set<string> }
+    ) => {
       // Get current items from cache
       const data = queryClient.getQueryData<{
         dashboard: Dashboard;
@@ -1455,6 +1467,12 @@ export default function DashboardPage() {
                         ...(messagingDirection === "send" ? { canSend: true } : { canReceive: true }),
                       };
                       await updateIntegrationPolicy(dashboardId, ptyId, provider, { policy: merged });
+                      // Cache merged policy to avoid D1 replication lag on immediate editor reopen
+                      const cacheKey = `${ptyId}:${provider}`;
+                      recentPolicySavesRef.current.set(cacheKey, {
+                        policy: merged, securityLevel: existing.securityLevel || "elevated", savedAt: Date.now(),
+                      });
+                      setTimeout(() => recentPolicySavesRef.current.delete(cacheKey), 10000);
                     }
                   }
                   // Fetch the current security level for the edge label
@@ -1508,9 +1526,11 @@ export default function DashboardPage() {
               return;
             }
 
-            // Find an unattached OAuth integration for this provider
+            // Find an unattached integration for this provider.
+            // Messaging providers (WhatsApp, etc.) may use platform credentials
+            // instead of per-user OAuth, so userIntegrationId can be absent.
             const userIntegration = availableIntegrations.find(
-              (i) => i.provider === provider && i.connected && !i.attached && i.userIntegrationId
+              (i) => i.provider === provider && i.connected && !i.attached && (i.userIntegrationId || isMessagingProvider)
             );
             if (!userIntegration) {
               // Not connected via OAuth yet - delete the edge and show warning
@@ -1530,13 +1550,17 @@ export default function DashboardPage() {
               return;
             }
 
-            // For messaging "send" edges, enable canSend in addition to the default policy.
-            // Always keep canReceive: true — there's only one terminal_integration per
-            // terminal+provider, so both send and receive edges share the same policy record.
+            // For messaging edges, only enable the capability matching the edge direction.
+            // canReceive ↔ receive edge (messaging→terminal), canSend ↔ send edge (terminal→messaging).
+            // There's one terminal_integration per terminal+provider; when a second edge is added
+            // in the other direction, the merge logic above (line ~1452) enables the other capability.
             let policy;
             if (messagingDirection === "send") {
               const readOnly = createReadOnlyPolicy(provider) as MessagingPolicy;
-              policy = { ...readOnly, canSend: true } as MessagingPolicy;
+              policy = { ...readOnly, canSend: true, canReceive: false } as MessagingPolicy;
+            } else if (messagingDirection === "receive") {
+              const readOnly = createReadOnlyPolicy(provider) as MessagingPolicy;
+              policy = { ...readOnly, canReceive: true, canSend: false } as MessagingPolicy;
             } else {
               policy = createReadOnlyPolicy(provider);
             }
@@ -1546,6 +1570,46 @@ export default function DashboardPage() {
               userIntegrationId: userIntegration.userIntegrationId,
               policy,
             });
+
+            // Cache policy to avoid D1 replication lag on immediate editor reopen
+            if (policy) {
+              const cacheKey = `${ptyId}:${provider}`;
+              recentPolicySavesRef.current.set(cacheKey, {
+                policy, securityLevel: result.securityLevel || "elevated", savedAt: Date.now(),
+              });
+              setTimeout(() => recentPolicySavesRef.current.delete(cacheKey), 10000);
+            }
+
+            // Pre-populate optimistic cache so immediate label clicks find the integration
+            // (prevents race where API hasn't propagated the write yet)
+            queryClient.setQueryData<TerminalIntegration>(
+              ["attached-integration-cache", dashboardId, ptyId, provider],
+              {
+                id: result.id,
+                terminalId: ptyId,
+                itemId: terminalItem!.id,
+                dashboardId,
+                userId: "",
+                provider: result.provider,
+                userIntegrationId: result.userIntegrationId,
+                activePolicyId: result.activePolicyId,
+                accountEmail: result.accountEmail,
+                accountLabel: result.accountLabel,
+                deletedAt: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                createdBy: "",
+                policy: policy ?? null,
+                policyVersion: result.policyVersion,
+                securityLevel: result.securityLevel,
+              }
+            );
+            // Auto-expire the optimistic entry after 15 seconds
+            setTimeout(() => {
+              queryClient.removeQueries({
+                queryKey: ["attached-integration-cache", dashboardId, ptyId, provider],
+              });
+            }, 15000);
 
             // For messaging edges, look up subscribed channel name (best-effort)
             let channelName: string | undefined;
@@ -1588,17 +1652,85 @@ export default function DashboardPage() {
             toast.success(`${getProviderDisplayName(provider)} attached to terminal${dirLabel}`);
           }
         } else {
-          await detachIntegration(dashboardId, ptyId, provider);
+          // For messaging providers, check if the OTHER direction's edge still exists.
+          // If so, only update the policy (clear this direction's capability) instead of
+          // fully detaching — one terminal_integration record is shared by both edges.
+          if (isMessagingProvider && messagingDirection) {
+            const termItemId = terminalItem!.id;
+            const integItemId = integrationItem!.id;
+            // Use pre-mutation edge data from batch delete context (authoritative),
+            // falling back to query cache edges. Exclude any edges being concurrently
+            // deleted to avoid lost-update races on the shared policy.
+            const edgesToCheck = detachContext?.originalEdges ?? data?.edges ?? [];
+            const deletingIds = detachContext?.deletingEdgeIds;
+            const otherEdgeExists = edgesToCheck.some((e) => {
+              if (e.id === edge.id) return false; // skip the edge being deleted
+              if (deletingIds?.has(e.id)) return false; // skip concurrently-deleting edges
+              if (messagingDirection === "send") {
+                // We're deleting a send edge (terminal→messaging). Check for receive edge (messaging→terminal).
+                return e.sourceItemId === integItemId && e.targetItemId === termItemId;
+              } else {
+                // We're deleting a receive edge (messaging→terminal). Check for send edge (terminal→messaging).
+                return e.sourceItemId === termItemId && e.targetItemId === integItemId;
+              }
+            });
 
-          // Reset edge back to normal type
-          setEdges((prev) =>
-            prev.map((e) =>
-              e.id === edge.id
-                ? { ...e, type: "smoothstep", data: undefined }
-                : e
-            )
-          );
-          toast.success(`${getProviderDisplayName(provider)} detached from terminal`);
+            if (otherEdgeExists) {
+              // Other direction still connected — just clear this direction's capability
+              try {
+                const tis = await listTerminalIntegrations(dashboardId, ptyId);
+                const existing = tis.find((i) => i.provider === provider);
+                if (existing?.policy) {
+                  const cleared = {
+                    ...(existing.policy as MessagingPolicy),
+                    ...(messagingDirection === "send" ? { canSend: false } : { canReceive: false }),
+                  };
+                  await updateIntegrationPolicy(dashboardId, ptyId, provider, { policy: cleared });
+                  // Cache cleared policy to avoid D1 replication lag on immediate editor reopen
+                  const cacheKey = `${ptyId}:${provider}`;
+                  recentPolicySavesRef.current.set(cacheKey, {
+                    policy: cleared, securityLevel: existing.securityLevel || "elevated", savedAt: Date.now(),
+                  });
+                  setTimeout(() => recentPolicySavesRef.current.delete(cacheKey), 10000);
+                }
+                // Reset this edge back to normal only after backend succeeds
+                setEdges((prev) =>
+                  prev.map((e) =>
+                    e.id === edge.id
+                      ? { ...e, type: "smoothstep", data: undefined }
+                      : e
+                  )
+                );
+                toast.success(`${getProviderDisplayName(provider)} ${messagingDirection} disconnected`);
+              } catch (err) {
+                console.warn(`[handleIntegrationEdge] failed to clear messaging capability:`, err);
+                toast.error(`Failed to disconnect ${getProviderDisplayName(provider)} ${messagingDirection}`);
+              }
+            } else {
+              // No other edge — fully detach
+              await detachIntegration(dashboardId, ptyId, provider);
+              setEdges((prev) =>
+                prev.map((e) =>
+                  e.id === edge.id
+                    ? { ...e, type: "smoothstep", data: undefined }
+                    : e
+                )
+              );
+              toast.success(`${getProviderDisplayName(provider)} detached from terminal`);
+            }
+          } else {
+            await detachIntegration(dashboardId, ptyId, provider);
+
+            // Reset edge back to normal type
+            setEdges((prev) =>
+              prev.map((e) =>
+                e.id === edge.id
+                  ? { ...e, type: "smoothstep", data: undefined }
+                  : e
+              )
+            );
+            toast.success(`${getProviderDisplayName(provider)} detached from terminal`);
+          }
         }
         // Invalidate terminal integrations to refresh the IntegrationsPanel
         queryClient.invalidateQueries({
@@ -1730,10 +1862,22 @@ export default function DashboardPage() {
       }
 
       // Find the matching integration by provider
-      const integration = integrations.find((i) => i.provider === provider);
+      let integration = integrations.find((i) => i.provider === provider);
+      if (!integration) {
+        // Fallback: recently-attached optimistic cache (API may not have propagated yet)
+        integration = queryClient.getQueryData<TerminalIntegration>(
+          ["attached-integration-cache", dashboardId, ptyId, provider]
+        );
+      }
       if (!integration) {
         toast.error(`No ${provider} integration found on this terminal`);
         return;
+      }
+
+      // Override with recently-saved policy to avoid D1 replication lag
+      const recentSave = recentPolicySavesRef.current.get(`${ptyId}:${provider}`);
+      if (recentSave && Date.now() - recentSave.savedAt < 10000) {
+        integration = { ...integration, policy: recentSave.policy, securityLevel: recentSave.securityLevel as SecurityLevel };
       }
 
       setEdgePolicyEditor({ terminalItemId: terminalItem.id, ptyId, integration });
@@ -2224,17 +2368,29 @@ export default function DashboardPage() {
       }>(["dashboard", dashboardId]);
       const edgeToDelete = data?.edges?.find((e) => e.id === edgeId);
 
-      // Mark reverse edges as recently deleted — server cascade-deletes them
+      // Mark reverse edges as recently deleted — server cascade-deletes them.
+      // Exception: messaging integration edges (slack, discord, etc.) where each
+      // direction is independent (send ≠ receive). Deleting one must NOT cascade
+      // the other.
       const edgeIdsToRemove = [edgeId];
-      if (edgeToDelete && data?.edges) {
-        for (const e of data.edges) {
-          if (
-            e.id !== edgeId &&
-            e.sourceItemId === edgeToDelete.targetItemId &&
-            e.targetItemId === edgeToDelete.sourceItemId
-          ) {
-            recentlyDeletedEdgeIdsRef.current.add(e.id);
-            edgeIdsToRemove.push(e.id);
+      if (edgeToDelete && data?.edges && data?.items) {
+        const MESSAGING_SET = new Set(["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"]);
+        const srcItem = data.items.find((i) => i.id === edgeToDelete.sourceItemId);
+        const tgtItem = data.items.find((i) => i.id === edgeToDelete.targetItemId);
+        const srcProvider = srcItem && isIntegrationBlockType(srcItem.type) ? getProviderForBlockType(srcItem.type) : null;
+        const tgtProvider = tgtItem && isIntegrationBlockType(tgtItem.type) ? getProviderForBlockType(tgtItem.type) : null;
+        const isMessagingEdge = (srcProvider && MESSAGING_SET.has(srcProvider)) || (tgtProvider && MESSAGING_SET.has(tgtProvider));
+
+        if (!isMessagingEdge) {
+          for (const e of data.edges) {
+            if (
+              e.id !== edgeId &&
+              e.sourceItemId === edgeToDelete.targetItemId &&
+              e.targetItemId === edgeToDelete.sourceItemId
+            ) {
+              recentlyDeletedEdgeIdsRef.current.add(e.id);
+              edgeIdsToRemove.push(e.id);
+            }
           }
         }
       }
@@ -2274,14 +2430,22 @@ export default function DashboardPage() {
       // overwrite the cache we just cleaned.
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
 
-      // Auto-detach integrations for all removed edges
+      // Auto-detach integrations for all removed edges.
+      // Serialize with await to prevent concurrent read-modify-write on shared
+      // messaging policies. Pass pre-mutation edge data so the detach logic can
+      // make authoritative decisions about whether the opposite direction still exists.
       if (data?.edges) {
+        const detachContext = {
+          originalEdges: data.edges,
+          deletingEdgeIds: removeSet,
+        };
         for (const id of edgeIdsToRemove) {
           const edge = data.edges.find((e) => e.id === id);
           if (edge) {
-            handleIntegrationEdge(
+            await handleIntegrationEdge(
               { id: edge.id, sourceItemId: edge.sourceItemId, targetItemId: edge.targetItemId },
-              "detach"
+              "detach",
+              detachContext
             );
           }
         }
@@ -3820,16 +3984,41 @@ export default function DashboardPage() {
             setEdgePolicyEditor(null);
           }}
           onPolicyUpdate={(provider, securityLevel, updatedPolicy) => {
+            // Cache the saved policy to avoid D1 replication lag on reopen
+            if (updatedPolicy) {
+              const key = `${edgePolicyEditor.ptyId}:${provider}`;
+              recentPolicySavesRef.current.set(key, {
+                policy: updatedPolicy, securityLevel, savedAt: Date.now(),
+              });
+              setTimeout(() => recentPolicySavesRef.current.delete(key), 10000);
+            }
+
             // Use terminalItemId (dashboard item ID) for edge matching
             handlePolicyUpdate(edgePolicyEditor.terminalItemId, provider, securityLevel);
 
-            // For messaging providers: if canSend was disabled, delete the outgoing "send" edge
+            // For messaging providers: sync edges with canSend/canReceive toggles.
+            // Edge = visual representation of the capability. They must stay paired.
             const MESSAGING_PROVIDERS_SET = new Set(["whatsapp", "slack", "discord", "teams", "matrix", "google_chat"]);
             if (MESSAGING_PROVIDERS_SET.has(provider) && updatedPolicy) {
               const mp = updatedPolicy as MessagingPolicy;
+              const termItemId = edgePolicyEditor.terminalItemId;
+
+              // Find the messaging integration block connected to THIS terminal for this provider.
+              // Must be scoped via edges — a global items.find would pick the wrong block
+              // when multiple blocks share a provider (e.g. two Slack blocks).
+              const integBlock = (() => {
+                for (const e of edges) {
+                  const otherId = e.source === termItemId ? e.target : e.target === termItemId ? e.source : null;
+                  if (!otherId) continue;
+                  const item = items.find((i) => (i.id === otherId || i._stableKey === otherId) && i.type !== "terminal");
+                  if (item && getProviderForBlockType(item.type) === provider) return item;
+                }
+                return undefined;
+              })();
+
+              // --- Delete edges when capabilities are disabled ---
               if (!mp.canSend) {
                 // Find and delete the terminal→messaging "send" edge
-                const termItemId = edgePolicyEditor.terminalItemId;
                 setEdges((prev) => {
                   const toDelete = prev.find((e) => {
                     if (e.source !== termItemId) return false;
@@ -3838,12 +4027,138 @@ export default function DashboardPage() {
                     return getProviderForBlockType(targetItem.type) === provider;
                   });
                   if (toDelete) {
-                    // Delete from backend too (fire-and-forget)
                     deleteEdge(dashboardId, toDelete.id).catch(() => {});
                     return prev.filter((e) => e.id !== toDelete.id);
                   }
                   return prev;
                 });
+              }
+              if (!mp.canReceive) {
+                // Find and delete the messaging→terminal "receive" edge
+                setEdges((prev) => {
+                  const toDelete = prev.find((e) => {
+                    if (e.target !== termItemId) return false;
+                    const sourceItem = items.find((i) => i.id === e.source);
+                    if (!sourceItem) return false;
+                    return getProviderForBlockType(sourceItem.type) === provider;
+                  });
+                  if (toDelete) {
+                    deleteEdge(dashboardId, toDelete.id).catch(() => {});
+                    return prev.filter((e) => e.id !== toDelete.id);
+                  }
+                  return prev;
+                });
+              }
+
+              // --- Create edges when capabilities are enabled (if not already present) ---
+              // Use handleCreateReverseEdge when an opposite-direction edge exists,
+              // so the new edge pairs on the same handle side (double-arrow appearance).
+              if (mp.canSend && integBlock) {
+                const sendEdgeExists = edges.some((e) =>
+                  e.source === termItemId && (e.target === integBlock.id || e.target === (integBlock._stableKey || integBlock.id))
+                );
+                if (!sendEdgeExists) {
+                  // Find the existing receive edge (messaging→terminal) to create a paired reverse
+                  const existingReceiveEdge = edges.find((e) =>
+                    e.target === termItemId && (e.source === integBlock.id || e.source === (integBlock._stableKey || integBlock.id))
+                  );
+                  if (existingReceiveEdge?.sourceHandle && existingReceiveEdge?.targetHandle) {
+                    // Create paired reverse edge with messaging data included directly
+                    // (handleCreateReverseEdge doesn't set data, so the label wouldn't appear)
+                    const srcHandle = existingReceiveEdge.targetHandle.replace("-in", "-out");
+                    const tgtHandle = existingReceiveEdge.sourceHandle.replace("-out", "-in");
+                    const tempId = `edge-${existingReceiveEdge.target}-${existingReceiveEdge.source}-${srcHandle}-${tgtHandle}`;
+                    const edgeData = { provider, messagingDirection: "send" as const, securityLevel: "elevated" as const };
+                    setEdges((prev) => {
+                      if (prev.some((e) => e.id === tempId)) return prev;
+                      return [...prev, {
+                        id: tempId,
+                        source: existingReceiveEdge.target,
+                        target: existingReceiveEdge.source,
+                        sourceHandle: srcHandle,
+                        targetHandle: tgtHandle,
+                        type: "integration",
+                        data: edgeData,
+                        animated: false,
+                        style: { stroke: "var(--edge-base)", strokeWidth: 4 },
+                      }];
+                    });
+                    createEdgeMutation.mutate({
+                      sourceItemId: existingReceiveEdge.target,
+                      targetItemId: existingReceiveEdge.source,
+                      sourceHandle: srcHandle,
+                      targetHandle: tgtHandle,
+                      _tempEdgeId: tempId,
+                    });
+                  } else {
+                    // No existing edge with handles — fall back to raw create
+                    createEdge(dashboardId, {
+                      sourceItemId: termItemId,
+                      targetItemId: integBlock.id,
+                    }).then((created) => {
+                      setEdges((prev) => [...prev, {
+                        id: created.id,
+                        source: termItemId,
+                        target: integBlock.id,
+                        type: "integration",
+                        data: { provider, messagingDirection: "send" as const, securityLevel: "elevated" },
+                      }]);
+                    }).catch((err) => console.warn("[onPolicyUpdate] failed to create send edge:", err));
+                  }
+                }
+              }
+              if (mp.canReceive && integBlock) {
+                const receiveEdgeExists = edges.some((e) =>
+                  e.target === termItemId && (e.source === integBlock.id || e.source === (integBlock._stableKey || integBlock.id))
+                );
+                if (!receiveEdgeExists) {
+                  // Find the existing send edge (terminal→messaging) to create a paired reverse
+                  const existingSendEdge = edges.find((e) =>
+                    e.source === termItemId && (e.target === integBlock.id || e.target === (integBlock._stableKey || integBlock.id))
+                  );
+                  if (existingSendEdge?.sourceHandle && existingSendEdge?.targetHandle) {
+                    // Create paired reverse edge with messaging data included directly
+                    const srcHandle = existingSendEdge.targetHandle.replace("-in", "-out");
+                    const tgtHandle = existingSendEdge.sourceHandle.replace("-out", "-in");
+                    const tempId = `edge-${existingSendEdge.target}-${existingSendEdge.source}-${srcHandle}-${tgtHandle}`;
+                    const edgeData = { provider, messagingDirection: "receive" as const, securityLevel: "elevated" as const };
+                    setEdges((prev) => {
+                      if (prev.some((e) => e.id === tempId)) return prev;
+                      return [...prev, {
+                        id: tempId,
+                        source: existingSendEdge.target,
+                        target: existingSendEdge.source,
+                        sourceHandle: srcHandle,
+                        targetHandle: tgtHandle,
+                        type: "integration",
+                        data: edgeData,
+                        animated: false,
+                        style: { stroke: "var(--edge-base)", strokeWidth: 4 },
+                      }];
+                    });
+                    createEdgeMutation.mutate({
+                      sourceItemId: existingSendEdge.target,
+                      targetItemId: existingSendEdge.source,
+                      sourceHandle: srcHandle,
+                      targetHandle: tgtHandle,
+                      _tempEdgeId: tempId,
+                    });
+                  } else {
+                    // No existing edge with handles — fall back to raw create
+                    createEdge(dashboardId, {
+                      sourceItemId: integBlock.id,
+                      targetItemId: termItemId,
+                    }).then((created) => {
+                      setEdges((prev) => [...prev, {
+                        id: created.id,
+                        source: integBlock.id,
+                        target: termItemId,
+                        type: "integration",
+                        data: { provider, messagingDirection: "receive" as const, securityLevel: "elevated" },
+                      }]);
+                    }).catch((err) => console.warn("[onPolicyUpdate] failed to create receive edge:", err));
+                  }
+                }
               }
             }
           }}

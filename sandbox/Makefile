@@ -1,8 +1,4 @@
-<<<<<<< Updated upstream
-.PHONY: build test test-integration test-integration-local run clean docker-build docker-run deploy drain invalidate-warm-pool
-=======
-.PHONY: build test test-race test-integration test-integration-local run clean docker-build docker-run deploy drain
->>>>>>> Stashed changes
+.PHONY: build test test-race test-integration test-integration-local run clean docker-build docker-run deploy drain invalidate-warm-pool
 
 # Binary name
 BINARY=orcabot-sandbox

@@ -100,6 +100,5 @@ database_id = "93828ba8-1160-49ec-8d82-6c1bc52800a1"
 binding = "DRIVE_CACHE"
 bucket_name = "orcabot-drive-cache"
 
-# Cron triggers for background tasks
-[triggers]
-crons = ["* * * * *"]
+# Cron triggers disabled in dev to avoid duplicate scheduled jobs
+# against shared Fly resources (prod owns cron maintenance).

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v14-applynow-secrets
-const sessionsRevision = "sessions-v14-applynow-secrets";
+// REVISION: sessions-v15-skip-approvals
+const sessionsRevision = "sessions-v15-skip-approvals";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -97,6 +97,7 @@ interface TerminalContent {
   ttsProvider?: string;
   ttsVoice?: string;
   workingDir?: string;
+  skipApprovals?: boolean;
 }
 
 interface ParsedTerminalConfig {
@@ -145,6 +146,20 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
     const parsed = JSON.parse(trimmed) as TerminalContent;
     let bootCommand = typeof parsed.bootCommand === 'string' ? parsed.bootCommand : '';
     const workingDir = typeof parsed.workingDir === 'string' ? parsed.workingDir : undefined;
+
+    // REVISION: sessions-v15-skip-approvals
+    // Append per-agent CLI flag to skip approval prompts when enabled.
+    // Must happen BEFORE TTS wrapping so the flag is part of the inner agent command.
+    if (parsed.skipApprovals && bootCommand) {
+      const cmd = bootCommand.trim().toLowerCase();
+      if (cmd === 'claude' || cmd.startsWith('claude ')) {
+        bootCommand += ' --dangerously-skip-permissions';
+      } else if (cmd === 'codex' || cmd.startsWith('codex ')) {
+        bootCommand += ' --dangerously-bypass-approvals-and-sandbox';
+      } else if (cmd === 'gemini' || cmd.startsWith('gemini ')) {
+        bootCommand += ' --approval-mode=yolo';
+      }
+    }
 
     // If TTS is enabled, wrap the command with talkito
     if (parsed.ttsProvider && parsed.ttsProvider !== 'none' && bootCommand) {
