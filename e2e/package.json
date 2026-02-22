@@ -1,0 +1,20 @@
+{
+  "name": "orcabot-e2e",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:auth": "playwright test recipes/01-auth-flow.spec.ts",
+    "test:dashboard": "playwright test recipes/02-dashboard-crud.spec.ts",
+    "test:terminal": "playwright test recipes/03-terminal-basic.spec.ts recipes/04-terminal-command.spec.ts",
+    "test:integration": "playwright test recipes/05-integration-blocks.spec.ts recipes/06-integration-wiring.spec.ts recipes/07-policy-editor.spec.ts",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "dotenv": "^17.3.1"
+  }
+}

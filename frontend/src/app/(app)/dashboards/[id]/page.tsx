@@ -3756,6 +3756,7 @@ export default function DashboardPage() {
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
                     >
                       {tool.icon}
                     </Button>
@@ -3782,6 +3783,7 @@ export default function DashboardPage() {
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
                     >
                       {tool.icon}
                     </Button>
