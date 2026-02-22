@@ -71,8 +71,9 @@ export default function RootLayout({
                   var stored = localStorage.getItem('theme-storage');
                   if (stored) {
                     var parsed = JSON.parse(stored);
-                    if (parsed.state && parsed.state.theme === 'dark') {
-                      document.documentElement.classList.add('dark');
+                    var theme = parsed.state && parsed.state.theme;
+                    if (theme === 'dark' || theme === 'midnight') {
+                      document.documentElement.classList.add(theme);
                     }
                   }
                   if (new URLSearchParams(window.location.search).get('egress') === '1') {

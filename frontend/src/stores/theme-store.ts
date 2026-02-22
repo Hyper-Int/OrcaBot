@@ -4,7 +4,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-type Theme = "light" | "dark";
+// REVISION: midnight-theme-v1-add-midnight-option
+const MODULE_REVISION = "midnight-theme-v1-add-midnight-option";
+console.log(`[theme-store] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
+type Theme = "light" | "dark" | "midnight";
+
+const THEME_CYCLE: Theme[] = ["light", "dark", "midnight"];
 
 interface ThemeState {
   theme: Theme;
@@ -21,7 +27,9 @@ export const useThemeStore = create<ThemeState>()(
         applyTheme(theme);
       },
       toggleTheme: () => {
-        const newTheme = get().theme === "light" ? "dark" : "light";
+        const current = get().theme;
+        const idx = THEME_CYCLE.indexOf(current);
+        const newTheme = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
         set({ theme: newTheme });
         applyTheme(newTheme);
       },
@@ -41,10 +49,9 @@ export const useThemeStore = create<ThemeState>()(
 function applyTheme(theme: Theme) {
   if (typeof document !== "undefined") {
     const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
+    root.classList.remove("dark", "midnight");
+    if (theme === "dark" || theme === "midnight") {
+      root.classList.add(theme);
     }
   }
 }

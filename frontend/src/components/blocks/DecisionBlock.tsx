@@ -95,7 +95,7 @@ export function DecisionBlock({ id, data, selected }: NodeProps<DecisionNode>) {
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const connectionFlow = useConnectionDataFlow();
   const theme = useThemeStore((s) => s.theme);
-  const isDark = theme === "dark";
+  const isDark = theme === "dark" || theme === "midnight";
   const isMinimized = data.metadata?.minimized === true;
   const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
   const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);

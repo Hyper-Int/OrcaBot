@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v5-subscriptions
-const MODULE_REVISION = "desktop-env-v5-subscriptions";
+// REVISION: desktop-env-v6-target-modes
+const MODULE_REVISION = "desktop-env-v6-target-modes";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -11,13 +11,39 @@ console.log(
  * Environment configuration
  */
 
+type FrontendTarget = "localhost" | "dev" | "production";
+
+function resolveFrontendTarget(): FrontendTarget {
+  const explicit = (process.env.NEXT_PUBLIC_FRONTEND_TARGET || "").toLowerCase();
+  if (explicit === "localhost" || explicit === "dev" || explicit === "production") {
+    return explicit;
+  }
+  if (process.env.NODE_ENV === "development") {
+    return "localhost";
+  }
+  return "production";
+}
+
+const FRONTEND_TARGET = resolveFrontendTarget();
+
+const API_URL_BY_TARGET: Record<FrontendTarget, string> = {
+  localhost: "http://localhost:8787",
+  dev: "https://api.dev.orcabot.com",
+  production: "https://orcabot-controlplane.orcabot.workers.dev",
+};
+
+const SITE_URL_BY_TARGET: Record<FrontendTarget, string> = {
+  localhost: "http://localhost:3000",
+  dev: "https://dev.orcabot.com",
+  production: "https://orcabot.com",
+};
+
 // API URLs with defaults
 export const CLOUDFLARE_API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "https://orcabot-controlplane.orcabot.workers.dev";
+  process.env.NEXT_PUBLIC_API_URL || API_URL_BY_TARGET[FRONTEND_TARGET];
 
 export const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL || "https://orcabot.com";
+  process.env.NEXT_PUBLIC_SITE_URL || SITE_URL_BY_TARGET[FRONTEND_TARGET];
 
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
