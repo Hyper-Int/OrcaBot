@@ -99,8 +99,14 @@ function renderTerminal(sessionOwnerId: string, viewerId: string) {
               stoppedAt: null,
             },
           }}
+          type="terminal"
           selected={false}
           dragging={false}
+          draggable={true}
+          selectable={true}
+          deletable={true}
+          zIndex={0}
+          isConnectable={true}
           positionAbsoluteX={0}
           positionAbsoluteY={0}
           width={420}

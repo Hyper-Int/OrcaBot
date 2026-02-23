@@ -38,7 +38,7 @@ describe('Recipe Handlers', () => {
         name: 'Test Workflow',
         description: 'A test workflow',
       });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(response.status).toBe(201);
       expect(data.recipe).toHaveProperty('id');
@@ -54,7 +54,7 @@ describe('Recipe Handlers', () => {
         name: 'With Steps',
         steps: steps as any,
       });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(data.recipe.steps).toHaveLength(1);
       expect(data.recipe.steps[0].type).toBe('run_agent');
@@ -62,7 +62,7 @@ describe('Recipe Handlers', () => {
 
     it('should default to empty steps', async () => {
       const response = await createRecipе(ctx.env, testUser.id, { name: 'Empty' });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(data.recipe.steps).toEqual([]);
     });
@@ -118,7 +118,7 @@ describe('Recipe Handlers', () => {
       const response = await getRecipе(ctx.env, recipe.id, testUser.id);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
       expect(data.recipe.name).toBe('Global Recipe');
     });
 

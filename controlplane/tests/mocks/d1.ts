@@ -6,7 +6,7 @@ interface Row {
   [key: string]: unknown;
 }
 
-export class MockD1Database implements D1Database {
+export class MockD1Database {
   private tables: Map<string, Row[]> = new Map();
   private lastInsertId = 0;
 
@@ -24,7 +24,11 @@ export class MockD1Database implements D1Database {
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new MockD1PreparedStatement(query, this.tables, () => ++this.lastInsertId);
+    return new MockD1PreparedStatement(query, this.tables, () => ++this.lastInsertId) as unknown as D1PreparedStatement;
+  }
+
+  withSession(_token?: string): D1Database {
+    return this as unknown as D1Database;
   }
 
   dump(): Promise<ArrayBuffer> {
@@ -32,7 +36,7 @@ export class MockD1Database implements D1Database {
   }
 
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    return Promise.all(statements.map(s => (s as MockD1PreparedStatement).all<T>()));
+    return Promise.all(statements.map(s => (s as unknown as MockD1PreparedStatement).all<T>()));
   }
 
   exec(query: string): Promise<D1ExecResult> {
@@ -54,7 +58,7 @@ export class MockD1Database implements D1Database {
   }
 }
 
-class MockD1PreparedStatement implements D1PreparedStatement {
+class MockD1PreparedStatement {
   private query: string;
   private tables: Map<string, Row[]>;
   private bindings: unknown[] = [];
@@ -68,7 +72,7 @@ class MockD1PreparedStatement implements D1PreparedStatement {
 
   bind(...values: unknown[]): D1PreparedStatement {
     this.bindings = values;
-    return this;
+    return this as unknown as D1PreparedStatement;
   }
 
   async first<T = Row>(colName?: string): Promise<T | null> {
@@ -91,6 +95,10 @@ class MockD1PreparedStatement implements D1PreparedStatement {
         changes: this.changes || 0,
         served_by: 'mock',
         internal_stats: null,
+        size_after: 0,
+        rows_read: 0,
+        rows_written: 0,
+        changed_db: false,
       },
     };
   }
@@ -168,8 +176,8 @@ class MockD1PreparedStatement implements D1PreparedStatement {
       rows = [...rows].sort((a, b) => {
         const aVal = a[orderCol];
         const bVal = b[orderCol];
-        if (aVal < bVal) return desc ? 1 : -1;
-        if (aVal > bVal) return desc ? -1 : 1;
+        if ((aVal as number | string) < (bVal as number | string)) return desc ? 1 : -1;
+        if ((aVal as number | string) > (bVal as number | string)) return desc ? -1 : 1;
         return 0;
       });
     }

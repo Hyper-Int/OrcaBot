@@ -2,7 +2,7 @@
  * Mock Durable Object for testing
  */
 
-export class MockDurableObjectState implements DurableObjectState {
+export class MockDurableObjectState {
   private _storage = new Map<string, unknown>();
   private webSockets: WebSocket[] = [];
 
@@ -74,12 +74,12 @@ export class MockDurableObjectState implements DurableObjectState {
       getCurrentBookmark: async () => '',
       getBookmarkForTime: async () => '',
       onNextSessionRestoreBookmark: async () => '',
-    } as DurableObjectStorage;
+    } as unknown as DurableObjectStorage;
   }
 }
 
-export class MockDurableObjectNamespace implements DurableObjectNamespace {
-  private instances = new Map<string, DurableObjectStub>();
+export class MockDurableObjectNamespace {
+  private instances = new Map<string, unknown>();
   private DOClass: new (state: DurableObjectState) => DurableObject;
 
   constructor(DOClass: new (state: DurableObjectState) => DurableObject) {
@@ -113,8 +113,8 @@ export class MockDurableObjectNamespace implements DurableObjectNamespace {
     const key = id.toString();
     if (!this.instances.has(key)) {
       const state = new MockDurableObjectState();
-      const instance = new this.DOClass(state);
-      const stub: DurableObjectStub = {
+      const instance = new this.DOClass(state as unknown as DurableObjectState);
+      const stub = {
         id,
         name: id.name,
         fetch: (input: RequestInfo, init?: RequestInit) => {
@@ -125,10 +125,10 @@ export class MockDurableObjectNamespace implements DurableObjectNamespace {
       };
       this.instances.set(key, stub);
     }
-    return this.instances.get(key)!;
+    return this.instances.get(key) as DurableObjectStub;
   }
 
   jurisdiction(jurisdiction: DurableObjectJurisdiction): DurableObjectNamespace {
-    return this;
+    return this as unknown as DurableObjectNamespace;
   }
 }

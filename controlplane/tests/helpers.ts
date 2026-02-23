@@ -18,24 +18,27 @@ export async function createTestContext(): Promise<TestContext> {
   const db = new MockD1Database();
 
   // Initialize schema
-  await initializeDatabase(db);
+  await initializeDatabase(db as unknown as D1Database);
 
-  const env: Env = {
-    DB: db,
+  const env = {
+    DB: db as unknown as D1Database,
     DASHBOARD: new MockDurableObjectNamespace(DashboardDO) as unknown as DurableObjectNamespace,
     SANDBOX_URL: 'http://localhost:8080',
     INTERNAL_API_TOKEN: 'test-internal-token',
     SANDBOX_INTERNAL_TOKEN: 'test-sandbox-token',
     RATE_LIMITER: { limit: async () => ({ success: true }) },
+    RATE_LIMITER_AUTH: { limit: async () => ({ success: true }) },
+    RATE_LIMIT_COUNTER: {} as DurableObjectNamespace,
+    ASR_STREAM: {} as DurableObjectNamespace,
     DEV_AUTH_ENABLED: 'true',
-  };
+  } as Env;
 
   return {
     env,
     db,
     reset: async () => {
       db.clear();
-      await initializeDatabase(db);
+      await initializeDatabase(db as unknown as D1Database);
     },
   };
 }

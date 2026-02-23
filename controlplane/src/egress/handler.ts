@@ -345,7 +345,7 @@ export async function handleInternalLogAudit(
   };
 
   const domain = body.domain?.trim().toLowerCase();
-  const port = Number.isInteger(body.port) ? body.port : 0;
+  const port: number = Number.isInteger(body.port) ? body.port! : 0;
   const decision = body.decision?.trim();
   const validDecisions = new Set(['allowed', 'denied', 'timeout', 'default_allowed', 'allow_once', 'allow_always', 'deny']);
 

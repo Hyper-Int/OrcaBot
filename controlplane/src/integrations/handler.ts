@@ -124,7 +124,7 @@ interface DriveManifest {
   entries: DriveFileEntry[];
 }
 
-function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+function concatBytes(left: Uint8Array<ArrayBufferLike>, right: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
   const next = new Uint8Array(left.length + right.length);
   next.set(left);
   next.set(right, left.length);
@@ -8616,7 +8616,7 @@ export async function getSpreadsheetEndpoint(
     const mirror = await env.DB.prepare(`
       SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
     `).bind(dashboardId).first<{ spreadsheet_id: string | null }>();
-    sheetId = mirror?.spreadsheet_id || null;
+    sheetId = mirror?.spreadsheet_id ?? null;
   }
 
   if (!sheetId) {
@@ -8677,7 +8677,7 @@ export async function readSheetValues(
     const mirror = await env.DB.prepare(`
       SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
     `).bind(dashboardId).first<{ spreadsheet_id: string | null }>();
-    sheetId = mirror?.spreadsheet_id || null;
+    sheetId = mirror?.spreadsheet_id ?? null;
   }
 
   if (!sheetId) {
@@ -8731,7 +8731,7 @@ export async function writeSheetValues(
     const mirror = await env.DB.prepare(`
       SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
     `).bind(data.dashboardId).first<{ spreadsheet_id: string | null }>();
-    sheetId = mirror?.spreadsheet_id || null;
+    sheetId = mirror?.spreadsheet_id ?? undefined;
   }
 
   if (!sheetId) {
@@ -8787,7 +8787,7 @@ export async function appendSheetValuesEndpoint(
     const mirror = await env.DB.prepare(`
       SELECT spreadsheet_id FROM sheets_mirrors WHERE dashboard_id = ?
     `).bind(data.dashboardId).first<{ spreadsheet_id: string | null }>();
-    sheetId = mirror?.spreadsheet_id || null;
+    sheetId = mirror?.spreadsheet_id ?? undefined;
   }
 
   if (!sheetId) {
@@ -9897,7 +9897,7 @@ export async function callbackDiscord(
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     if (userResp.ok) {
-      discordUser = await userResp.json() as typeof discordUser;
+      discordUser = await userResp.json() as { id: string; username: string; discriminator?: string; avatar?: string | null };
     }
   } catch {
     // Non-critical — continue without user info

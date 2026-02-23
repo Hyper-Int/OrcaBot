@@ -822,13 +822,15 @@ export async function handleInboundWebhook(
     });
   }
   // Google Chat ADDED_TO_SPACE / REMOVED_FROM_SPACE events
-  if (provider === 'google_chat' && (body.type === 'ADDED_TO_SPACE' || body.type === 'REMOVED_FROM_SPACE')) {
+  // Re-widen provider type (TypeScript narrows after verification switch above)
+  const p: string = provider;
+  if (p === 'google_chat' && (body.type === 'ADDED_TO_SPACE' || body.type === 'REMOVED_FROM_SPACE')) {
     return Response.json({ text: '' });
   }
 
   // 3. Parse the message first (needed for channel-based routing for Slack/Discord).
   let message: NormalizedMessage | null = null;
-  switch (provider) {
+  switch (p) {
     case 'slack':
       message = parseSlackEvent(body);
       break;
@@ -870,14 +872,14 @@ export async function handleInboundWebhook(
   //   to the same channel). All matching active subscriptions receive the message.
   let subscriptions: Record<string, unknown>[];
 
-  if (provider === 'telegram' && hookId) {
+  if (p === 'telegram' && hookId) {
     const sub = await env.DB.prepare(`
       SELECT * FROM messaging_subscriptions
       WHERE webhook_id = ? AND provider = 'telegram'
       LIMIT 1
     `).bind(hookId).first();
     subscriptions = sub ? [sub] : [];
-  } else if (provider === 'whatsapp') {
+  } else if (p === 'whatsapp') {
     // WhatsApp routes by channel_id (phone_number_id) and optionally chat_id (sender phone).
     // Supports two subscription models:
     // 1. Catch-all: chat_id IS NULL — receives messages from ANY sender to this business number
@@ -895,7 +897,7 @@ export async function handleInboundWebhook(
     subscriptions = allWhatsAppSubs.filter(
       (s: Record<string, unknown>) => !s.hybrid_mode,
     );
-  } else if (provider === 'matrix') {
+  } else if (p === 'matrix') {
     // Matrix uses chat_id (room_id) for routing
     const chatId = message.channelId;
     if (!chatId) return Response.json({ ok: true });
@@ -911,7 +913,7 @@ export async function handleInboundWebhook(
       return Response.json({ ok: true }); // No channel in event — can't route
     }
 
-    if (provider === 'slack') {
+    if (p === 'slack') {
       // Slack channel IDs are only unique within a workspace (team). To prevent
       // cross-workspace misrouting, we include team_id in the lookup.
       // Fail-closed: if the webhook doesn't include team_id, we can't safely route.

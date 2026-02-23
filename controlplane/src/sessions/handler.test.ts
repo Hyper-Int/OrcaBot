@@ -17,6 +17,7 @@ import {
 import { createMockSandboxServer } from '../../tests/mocks/sandbox';
 import { SandboxClient } from '../sandbox/client';
 import { createSessiоn } from './handler';
+import { ensureDriveCache } from '../storage/drive-cache';
 import type { TestContext } from '../../tests/helpers';
 
 describe('Session Handlers', () => {
@@ -61,10 +62,10 @@ describe('Session Handlers', () => {
       const dashboard = await seedDashboard(ctx.db, testUser.id);
       const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
 
-      const response = await createSessiоn(ctx.env, dashboard.id, item.id, testUser.id, testUser.name);
+      const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
       expect(response.status).toBe(201);
 
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
       expect(data.session.ownerUserId).toBe(testUser.id);
       expect(data.session.ownerName).toBe(testUser.name);
       expect(
