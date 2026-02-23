@@ -1286,7 +1286,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'edges' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json();
+    const data = await request.json() as { sourceItemId: string; targetItemId: string; sourceHandle?: string; targetHandle?: string };
     return dashboards.createEdge(env, segments[1], auth.user!.id, data);
   }
 
@@ -1574,17 +1574,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 6 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'PUT') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as {
-      policy: Record<string, unknown>;
-      highRiskConfirmations?: string[];
-    };
+    const data = await request.json() as Record<string, unknown>;
     return integrationPolicies.updateIntegrationPolicy(
       env,
       segments[1],
       segments[3],
       segments[5] as Parameters<typeof integrationPolicies.updateIntegrationPolicy>[3],
       auth.user!.id,
-      data as Parameters<typeof integrationPolicies.updateIntegrationPolicy>[5]
+      data as unknown as Parameters<typeof integrationPolicies.updateIntegrationPolicy>[5]
     );
   }
 
@@ -1757,7 +1754,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   if (segments[0] === 'integrations') {
     const routeKey = `${method} ${segments.slice(1).join('/')}`;
-    const integrationRoutes: Record<string, (request: Request, env: Env, auth: AuthContext) => Promise<Response> | Response> = {
+    const integrationRoutes: Record<string, (request: Request, env: EnvWithDriveCache, auth: AuthContext) => Promise<Response> | Response> = {
       'GET google/drive/connect': integrations.cоnnectGооgleDrive,
       'GET google/drive/callback': (request, env) => integrations.callbackGооgleDrive(request, env),
       'GET google/drive': integrations.getGооgleDriveIntegratiоn,
@@ -1912,7 +1909,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
     const handler = integrationRoutes[routeKey];
     if (handler) {
-      return handler(request, env, auth);
+      return handler(request, ensureDriveCache(env), auth);
     }
   }
 
@@ -2896,7 +2893,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // Security: Authenticated via X-Bridge-Token (shared secret with bridge)
   if (segments[0] === 'internal' && segments[1] === 'bridge' && segments[2] === 'inbound' && segments.length === 3 && method === 'POST') {
     const { handleBridgeInbound } = await import('./messaging/webhook-handler');
-    return handleBridgeInbound(request, env, ctx);
+    return handleBridgeInbound(request, env, ctx as ExecutionContext);
   }
 
   // ============================================
@@ -2951,7 +2948,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const { handleInboundWebhook } = await import('./messaging/webhook-handler');
     const provider = segments[1];
     const hookId = segments.length === 3 ? segments[2] : undefined;
-    return handleInboundWebhook(request, env, provider, hookId, ctx);
+    return handleInboundWebhook(request, env, provider, hookId, ctx as ExecutionContext);
   }
 
   // ============================================

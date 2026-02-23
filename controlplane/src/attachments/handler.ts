@@ -356,7 +356,7 @@ async function resolveAttachmentFiles(env: Env, attachment: AttachmentSpec): Pro
     const encoder = new TextEncoder();
     return [{
       path: "SKILL.md",
-      data: encoder.encode(attachment.content).buffer,
+      data: encoder.encode(attachment.content).buffer as ArrayBuffer,
       contentType: "text/markdown",
     }];
   }

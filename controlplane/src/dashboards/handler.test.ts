@@ -32,7 +32,7 @@ describe('Dashboard Handlers', () => {
   describe('createDashbоard()', () => {
     it('should create a new dashboard', async () => {
       const response = await createDashbоard(ctx.env, testUser.id, { name: 'My Dashboard' });
-      const data = await response.json();
+      const data = await response.json() as Record<string, Record<string, unknown>>;
 
       expect(response.status).toBe(201);
       expect(data.dashboard).toHaveProperty('id');
@@ -42,7 +42,7 @@ describe('Dashboard Handlers', () => {
 
     it('should set timestamps on creation', async () => {
       const response = await createDashbоard(ctx.env, testUser.id, { name: 'Test' });
-      const data = await response.json();
+      const data = await response.json() as Record<string, Record<string, unknown>>;
 
       expect(data.dashboard.createdAt).toBeTruthy();
       expect(data.dashboard.updatedAt).toBeTruthy();
@@ -63,7 +63,7 @@ describe('Dashboard Handlers', () => {
 
     it('should create dashboard_members entry', async () => {
       const response = await createDashbоard(ctx.env, testUser.id, { name: 'Member Test' });
-      const { dashboard } = await response.json();
+      const { dashboard } = await response.json() as { dashboard: { id: string } };
 
       const member = await ctx.db.prepare(`
         SELECT dashboard_id, user_id, role FROM dashboard_members WHERE dashboard_id = ?

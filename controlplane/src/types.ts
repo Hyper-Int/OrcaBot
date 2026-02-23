@@ -391,13 +391,13 @@ export interface PresenceInfo {
 
 // WebSocket messages for collaboration
 export type CollabMessage =
-  | { type: 'join'; userId: string; userName: string }
-  | { type: 'leave'; userId: string }
-  | { type: 'cursor'; userId: string; x: number; y: number }
-  | { type: 'select'; userId: string; itemId: string | null }
+  | { type: 'join'; user_id: string; user_name: string }
+  | { type: 'leave'; user_id: string }
+  | { type: 'cursor'; user_id: string; x: number; y: number }
+  | { type: 'select'; user_id: string; item_id: string | null }
   | { type: 'item_update'; item: DashboardItem }
   | { type: 'item_create'; item: DashboardItem }
-  | { type: 'item_delete'; itemId: string }
+  | { type: 'item_delete'; item_id: string }
   | { type: 'edge_create'; edge: DashboardEdge }
   | { type: 'edge_delete'; edge_id: string }
   | { type: 'presence'; users: PresenceInfo[] }
@@ -410,7 +410,7 @@ export type CollabMessage =
   | { type: 'memory_update'; key: string; memory: AgentMemory | null; sessionId: string | null }
   | UICommandMessage
   | UICommandResultMessage
-  | { type: 'inbound_message'; item_id: string; text: string; provider: string; sender_name: string; message_id: string };
+  | { type: 'inbound_message'; item_id: string; text: string; provider: string; sender_name: string; message_id: string; is_orcabot_chat?: boolean };
 
 // API response types
 export interface ApiResponse<T = unknown> {
@@ -530,6 +530,8 @@ export interface DisconnectNodesCommand extends UICommandBase {
   type: 'disconnect_nodes';
   source_item_id: string;
   target_item_id: string;
+  source_handle?: string;
+  target_handle?: string;
 }
 
 /**

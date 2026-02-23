@@ -67,7 +67,7 @@ class RemoteD1Client {
   }
 }
 
-class RemoteD1PreparedStatement implements D1PreparedStatement {
+class RemoteD1PreparedStatement {
   private bindings: unknown[] = [];
 
   constructor(
@@ -77,7 +77,7 @@ class RemoteD1PreparedStatement implements D1PreparedStatement {
 
   bind(...values: unknown[]): D1PreparedStatement {
     this.bindings = values;
-    return this;
+    return this as unknown as D1PreparedStatement;
   }
 
   async first<T = Record<string, unknown>>(colName?: string): Promise<T | null> {
@@ -97,9 +97,15 @@ class RemoteD1PreparedStatement implements D1PreparedStatement {
     return this.all<T>();
   }
 
-  async raw<T = unknown[]>(): Promise<T[]> {
+  async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<unknown[]> {
     const result = await this.all();
-    return result.results.map(row => Object.values(row as Record<string, unknown>)) as T[];
+    const rows = result.results.map(row => Object.values(row as Record<string, unknown>)) as T[];
+    if (options?.columnNames) {
+      const firstRow = result.results[0] as Record<string, unknown> | undefined;
+      const colNames = firstRow ? Object.keys(firstRow) : [];
+      return [colNames, ...rows];
+    }
+    return rows;
   }
 
   toPayload(): D1QueryPayload {
@@ -109,11 +115,11 @@ class RemoteD1PreparedStatement implements D1PreparedStatement {
 
 function isRemoteStatement(
   statement: D1PreparedStatement
-): statement is RemoteD1PreparedStatement {
-  return typeof (statement as RemoteD1PreparedStatement).toPayload === 'function';
+): boolean {
+  return typeof (statement as unknown as RemoteD1PreparedStatement).toPayload === 'function';
 }
 
-class RemoteD1Database implements D1Database {
+class RemoteD1Database {
   private client: RemoteD1Client;
 
   constructor(baseUrl: string, fetcher?: Fetcher, debug = false) {
@@ -121,7 +127,7 @@ class RemoteD1Database implements D1Database {
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new RemoteD1PreparedStatement(this.client, query);
+    return new RemoteD1PreparedStatement(this.client, query) as unknown as D1PreparedStatement;
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
@@ -129,7 +135,7 @@ class RemoteD1Database implements D1Database {
       if (!isRemoteStatement(statement)) {
         throw new Error('D1 shim batch requires statements from the same database instance.');
       }
-      return statement.toPayload();
+      return (statement as unknown as RemoteD1PreparedStatement).toPayload();
     });
 
     return this.client.batch<T>(payload);
@@ -137,6 +143,11 @@ class RemoteD1Database implements D1Database {
 
   exec(query: string): Promise<D1ExecResult> {
     return this.client.exec({ sql: query });
+  }
+
+  withSession(token?: string): D1Database {
+    // Session pinning not supported in desktop mode; return self
+    return this as unknown as D1Database;
   }
 
   dump(): Promise<ArrayBuffer> {
@@ -170,6 +181,6 @@ export function ensureDb(env: Env): EnvWithDb {
       env.D1_HTTP_URL,
       env.D1_SHIM,
       env.D1_SHIM_DEBUG === 'trace'
-    ),
+    ) as unknown as D1Database,
   };
 }

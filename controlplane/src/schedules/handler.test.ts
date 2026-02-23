@@ -42,7 +42,7 @@ describe('Schedule Handlers', () => {
         name: 'Daily Run',
         cron: '0 9 * * *',
       });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(response.status).toBe(201);
       expect(data.schedule.cron).toBe('0 9 * * *');
@@ -57,7 +57,7 @@ describe('Schedule Handlers', () => {
         name: 'On Push',
         eventTrigger: 'code.push',
       });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(data.schedule.eventTrigger).toBe('code.push');
       expect(data.schedule.cron).toBeNull();
@@ -83,7 +83,7 @@ describe('Schedule Handlers', () => {
         cron: '0 * * * *',
         enabled: false,
       });
-      const data = await response.json();
+      const data = await response.json() as Record<string, any>;
 
       expect(data.schedule.enabled).toBe(false);
     });

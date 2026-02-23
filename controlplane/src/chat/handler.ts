@@ -527,7 +527,7 @@ function getConnectUrl(env: Env, provider: string, dashboardId?: string, request
   // OAuth connect endpoints are served by the control plane.
   // Prefer the request origin (most reliable), then OAUTH_REDIRECT_BASE, then CONTROLPLANE_URL.
   // FRONTEND_URL is intentionally NOT used — it points at a different origin where these routes don't exist.
-  const base = requestOrigin || env.OAUTH_REDIRECT_BASE || (env as Record<string, unknown>).CONTROLPLANE_URL as string || '';
+  const base = requestOrigin || env.OAUTH_REDIRECT_BASE || (env as unknown as Record<string, string>).CONTROLPLANE_URL || '';
 
   // Guard: base must be an absolute URL, otherwise the connect link is unusable
   if (!base || !base.startsWith('http')) {
@@ -1014,7 +1014,7 @@ async function executeTool(
     }
 
     if (toolName === 'secrets_delete') {
-      const response = await secrets.deleteSecret(env, userId, args.secret_id as string);
+      const response = await secrets.deleteSecret(env, userId, args.secret_id as string, null);
       if (response.status === 204) {
         return { result: { success: true, message: 'Secret deleted' }, isError: false };
       }
@@ -1353,7 +1353,7 @@ export async function streamMessage(
     async start(controller) {
       try {
         let fullContent = '';
-        const toolCalls: ChatToolCall[] = [];
+        const toolCalls: (ChatToolCall & { result?: Record<string, unknown>; isError?: boolean })[] = [];
         let currentMessages = geminiMessages;
 
         // Loop to handle multi-turn tool calls

@@ -25,8 +25,8 @@ interface WebSocketAttachment {
 
 // Type for WebSocket with hibernation API methods
 interface HibernatingWebSocket extends WebSocket {
-  serializeAttachment?: (data: WebSocketAttachment) => void;
-  deserializeAttachment?: () => WebSocketAttachment | null;
+  serializeAttachment: (data: WebSocketAttachment) => void;
+  deserializeAttachment: () => WebSocketAttachment | null;
 }
 
 // Rate limiter for error logging to prevent log spam
@@ -261,7 +261,6 @@ export class DashboardDO implements DurableObject {
       const { itemId } = await request.json() as { itemId: string };
       this.items.delete(itemId);
       await this.persistState();
-      // Use snake_case for frontend
       this.broadcast({ type: 'item_delete', item_id: itemId });
       return Response.json({ success: true });
     }
@@ -432,7 +431,6 @@ export class DashboardDO implements DurableObject {
       };
       this.presence.set(userId, presenceInfo);
 
-      // Notify others of new user (use snake_case for frontend)
       this.broadcast({ type: 'join', user_id: userId, user_name: userName }, ws);
     }
 
@@ -485,7 +483,6 @@ export class DashboardDO implements DurableObject {
           const presence = this.presence.get(attachment.userId);
           if (presence) {
             presence.cursor = { x: msg.x, y: msg.y };
-            // Use snake_case for frontend
             this.broadcast({ type: 'cursor', user_id: attachment.userId, x: msg.x, y: msg.y }, ws);
           }
           break;
@@ -494,9 +491,8 @@ export class DashboardDO implements DurableObject {
         case 'select': {
           const presence = this.presence.get(attachment.userId);
           if (presence) {
-            presence.selectedItemId = msg.itemId;
-            // Use snake_case for frontend
-            this.broadcast({ type: 'select', user_id: attachment.userId, item_id: msg.itemId }, ws);
+            presence.selectedItemId = msg.item_id;
+            this.broadcast({ type: 'select', user_id: attachment.userId, item_id: msg.item_id }, ws);
           }
           break;
         }
@@ -529,7 +525,6 @@ export class DashboardDO implements DurableObject {
       // Last connection closed - remove presence and notify
       this.userConnectionCount.delete(attachment.userId);
       this.presence.delete(attachment.userId);
-      // Use snake_case for frontend
       this.broadcast({ type: 'leave', user_id: attachment.userId });
     } else {
       // User still has other connections open
