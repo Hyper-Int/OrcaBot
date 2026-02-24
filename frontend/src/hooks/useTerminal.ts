@@ -94,7 +94,9 @@ export function useTerminal(
 
   // Store callbacks in ref to avoid re-subscribing
   const callbacksRef = React.useRef(callbacks);
-  callbacksRef.current = callbacks;
+  React.useEffect(() => {
+    callbacksRef.current = callbacks;
+  });
 
   // Initialize and manage WebSocket connection
   React.useEffect(() => {

@@ -60,13 +60,17 @@ func (w *Workspace) Root() string {
 // resolvePath safely resolves a path within the workspace
 // Returns an error if the path would escape the workspace
 func (w *Workspace) resоlvePath(path string) (string, error) {
-	// Clean the path (removes redundant slashes, etc.)
-	cleaned := filepath.Clean(path)
-	for _, part := range strings.Split(cleaned, string(filepath.Separator)) {
+	// Check raw input for ".." segments BEFORE cleaning.
+	// filepath.Clean resolves ".." which can hide traversal attempts
+	// (e.g. "/../../../tmp/evil.txt" cleans to "/tmp/evil.txt", losing the ".." evidence).
+	for _, part := range strings.Split(path, "/") {
 		if part == ".." {
 			return "", ErrPathTraversal
 		}
 	}
+
+	// Clean the path (removes redundant slashes, etc.)
+	cleaned := filepath.Clean(path)
 
 	// Remove leading slash for joining
 	cleaned = strings.TrimPrefix(cleaned, "/")

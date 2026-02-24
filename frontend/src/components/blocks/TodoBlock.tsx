@@ -82,7 +82,7 @@ function parseContent(content: string): { title: string; items: TodoItem[] } {
 }
 
 export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
-  const initialParsed = React.useMemo(() => parseContent(data.content), []);
+  const initialParsed = React.useMemo(() => parseContent(data.content), [data.content]);
   const [title, setTitle] = React.useState(data.title || initialParsed.title);
   const [items, setItems] = React.useState<TodoItem[]>(initialParsed.items);
   const [newItemText, setNewItemText] = React.useState("");

@@ -159,28 +159,8 @@ export default function Home() {
     setLoading,
   } = useAuthStore();
 
-  // Desktop mode: skip splash entirely, go straight to dashboards
-  React.useEffect(() => {
-    if (DESKTOP_MODE) {
-      router.replace("/dashboards");
-    }
-  }, [router]);
-
-  // Don't render splash content in desktop mode, just show blank while redirecting
-  if (DESKTOP_MODE) {
-    return null;
-  }
-
   // Auth config from backend (runtime feature flags)
   const [codeLoginEnabled, setCodeLoginEnabled] = React.useState(false);
-  React.useEffect(() => {
-    fetch(`${API.cloudflare.base}/auth/config`)
-      .then((r) => r.json())
-      .then((data: { codeLoginEnabled?: boolean }) => {
-        if (data.codeLoginEnabled) setCodeLoginEnabled(true);
-      })
-      .catch(() => {});
-  }, []);
 
   // Login form state
   const [showDevLogin, setShowDevLogin] = React.useState(false);
@@ -189,6 +169,28 @@ export default function Home() {
   const [email, setEmail] = React.useState("");
   const [accessCode, setAccessCode] = React.useState("");
   const [error, setError] = React.useState("");
+
+  // Desktop mode: skip splash entirely, go straight to dashboards
+  React.useEffect(() => {
+    if (DESKTOP_MODE) {
+      router.replace("/dashboards");
+    }
+  }, [router]);
+
+  React.useEffect(() => {
+    if (DESKTOP_MODE) return;
+    fetch(`${API.cloudflare.base}/auth/config`)
+      .then((r) => r.json())
+      .then((data: { codeLoginEnabled?: boolean }) => {
+        if (data.codeLoginEnabled) setCodeLoginEnabled(true);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Don't render splash content in desktop mode, just show blank while redirecting
+  if (DESKTOP_MODE) {
+    return null;
+  }
 
   // Turnstile bot verification: execute on demand when user clicks login
   const turnstileWidgetId = React.useRef<string | null>(null);

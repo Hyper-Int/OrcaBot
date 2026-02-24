@@ -17,15 +17,18 @@ import { toast } from "sonner";
 
 export function TrialBanner() {
   const { subscription } = useAuthStore();
+  // Capture current time once per mount (avoids non-idempotent render from Date.now())
+  const [now] = React.useState(() => Date.now());
 
   if (!subscription) return null;
   if (subscription.status === "exempt") return null;
 
   if (subscription.status === "trialing" && subscription.trialEndsAt) {
+    const trialEnd = new Date(subscription.trialEndsAt).getTime();
     const daysLeft = Math.max(
       0,
       Math.ceil(
-        (new Date(subscription.trialEndsAt).getTime() - Date.now()) /
+        (trialEnd - now) /
           (1000 * 60 * 60 * 24)
       )
     );
