@@ -126,64 +126,6 @@ export function useCollaboration(
     onUICommandResultRef.current = onUICommandResult;
   }, [onUICommandResult]);
 
-  // Initialize and manage WebSocket connection
-  React.useEffect(() => {
-    if (!enabled || !dashboardId || !userId || !isBootstrapped) {
-      console.log(`[Collab] Skipping connection - enabled: ${enabled}, dashboardId: ${dashboardId}, userId: ${userId}`);
-      return;
-    }
-
-    console.log(`[Collab] Initializing collaboration for dashboard ${dashboardId}`);
-
-    const manager = new DashboardWSManager(dashboardId, userId, userName);
-    managerRef.current = manager;
-
-    // Subscribe to state changes
-    const unsubState = manager.onStateChange((state) => {
-      console.log(`[Collab] Connection state changed: ${state}`);
-      setConnectionState(state);
-    });
-
-    // Subscribe to errors
-    const unsubError = manager.onError((err) => {
-      console.error(`[Collab] Error:`, err);
-      setError(err);
-    });
-
-    // Subscribe to messages
-    const unsubMessage = manager.onMessage((message) => {
-      console.log(`[Collab] Message received:`, message.type);
-      handleMessage(message);
-      onMessageRef.current?.(message);
-    });
-
-    // Subscribe to UI commands
-    const unsubUICommand = manager.onUICommand((command) => {
-      console.log(`[Collab] UI command received:`, command.type);
-      onUICommandRef.current?.(command);
-    });
-
-    // Subscribe to UI command results
-    const unsubUICommandResult = manager.onUICommandResult((result) => {
-      console.log(`[Collab] UI command result:`, result.command_id, result.success);
-      onUICommandResultRef.current?.(result);
-    });
-
-    // Connect
-    manager.connect();
-
-    return () => {
-      console.log(`[Collab] Cleanup - disconnecting`);
-      unsubState();
-      unsubError();
-      unsubMessage();
-      unsubUICommand();
-      unsubUICommandResult();
-      manager.disconnect();
-      managerRef.current = null;
-    };
-  }, [dashboardId, userId, userName, enabled, isBootstrapped]);
-
   // Handle incoming messages
   const handleMessage = React.useCallback((message: IncomingCollabMessage) => {
     switch (message.type) {
@@ -299,6 +241,64 @@ export function useCollaboration(
         break;
     }
   }, []);
+
+  // Initialize and manage WebSocket connection
+  React.useEffect(() => {
+    if (!enabled || !dashboardId || !userId || !isBootstrapped) {
+      console.log(`[Collab] Skipping connection - enabled: ${enabled}, dashboardId: ${dashboardId}, userId: ${userId}`);
+      return;
+    }
+
+    console.log(`[Collab] Initializing collaboration for dashboard ${dashboardId}`);
+
+    const manager = new DashboardWSManager(dashboardId, userId, userName);
+    managerRef.current = manager;
+
+    // Subscribe to state changes
+    const unsubState = manager.onStateChange((state) => {
+      console.log(`[Collab] Connection state changed: ${state}`);
+      setConnectionState(state);
+    });
+
+    // Subscribe to errors
+    const unsubError = manager.onError((err) => {
+      console.error(`[Collab] Error:`, err);
+      setError(err);
+    });
+
+    // Subscribe to messages
+    const unsubMessage = manager.onMessage((message) => {
+      console.log(`[Collab] Message received:`, message.type);
+      handleMessage(message);
+      onMessageRef.current?.(message);
+    });
+
+    // Subscribe to UI commands
+    const unsubUICommand = manager.onUICommand((command) => {
+      console.log(`[Collab] UI command received:`, command.type);
+      onUICommandRef.current?.(command);
+    });
+
+    // Subscribe to UI command results
+    const unsubUICommandResult = manager.onUICommandResult((result) => {
+      console.log(`[Collab] UI command result:`, result.command_id, result.success);
+      onUICommandResultRef.current?.(result);
+    });
+
+    // Connect
+    manager.connect();
+
+    return () => {
+      console.log(`[Collab] Cleanup - disconnecting`);
+      unsubState();
+      unsubError();
+      unsubMessage();
+      unsubUICommand();
+      unsubUICommandResult();
+      manager.disconnect();
+      managerRef.current = null;
+    };
+  }, [dashboardId, userId, userName, enabled, isBootstrapped, handleMessage]);
 
   // Actions
   const sendCursor = React.useCallback((position: CursorPosition) => {

@@ -300,19 +300,21 @@ export function Canvas({
       }),
     [getZIndex]
   );
+  // Stable callback for terminal ref registration (avoids render-phase ref mutation in useMemo)
+  const terminalRefCallback = React.useCallback((itemId: string, handle: TerminalHandle | null) => {
+    if (handle) {
+      terminalRefs.current.set(itemId, handle);
+    } else {
+      terminalRefs.current.delete(itemId);
+    }
+  }, []);
   const initialNodes = React.useMemo(() => {
     const baseNodes = applyZIndex(
       itemsToNodes(
         items,
         sessions,
         readOnly ? undefined : onItemChange,
-        (itemId, handle) => {
-          if (handle) {
-            terminalRefs.current.set(itemId, handle);
-          } else {
-            terminalRefs.current.delete(itemId);
-          }
-        },
+        terminalRefCallback,
         onCreateBrowserBlock,
         onConnectorClick,
         connectorMode,
@@ -367,13 +369,7 @@ export function Canvas({
         items,
         sessions,
         readOnly ? undefined : onItemChange,
-        (itemId, handle) => {
-          if (handle) {
-            terminalRefs.current.set(itemId, handle);
-          } else {
-            terminalRefs.current.delete(itemId);
-          }
-        },
+        terminalRefCallback,
         onCreateBrowserBlock,
         onConnectorClick,
         connectorMode,

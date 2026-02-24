@@ -187,8 +187,8 @@ export async function createDashbоard(
   // Add owner as member
   await env.DB.prepare(`
     INSERT INTO dashboard_members (dashboard_id, user_id, role, added_at)
-    VALUES (?, ?, 'owner', ?)
-  `).bind(id, userId, now).run();
+    VALUES (?, ?, ?, ?)
+  `).bind(id, userId, 'owner', now).run();
 
   // If templateId provided, populate dashboard from template
   let templateViewport: { x: number; y: number; zoom: number } | undefined;

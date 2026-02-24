@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"unsafe"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 	"github.com/creack/pty"
@@ -186,6 +185,7 @@ func (p *PTY) Write(data []byte) (int, error) {
 }
 
 // WriteSilent writes to the PTY with echo temporarily disabled.
+// Uses platform-specific termios functions (see pty_termios_linux.go / pty_termios_other.go).
 func (p *PTY) WriteSilent(data []byte) (int, error) {
 	p.mu.Lock()
 	if p.closed {
@@ -195,39 +195,7 @@ func (p *PTY) WriteSilent(data []byte) (int, error) {
 	file := p.file
 	p.mu.Unlock()
 
-	fd := int(file.Fd())
-	termios, err := ioctlGetTermios(fd)
-	if err != nil {
-		return file.Write(data)
-	}
-	original := *termios
-	termios.Lflag &^= syscall.ECHO
-	if err := ioctlSetTermios(fd, termios); err != nil {
-		return file.Write(data)
-	}
-
-	n, writeErr := file.Write(data)
-
-	restore := original
-	_ = ioctlSetTermios(fd, &restore)
-	return n, writeErr
-}
-
-func ioctlGetTermios(fd int) (*syscall.Termios, error) {
-	var termios syscall.Termios
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&termios)))
-	if errno != 0 {
-		return nil, errno
-	}
-	return &termios, nil
-}
-
-func ioctlSetTermios(fd int, termios *syscall.Termios) error {
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(termios)))
-	if errno != 0 {
-		return errno
-	}
-	return nil
+	return writeSilentPlatform(file, data)
 }
 
 // Resize changes the PTY window size
