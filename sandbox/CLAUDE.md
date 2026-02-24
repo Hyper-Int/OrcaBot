@@ -370,6 +370,27 @@ curl -X POST "http://localhost:8082/broker/{sessionID}/custom/MY_API_KEY?target=
 # that appears in the frontend for the dashboard owner to approve.
 ```
 
+### Browser Block (Chromium)
+
+The sandbox runs an embedded Chromium browser accessible via WebSocket for in-browser testing.
+
+**Startup chain (4 processes):**
+1. **Xvfb** — X Virtual Framebuffer (display `:N`, 1280x720x24)
+2. **x11vnc** — VNC server with clipboard sync
+3. **websockify** — VNC→WebSocket proxy on allocated port
+4. **Chromium** — Browser with remote debugging enabled
+
+**Key behaviors:**
+- Auto-cleans Chromium profile lock files + crash state on startup
+- Log filtering suppresses noisy DBus/DPMS/WebSocket messages
+- `OpenURL()` reuses blank tabs or deduplicates existing URLs via Chrome DevTools Protocol
+- Port waiting with timeouts (10–20s per process)
+- Status returns: `Running`, `Ready`, `WSPort`, `Display`, `DebugPort`
+
+**Key file:** `internal/browser/browser.go`
+
+---
+
 ### Coding Agent integration
 Claude Code, Gemini CLI, and Codex CLI are preinstalled in the sandbox image.
 Agents run as CLI processes inside PTYs.

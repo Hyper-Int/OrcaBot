@@ -247,6 +247,31 @@ Key files:
 
 ---
 
+## Speech Recognition (ASR)
+
+The frontend supports voice input via 4 providers with automatic provider selection and fallback.
+
+### Providers
+- **Web Speech API** — Free, browser-native (no API key needed)
+- **AssemblyAI** — Real-time streaming via token vending
+- **OpenAI Whisper** — Chunked audio via HTTP proxy (control plane proxies server-side)
+- **Deepgram** — Streaming via WebSocket (Durable Object relay); falls back to REST chunked if token vending fails
+
+### Architecture
+- `useASR` hook manages provider lifecycle, recording, transcription, and error recovery
+- Provider preference stored in `localStorage`
+- API keys managed via `ASRSettingsDialog` (stored encrypted in control plane, never cached client-side)
+- Key status fetched from control plane with coalesced requests (avoids duplicate polls)
+- Deepgram auto-fallback: streaming WebSocket → REST chunked (handles keys without Member scope)
+
+### Key Files
+- `src/hooks/useASR.ts` — Core ASR hook (provider selection, streaming, chunked modes)
+- `src/components/blocks/ASRSettingsDialog.tsx` — Provider + key management UI
+- `src/stores/asr-settings-store.ts` — Provider preference persistence
+- `src/lib/api/cloudflare/asr.ts` — Control plane ASR API client
+
+---
+
 ## Session & recovery UX
 
 - Dashboards can exist with **no active sandboxes**
