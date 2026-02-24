@@ -268,6 +268,77 @@ Sandbox MCP Server
 
 ---
 
+## ASR (Automatic Speech Recognition)
+
+The control plane manages ASR API keys and provides token vending / proxy endpoints for speech-to-text.
+
+### Providers
+- **AssemblyAI** — Token vending (temporary token, 1h TTL)
+- **OpenAI Whisper** — HTTP proxy (multipart audio forwarded server-side, 25MB limit)
+- **Deepgram** — Token vending (JWT, 30s TTL) + REST transcription fallback + WebSocket streaming via Durable Object
+
+### Endpoints
+- `GET /asr/keys` — List configured providers (no values)
+- `POST /asr/keys` — Upsert API key (stored encrypted in `user_secrets` at `_global` scope)
+- `DELETE /asr/keys/:provider` — Remove key
+- `POST /asr/assemblyai/token` — Exchange key for temporary token
+- `POST /asr/deepgram/token` — Exchange key for JWT
+- `POST /asr/openai/transcribe` — Proxy audio to Whisper API
+- `POST /asr/deepgram/transcribe` — Proxy audio to Deepgram Nova v2
+
+### ASRStreamProxy (Durable Object)
+WebSocket relay between browser and Deepgram for real-time streaming. API key injected server-side via `X-ASR-Api-Key` header — never reaches the browser.
+
+### Key Files
+- `src/asr/handler.ts` — Endpoints, key management, proxy logic
+- `src/asr/ASRStreamProxy.ts` — Durable Object WebSocket relay
+
+---
+
+## Analytics & Metrics
+
+First-party analytics with client-side event ingestion and admin metrics.
+
+### Endpoints
+- `POST /analytics/events` — Batch ingest (max 50 events), verifies user has dashboard access
+- `GET /admin/metrics` — Admin-only: DAU/WAU/MAU, signups by day, active dashboards, session breakdown by agent type, block type distribution, integration adoption, top 20 users, 7-day retention
+
+### Database
+- `analytics_events` table: `(id, user_id, dashboard_id, event_name, properties JSON, created_at)`
+- `users.last_active_at` column: throttled write (only if NULL or >5min old)
+
+### Server-Side Events
+- `logServerEvent()` — Fire-and-forget internal logging
+- `detectAgentType()` — Parses boot command to identify agent (claude, gemini, codex, etc.)
+
+### Key Files
+- `src/analytics/handler.ts` — All endpoints + metrics queries
+
+---
+
+## Messaging Integrations (Inbound Webhooks)
+
+Multi-platform inbound message handling for messaging integrations (Slack, Discord, WhatsApp, Telegram, Teams, Matrix, Google Chat).
+
+### Webhook Flow
+1. Verify platform-specific signature (HMAC-SHA256, Ed25519, token header, or shared secret)
+2. Parse + normalize message to `NormalizedMessage` format
+3. Deduplicate via unique index on `(subscription_id, platform_message_id)`
+4. Load subscription + policy from DB
+5. Enforce inbound policy: channel filter (allowlist), sender filter (allowlist/blocklist), `repliesOnly`
+6. Buffer in `inbound_messages` table
+7. Broadcast to frontend via Durable Object (`inbound_message` event)
+8. Attempt delivery to terminal or wake VM
+
+### Database Tables
+- `messaging_subscriptions` — Channel binding (dashboard_id, item_id, provider, channel_id, webhook_secret, etc.)
+- `inbound_messages` — Buffered messages (subscription_id, sender, channel, text, metadata, status, expires_at)
+
+### Key Files
+- `src/messaging/webhook-handler.ts` — Signature verification, parsing, policy enforcement, subscription CRUD
+
+---
+
 ## Orchestration model
 
 This repo implements a **durable orchestrator**.

@@ -40,6 +40,7 @@ This is non-negotiable. Never speculate about deployment issues - add logs that 
 - `frontend` — Next.js dashboard UI
 - `controlplane` — Cloudflare Worker control plane
 - `sandbox` — Go sandbox server
+- `e2e` — Playwright end-to-end tests (external, against running instance)
 
 ## App Guides
 - Frontend: `frontend/CLAUDE.md`
@@ -218,3 +219,56 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 
 ### Workspace Sidebar
 - File tree is populated via control plane proxy of sandbox filesystem APIs
+
+### ASR (Automatic Speech Recognition)
+- Control plane stores ASR API keys encrypted in `user_secrets` (global scope)
+- Three providers: AssemblyAI (token vending), OpenAI Whisper (HTTP proxy), Deepgram (streaming WS + REST fallback)
+- `ASRStreamProxy` Durable Object relays WebSocket audio between browser and Deepgram (API key injected server-side)
+- Frontend `useASR` hook manages provider selection, streaming, and chunked transcription
+- Key files: `controlplane/src/asr/`, `frontend/src/hooks/useASR.ts`, `frontend/src/components/blocks/ASRSettingsDialog.tsx`
+
+### Analytics & Metrics
+- Client-side event tracking with batched ingestion (`POST /analytics/events`, max 50/batch)
+- Server-side event logging for agent type detection and session lifecycle
+- Admin metrics endpoint (`GET /admin/metrics`): DAU/WAU/MAU, signups, agent type breakdown, integration adoption, 7-day retention
+- D1 table: `analytics_events` + `users.last_active_at` column
+- Key files: `controlplane/src/analytics/handler.ts`, `frontend/src/lib/analytics.ts`
+
+### Messaging Integrations (Send/Receive)
+- Inbound webhook handling for: Slack, Discord, Telegram, WhatsApp, Teams, Matrix, Google Chat
+- Per-platform signature verification (HMAC-SHA256, Ed25519, token header)
+- Inbound policy enforcement: channel filter, sender filter, `repliesOnly` mode
+- Messages buffered in `inbound_messages` D1 table, broadcast via Durable Object, can trigger VM wake-up
+- Canvas edges from messaging blocks to terminals enable communication paths
+- Key files: `controlplane/src/messaging/webhook-handler.ts`
+
+## E2E Testing
+
+External Playwright test suite in `e2e/` that runs against a live OrcaBot instance.
+
+### Running
+```bash
+cd e2e && npm install && npx playwright install chromium
+ORCABOT_URL=https://your-instance.com npm test
+```
+
+### Configuration
+- Sequential execution (1 worker) — tests share real instance state
+- 120s test timeout, 30s expect timeout (sandbox boot can be slow)
+- Traces on first retry, screenshots on failure
+
+### Fixtures
+- `auth` — API-based login (fast) and UI-based login
+- `dashboard` — Create/goto/delete with auto-cleanup
+- `terminal` — Add terminal, wait for prompt, type commands, wait for output
+- `api` — Direct control plane API client
+
+### Test Recipes
+1. `01-auth-flow` — Login/logout flows
+2. `02-dashboard-crud` — Dashboard create/delete
+3. `03-terminal-basic` — Terminal creation
+4. `04-terminal-command` — Command execution
+5. `05-integration-blocks` — Integration block creation
+6. `06-integration-wiring` — Edge wiring (terminals ↔ integrations)
+7. `07-policy-editor` — Policy UI
+8. `08-gemini-chess` — Full agent scenario (Gemini playing chess)
