@@ -5,12 +5,13 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v3-fly-machine-cleanup
+// REVISION: dashboards-v4-eager-vm-claim
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { populateFromTemplate } from '../templates/handler';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { FlyMachinesClient } from '../sandbox/fly-machines';
+import { preProvisionDashboardSandbox } from '../sessions/handler';
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -173,7 +174,9 @@ export async function getDashbоard(
 export async function createDashbоard(
   env: Env,
   userId: string,
-  data: { name: string; templateId?: string }
+  data: { name: string; templateId?: string },
+  ctx?: Pick<ExecutionContext, 'waitUntil'>,
+  preferredRegion?: string,
 ): Promise<Response> {
   const id = generateId();
   const now = new Date().toISOString();
@@ -195,6 +198,19 @@ export async function createDashbоard(
   if (data.templateId) {
     const result = await populateFromTemplate(env, id, data.templateId);
     templateViewport = result?.viewport;
+  }
+
+  // Eagerly claim a warm VM so terminals open instantly.
+  // Only starts if ctx is provided: the promise MUST be registered with waitUntil before
+  // it begins executing, otherwise the Worker runtime can kill it mid-provisioning after
+  // the warm machine is deleted from the pool but before it is inserted into
+  // dashboard_sandboxes — stranding a running Fly machine as an untracked orphan.
+  if (ctx) {
+    ctx.waitUntil(
+      preProvisionDashboardSandbox(env as EnvWithDriveCache, id, preferredRegion).catch(e => {
+        console.warn(`[createDashboard] Eager VM claim failed for ${id}: ${e}`);
+      })
+    );
   }
 
   const dashboard: Dashboard = {
