@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v19-hybrid-deactivate-conflict
-const integrationsRevision = "integrations-v18-mirror-cleanup-intermediate-dirs";
+// REVISION: integrations-v20-whatsapp-qr-error-propagation
+const integrationsRevision = "integrations-v20-whatsapp-qr-error-propagation";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -10834,9 +10834,15 @@ export async function getWhatsAppQr(
   try {
     const qrResult = await bridge.getQrCode(sub.webhook_id);
 
-    if (!qrResult || qrResult.status === 'error') {
-      // Bridge session missing or in error state (e.g. max retries exhausted). Auto-restart it.
-      console.log(`[integrations] Bridge session for ${sub.webhook_id} is ${qrResult ? 'error' : 'missing'}, restarting`);
+    if (qrResult && qrResult.status === 'error') {
+      // Bridge explicitly exhausted all reconnect attempts — propagate error to user (do not auto-restart).
+      console.log(`[integrations] Bridge session for ${sub.webhook_id} reached error state after max retries`);
+      return Response.json({ status: 'error', qrCode: null });
+    }
+
+    if (!qrResult) {
+      // Bridge has no record of this session (bridge restarted and lost in-memory state). Auto-restart it.
+      console.log(`[integrations] Bridge session for ${sub.webhook_id} is missing, restarting`);
       const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
       try {
         const restartResult = await bridge.startSession({
