@@ -6,6 +6,7 @@ package sessions
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 
@@ -56,7 +57,7 @@ func NewManagerWithWоrkspace(workspaceBase string) *Manager {
 
 	// Start the broker in the background (singleton for all sessions)
 	go func() {
-		if err := b.Start(); err != nil {
+		if err := b.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
 		}
 	}()

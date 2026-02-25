@@ -26,7 +26,8 @@ export type IntegrationProvider =
   | "whatsapp"
   | "teams"
   | "matrix"
-  | "google_chat";
+  | "google_chat"
+  | "twitter";
 
 export type MessagingProvider = "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat";
 
@@ -336,6 +337,21 @@ export interface TelegramPolicy extends MessagingPolicy {
   };
 }
 
+/**
+ * Twitter/X policy configuration
+ * Default: read-only (canSearch + canRead). No DMs for privacy.
+ */
+export interface TwitterPolicy extends BasePolicy {
+  canSearch: boolean;
+  canRead: boolean;
+  canRetweet: boolean;
+  canLike: boolean;
+  canReply: boolean;
+  canPost: boolean;
+  canFollow: boolean;
+  canDeleteTweet: boolean;
+}
+
 export type AnyPolicy =
   | GmailPolicy
   | CalendarPolicy
@@ -350,7 +366,8 @@ export type AnyPolicy =
   | MessagingPolicy
   | SlackPolicy
   | DiscordPolicy
-  | TelegramPolicy;
+  | TelegramPolicy
+  | TwitterPolicy;
 
 export interface AvailableIntegration {
   provider: IntegrationProvider;
@@ -601,6 +618,7 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   teams: ["canSend", "canEditMessages", "canDeleteMessages"],
   matrix: ["canSend", "canEditMessages", "canDeleteMessages"],
   google_chat: ["canSend", "canEditMessages", "canDeleteMessages"],
+  twitter: ["canPost", "canRetweet", "canFollow", "canDeleteTweet"],
 };
 
 /**
@@ -625,6 +643,7 @@ export function getProviderDisplayName(provider: IntegrationProvider): string {
     teams: "Microsoft Teams",
     matrix: "Matrix",
     google_chat: "Google Chat",
+    twitter: "X",
   };
   return names[provider] || provider;
 }
@@ -651,6 +670,7 @@ export function getProviderIcon(provider: IntegrationProvider): string {
     teams: "Users",
     matrix: "Network",
     google_chat: "MessageCircle",
+    twitter: "X",
   };
   return icons[provider] || "Plug";
 }
@@ -877,6 +897,18 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canReadHistory: true,
       } as MessagingPolicy;
 
+    case "twitter":
+      return {
+        canSearch: true,
+        canRead: true,
+        canRetweet: false,
+        canLike: false,
+        canReply: false,
+        canPost: false,
+        canFollow: false,
+        canDeleteTweet: false,
+      } as TwitterPolicy;
+
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${provider}`);
@@ -908,6 +940,7 @@ export const BLOCK_TYPE_TO_PROVIDER: Partial<Record<string, IntegrationProvider>
   teams: "teams",
   matrix: "matrix",
   google_chat: "google_chat",
+  twitter: "twitter",
 };
 
 /**

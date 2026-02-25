@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email ON dashboard_invitations(email)
 CREATE TABLE IF NOT EXISTS dashboard_items (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN ('note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  type TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   position_x INTEGER NOT NULL DEFAULT 0,
   position_y INTEGER NOT NULL DEFAULT 0,
@@ -212,7 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_user ON oauth_states(user_id);
 CREATE TABLE IF NOT EXISTS user_integrations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  provider TEXT NOT NULL,
   access_token TEXT NOT NULL,
   refresh_token TEXT,
   scope TEXT,
@@ -691,7 +691,7 @@ CREATE TABLE IF NOT EXISTS terminal_integrations (
   item_id TEXT,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'google_drive', 'onedrive', 'box', 'github', 'browser', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  provider TEXT NOT NULL,
   user_integration_id TEXT REFERENCES user_integrations(id),
   active_policy_id TEXT,
   account_email TEXT,
@@ -763,7 +763,7 @@ CREATE TABLE IF NOT EXISTS messaging_subscriptions (
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
   item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  provider TEXT NOT NULL,
   channel_id TEXT,
   channel_name TEXT,
   chat_id TEXT,
@@ -804,7 +804,7 @@ CREATE TABLE IF NOT EXISTS inbound_messages (
   id TEXT PRIMARY KEY,
   subscription_id TEXT NOT NULL REFERENCES messaging_subscriptions(id) ON DELETE CASCADE,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL CHECK (provider IN ('slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat')),
+  provider TEXT NOT NULL,
   platform_message_id TEXT NOT NULL,
   sender_id TEXT,
   sender_name TEXT,
@@ -1436,7 +1436,7 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 }
 
 // All valid integration providers - add new providers here
-const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
+const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter'] as const;
 
 // All valid terminal integration providers (includes 'browser' which is not an OAuth provider)
 const TERMINAL_INTEGRATION_PROVIDERS = [...INTEGRATION_PROVIDERS, 'browser'] as const;
@@ -1450,36 +1450,23 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
     return;
   }
 
-  // Check if all required providers are present in the CHECK constraint
-  const allProvidersPresent = INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
   // Also check if required columns exist (scope column was missing in some migrations)
   const hasRequiredColumns = tableInfo.sql.includes('scope TEXT');
+
+  // If the table has no CHECK constraint on provider, it's already in the desired state (no constraint).
+  // Check constraint was removed in favour of app-level validation.
+  // Still need to check for required columns though.
+  if (!tableInfo.sql.includes("CHECK (provider IN") && hasRequiredColumns) {
+    return;
+  }
+
+  // Check if all required providers are present in the CHECK constraint
+  const allProvidersPresent = INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
 
   if (allProvidersPresent && hasRequiredColumns) {
     return;
   }
 
-  // Recreate table with updated CHECK constraint
-  const providerList = INTEGRATION_PROVIDERS.map(p => `'${p}'`).join(', ');
-
-  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
-  // Clean up any leftover table from a failed migration
-  await db.prepare(`DROP TABLE IF EXISTS user_integrations_new`).run();
-  await db.prepare(`
-    CREATE TABLE user_integrations_new (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL CHECK (provider IN (${providerList})),
-      access_token TEXT NOT NULL,
-      refresh_token TEXT,
-      scope TEXT,
-      token_type TEXT,
-      expires_at TEXT,
-      metadata TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `).run();
   // Copy ALL columns that exist in both old and new tables to preserve data.
   // Critical: metadata contains team_id for Slack routing, scope/token_type/expires_at
   // are needed for OAuth refresh. Dropping these would break existing integrations.
@@ -1488,14 +1475,31 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
   const allNewColumns = ['id', 'user_id', 'provider', 'access_token', 'refresh_token', 'scope', 'token_type', 'expires_at', 'metadata', 'created_at', 'updated_at'];
   const columnsToCopy = allNewColumns.filter(c => oldColumnNames.has(c));
   const columnList = columnsToCopy.join(', ');
-  await db.prepare(`
-    INSERT INTO user_integrations_new (${columnList})
-    SELECT ${columnList} FROM user_integrations
-  `).run();
-  await db.prepare(`DROP TABLE user_integrations`).run();
-  await db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`).run();
-  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider ON user_integrations(user_id, provider)`).run();
-  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+
+  await db.batch([
+    db.prepare(`PRAGMA foreign_keys=OFF`),
+    db.prepare(`DROP TABLE IF EXISTS user_integrations_new`),
+    db.prepare(`
+      CREATE TABLE user_integrations_new (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        scope TEXT,
+        token_type TEXT,
+        expires_at TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `),
+    db.prepare(`INSERT INTO user_integrations_new (${columnList}) SELECT ${columnList} FROM user_integrations`),
+    db.prepare(`DROP TABLE user_integrations`),
+    db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`),
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider ON user_integrations(user_id, provider)`),
+    db.prepare(`PRAGMA foreign_keys=ON`),
+  ]);
 }
 
 // Migrate schedules table to support edge-based schedules (recipe_id nullable, new columns)
@@ -1514,43 +1518,45 @@ async function migrateSchedulesTable(db: D1Database): Promise<void> {
   }
 
   // Recreate table with nullable recipe_id and new columns
-  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
-  await db.prepare(`DROP TABLE IF EXISTS schedules_new`).run();
-  await db.prepare(`
-    CREATE TABLE schedules_new (
-      id TEXT PRIMARY KEY,
-      recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
-      dashboard_id TEXT REFERENCES dashboards(id) ON DELETE CASCADE,
-      dashboard_item_id TEXT,
-      command TEXT,
-      name TEXT NOT NULL,
-      cron TEXT,
-      event_trigger TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      last_run_at TEXT,
-      next_run_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      CHECK (recipe_id IS NOT NULL OR dashboard_item_id IS NOT NULL),
-      CHECK (dashboard_item_id IS NULL OR dashboard_id IS NOT NULL)
-    )
-  `).run();
-  await db.prepare(`
-    INSERT INTO schedules_new
-      (id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at)
-    SELECT id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at
-    FROM schedules
-  `).run();
-  await db.prepare(`DROP TABLE schedules`).run();
-  await db.prepare(`ALTER TABLE schedules_new RENAME TO schedules`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_recipe ON schedules(recipe_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_dashboard ON schedules(dashboard_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_item ON schedules(dashboard_item_id)`).run();
-  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+  await db.batch([
+    db.prepare(`PRAGMA foreign_keys=OFF`),
+    db.prepare(`DROP TABLE IF EXISTS schedules_new`),
+    db.prepare(`
+      CREATE TABLE schedules_new (
+        id TEXT PRIMARY KEY,
+        recipe_id TEXT REFERENCES recipes(id) ON DELETE CASCADE,
+        dashboard_id TEXT REFERENCES dashboards(id) ON DELETE CASCADE,
+        dashboard_item_id TEXT,
+        command TEXT,
+        name TEXT NOT NULL,
+        cron TEXT,
+        event_trigger TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_run_at TEXT,
+        next_run_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK (recipe_id IS NOT NULL OR dashboard_item_id IS NOT NULL),
+        CHECK (dashboard_item_id IS NULL OR dashboard_id IS NOT NULL)
+      )
+    `),
+    db.prepare(`
+      INSERT INTO schedules_new
+        (id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at)
+      SELECT id, recipe_id, name, cron, event_trigger, enabled, last_run_at, next_run_at, created_at
+      FROM schedules
+    `),
+    db.prepare(`DROP TABLE schedules`),
+    db.prepare(`ALTER TABLE schedules_new RENAME TO schedules`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_recipe ON schedules(recipe_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_dashboard ON schedules(dashboard_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_schedules_item ON schedules(dashboard_item_id)`),
+    db.prepare(`PRAGMA foreign_keys=ON`),
+  ]);
 }
 
 // All valid dashboard item types - add new types here
-const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat'] as const;
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter'] as const;
 
 async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
@@ -1561,41 +1567,47 @@ async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
     return;
   }
 
+  // If the table has no CHECK constraint on type, it's already in the desired state (no constraint).
+  // Check constraint was removed in favour of app-level validation.
+  if (!tableInfo.sql.includes("CHECK (type IN")) {
+    return;
+  }
+
   // Check if all required types are present in the CHECK constraint
   const allTypesPresent = DASHBOARD_ITEM_TYPES.every(type => tableInfo.sql.includes(`'${type}'`));
   if (allTypesPresent) {
     return;
   }
 
-  // Recreate table with updated CHECK constraint
-  const typeList = DASHBOARD_ITEM_TYPES.map(t => `'${t}'`).join(', ');
-
-  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS dashboard_items_new (
-      id TEXT PRIMARY KEY,
-      dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-      type TEXT NOT NULL CHECK (type IN (${typeList})),
-      content TEXT NOT NULL DEFAULT '',
-      position_x INTEGER NOT NULL DEFAULT 0,
-      position_y INTEGER NOT NULL DEFAULT 0,
-      width INTEGER NOT NULL DEFAULT 200,
-      height INTEGER NOT NULL DEFAULT 150,
-      metadata TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `).run();
-  await db.prepare(`
-    INSERT INTO dashboard_items_new
-      (id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at)
-    SELECT id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at
-    FROM dashboard_items
-  `).run();
-  await db.prepare(`DROP TABLE dashboard_items`).run();
-  await db.prepare(`ALTER TABLE dashboard_items_new RENAME TO dashboard_items`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id)`).run();
-  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+  await db.batch([
+    db.prepare(`PRAGMA foreign_keys=OFF`),
+    db.prepare(`DROP TABLE IF EXISTS dashboard_items_new`),
+    db.prepare(`
+      CREATE TABLE dashboard_items_new (
+        id TEXT PRIMARY KEY,
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        position_x INTEGER NOT NULL DEFAULT 0,
+        position_y INTEGER NOT NULL DEFAULT 0,
+        width INTEGER NOT NULL DEFAULT 200,
+        height INTEGER NOT NULL DEFAULT 150,
+        metadata TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `),
+    db.prepare(`
+      INSERT INTO dashboard_items_new
+        (id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at)
+      SELECT id, dashboard_id, type, content, position_x, position_y, width, height, metadata, created_at, updated_at
+      FROM dashboard_items
+    `),
+    db.prepare(`DROP TABLE dashboard_items`),
+    db.prepare(`ALTER TABLE dashboard_items_new RENAME TO dashboard_items`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id)`),
+    db.prepare(`PRAGMA foreign_keys=ON`),
+  ]);
 }
 
 async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void> {
@@ -1610,14 +1622,21 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
 
   console.log(`[migrateTerminalIntegrationProviders] Current table SQL: ${tableInfo.sql.substring(0, 500)}`);
 
-  // Check if all required providers are present in the provider enum CHECK
-  const allProvidersPresent = TERMINAL_INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
-
-  // Also check if the platform-credential exemption CHECK is up to date
-  // (providers that don't need user_integration_id, e.g. browser + whatsapp)
+  // The provider enum CHECK lists many providers: CHECK (provider IN ('gmail', 'github', ...))
+  // The credential-exemption CHECK is different: CHECK (provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL)
+  // Distinguish them by checking for the OR clause — the enum CHECK never has it.
   const hasCorrectExemption = tableInfo.sql.includes("provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL");
+  const hasProviderEnumCheck = tableInfo.sql.includes("CHECK (provider IN") && !hasCorrectExemption;
 
-  console.log(`[migrateTerminalIntegrationProviders] allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
+  if (!hasProviderEnumCheck && hasCorrectExemption) {
+    console.log(`[migrateTerminalIntegrationProviders] Table is up to date, skipping migration`);
+    return;
+  }
+
+  // Check if all required providers are present in the provider enum CHECK (only relevant if enum check exists)
+  const allProvidersPresent = !hasProviderEnumCheck || TERMINAL_INTEGRATION_PROVIDERS.every(provider => tableInfo.sql.includes(`'${provider}'`));
+
+  console.log(`[migrateTerminalIntegrationProviders] hasProviderEnumCheck=${hasProviderEnumCheck}, allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
 
   if (allProvidersPresent && hasCorrectExemption) {
     console.log(`[migrateTerminalIntegrationProviders] Table is up to date, skipping migration`);
@@ -1626,41 +1645,42 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
 
   // Recreate table with updated CHECK constraint
   console.log(`[migrateTerminalIntegrationProviders] Recreating terminal_integrations table. allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
-  const providerList = TERMINAL_INTEGRATION_PROVIDERS.map(p => `'${p}'`).join(', ');
 
-  await db.prepare(`PRAGMA foreign_keys=OFF`).run();
-  await db.prepare(`DROP TABLE IF EXISTS terminal_integrations_new`).run();
-  await db.prepare(`
-    CREATE TABLE terminal_integrations_new (
-      id TEXT PRIMARY KEY,
-      terminal_id TEXT NOT NULL,
-      item_id TEXT,
-      dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL CHECK (provider IN (${providerList})),
-      user_integration_id TEXT REFERENCES user_integrations(id),
-      active_policy_id TEXT,
-      account_email TEXT,
-      account_label TEXT,
-      deleted_at TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      created_by TEXT NOT NULL REFERENCES users(id),
-      CHECK (provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL)
-    )
-  `).run();
-  await db.prepare(`
-    INSERT INTO terminal_integrations_new
-      (id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by)
-    SELECT id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by
-    FROM terminal_integrations
-  `).run();
-  await db.prepare(`DROP TABLE terminal_integrations`).run();
-  await db.prepare(`ALTER TABLE terminal_integrations_new RENAME TO terminal_integrations`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)`).run();
-  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active ON terminal_integrations(terminal_id, provider) WHERE deleted_at IS NULL`).run();
-  await db.prepare(`PRAGMA foreign_keys=ON`).run();
+  await db.batch([
+    db.prepare(`PRAGMA foreign_keys=OFF`),
+    db.prepare(`DROP TABLE IF EXISTS terminal_integrations_new`),
+    db.prepare(`
+      CREATE TABLE terminal_integrations_new (
+        id TEXT PRIMARY KEY,
+        terminal_id TEXT NOT NULL,
+        item_id TEXT,
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        user_integration_id TEXT REFERENCES user_integrations(id),
+        active_policy_id TEXT,
+        account_email TEXT,
+        account_label TEXT,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_by TEXT NOT NULL REFERENCES users(id),
+        CHECK (provider IN ('browser', 'whatsapp') OR user_integration_id IS NOT NULL)
+      )
+    `),
+    db.prepare(`
+      INSERT INTO terminal_integrations_new
+        (id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by)
+      SELECT id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by
+      FROM terminal_integrations
+    `),
+    db.prepare(`DROP TABLE terminal_integrations`),
+    db.prepare(`ALTER TABLE terminal_integrations_new RENAME TO terminal_integrations`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_terminal ON terminal_integrations(terminal_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_dashboard ON terminal_integrations(dashboard_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)`),
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active ON terminal_integrations(terminal_id, provider) WHERE deleted_at IS NULL`),
+    db.prepare(`PRAGMA foreign_keys=ON`),
+  ]);
 }

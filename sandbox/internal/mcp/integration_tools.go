@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integration-tools-v6-all-messaging
+// REVISION: integration-tools-v7-twitter
 package mcp
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-tools] REVISION: integration-tools-v6-all-messaging loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-tools] REVISION: integration-tools-v7-twitter loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // IntegrationTool represents an MCP tool definition for an integration
@@ -49,6 +49,8 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return matrixTools
 	case "google_chat":
 		return googleChatTools
+	case "twitter":
+		return twitterTools
 	default:
 		return nil
 	}
@@ -96,6 +98,7 @@ var allTools = map[string][]IntegrationTool{
 	"teams":           teamsTools,
 	"matrix":          matrixTools,
 	"google_chat":     googleChatTools,
+	"twitter":         twitterTools,
 }
 
 // ============================================
@@ -1584,6 +1587,202 @@ var googleChatTools = []IntegrationTool{
 				"message_id": {"type": "string", "description": "Message name to delete"}
 			},
 			"required": ["space", "message_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Twitter/X Tools
+// ============================================
+
+var twitterTools = []IntegrationTool{
+	{
+		Name:        "twitter_search",
+		Description: "Search recent tweets matching a query",
+		Provider:    "twitter",
+		Action:      "twitter.search",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Search query (supports Twitter search operators)"
+				},
+				"max_results": {
+					"type": "integer",
+					"description": "Maximum number of results (default: 10, max: 100)",
+					"default": 10
+				}
+			},
+			"required": ["query"]
+		}`),
+	},
+	{
+		Name:        "twitter_get_tweet",
+		Description: "Get a specific tweet by ID",
+		Provider:    "twitter",
+		Action:      "twitter.get_tweet",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tweet_id": {
+					"type": "string",
+					"description": "The tweet ID"
+				}
+			},
+			"required": ["tweet_id"]
+		}`),
+	},
+	{
+		Name:        "twitter_get_mentions",
+		Description: "Get tweets mentioning you. Account ID is injected server-side.",
+		Provider:    "twitter",
+		Action:      "twitter.get_mentions",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"max_results": {
+					"type": "integer",
+					"description": "Maximum number of results (default: 10, max: 100)",
+					"default": 10
+				}
+			}
+		}`),
+	},
+	{
+		Name:        "twitter_get_timeline",
+		Description: "Get your recent tweets. Account ID is injected server-side.",
+		Provider:    "twitter",
+		Action:      "twitter.get_timeline",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"max_results": {
+					"type": "integer",
+					"description": "Maximum number of results (default: 10, max: 100)",
+					"default": 10
+				}
+			}
+		}`),
+	},
+	{
+		Name:        "twitter_get_user",
+		Description: "Get a user profile by username or user ID. At least one of username or user_id must be provided.",
+		Provider:    "twitter",
+		Action:      "twitter.get_user",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"username": {
+					"type": "string",
+					"description": "Twitter username (without @)"
+				},
+				"user_id": {
+					"type": "string",
+					"description": "Twitter user ID"
+				}
+			}
+		}`),
+	},
+	{
+		Name:        "twitter_post",
+		Description: "Post a new tweet",
+		Provider:    "twitter",
+		Action:      "twitter.post",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"text": {
+					"type": "string",
+					"description": "Tweet text (max 280 characters)",
+					"maxLength": 280
+				}
+			},
+			"required": ["text"]
+		}`),
+	},
+	{
+		Name:        "twitter_reply",
+		Description: "Reply to a tweet",
+		Provider:    "twitter",
+		Action:      "twitter.reply",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tweet_id": {
+					"type": "string",
+					"description": "The tweet ID to reply to"
+				},
+				"text": {
+					"type": "string",
+					"description": "Reply text"
+				}
+			},
+			"required": ["tweet_id", "text"]
+		}`),
+	},
+	{
+		Name:        "twitter_like",
+		Description: "Like a tweet. Account ID is injected server-side.",
+		Provider:    "twitter",
+		Action:      "twitter.like",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tweet_id": {
+					"type": "string",
+					"description": "The tweet ID to like"
+				}
+			},
+			"required": ["tweet_id"]
+		}`),
+	},
+	{
+		Name:        "twitter_retweet",
+		Description: "Retweet a tweet. Account ID is injected server-side.",
+		Provider:    "twitter",
+		Action:      "twitter.retweet",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tweet_id": {
+					"type": "string",
+					"description": "The tweet ID to retweet"
+				}
+			},
+			"required": ["tweet_id"]
+		}`),
+	},
+	{
+		Name:        "twitter_follow",
+		Description: "Follow a user. Account ID is injected server-side.",
+		Provider:    "twitter",
+		Action:      "twitter.follow",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"target_user_id": {
+					"type": "string",
+					"description": "The user ID to follow"
+				}
+			},
+			"required": ["target_user_id"]
+		}`),
+	},
+	{
+		Name:        "twitter_delete_tweet",
+		Description: "Delete one of your tweets",
+		Provider:    "twitter",
+		Action:      "twitter.delete_tweet",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tweet_id": {
+					"type": "string",
+					"description": "The tweet ID to delete"
+				}
+			},
+			"required": ["tweet_id"]
 		}`),
 	},
 }

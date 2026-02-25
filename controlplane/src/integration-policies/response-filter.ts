@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: response-filter-v7-empty-allowlist-pii
-console.log(`[response-filter] REVISION: response-filter-v7-empty-allowlist-pii loaded at ${new Date().toISOString()}`);
+// REVISION: response-filter-v9-twitter-user-fields-action-name
+console.log(`[response-filter] REVISION: response-filter-v9-twitter-user-fields-action-name loaded at ${new Date().toISOString()}`);
 
 /**
  * Response Filtering
@@ -22,6 +22,7 @@ import type {
   GoogleDrivePolicy,
   CalendarPolicy,
   MessagingPolicy,
+  TwitterPolicy,
 } from '../types';
 import { globToRegex } from './handler';
 
@@ -59,6 +60,8 @@ export function filterResponse(
     case 'matrix':
     case 'google_chat':
       return filterMessagingResponse(action, response, policy as MessagingPolicy);
+    case 'twitter':
+      return filterTwitterResponse(action, response, policy as TwitterPolicy);
     default:
       return { data: response, filtered: false };
   }
@@ -673,4 +676,80 @@ function stripUserPII(obj: Record<string, unknown>): boolean {
   }
 
   return stripped;
+}
+
+// ============================================
+// Twitter Filtering
+// ============================================
+
+/** Safe tweet fields that LLM can see */
+const SAFE_TWEET_FIELDS = new Set([
+  'id', 'text', 'created_at', 'author_id', 'conversation_id',
+  'public_metrics', 'referenced_tweets', 'in_reply_to_user_id',
+]);
+
+/** Safe user fields for expansion data */
+const SAFE_USER_FIELDS = new Set([
+  'id', 'name', 'username', 'description', 'public_metrics', 'profile_image_url',
+]);
+
+function filterTwitterResponse(
+  action: string,
+  response: unknown,
+  _policy: TwitterPolicy
+): FilterResult {
+  if (!response || typeof response !== 'object') {
+    return { data: response, filtered: false };
+  }
+
+  const resp = response as Record<string, unknown>;
+  let filtered = false;
+
+  // get_user returns a user object in resp.data — use user fields, not tweet fields
+  const isUserAction = action === 'twitter.get_user';
+
+  // Filter tweet/user data
+  if (resp.data) {
+    if (Array.isArray(resp.data)) {
+      resp.data = (resp.data as Record<string, unknown>[]).map(item => {
+        const fields = isUserAction ? SAFE_USER_FIELDS : SAFE_TWEET_FIELDS;
+        const clean = filterObjectFields(item, fields);
+        if (Object.keys(clean).length !== Object.keys(item).length) filtered = true;
+        return clean;
+      });
+    } else if (typeof resp.data === 'object') {
+      const item = resp.data as Record<string, unknown>;
+      const fields = isUserAction ? SAFE_USER_FIELDS : SAFE_TWEET_FIELDS;
+      resp.data = filterObjectFields(item, fields);
+      if (Object.keys(resp.data as Record<string, unknown>).length !== Object.keys(item).length) filtered = true;
+    }
+  }
+
+  // Filter user expansion data
+  if (resp.includes && typeof resp.includes === 'object') {
+    const includes = resp.includes as Record<string, unknown>;
+    if (Array.isArray(includes.users)) {
+      includes.users = (includes.users as Record<string, unknown>[]).map(user => {
+        const clean = filterObjectFields(user, SAFE_USER_FIELDS);
+        if (Object.keys(clean).length !== Object.keys(user).length) filtered = true;
+        return clean;
+      });
+    }
+  }
+
+  return { data: resp, filtered };
+}
+
+/** Keep only allowed fields from an object */
+function filterObjectFields(
+  obj: Record<string, unknown>,
+  allowedFields: Set<string>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(obj)) {
+    if (allowedFields.has(key)) {
+      result[key] = obj[key];
+    }
+  }
+  return result;
 }

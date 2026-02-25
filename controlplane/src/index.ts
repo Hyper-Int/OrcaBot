@@ -536,7 +536,16 @@ async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> 
       SELECT ds.dashboard_id, ds.sandbox_machine_id, ds.fly_volume_id
       FROM dashboard_sandboxes ds
       LEFT JOIN dashboards d ON ds.dashboard_id = d.id
-      WHERE d.id IS NULL AND ds.sandbox_machine_id != ''
+      LEFT JOIN (
+        SELECT dashboard_id, MAX(COALESCE(stopped_at, created_at)) AS last_activity
+        FROM sessions
+        GROUP BY dashboard_id
+      ) s ON s.dashboard_id = ds.dashboard_id
+      WHERE ds.sandbox_machine_id != ''
+        AND (
+          d.id IS NULL
+          OR COALESCE(s.last_activity, ds.created_at) < datetime('now', '-6 hours')
+        )
     `).all<{ dashboard_id: string; sandbox_machine_id: string; fly_volume_id: string }>();
 
     if (!orphans.results || orphans.results.length === 0) return;
@@ -545,6 +554,7 @@ async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> 
     const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
 
     for (const orphan of orphans.results) {
+      const isDashboardDeleted = !(await env.DB.prepare(`SELECT id FROM dashboards WHERE id = ?`).bind(orphan.dashboard_id).first());
       try { await fly.destroyMachine(orphan.sandbox_machine_id, true); } catch (e) {
         console.error(`[cleanup] Failed to destroy machine ${orphan.sandbox_machine_id}: ${e}`);
       }
@@ -553,8 +563,14 @@ async function cleanupOrphanedFlyResources(env: EnvWithBindings): Promise<void> 
           console.error(`[cleanup] Failed to delete volume ${orphan.fly_volume_id}: ${e}`);
         }
       }
-      await env.DB.prepare(`DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?`)
-        .bind(orphan.dashboard_id).run();
+      if (isDashboardDeleted) {
+        await env.DB.prepare(`DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?`)
+          .bind(orphan.dashboard_id).run();
+      } else {
+        // Dashboard still exists but VM is idle — clear machine/volume so next terminal open re-provisions
+        await env.DB.prepare(`UPDATE dashboard_sandboxes SET sandbox_machine_id = '', sandbox_session_id = '', fly_volume_id = '' WHERE dashboard_id = ?`)
+          .bind(orphan.dashboard_id).run();
+      }
     }
 
     if (orphans.results.length > 0) {
@@ -829,7 +845,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (path === '/init-db' && method === 'POST') {
     const authError = requireInternalAuth(request, env);
     if (authError) return authError;
-    await initializeDatabase(env.DB);
+    try {
+      await initializeDatabase(env.DB);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[init-db] FAILED:', msg, err);
+      return Response.json({ error: msg, stack: err instanceof Error ? err.stack : undefined }, { status: 500 });
+    }
     return Response.json({ success: true, message: 'Database initialized' });
   }
 
@@ -1918,6 +1940,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET google_chat': integrations.getMessagingIntegration,
       'GET google_chat/spaces': integrations.listMessagingChannels,
       'DELETE google_chat': integrations.disconnectMessaging,
+      // Twitter / X (Bearer token — user provides their own developer credentials)
+      'POST twitter/credentials': integrations.saveTwitterCredentials,
+      'GET twitter': integrations.getTwitterIntegration,
+      'DELETE twitter': integrations.disconnectTwitter,
     };
 
     const handler = integrationRoutes[routeKey];
