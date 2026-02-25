@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v17-waituntil-analytics
-const sessionsRevision = "sessions-v17-waituntil-analytics";
+// REVISION: sessions-v18-dashboard-eager-provision
+const sessionsRevision = "sessions-v18-dashboard-eager-provision";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -404,6 +404,46 @@ async function ensureDashbоardSandbоxCreate(
 }
 
 /**
+ * Eagerly claim a warm VM at dashboard creation time.
+ *
+ * By claiming at dashboard creation rather than first terminal open, we eliminate
+ * the race condition window where multiple terminals opening simultaneously each
+ * attempt to provision their own VM. Once this completes, all terminals on the
+ * dashboard find an existing sandbox and skip provisioning entirely.
+ *
+ * Warm-only: cold provisioning (90s) would block or create background work that
+ * outlives the dashboard creation request. If no warm machine is available, the
+ * first terminal will cold-provision as before.
+ */
+export async function preProvisionDashboardSandbox(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  preferredRegion?: string,
+): Promise<void> {
+  const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+    && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+  if (!flyProvisioningEnabled) return;
+
+  // Skip if sandbox already exists (e.g. reprovision after template copy)
+  const existing = await getDashbоardSandbоx(env, dashboardId);
+  if (existing?.sandbox_session_id) return;
+
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const now = new Date().toISOString();
+  const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+
+  const result = await claimWarmMachine(
+    env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion, false,
+  );
+  if (result) {
+    console.log(`[preProvision] Eagerly claimed VM for dashboard ${dashboardId}: machine=${result.sandboxMachineId}`);
+  } else {
+    console.log(`[preProvision] No warm machine available for ${dashboardId} — first terminal will provision`);
+  }
+}
+
+/**
  * Provision a dedicated Fly machine + volume for a dashboard.
  *
  * Flow:
@@ -487,6 +527,10 @@ async function claimWarmMachine(
       await cleanupFlyResources(fly, machineId, volumeId);
       return null;
     }
+
+    // Disable autostop so Fly doesn't hibernate this active dashboard machine.
+    // Warm pool machines have autostop:'stop' for hibernation; once claimed, disable it.
+    await fly.disableAutostop(machineId); // best-effort, non-throwing
 
     // Create sandbox session pinned to this machine
     const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);
@@ -593,6 +637,9 @@ async function coldProvisionMachine(
 
     // Step 3: Wait for machine to be ready
     await fly.waitForState(machineId, 'started', 90);
+
+    // Disable autostop so Fly doesn't hibernate this active dashboard machine
+    await fly.disableAutostop(machineId); // best-effort, non-throwing
 
     // Step 4: Create sandbox session pinned to the new machine
     const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);

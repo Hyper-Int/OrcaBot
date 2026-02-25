@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: fly-provisioning-v3-auto-discover-image
-const MODULE_REVISION = 'fly-provisioning-v3-auto-discover-image';
+// REVISION: fly-provisioning-v4-disable-autostop
+const MODULE_REVISION = 'fly-provisioning-v4-disable-autostop';
 console.log(`[fly-machines] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -37,7 +37,7 @@ export interface FlyMachine {
   region: string;
   private_ip: string;
   created_at: string;
-  config?: { image?: string };
+  config?: Partial<FlyMachineConfig>;
 }
 
 export interface FlyGuestConfig {
@@ -427,6 +427,34 @@ export class FlyMachinesClient {
         },
       },
     };
+  }
+
+  /**
+   * Disable autostop on a claimed dashboard machine.
+   * Warm pool machines use autostop: 'stop' so they hibernate when idle.
+   * Once claimed for a dashboard, autostop must be disabled so Fly doesn't
+   * hibernate an in-use sandbox mid-session.
+   * Best-effort: logs a warning on failure but never throws.
+   */
+  async disableAutostop(machineId: string): Promise<void> {
+    try {
+      const machine = await this.getMachine(machineId);
+      if (!machine.config?.services?.length) return;
+
+      const updatedConfig: Partial<FlyMachineConfig> = {
+        ...machine.config,
+        services: machine.config.services.map(svc => ({ ...svc, autostop: 'off' })),
+      };
+
+      const url = `${this.baseUrl}/v1/apps/${this.appName}/machines/${machineId}`;
+      const res = await this.request('POST', url, { config: updatedConfig });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.warn(`[fly-machines] disableAutostop failed for ${machineId}: ${res.status} ${body}`);
+      }
+    } catch (e) {
+      console.warn(`[fly-machines] disableAutostop error for ${machineId}: ${e}`);
+    }
   }
 
   // ── Internal ─────────────────────────────────────────────────────
