@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+import { SplashTransitionOverlay } from "@/components/SplashTransitionOverlay";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -29,6 +30,9 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   manifest: "/site.webmanifest",
+  other: {
+    "theme-color": "#030a16",
+  },
   openGraph: {
     title: "OrcaBot - Agentic AI Orchestration",
     description:
@@ -87,8 +91,12 @@ export default function RootLayout({
       </head>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}
+        style={{ backgroundColor: "#030a16" }}
       >
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <SplashTransitionOverlay />
+        </Providers>
       </body>
     </html>
   );

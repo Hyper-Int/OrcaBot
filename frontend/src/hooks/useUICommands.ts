@@ -18,6 +18,7 @@ import type {
   CreateTodoCommand,
   CreateNoteCommand,
   CreateTerminalCommand,
+  CreateIntegrationCommand,
   UpdateItemCommand,
   DeleteItemCommand,
   ConnectNodesCommand,
@@ -27,6 +28,8 @@ import type {
   ToggleTodoItemCommand,
 } from "@/types/collaboration";
 import { generateId } from "@/lib/utils";
+import { getBlockTypeForProvider, type IntegrationProvider } from "@/lib/api/cloudflare/integration-policies";
+import type { DashboardItemType } from "@/types/dashboard";
 
 interface TodoContent {
   title: string;
@@ -45,6 +48,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   todo: { width: 280, height: 160 },
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
+  integration: { width: 320, height: 400 },
 };
 
 interface UseUICommandsOptions {
@@ -79,6 +83,10 @@ interface UseUICommandsOptions {
   }) => Promise<void>;
   deleteEdgeFn?: (edgeId: string) => Promise<void>;
   onCommandExecuted?: (result: UICommandResultMessage) => void;
+  /** Smart placement function — finds non-overlapping position in viewport */
+  computePlacement?: (size: { width: number; height: number }) => { x: number; y: number };
+  /** Pan/zoom to make a newly-placed item visible */
+  ensureVisible?: (position: { x: number; y: number }, size: { width: number; height: number }) => void;
 }
 
 export function useUICommands({
@@ -91,15 +99,19 @@ export function useUICommands({
   createEdgeFn,
   deleteEdgeFn,
   onCommandExecuted,
+  computePlacement,
+  ensureVisible,
 }: UseUICommandsOptions) {
   // Track pending commands to avoid duplicates
   const pendingCommandsRef = React.useRef<Set<string>>(new Set());
 
-  // Place MCP-created items at a fixed center position
-  const getNextPosition = React.useCallback((): { x: number; y: number } => {
-    // Fixed center position - visible on most screen sizes
+  // Smart placement: use the canvas-aware function if available, otherwise fall back to fixed center
+  const getNextPosition = React.useCallback((size: { width: number; height: number }): { x: number; y: number } => {
+    if (computePlacement) {
+      return computePlacement(size);
+    }
     return { x: 400, y: 300 };
-  }, []);
+  }, [computePlacement]);
 
   // Send command result back to the WebSocket
   const sendResult = React.useCallback(
@@ -123,8 +135,8 @@ export function useUICommands({
         switch (command.type) {
           case "create_browser": {
             const cmd = command as CreateBrowserCommand;
-            const position = cmd.position || getNextPosition();
             const size = cmd.size || defaultSizes.browser;
+            const position = cmd.position || getNextPosition(size);
 
             createItemMutation.mutate(
               {
@@ -139,6 +151,7 @@ export function useUICommands({
               },
               {
                 onSuccess: (item) => {
+                  ensureVisible?.(position, size);
                   sendResult({
                     type: "ui_command_result",
                     command_id: command.command_id,
@@ -161,8 +174,8 @@ export function useUICommands({
 
           case "create_todo": {
             const cmd = command as CreateTodoCommand;
-            const position = cmd.position || getNextPosition();
             const size = cmd.size || defaultSizes.todo;
+            const position = cmd.position || getNextPosition(size);
 
             const todoContent: TodoContent = {
               title: cmd.title,
@@ -182,6 +195,7 @@ export function useUICommands({
               },
               {
                 onSuccess: (item) => {
+                  ensureVisible?.(position, size);
                   sendResult({
                     type: "ui_command_result",
                     command_id: command.command_id,
@@ -204,8 +218,8 @@ export function useUICommands({
 
           case "create_note": {
             const cmd = command as CreateNoteCommand;
-            const position = cmd.position || getNextPosition();
             const size = cmd.size || defaultSizes.note;
+            const position = cmd.position || getNextPosition(size);
 
             // Pass color via metadata for NoteBlock to consume
             const metadata = cmd.color ? { color: cmd.color } : undefined;
@@ -219,6 +233,7 @@ export function useUICommands({
               },
               {
                 onSuccess: (item) => {
+                  ensureVisible?.(position, size);
                   sendResult({
                     type: "ui_command_result",
                     command_id: command.command_id,
@@ -241,8 +256,8 @@ export function useUICommands({
 
           case "create_terminal": {
             const cmd = command as CreateTerminalCommand;
-            const position = cmd.position || getNextPosition();
             const size = cmd.size || defaultSizes.terminal;
+            const position = cmd.position || getNextPosition(size);
 
             const terminalContent: TerminalContent = {
               name: cmd.name || "Terminal",
@@ -259,6 +274,45 @@ export function useUICommands({
               },
               {
                 onSuccess: (item) => {
+                  ensureVisible?.(position, size);
+                  sendResult({
+                    type: "ui_command_result",
+                    command_id: command.command_id,
+                    success: true,
+                    created_item_id: item.id,
+                  });
+                },
+                onError: (error) => {
+                  sendResult({
+                    type: "ui_command_result",
+                    command_id: command.command_id,
+                    success: false,
+                    error: error.message,
+                  });
+                },
+              }
+            );
+            break;
+          }
+
+          case "create_integration": {
+            const cmd = command as CreateIntegrationCommand;
+            const size = cmd.size || defaultSizes.integration;
+            const position = cmd.position || getNextPosition(size);
+
+            // Normalize provider name to block type (e.g. google_calendar → calendar)
+            const blockType = (getBlockTypeForProvider(cmd.provider as IntegrationProvider) ?? cmd.provider) as DashboardItemType;
+
+            createItemMutation.mutate(
+              {
+                type: blockType,
+                content: "",
+                position,
+                size,
+              },
+              {
+                onSuccess: (item) => {
+                  ensureVisible?.(position, size);
                   sendResult({
                     type: "ui_command_result",
                     command_id: command.command_id,
@@ -611,6 +665,7 @@ export function useUICommands({
       createEdgeFn,
       deleteEdgeFn,
       sendResult,
+      ensureVisible,
     ]
   );
 

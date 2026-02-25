@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-block-v14-faster-sync-progress
-const MODULE_REVISION = "workspace-block-v14-faster-sync-progress";
+// REVISION: workspace-block-v15-hide-lost-found
+const MODULE_REVISION = "workspace-block-v15-hide-lost-found";
 console.log(`[WorkspaceBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 console.log(`[WorkspaceBlock] DEV_MODE_ENABLED=${DEV_MODE_ENABLED} loaded at ${new Date().toISOString()}`);
 
@@ -81,6 +81,15 @@ import { API, DEV_MODE_ENABLED } from "@/config/env";
 const integrationLoadCache = new Map<string, number>();
 const INTEGRATION_LOAD_COOLDOWN_MS = 30000; // 30 seconds between loads for same dashboard
 const INTEGRATION_CACHE_KEY = 'orcabot:integration-load-cache';
+const HIDDEN_SYSTEM_ENTRY_NAMES = new Set(["lost+found"]);
+
+function isHiddenSystemEntry(entry: Pick<SessionFileEntry, "name" | "path">): boolean {
+  return (
+    HIDDEN_SYSTEM_ENTRY_NAMES.has(entry.name) ||
+    entry.path === "/lost+found" ||
+    entry.path.startsWith("/lost+found/")
+  );
+}
 
 // Restore cache from sessionStorage (survives HMR in dev)
 function getLastLoadTime(dashboardId: string): number | null {
@@ -319,7 +328,8 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     async (path: string) => {
       if (!sessionId) return;
       try {
-        const entries = await listSessionFiles(sessionId, path);
+        const entries = (await listSessionFiles(sessionId, path))
+          .filter((entry) => !isHiddenSystemEntry(entry));
         entries.sort((a, b) => {
           if (a.is_dir && !b.is_dir) return -1;
           if (!a.is_dir && b.is_dir) return 1;
@@ -389,11 +399,13 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const mergePreviewEntries = React.useCallback(
     (target: Record<string, SessionFileEntry[]>, source: Record<string, SessionFileEntry[]>) => {
       Object.entries(source).forEach(([path, entries]) => {
+        const visibleEntries = entries.filter((entry) => !isHiddenSystemEntry(entry));
+        if (visibleEntries.length === 0) return;
         if (!target[path]) {
-          target[path] = [...entries];
+          target[path] = [...visibleEntries];
           return;
         }
-        target[path] = [...target[path], ...entries];
+        target[path] = [...target[path], ...visibleEntries];
       });
       Object.keys(target).forEach((key) => {
         target[key].sort((a, b) => {
@@ -1123,9 +1135,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const renderFileTree = React.useCallback(
     (path: string, depth = 0) => {
       const entries = fileEntries[path] || [];
-      const filteredEntries = showHiddenFiles
-        ? entries
-        : entries.filter((entry) => !entry.name.startsWith("."));
+      const filteredEntries = entries.filter((entry) => {
+        if (isHiddenSystemEntry(entry)) return false;
+        if (showHiddenFiles) return true;
+        return !entry.name.startsWith(".");
+      });
       return filteredEntries.map((entry) => {
         const isExpanded = expandedPaths.has(entry.path);
         const isDir = entry.is_dir;

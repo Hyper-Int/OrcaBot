@@ -180,6 +180,40 @@ export const UI_TOOLS = [
     },
   },
   {
+    name: 'create_integration',
+    description: 'Create an integration block on the dashboard. The block handles OAuth connection via its built-in Connect button. Supported providers: gmail, calendar, contacts, sheets, forms, slack, discord, telegram, whatsapp, teams, matrix, google_chat',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: {
+          type: 'string',
+          description: 'The ID of the dashboard to create the integration block in',
+        },
+        provider: {
+          type: 'string',
+          description: 'The integration provider: gmail, calendar, contacts, sheets, forms, slack, discord, telegram, whatsapp, teams, matrix, google_chat',
+        },
+        position: {
+          type: 'object',
+          description: 'Position on the canvas (optional, defaults to auto-placement)',
+          properties: {
+            x: { type: 'number' },
+            y: { type: 'number' },
+          },
+        },
+        size: {
+          type: 'object',
+          description: 'Size of the integration block (optional)',
+          properties: {
+            width: { type: 'number' },
+            height: { type: 'number' },
+          },
+        },
+      },
+      required: ['dashboard_id', 'provider'],
+    },
+  },
+  {
     name: 'update_item',
     description: 'Update an existing item on the dashboard',
     inputSchema: {
@@ -510,6 +544,17 @@ export async function callTool(
         name: args.name as string | undefined,
         boot_command: args.boot_command as string | undefined,
         agentic: args.agentic as boolean | undefined,
+        position: args.position as { x: number; y: number } | undefined,
+        size: args.size as { width: number; height: number } | undefined,
+      };
+      break;
+
+    case 'create_integration':
+      command = {
+        type: 'create_integration',
+        command_id: commandId,
+        source_terminal_id: sourceTerminalId,
+        provider: args.provider as string,
         position: args.position as { x: number; y: number } | undefined,
         size: args.size as { width: number; height: number } | undefined,
       };

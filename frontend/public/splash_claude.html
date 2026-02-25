@@ -1,0 +1,1539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<base target="_top">
+<title>OrcaBot — Secure AI Agent Orchestration</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#030a16">
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════════════════ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --bg-deep:    #030a16;
+  --bg-plane:   #071428;
+  --bg-surface: #0d1e3a;
+  --bg-card:    #0f2240;
+  --bg-glass:   rgba(11, 22, 59, 0.55);
+  --border:     rgba(56, 97, 150, 0.22);
+  --border-glow: rgba(59, 130, 246, 0.4);
+  --text:       #e8edf5;
+  --text-muted: #8ba3c4;
+  --text-subtle:#5a7a9e;
+  --accent:     #3b82f6;
+  --accent-cyan: #00e5ff;
+  --accent-glow: rgba(59, 130, 246, 0.15);
+  --cyan-glow:  rgba(0, 229, 255, 0.12);
+  --green:      #22c55e;
+  --amber:      #f59e0b;
+  --purple:     #8b5cf6;
+  --pink:       #ec4899;
+  --red:        #ef4444;
+  --cyan:       #06b6d4;
+  --radius:     12px;
+  --radius-sm:  8px;
+  --font:       'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg-deep);
+  color: var(--text);
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BACKGROUND — BLEND OF CLAUDE MULTI-PLANE + GEMINI ANIMATED GRID
+   ═══════════════════════════════════════════════════════════════ */
+.bg-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  perspective: 1200px;
+  background: radial-gradient(ellipse 70% 50% at 50% 45%, #0B163B 0%, var(--bg-deep) 100%);
+}
+
+/* Primary angled plane — animated grid (from Gemini) */
+.bg-plane {
+  position: absolute;
+  width: 220%;
+  height: 220%;
+  top: -40%;
+  left: -60%;
+  background-image:
+    linear-gradient(rgba(0, 229, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 229, 255, 0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+  transform: perspective(1000px) rotateX(60deg) rotateZ(-15deg) translateY(0);
+  animation: moveGrid 25s linear infinite;
+}
+
+@keyframes moveGrid {
+  0% { transform: perspective(1000px) rotateX(60deg) rotateZ(-15deg) translateY(0); }
+  100% { transform: perspective(1000px) rotateX(60deg) rotateZ(-15deg) translateY(60px); }
+}
+
+/* Secondary plane — Claude style depth layer with tighter grid */
+.bg-plane-2 {
+  position: absolute;
+  width: 180%;
+  height: 180%;
+  top: -20%;
+  left: -40%;
+  background-image:
+    linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  transform: perspective(1000px) rotateX(55deg) rotateZ(-20deg) translateY(0) translateZ(-80px);
+  animation: moveGrid2 35s linear infinite;
+  opacity: 0.6;
+}
+
+@keyframes moveGrid2 {
+  0% { transform: perspective(1000px) rotateX(55deg) rotateZ(-20deg) translateY(0) translateZ(-80px); }
+  100% { transform: perspective(1000px) rotateX(55deg) rotateZ(-20deg) translateY(40px) translateZ(-80px); }
+}
+
+/* Central glow (from Gemini) */
+.bg-glow {
+  position: absolute;
+  top: 35%;
+  left: 50%;
+  width: 60vw;
+  height: 60vh;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.1) 0%, rgba(59, 130, 246, 0.05) 40%, transparent 70%);
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+/* Floating abstract blocks (from Claude v1) */
+.bg-block {
+  position: absolute;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 229, 255, 0.06);
+  background: rgba(0, 229, 255, 0.02);
+}
+
+.bg-block-1 { width: 120px; height: 80px; top: 25%; left: 20%; animation: float-block 8s ease-in-out infinite; }
+.bg-block-2 { width: 160px; height: 60px; top: 40%; left: 65%; animation: float-block 10s ease-in-out infinite 2s; border-color: rgba(139, 92, 246, 0.08); background: rgba(139, 92, 246, 0.02); }
+.bg-block-3 { width: 100px; height: 100px; top: 60%; left: 35%; animation: float-block 12s ease-in-out infinite 4s; }
+.bg-block-4 { width: 140px; height: 50px; top: 15%; left: 55%; animation: float-block 9s ease-in-out infinite 1s; border-color: rgba(59, 130, 246, 0.08); background: rgba(59, 130, 246, 0.02); }
+.bg-block-5 { width: 90px; height: 70px; top: 70%; left: 75%; animation: float-block 11s ease-in-out infinite 3s; }
+
+@keyframes float-block {
+  0%, 100% { transform: translateY(0) translateX(0); opacity: 0.3; }
+  50% { transform: translateY(-20px) translateX(10px); opacity: 0.6; }
+}
+
+/* Gradient fade overlay */
+.bg-fade {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 30%, transparent 0%, var(--bg-deep) 75%),
+    linear-gradient(to bottom, transparent 0%, var(--bg-deep) 90%);
+  z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLL CONTAINER
+   ═══════════════════════════════════════════════════════════════ */
+.content {
+  position: relative;
+  z-index: 2;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HEADER
+   ═══════════════════════════════════════════════════════════════ */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  background: rgba(3, 10, 22, 0.75);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.header-logo img { width: 28px; height: 28px; object-fit: contain; }
+.header-logo span { font-weight: 700; font-size: 1.1rem; letter-spacing: -0.02em; }
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.header-nav a:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+/* ═══════════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════════ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 0.9rem;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3), 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.btn-primary:hover {
+  background: #4f8ff7;
+  box-shadow: 0 0 30px rgba(59, 130, 246, 0.5), 0 4px 16px rgba(0,0,0,0.3);
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.btn-sm { padding: 7px 16px; font-size: 0.82rem; }
+
+/* ═══════════════════════════════════════════════════════════════
+   HERO — ORCA + CHAT BAR
+   ═══════════════════════════════════════════════════════════════ */
+.hero {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 120px 24px 80px;
+  text-align: center;
+  position: relative;
+}
+
+.hero-orca {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  margin-bottom: 32px;
+  filter: drop-shadow(0 0 40px rgba(0, 229, 255, 0.3)) drop-shadow(0 0 80px rgba(59, 130, 246, 0.15));
+  animation: hero-float 4s ease-in-out infinite;
+}
+
+@keyframes hero-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.hero-tagline {
+  font-size: clamp(1rem, 2.5vw, 1.25rem);
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-bottom: 40px;
+  max-width: 480px;
+  letter-spacing: -0.01em;
+}
+
+.chat-bar {
+  width: 100%;
+  max-width: 580px;
+  position: relative;
+  margin-bottom: 24px;
+}
+
+.chat-bar input {
+  width: 100%;
+  padding: 18px 56px 18px 24px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+  border-radius: 16px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.3s;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 0 0 0 rgba(0, 229, 255, 0);
+}
+
+.chat-bar input::placeholder { color: var(--text-subtle); }
+
+.chat-bar input:focus {
+  border-color: rgba(0, 229, 255, 0.4);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 0 0 3px rgba(0, 229, 255, 0.1);
+}
+
+.chat-bar-send {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.chat-bar-send:hover { background: #4f8ff7; transform: translateY(-50%) scale(1.05); }
+.chat-bar-send svg { width: 18px; height: 18px; color: white; }
+
+.hero-subtext {
+  font-size: 0.85rem;
+  color: var(--text-subtle);
+  max-width: 420px;
+}
+
+.hero-subtext a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.hero-subtext a:hover { text-decoration: underline; }
+
+.hero-legal {
+  margin-top: 20px;
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+  opacity: 0.7;
+}
+
+.hero-legal a { color: var(--text-subtle); text-decoration: underline; }
+.hero-legal a:hover { color: var(--text-muted); }
+
+/* Scroll hint */
+.scroll-hint {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  animation: hint-bob 2s ease-in-out infinite;
+}
+
+@keyframes hint-bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(6px); }
+}
+
+.scroll-hint svg { width: 16px; height: 16px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   SECTIONS
+   ═══════════════════════════════════════════════════════════════ */
+section {
+  padding: 100px 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+  padding: 5px 14px;
+  background: var(--accent-glow);
+  border-radius: 20px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.section-title {
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.section-desc {
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  max-width: 640px;
+  line-height: 1.7;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   WHAT IS ORCABOT
+   ═══════════════════════════════════════════════════════════════ */
+.about-box {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.about-box h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.about-box p {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
+
+.about-box p:last-child { margin-bottom: 0; }
+
+.about-box strong { color: var(--text); }
+
+/* ═══════════════════════════════════════════════════════════════
+   VIDEO CAROUSEL
+   ═══════════════════════════════════════════════════════════════ */
+.carousel-section { text-align: center; }
+
+.carousel-wrap {
+  position: relative;
+  max-width: 900px;
+  margin: 48px auto 0;
+}
+
+.carousel-viewport {
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid rgba(0, 229, 255, 0.12);
+  background: rgba(0,0,0,0.4);
+  box-shadow: 0 8px 48px rgba(0,0,0,0.4), 0 0 80px rgba(0, 229, 255, 0.04);
+  aspect-ratio: 16 / 10;
+  position: relative;
+}
+
+.carousel-slide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+
+.carousel-slide.active { opacity: 1; pointer-events: auto; }
+
+.carousel-slide video,
+.carousel-slide img { width: 100%; height: 100%; object-fit: inherit; }
+
+.carousel-info { margin-top: 24px; min-height: 100px; }
+
+.carousel-info h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.carousel-info p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  max-width: 600px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.carousel-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.carousel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s;
+  padding: 0;
+}
+
+.carousel-dot.active {
+  background: var(--accent);
+  width: 28px;
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+.carousel-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(3, 10, 22, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  z-index: 5;
+}
+
+.carousel-arrow:hover { background: rgba(59, 130, 246, 0.2); border-color: var(--accent); }
+.carousel-arrow.prev { left: -20px; }
+.carousel-arrow.next { right: -20px; }
+.carousel-arrow svg { width: 18px; height: 18px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   PLATFORM — LAYOUT 1: ALTERNATING FEATURE ROWS
+   ═══════════════════════════════════════════════════════════════ */
+.feature-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 28px;
+  align-items: start;
+  padding: 36px 0;
+  border-bottom: 1px solid rgba(56, 97, 150, 0.1);
+}
+
+.feature-row:last-child { border-bottom: none; }
+
+.feature-row-num {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.feature-row-num span {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: rgba(255,255,255,0.7);
+  position: relative;
+  z-index: 1;
+}
+
+.feature-row-body h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.feature-row-body p {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+  max-width: 600px;
+}
+
+.feature-row-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SECURITY — BENTO GRID
+   ═══════════════════════════════════════════════════════════════ */
+.bento-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 48px;
+}
+
+.bento-grid-3col { grid-template-columns: repeat(3, 1fr); }
+
+.bento-card {
+  padding: 32px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  transition: all 0.35s;
+  position: relative;
+  overflow: hidden;
+}
+
+.bento-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.bento-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+}
+
+.bento-card:hover::after { opacity: 1; }
+
+.bento-wide { grid-column: 1 / -1; }
+
+.bento-dark {
+  background: linear-gradient(135deg, rgba(11, 22, 59, 0.7) 0%, rgba(3, 10, 22, 0.9) 100%);
+  backdrop-filter: blur(16px);
+}
+
+.bento-dark::after {
+  background: linear-gradient(90deg, var(--accent), var(--accent-cyan));
+}
+
+.bento-accent {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(0, 229, 255, 0.04) 100%);
+  backdrop-filter: blur(16px);
+}
+
+.bento-accent::after {
+  background: linear-gradient(90deg, var(--accent-cyan), var(--green));
+}
+
+.bento-subtle {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06) 0%, rgba(236, 72, 153, 0.04) 100%);
+  backdrop-filter: blur(16px);
+}
+
+.bento-subtle::after {
+  background: linear-gradient(90deg, var(--purple), var(--pink));
+}
+
+.bento-card h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.bento-card p {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+
+.bento-inline-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INTEGRATIONS MARQUEE
+   ═══════════════════════════════════════════════════════════════ */
+.marquee-wrap {
+  overflow: hidden;
+  margin-top: 48px;
+  position: relative;
+}
+
+.marquee-fade-left,
+.marquee-fade-right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.marquee-fade-left  { left: 0;  background: linear-gradient(to right, var(--bg-deep), transparent); }
+.marquee-fade-right { right: 0; background: linear-gradient(to left, var(--bg-deep), transparent); }
+
+.marquee-track {
+  display: flex;
+  gap: 12px;
+  animation: marquee 30s linear infinite;
+  width: max-content;
+}
+
+.marquee-track:hover { animation-play-state: paused; }
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.integration-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.integration-chip:hover { border-color: var(--accent-cyan); background: rgba(0, 229, 255, 0.06); }
+.integration-chip img { width: 18px; height: 18px; object-fit: contain; }
+.integration-chip svg { width: 18px; height: 18px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   HOW IT WORKS
+   ═══════════════════════════════════════════════════════════════ */
+.steps { margin-top: 48px; }
+
+.step {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+
+.step:last-child { margin-bottom: 0; }
+
+.step-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: rgba(0, 229, 255, 0.1);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+}
+
+.step h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.step p {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   USE CASES
+   ═══════════════════════════════════════════════════════════════ */
+.usecases {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  margin-top: 48px;
+}
+
+.usecase-card {
+  padding: 32px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: all 0.3s;
+}
+
+.usecase-card:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
+
+.usecase-emoji { font-size: 2rem; margin-bottom: 16px; display: block; }
+
+.usecase-card h3 { font-size: 1.1rem; font-weight: 700; color: var(--text); margin-bottom: 10px; }
+.usecase-card p { font-size: 0.875rem; color: var(--text-muted); line-height: 1.7; }
+
+/* ═══════════════════════════════════════════════════════════════
+   BOTTOM CTA
+   ═══════════════════════════════════════════════════════════════ */
+.cta-section {
+  text-align: center;
+  padding: 80px 24px 60px;
+  position: relative;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.cta-glow {
+  position: absolute;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.06) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cta-section h2 {
+  font-size: clamp(1.5rem, 3.5vw, 2.25rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.cta-section p {
+  font-size: 1rem;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FOOTER
+   ═══════════════════════════════════════════════════════════════ */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 24px 32px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.footer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.footer-brand {
+  font-size: 0.85rem;
+  color: var(--text-subtle);
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+}
+
+.footer-links a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.footer-links a:hover { color: var(--text); }
+
+.footer-bottom {
+  font-size: 0.75rem;
+  color: var(--text-subtle);
+  opacity: 0.6;
+}
+
+.footer-bottom a {
+  color: var(--text-subtle);
+  text-decoration: underline;
+  transition: color 0.2s;
+}
+
+.footer-bottom a:hover { color: var(--text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLL ANIMATIONS
+   ═══════════════════════════════════════════════════════════════ */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1), transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+.reveal-delay-1 { transition-delay: 0.1s; }
+.reveal-delay-2 { transition-delay: 0.2s; }
+.reveal-delay-3 { transition-delay: 0.3s; }
+.reveal-delay-4 { transition-delay: 0.4s; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .header { padding: 12px 16px; }
+  .header-nav a:not(.btn) { display: none; }
+  section { padding: 60px 16px; }
+  .hero { padding: 100px 16px 60px; }
+  .hero-orca { width: 72px; height: 72px; }
+  .carousel-arrow { display: none; }
+  .about-box { padding: 24px; }
+  .stat-strip { grid-template-columns: 1fr; }
+  .bento-grid { grid-template-columns: 1fr; }
+  .bento-grid-3col { grid-template-columns: 1fr; }
+  .bento-wide { grid-column: 1; }
+  .feature-row { grid-template-columns: 60px 1fr; gap: 16px; }
+  .usecases { grid-template-columns: 1fr; }
+  footer { padding: 20px 16px; }
+  .footer-top { flex-direction: column; gap: 12px; text-align: center; }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ═══ BACKGROUND ═══ -->
+<div class="bg-scene" aria-hidden="true">
+  <div class="bg-plane"></div>
+  <div class="bg-plane-2"></div>
+  <div class="bg-glow"></div>
+  <div class="bg-block bg-block-1"></div>
+  <div class="bg-block bg-block-2"></div>
+  <div class="bg-block bg-block-3"></div>
+  <div class="bg-block bg-block-4"></div>
+  <div class="bg-block bg-block-5"></div>
+  <div class="bg-fade"></div>
+</div>
+
+<!-- ═══ CONTENT ═══ -->
+<div class="content">
+
+  <!-- HEADER -->
+  <header class="header">
+    <a href="/" class="header-logo">
+      <img src="/orca.png" alt="OrcaBot">
+      <span>OrcaBot</span>
+    </a>
+    <div class="header-nav">
+      <a href="#about">About</a>
+      <a href="#demos">Demos</a>
+      <a href="#features">Features</a>
+      <a href="#security">Security</a>
+      <a href="#usecases">Use Cases</a>
+      <a href="/dashboards" class="btn btn-primary btn-sm">Get Started</a>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <div class="hero">
+    <img src="/orca.png" alt="OrcaBot" class="hero-orca">
+    <p class="hero-tagline">What can OrcaBot help you with?</p>
+    <div class="chat-bar">
+      <input type="text" id="chat-input" placeholder="Set up a coding agent, manage my email, build a workflow...">
+      <button class="chat-bar-send" id="chat-send" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </div>
+    <p class="hero-subtext">
+      Run AI agents in secure sandboxes. The sane and secure alternative to open-source claws.
+    </p>
+    <p class="hero-legal">
+      By continuing, you agree to our
+      <a href="/terms">Terms of Service</a> and
+      <a href="/privacy">Privacy Policy</a>
+    </p>
+    <div class="scroll-hint">
+      <span>Explore</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    </div>
+  </div>
+
+  <!-- WHAT IS ORCABOT -->
+  <section id="about">
+    <div class="about-box reveal">
+      <h2>What is OrcaBot?</h2>
+      <p>
+        OrcaBot is a <strong>web-based orchestration platform</strong> for AI coding agents. It provides sandboxed Linux virtual machines where AI agents like Claude Code, Codex, and Gemini CLI can write, run, and test code on your behalf &mdash; all accessible through your browser.
+      </p>
+      <p>
+        OrcaBot is <strong>not an AI provider</strong>. It orchestrates third-party AI agents (from Anthropic, OpenAI, Google, etc.) inside secure, isolated environments. You bring your own API keys, which are protected by a secrets broker that prevents AI agents from ever seeing or exfiltrating them.
+      </p>
+      <p>
+        Users create <strong>dashboards</strong> &mdash; collaborative workspaces similar to Figma boards &mdash; where they can place terminals, notes, browser previews, and integration blocks. Multiple team members can view and interact with the same dashboard in real-time.
+      </p>
+    </div>
+  </section>
+
+  <!-- DEMOS CAROUSEL (moved up) -->
+  <section id="demos" class="carousel-section">
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        See It In Action
+      </div>
+      <h2 class="section-title">Watch how it works.</h2>
+      <p class="section-desc" style="margin: 0 auto;">
+        From launching an agent to connecting integrations, OrcaBot is designed to get you productive in a few clicks.
+      </p>
+    </div>
+
+    <div class="carousel-wrap reveal reveal-delay-1">
+      <div class="carousel-viewport" id="carousel-viewport"></div>
+      <button class="carousel-arrow prev" onclick="carouselPrev()" aria-label="Previous">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+      </button>
+      <button class="carousel-arrow next" onclick="carouselNext()" aria-label="Next">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+      </button>
+      <div class="carousel-info" id="carousel-info">
+        <h3 id="carousel-title"></h3>
+        <p id="carousel-desc"></p>
+      </div>
+      <div class="carousel-dots" id="carousel-dots"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       FEATURES — what makes it easy to use
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="features">
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+        Features
+      </div>
+      <h2 class="section-title">Ridiculously easy to use.</h2>
+      <p class="section-desc">
+        From zero to running AI agents in a few clicks. No installs, no Docker, no config files.
+      </p>
+    </div>
+
+    <div style="margin-top: 48px;">
+
+      <div class="feature-row reveal reveal-delay-1">
+        <div class="feature-row-num" style="background: rgba(59, 130, 246, 0.1);">
+          <span style="color: var(--accent);">1</span>
+        </div>
+        <div class="feature-row-body">
+          <h3>AI Agents in Your Browser</h3>
+          <p>Run vanilla Claude Code, Codex, or Gemini CLI directly in your browser with a built-in Chromium browser for seamless login to your subscription. No local setup, no Docker, no configuration files. A few clicks and you're coding.</p>
+        </div>
+      </div>
+
+      <div class="feature-row reveal reveal-delay-2">
+        <div class="feature-row-num" style="background: rgba(236, 72, 153, 0.1);">
+          <span style="color: var(--pink);">2</span>
+        </div>
+        <div class="feature-row-body">
+          <h3>Multiplayer Dashboards</h3>
+          <p>Collaborate in real-time on shared workspaces. Place terminals, notes, browser previews, and integration blocks on a Figma-style infinite canvas. Multiple team members can view and interact simultaneously.</p>
+        </div>
+      </div>
+
+      <div class="feature-row reveal reveal-delay-3">
+        <div class="feature-row-num" style="background: rgba(245, 158, 11, 0.1);">
+          <span style="color: var(--amber);">3</span>
+        </div>
+        <div class="feature-row-body">
+          <h3>Background Workflows &amp; Schedulers</h3>
+          <p>Schedule repeatable workflows that run on a cadence or in response to events. Agents keep working even when you close the tab. Build decision trees, set up cron-style triggers, and connect Slack or Discord for notifications.</p>
+        </div>
+      </div>
+
+      <div class="feature-row reveal reveal-delay-4">
+        <div class="feature-row-num" style="background: rgba(6, 182, 212, 0.1);">
+          <span style="color: var(--cyan);">4</span>
+        </div>
+        <div class="feature-row-body">
+          <h3>Skills, Subagents &amp; MCP</h3>
+          <p>A few clicks and you have custom skills, subagent templates, MCP servers, and text-to-speech ready to go. Works natively with Claude Code, Gemini CLI, and Codex CLI.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SECURITY — why it's safe
+       ═══════════════════════════════════════════════════════════ -->
+  <section id="security">
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        Security
+      </div>
+      <h2 class="section-title">A secure alternative to<br>claws-type systems.</h2>
+      <p class="section-desc">
+        Running AI agents on your personal machine is asking for trouble. OrcaBot isolates execution in sandboxes and adds six layers of defense against data exfiltration.
+      </p>
+    </div>
+
+    <div class="bento-grid bento-grid-3col">
+      <div class="bento-card bento-dark reveal reveal-delay-1">
+        <div class="bento-inline-icon" style="background: rgba(34, 197, 94, 0.12);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+        </div>
+        <h3>Sandboxed Virtual Machines</h3>
+        <p>Every session runs in an isolated Linux VM. Agents can't touch your local machine, can't see other sessions, and can't persist beyond the sandbox.</p>
+      </div>
+      <div class="bento-card bento-accent reveal reveal-delay-2">
+        <div class="bento-inline-icon" style="background: rgba(139, 92, 246, 0.12);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+        </div>
+        <h3>Encrypted Secrets Broker</h3>
+        <p>API keys injected server-side at the network layer. Agents never see credentials. Terminal output is scanned and redacted.</p>
+      </div>
+      <div class="bento-card bento-subtle reveal reveal-delay-3">
+        <div class="bento-inline-icon" style="background: rgba(245, 158, 11, 0.12);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+        </div>
+        <h3>Egress Monitoring</h3>
+        <p>All outbound traffic intercepted. Unknown domains held for approval. 60-second timeout means deny. Little Snitch for AI.</p>
+      </div>
+      <div class="bento-card bento-accent reveal reveal-delay-3">
+        <div class="bento-inline-icon" style="background: rgba(6, 182, 212, 0.12);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 12 15 16 10"></polyline></svg>
+        </div>
+        <h3>Policy-Gated Integrations</h3>
+        <p>Gmail, Drive, Calendar, GitHub, Slack &mdash; each with per-terminal policies controlling senders, repos, and actions.</p>
+      </div>
+      <div class="bento-card bento-dark reveal reveal-delay-4">
+        <div class="bento-inline-icon" style="background: rgba(34, 197, 94, 0.12);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </div>
+        <h3>OAuth Tokens Stay Server-Side</h3>
+        <p>OAuth tokens stored encrypted on the control plane. They never reach the sandbox. All API calls made server-side.</p>
+      </div>
+      <div class="bento-card bento-subtle reveal reveal-delay-4">
+        <div class="bento-inline-icon" style="background: rgba(139, 92, 246, 0.1);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </div>
+        <h3>Full Audit Trail</h3>
+        <p>Every action logged before response. Review what agents accessed, when, and what was returned. Disconnect anytime.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- INTEGRATIONS MARQUEE -->
+  <section id="integrations" style="text-align: center;">
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+        Integrations
+      </div>
+      <h2 class="section-title">A growing ecosystem.</h2>
+      <p class="section-desc" style="margin: 0 auto;">
+        OrcaBot connects to the tools, agents, and services you already use.
+        Every integration is optional and controlled by policies you define.
+      </p>
+    </div>
+
+    <div class="marquee-wrap reveal reveal-delay-1">
+      <div class="marquee-fade-left"></div>
+      <div class="marquee-fade-right"></div>
+      <div class="marquee-track" id="marquee-track"></div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section>
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        How It Works
+      </div>
+      <h2 class="section-title">Five steps to get started.</h2>
+    </div>
+
+    <div class="steps">
+      <div class="step reveal reveal-delay-1">
+        <div class="step-num">1</div>
+        <div>
+          <h3>Create a Dashboard</h3>
+          <p>Sign in and create a new dashboard &mdash; a shared workspace where you place terminals, notes, browser previews, and integration blocks on an infinite canvas.</p>
+        </div>
+      </div>
+      <div class="step reveal reveal-delay-2">
+        <div class="step-num">2</div>
+        <div>
+          <h3>Launch a Terminal</h3>
+          <p>Add a terminal block to your dashboard. OrcaBot provisions a sandboxed Linux VM and connects it to your browser via a secure WebSocket.</p>
+        </div>
+      </div>
+      <div class="step reveal reveal-delay-3">
+        <div class="step-num">3</div>
+        <div>
+          <h3>Run an AI Agent</h3>
+          <p>Start an AI coding agent (Claude Code, Codex, Gemini CLI, etc.) inside the terminal. The agent writes, runs, and tests code in the sandbox.</p>
+        </div>
+      </div>
+      <div class="step reveal reveal-delay-4">
+        <div class="step-num">4</div>
+        <div>
+          <h3>Connect Integrations</h3>
+          <p>Attach Gmail, Drive, Calendar, or GitHub to a terminal so agents can access relevant context. You define policies that control exactly what agents can see and do.</p>
+        </div>
+      </div>
+      <div class="step reveal reveal-delay-4">
+        <div class="step-num">5</div>
+        <div>
+          <h3>Collaborate &amp; Ship</h3>
+          <p>Share your dashboard with teammates. Everyone can see agent output in real-time, provide input, and review results together.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- USE CASES -->
+  <section id="usecases">
+    <div class="reveal">
+      <div class="section-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+        Use Cases
+      </div>
+      <h2 class="section-title">What can you build?</h2>
+      <p class="section-desc">
+        From personal assistants to multi-agent tournaments, the only limit is your imagination.
+      </p>
+    </div>
+
+    <div class="usecases">
+      <div class="usecase-card reveal reveal-delay-1">
+        <span class="usecase-emoji" aria-hidden="true">&#x1f4c5;</span>
+        <h3>Personal AI Assistant</h3>
+        <p>Set up an agent that manages your meeting schedule and handles booking requests. Configure it to only respond to emails with a specific subject line and only with calendar invites, so you don't get prompt-hacked out of your crypto savings.</p>
+      </div>
+      <div class="usecase-card reveal reveal-delay-2">
+        <span class="usecase-emoji" aria-hidden="true">&#x1f504;</span>
+        <h3>Ralph Wiggum Loop</h3>
+        <p>A sophisticated code review loop where one agent writes code and another reviews it. Unlike other services that use the same model for both, OrcaBot lets you pair different AI providers so the reviewer isn't biased by its own weights.</p>
+      </div>
+      <div class="usecase-card reveal reveal-delay-3">
+        <span class="usecase-emoji" aria-hidden="true">&#x265f;&#xfe0f;</span>
+        <h3>AI Chess Tournament</h3>
+        <p>Get agents to play chess against each other. We're planning a benchmark where AI models compete in a tournament. Multiple terminals on a shared dashboard, each running a different model. Who wins? Stay tuned.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- BOTTOM CTA -->
+  <div class="cta-section">
+    <div class="cta-glow"></div>
+    <div class="reveal">
+      <h2>Ready to run your agents?</h2>
+      <p>Sign in, create a dashboard, and start building in seconds. No installs required.</p>
+      <a href="/go" class="btn btn-primary" style="font-size: 1rem; padding: 14px 32px;">
+        Get Started
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+      </a>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-top">
+      <span class="footer-brand">OrcaBot. Sandboxed, multiplayer AI coding platform.</span>
+      <div class="footer-links">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/terms">Terms of Service</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      By using OrcaBot, you agree to our <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>.
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   CAROUSEL
+   ═══════════════════════════════════════════════════════════════ */
+const slides = [
+  { type:'video', src:'/videos/open_claude_code.mp4', poster:'/videos/open_claude_code-poster.jpg',
+    title:'Launch Claude Code in a secure sandbox',
+    desc:'Create a dashboard, add a terminal, and launch Claude Code. It runs in an isolated Linux VM. Your API key is injected server-side so the agent never sees it.' },
+  { type:'video', src:'/videos/gemini_secret.mp4', poster:'/videos/gemini_secret-poster.jpg',
+    title:'Secrets broker keeps API keys invisible',
+    desc:'API keys are injected at the network layer, not as env vars. The agent only sees placeholders, and any secret in terminal output is redacted before reaching your browser.' },
+  { type:'video', src:'/videos/gmail.mp4', poster:'/videos/gmail-poster.jpg',
+    title:'Connect Gmail with policy-guarded access',
+    desc:'Attach integration blocks to terminals and define the policy: which senders the agent can read, which actions are allowed. OAuth tokens never leave the control plane.' },
+  { type:'video', src:'/videos/whatsapp.mp4', poster:'/videos/whatsapp-poster.jpg',
+    title:'Two-way messaging via WhatsApp & Slack',
+    desc:'Connect messaging integrations so agents can receive instructions and send updates through your existing channels. Monitor long-running tasks from anywhere.' },
+  { type:'video', src:'/videos/chess.mp4', poster:'/videos/chess-poster.jpg',
+    title:'Multi-agent chess: AIs compete head to head',
+    desc:'Place multiple terminals on a dashboard and let different AI agents compete. Each terminal runs in the same sandbox so agents can share files and communicate.' },
+  { type:'image', src:'/videos/ralph_wiggum.png',
+    title:'Ralph Wiggum loop: code + review agents',
+    desc:'Chain agents so one writes code and another reviews it. Different AI providers mean the reviewer isn\'t biased by its own weights. Continuous improvement, no human needed.' }
+];
+
+let currentSlide = 0, autoplayTimer = null, slideVideos = [];
+var carouselVisible = false;
+
+function initCarousel() {
+  const vp = document.getElementById('carousel-viewport');
+  const dots = document.getElementById('carousel-dots');
+  slides.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'carousel-slide' + (i === 0 ? ' active' : '');
+    if (s.type === 'video') {
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'none'; v.poster = s.poster;
+      v.dataset.src = s.src;
+      v.addEventListener('ended', () => { autoplayTimer = setTimeout(() => goToSlide(i + 1), 3000); });
+      div.appendChild(v); slideVideos[i] = v;
+    } else {
+      const img = document.createElement('img');
+      img.src = s.src; img.alt = s.title; img.loading = 'lazy';
+      div.appendChild(img); slideVideos[i] = null;
+    }
+    vp.appendChild(div);
+    const dot = document.createElement('button');
+    dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+    dot.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+    dot.addEventListener('click', () => goToSlide(i));
+    dots.appendChild(dot);
+  });
+  updateInfo(0);
+
+  /* Only play videos when the carousel is visible in the viewport */
+  var carouselObs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(entry) {
+      carouselVisible = entry.isIntersecting;
+      if (entry.isIntersecting) {
+        loadAndPlaySlide(currentSlide);
+      } else {
+        clearTimeout(autoplayTimer);
+        var v = slideVideos[currentSlide];
+        if (v && v.tagName === 'VIDEO') v.pause();
+      }
+    });
+  }, { threshold: 0.3 });
+  carouselObs.observe(vp);
+}
+
+function goToSlide(idx) {
+  clearTimeout(autoplayTimer);
+  const prev = currentSlide;
+  currentSlide = ((idx % slides.length) + slides.length) % slides.length;
+  if (slideVideos[prev] && slideVideos[prev].tagName === 'VIDEO') slideVideos[prev].pause();
+  document.querySelectorAll('.carousel-slide').forEach((el, i) => el.classList.toggle('active', i === currentSlide));
+  document.querySelectorAll('.carousel-dot').forEach((el, i) => el.classList.toggle('active', i === currentSlide));
+  updateInfo(currentSlide);
+  if (carouselVisible) loadAndPlaySlide(currentSlide);
+}
+
+function loadAndPlaySlide(i) {
+  const v = slideVideos[i];
+  if (v && v.tagName === 'VIDEO') {
+    if (!v.src && v.dataset.src) v.src = v.dataset.src;
+    v.currentTime = 0; v.play().catch(() => {});
+  } else {
+    autoplayTimer = setTimeout(() => goToSlide(i + 1), 6000);
+  }
+}
+
+function updateInfo(i) {
+  document.getElementById('carousel-title').textContent = slides[i].title;
+  document.getElementById('carousel-desc').textContent = slides[i].desc;
+}
+
+function carouselPrev() { goToSlide(currentSlide - 1); }
+function carouselNext() { goToSlide(currentSlide + 1); }
+
+/* ═══════════════════════════════════════════════════════════════
+   MARQUEE
+   ═══════════════════════════════════════════════════════════════ */
+function initMarquee() {
+  const list = [
+    { name:'Claude Code', img:'/icons/claude.ico' },
+    { name:'Codex', img:'/icons/codex.png' },
+    { name:'Gemini CLI', img:'/icons/gemini.ico' },
+    { name:'Gmail', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
+    { name:'Google Drive', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 19.5h7.5L12 14l2.5 5.5H22z"/></svg>' },
+    { name:'Google Calendar', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+    { name:'Google Contacts', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+    { name:'Google Sheets', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>' },
+    { name:'Google Forms', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="12" y2="16"/></svg>' },
+    { name:'GitHub', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>' },
+    { name:'Slack', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="13" y="2" width="3" height="8" rx="1.5"/><rect x="8" y="14" width="3" height="8" rx="1.5"/><rect x="2" y="8" width="8" height="3" rx="1.5"/><rect x="14" y="13" width="8" height="3" rx="1.5"/></svg>' },
+    { name:'Discord', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 9a5 5 0 0 0-4-2h-4a5 5 0 0 0-4 2"/><circle cx="9" cy="13" r="1.25"/><circle cx="15" cy="13" r="1.25"/><path d="M7 3s-2 2-2 8 2 10 2 10"/><path d="M17 3s2 2 2 8-2 10-2 10"/></svg>' },
+    { name:'WhatsApp', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>' },
+    { name:'ElevenLabs', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>' },
+    { name:'Deepgram', svg:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>' },
+  ];
+  const track = document.getElementById('marquee-track');
+  [...list, ...list].forEach(item => {
+    const chip = document.createElement('span');
+    chip.className = 'integration-chip';
+    chip.innerHTML = item.img
+      ? `<img src="${item.img}" alt="${item.name}"> ${item.name}`
+      : item.svg ? `${item.svg} ${item.name}` : item.name;
+    track.appendChild(chip);
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLL REVEAL
+   ═══════════════════════════════════════════════════════════════ */
+function initReveal() {
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') carouselPrev();
+  if (e.key === 'ArrowRight') carouselNext();
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   CHAT BAR — postMessage to parent if authed, else redirect /go
+   ═══════════════════════════════════════════════════════════════ */
+var _parentAuthStatus = false; // set by parent postMessage
+
+function initChatBar() {
+  var input = document.getElementById('chat-input');
+  var sendBtn = document.getElementById('chat-send');
+  var submitted = false;
+
+  // Listen for auth status from parent frame (same-origin only)
+  window.addEventListener('message', function(e) {
+    if (e.origin !== window.location.origin) return;
+    if (e.data && e.data.type === 'orcabot_auth_status') {
+      _parentAuthStatus = !!e.data.authenticated;
+    }
+  });
+
+  function handleSend() {
+    var query = input.value.trim();
+    if (!query || submitted) return;
+
+    // Always set localStorage as safety net
+    localStorage.setItem('orcabot_initial_prompt', query);
+
+    // If parent signaled authenticated, use postMessage for smooth transition
+    if (_parentAuthStatus && window.parent !== window) {
+      submitted = true;
+      input.disabled = true;
+      sendBtn.disabled = true;
+
+      // Calculate chat bar position relative to viewport bottom
+      var chatBar = input.closest('.chat-bar');
+      var rect = chatBar.getBoundingClientRect();
+      var chatBarBottom = window.innerHeight - rect.bottom;
+
+      window.parent.postMessage({
+        type: 'orcabot_splash_submit',
+        prompt: query,
+        chatBarBottom: chatBarBottom
+      }, window.location.origin);
+      return;
+    }
+
+    // Fallback: redirect to /go (unauthenticated or not in iframe)
+    (window.top || window).location.href = '/go';
+  }
+
+  sendBtn.addEventListener('click', handleSend);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); handleSend(); }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  initCarousel();
+  initMarquee();
+  initReveal();
+  initChatBar();
+});
+</script>
+
+</body>
+</html>

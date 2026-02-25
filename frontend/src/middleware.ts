@@ -1,16 +1,17 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-middleware-v2-cookie
+// REVISION: desktop-middleware-v3-go-route
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
   if (process.env.NEXT_PUBLIC_DESKTOP_MODE === "true") {
-    // Redirect root and /login to /dashboards
+    // Redirect root, /login, and /go to /dashboards
     if (
       request.nextUrl.pathname === "/" ||
-      request.nextUrl.pathname === "/login"
+      request.nextUrl.pathname === "/login" ||
+      request.nextUrl.pathname === "/go"
     ) {
       const url = request.nextUrl.clone();
       url.pathname = "/dashboards";
@@ -35,5 +36,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/login", "/dashboards/:path*"],
+  matcher: ["/", "/login", "/go", "/dashboards/:path*"],
 };
