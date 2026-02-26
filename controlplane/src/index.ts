@@ -1028,7 +1028,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'admin' && segments[1] === 'metrics' && segments.length === 2 && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    return analytics.getAdminMetrics(env, auth.user!.email);
+    return analytics.getAdminMetrics(env, auth.user!.email, request);
   }
 
   // POST /auth/logout - clear session cookie

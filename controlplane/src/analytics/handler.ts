@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: analytics-v1-first-party-analytics
-const analyticsRevision = "analytics-v1-first-party-analytics";
+// REVISION: analytics-v3-exclude-admins
+const analyticsRevision = "analytics-v3-exclude-admins";
 console.log(`[analytics] REVISION: ${analyticsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
@@ -170,13 +170,32 @@ export async function logServerEvent(
 /**
  * Admin metrics endpoint.
  * GET /admin/metrics — requires admin email.
+ * Supports ?excludeAdmins=1 to filter out admin account activity.
  */
 export async function getAdminMetrics(
   env: Env,
-  userEmail: string
+  userEmail: string,
+  request: Request
 ): Promise<Response> {
   if (!isAdminEmail(env, userEmail)) {
     return Response.json({ error: 'E79906: Admin access required' }, { status: 403 });
+  }
+
+  const url = new URL(request.url);
+  const excludeAdmins = url.searchParams.get('excludeAdmins') === '1';
+
+  // Resolve admin emails → user IDs for exclusion filtering
+  let adminFilter = '';
+  let adminUserFilter = '';
+  const adminBinds: string[] = [];
+  if (excludeAdmins && env.ADMIN_EMAILS) {
+    const adminEmails = env.ADMIN_EMAILS.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+    if (adminEmails.length > 0) {
+      const placeholders = adminEmails.map(() => '?').join(',');
+      adminFilter = `AND email NOT IN (${placeholders})`;
+      adminUserFilter = `AND user_id NOT IN (SELECT id FROM users WHERE email IN (${placeholders}))`;
+      adminBinds.push(...adminEmails);
+    }
   }
 
   // Each metric query is independently resilient — if a table/column doesn't exist
@@ -209,20 +228,20 @@ export async function getAdminMetrics(
       // DAU (users active today) — needs users.last_active_at
       safeFirst(env.DB.prepare(`
         SELECT COUNT(*) as count FROM users
-        WHERE last_active_at >= datetime('now', '-1 day')
-      `), { count: 0 }),
+        WHERE last_active_at >= datetime('now', '-1 day') ${adminFilter}
+      `).bind(...adminBinds), { count: 0 }),
 
       // WAU (users active this week) — needs users.last_active_at
       safeFirst(env.DB.prepare(`
         SELECT COUNT(*) as count FROM users
-        WHERE last_active_at >= datetime('now', '-7 days')
-      `), { count: 0 }),
+        WHERE last_active_at >= datetime('now', '-7 days') ${adminFilter}
+      `).bind(...adminBinds), { count: 0 }),
 
       // MAU (users active this month) — needs users.last_active_at
       safeFirst(env.DB.prepare(`
         SELECT COUNT(*) as count FROM users
-        WHERE last_active_at >= datetime('now', '-30 days')
-      `), { count: 0 }),
+        WHERE last_active_at >= datetime('now', '-30 days') ${adminFilter}
+      `).bind(...adminBinds), { count: 0 }),
 
       // Signups by day (last 30 days)
       // datetime(created_at) normalizes ISO 'T' separator to SQLite space format
@@ -230,30 +249,30 @@ export async function getAdminMetrics(
       safeAll<{ day: string; count: number }>(env.DB.prepare(`
         SELECT date(created_at) as day, COUNT(*) as count
         FROM users
-        WHERE datetime(created_at) >= datetime('now', '-30 days')
+        WHERE datetime(created_at) >= datetime('now', '-30 days') ${adminFilter}
         GROUP BY date(created_at)
         ORDER BY day DESC
-      `), []),
+      `).bind(...adminBinds), []),
 
       // Active dashboards by day — needs analytics_events table
       safeAll<{ day: string; count: number }>(env.DB.prepare(`
         SELECT date(created_at) as day, COUNT(DISTINCT dashboard_id) as count
         FROM analytics_events
-        WHERE dashboard_id IS NOT NULL AND datetime(created_at) >= datetime('now', '-30 days')
+        WHERE dashboard_id IS NOT NULL AND datetime(created_at) >= datetime('now', '-30 days') ${adminUserFilter}
         GROUP BY date(created_at)
         ORDER BY day DESC
-      `), []),
+      `).bind(...adminBinds), []),
 
       // Terminal sessions by day with agent_type breakdown — needs sessions.agent_type
       safeAll<{ day: string; agent_type: string | null; count: number }>(env.DB.prepare(`
         SELECT date(created_at) as day, agent_type, COUNT(*) as count
         FROM sessions
-        WHERE datetime(created_at) >= datetime('now', '-30 days')
+        WHERE datetime(created_at) >= datetime('now', '-30 days') ${adminUserFilter}
         GROUP BY date(created_at), agent_type
         ORDER BY day DESC
-      `), []),
+      `).bind(...adminBinds), []),
 
-      // Block type distribution
+      // Block type distribution (not user-scoped, no admin filter)
       safeAll<{ type: string; count: number }>(env.DB.prepare(`
         SELECT type, COUNT(*) as count
         FROM dashboard_items
@@ -261,7 +280,7 @@ export async function getAdminMetrics(
         ORDER BY count DESC
       `), []),
 
-      // Integration adoption by provider
+      // Integration adoption by provider (not user-scoped, no admin filter)
       safeAll<{ provider: string; count: number }>(env.DB.prepare(`
         SELECT provider, COUNT(*) as count
         FROM user_integrations
@@ -269,7 +288,7 @@ export async function getAdminMetrics(
         ORDER BY count DESC
       `), []),
 
-      // Subscription status breakdown
+      // Subscription status breakdown (not user-scoped, no admin filter)
       safeAll<{ status: string; count: number }>(env.DB.prepare(`
         SELECT status, COUNT(*) as count
         FROM user_subscriptions
@@ -277,16 +296,20 @@ export async function getAdminMetrics(
         ORDER BY count DESC
       `), []),
 
-      // Top 20 users by event count — needs analytics_events table
-      safeAll<{ user_id: string; email: string; name: string; event_count: number }>(env.DB.prepare(`
-        SELECT ae.user_id, u.email, u.name, COUNT(*) as event_count
-        FROM analytics_events ae
-        JOIN users u ON u.id = ae.user_id
-        WHERE datetime(ae.created_at) >= datetime('now', '-30 days')
-        GROUP BY ae.user_id
-        ORDER BY event_count DESC
+      // Top 20 users by activity (sessions + analytics events)
+      safeAll<{ user_id: string; email: string; name: string; session_count: number; event_count: number }>(env.DB.prepare(`
+        SELECT u.id as user_id, u.email, u.name,
+          COALESCE((SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND datetime(s.created_at) >= datetime('now', '-30 days')), 0) as session_count,
+          COALESCE((SELECT COUNT(*) FROM analytics_events ae WHERE ae.user_id = u.id AND datetime(ae.created_at) >= datetime('now', '-30 days')), 0) as event_count
+        FROM users u
+        WHERE u.id IN (
+          SELECT s.user_id FROM sessions s WHERE datetime(s.created_at) >= datetime('now', '-30 days')
+          UNION
+          SELECT ae.user_id FROM analytics_events ae WHERE datetime(ae.created_at) >= datetime('now', '-30 days')
+        ) ${adminFilter}
+        ORDER BY session_count DESC, event_count DESC
         LIMIT 20
-      `), []),
+      `).bind(...adminBinds), []),
 
       // 7-day retention rate — needs users.last_active_at
       // Denominator: ALL users created >7 days ago (including those who never returned).
@@ -297,16 +320,16 @@ export async function getAdminMetrics(
           COUNT(*) as total_eligible,
           COALESCE(SUM(CASE WHEN last_active_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END), 0) as retained
         FROM users
-        WHERE datetime(created_at) <= datetime('now', '-7 days')
-      `), { total_eligible: 0, retained: 0 }),
+        WHERE datetime(created_at) <= datetime('now', '-7 days') ${adminFilter}
+      `).bind(...adminBinds), { total_eligible: 0, retained: 0 }),
 
       // Totals
       safeFirst(env.DB.prepare(`
         SELECT
-          (SELECT COUNT(*) FROM users) as total_users,
+          (SELECT COUNT(*) FROM users WHERE 1=1 ${adminFilter}) as total_users,
           (SELECT COUNT(*) FROM dashboards) as total_dashboards,
-          (SELECT COUNT(*) FROM sessions) as total_sessions
-      `), { total_users: 0, total_dashboards: 0, total_sessions: 0 }),
+          (SELECT COUNT(*) FROM sessions WHERE 1=1 ${adminUserFilter}) as total_sessions
+      `).bind(...adminBinds, ...adminBinds), { total_users: 0, total_dashboards: 0, total_sessions: 0 }),
     ]);
 
     return Response.json({
