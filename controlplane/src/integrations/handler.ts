@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v20-whatsapp-qr-error-propagation
-const integrationsRevision = "integrations-v20-whatsapp-qr-error-propagation";
+// REVISION: integrations-v21-whatsapp-bridge-retry-restart
+const integrationsRevision = "integrations-v21-whatsapp-bridge-retry-restart";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -10675,19 +10675,21 @@ export async function connectWhatsAppPersonal(
     // subscription can be stuck pending with no live session behind it.
     const { BridgeClient } = await import('../bridge/client');
     const bridge = new BridgeClient(env.BRIDGE_URL, env.BRIDGE_INTERNAL_TOKEN);
-    let bridgeAlive = false;
+    let bridgeStatus: { status: 'connecting' | 'connected' | 'disconnected' | 'error' } | null = null;
     try {
-      const status = await bridge.getStatus(existing.webhook_id);
-      bridgeAlive = status !== null;
+      bridgeStatus = await bridge.getStatus(existing.webhook_id);
     } catch {
       // Bridge unreachable — treat as dead
     }
 
-    if (bridgeAlive) {
+    const bridgeOperational = bridgeStatus?.status === 'connecting' || bridgeStatus?.status === 'connected';
+    if (bridgeOperational) {
+      const qrResult = await bridge.getQrCode(existing.webhook_id).catch(() => null);
       return Response.json({
         subscriptionId: existing.id,
         webhookId: existing.webhook_id,
-        status: 'existing',
+        status: qrResult?.status || bridgeStatus?.status || 'connecting',
+        qrCode: qrResult?.qrCode || null,
       });
     }
 
@@ -10814,9 +10816,9 @@ export async function getWhatsAppQr(
 
   // Look up subscription and verify ownership
   const sub = await env.DB.prepare(`
-    SELECT id, webhook_id, status FROM messaging_subscriptions
+    SELECT id, webhook_id, status, hybrid_mode FROM messaging_subscriptions
     WHERE id = ? AND user_id = ? AND provider = 'whatsapp'
-  `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string }>();
+  `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string; hybrid_mode: number }>();
 
   if (!sub) {
     return Response.json({ error: 'E79565: Subscription not found' }, { status: 404 });
@@ -10845,11 +10847,13 @@ export async function getWhatsAppQr(
       console.log(`[integrations] Bridge session for ${sub.webhook_id} is missing, restarting`);
       const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
       try {
+        const restartIsHybrid = sub.hybrid_mode === 1 && !!env.WHATSAPP_BUSINESS_PHONE;
         const restartResult = await bridge.startSession({
           sessionId: sub.webhook_id,
           userId: auth.user!.id,
           provider: 'whatsapp',
           callbackUrl,
+          config: restartIsHybrid ? { hybridMode: true, businessPhoneJid: `${env.WHATSAPP_BUSINESS_PHONE}@s.whatsapp.net` } : undefined,
         });
         return Response.json({
           status: restartResult.status,

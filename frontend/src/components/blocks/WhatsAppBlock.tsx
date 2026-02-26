@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v14-skip-business-flash
+// REVISION: whatsapp-block-v15-retry-restarts-session
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v14-skip-business-flash";
+const MODULE_REVISION = "whatsapp-block-v15-retry-restarts-session";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -759,10 +759,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
                 <p className="text-xs text-red-500 text-center mb-2">Connection lost</p>
                 <Button
                   size="sm"
-                  onClick={() => {
-                    setPersonalStatus("connecting");
-                    startQrPolling(personalSubId!);
-                  }}
+                  onClick={() => { void handleConnectPersonal(); }}
                   className="nodrag gap-2"
                   style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
                 >
