@@ -7,13 +7,14 @@
 <title>OrcaBot — Secure AI Agent Orchestration</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#030a16">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap">
 <style>
 /* ═══════════════════════════════════════════════════════════════
    RESET & BASE
    ═══════════════════════════════════════════════════════════════ */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 :root {
   --bg-deep:    #030a16;
@@ -282,6 +283,7 @@ body {
   font-size: clamp(1rem, 2.5vw, 1.25rem);
   font-weight: 400;
   color: var(--text-muted);
+  margin-top: 0;
   margin-bottom: 40px;
   max-width: 480px;
   letter-spacing: -0.01em;
@@ -997,16 +999,16 @@ footer {
       <a href="#features">Features</a>
       <a href="#security">Security</a>
       <a href="#usecases">Use Cases</a>
-      <a href="/go" id="header-login-btn" class="btn btn-primary btn-sm">Login</a>
+      <a href="/go" id="header-login-btn" class="btn btn-primary btn-sm">Sign In</a>
     </div>
   </header>
 
   <!-- HERO -->
   <div class="hero">
     <img src="/orca.png" alt="OrcaBot" class="hero-orca">
-    <p class="hero-tagline">What can OrcaBot help you with?</p>
+    <h1 class="hero-tagline">Run AI coding agents in the browser. No setup. No risk.</h1>
     <div class="chat-bar">
-      <input type="text" id="chat-input" placeholder="Set up a coding agent, manage my email, build a workflow...">
+      <input type="text" id="chat-input" placeholder="Set up a coding agent, manage my email, build a workflow..." data-placeholder-full="Set up a coding agent, manage my email, build a workflow..." data-placeholder-short="Describe what you want to build...">
       <button class="chat-bar-send" id="chat-send" aria-label="Send">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -1022,12 +1024,12 @@ footer {
       <a href="/terms">Terms of Service</a> and
       <a href="/privacy">Privacy Policy</a>
     </p>
-    <div class="scroll-hint">
+    <a href="#about" class="scroll-hint" style="text-decoration: none; color: inherit; cursor: pointer;">
       <span>Explore</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9"></polyline>
       </svg>
-    </div>
+    </a>
   </div>
 
   <!-- WHAT IS ORCABOT -->
@@ -1059,8 +1061,8 @@ footer {
       </p>
     </div>
 
-    <div class="carousel-wrap reveal reveal-delay-1">
-      <div class="carousel-viewport" id="carousel-viewport"></div>
+    <div class="carousel-wrap reveal reveal-delay-1" role="region" aria-roledescription="carousel" aria-label="Product demos">
+      <div class="carousel-viewport" id="carousel-viewport" aria-live="polite"></div>
       <button class="carousel-arrow prev" onclick="carouselPrev()" aria-label="Previous">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
       </button>
@@ -1078,7 +1080,7 @@ footer {
   <!-- ═══════════════════════════════════════════════════════════
        FEATURES — what makes it easy to use
        ═══════════════════════════════════════════════════════════ -->
-  <section id="features">
+  <section id="features" style="padding-bottom: 40px;">
     <div class="reveal">
       <div class="section-label">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
@@ -1305,7 +1307,7 @@ footer {
       <h2>Ready to run your agents?</h2>
       <p>Sign in, create a dashboard, and start building in seconds. No installs required.</p>
       <a href="/go" id="cta-login-btn" class="btn btn-primary" style="font-size: 1rem; padding: 14px 32px;">
-        Login
+        Get Started Free
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
       </a>
     </div>
@@ -1361,6 +1363,10 @@ function initCarousel() {
   slides.forEach((s, i) => {
     const div = document.createElement('div');
     div.className = 'carousel-slide' + (i === 0 ? ' active' : '');
+    div.setAttribute('role', 'group');
+    div.setAttribute('aria-roledescription', 'slide');
+    div.setAttribute('aria-label', s.title + ' (' + (i + 1) + ' of ' + slides.length + ')');
+    div.setAttribute('aria-hidden', i !== 0 ? 'true' : 'false');
     if (s.type === 'video') {
       const v = document.createElement('video');
       v.muted = true; v.playsInline = true; v.preload = 'none'; v.poster = s.poster;
@@ -1402,7 +1408,7 @@ function goToSlide(idx) {
   const prev = currentSlide;
   currentSlide = ((idx % slides.length) + slides.length) % slides.length;
   if (slideVideos[prev] && slideVideos[prev].tagName === 'VIDEO') slideVideos[prev].pause();
-  document.querySelectorAll('.carousel-slide').forEach((el, i) => el.classList.toggle('active', i === currentSlide));
+  document.querySelectorAll('.carousel-slide').forEach((el, i) => { el.classList.toggle('active', i === currentSlide); el.setAttribute('aria-hidden', i !== currentSlide ? 'true' : 'false'); });
   document.querySelectorAll('.carousel-dot').forEach((el, i) => el.classList.toggle('active', i === currentSlide));
   updateInfo(currentSlide);
   if (carouselVisible) loadAndPlaySlide(currentSlide);
@@ -1468,7 +1474,17 @@ function initReveal() {
   document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
 }
 
-document.addEventListener('keydown', (e) => {
+// Only bind arrow keys when carousel is hovered (avoids conflict with chat input)
+var _carouselHovered = false;
+(function() {
+  var wrap = document.querySelector('.carousel-wrap');
+  if (wrap) {
+    wrap.addEventListener('mouseenter', function() { _carouselHovered = true; });
+    wrap.addEventListener('mouseleave', function() { _carouselHovered = false; });
+  }
+})();
+document.addEventListener('keydown', function(e) {
+  if (!_carouselHovered) return;
   if (e.key === 'ArrowLeft') carouselPrev();
   if (e.key === 'ArrowRight') carouselNext();
 });
@@ -1543,8 +1559,8 @@ function updateLoginButtons(authenticated) {
     if (headerBtn) { headerBtn.href = '/dashboards'; headerBtn.textContent = 'Dashboards'; headerBtn.onclick = null; }
     if (ctaBtn) { ctaBtn.href = '/dashboards'; ctaBtn.innerHTML = 'Dashboards <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>'; ctaBtn.onclick = null; }
   } else {
-    if (headerBtn) { headerBtn.href = '/go'; headerBtn.textContent = 'Login'; headerBtn.onclick = openLoginPopup; }
-    if (ctaBtn) { ctaBtn.href = '/go'; ctaBtn.innerHTML = 'Login <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>'; ctaBtn.onclick = openLoginPopup; }
+    if (headerBtn) { headerBtn.href = '/go'; headerBtn.textContent = 'Sign In'; headerBtn.onclick = openLoginPopup; }
+    if (ctaBtn) { ctaBtn.href = '/go'; ctaBtn.innerHTML = 'Get Started Free <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>'; ctaBtn.onclick = openLoginPopup; }
   }
 }
 
@@ -1627,11 +1643,19 @@ function initChatBar() {
   });
 }
 
+function updateChatPlaceholder() {
+  var input = document.getElementById('chat-input');
+  if (!input) return;
+  input.placeholder = window.innerWidth <= 480 ? input.dataset.placeholderShort : input.dataset.placeholderFull;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initCarousel();
   initMarquee();
   initReveal();
   initChatBar();
+  updateChatPlaceholder();
+  window.addEventListener('resize', updateChatPlaceholder);
 });
 </script>
 
