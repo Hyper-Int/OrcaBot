@@ -52,13 +52,14 @@ export class SandboxClient {
   }
 
   // Health check (optionally pinned to a specific Fly machine)
-  async health(machineId?: string): Promise<boolean> {
+  // REVISION: session-recovery-v2-fast-health-check
+  async health(machineId?: string, timeoutMs?: number): Promise<boolean> {
     try {
       const headers: HeadersInit = {};
       if (machineId) {
         headers['X-Sandbox-Machine-ID'] = machineId;
       }
-      const res = await this.timedFetch(`${this.baseUrl}/health`, { headers });
+      const res = await this.timedFetch(`${this.baseUrl}/health`, { headers }, timeoutMs);
       return res.ok;
     } catch {
       return false;
@@ -191,6 +192,24 @@ export class SandboxClient {
   }
 
   // PTY management
+  // REVISION: session-recovery-v1-list-ptys
+  async listPtys(sessionId: string, machineId?: string, timeoutMs?: number): Promise<SandboxPty[]> {
+    const headers = new Headers(this.authHeaders());
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
+    const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/ptys`, {
+      method: 'GET',
+      headers,
+    }, timeoutMs);
+    if (!res.ok) {
+      const errorBody = await res.text().catch(() => '(no body)');
+      throw new Error(`Failed to list PTYs: ${res.status} - ${errorBody}`);
+    }
+    const payload = await res.json() as { ptys?: SandboxPty[] };
+    return Array.isArray(payload.ptys) ? payload.ptys : [];
+  }
+
   // REVISION: working-dir-v2-createpty-error-propagation
   async createPty(
     sessionId: string,
