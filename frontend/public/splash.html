@@ -997,7 +997,7 @@ footer {
       <a href="#features">Features</a>
       <a href="#security">Security</a>
       <a href="#usecases">Use Cases</a>
-      <a href="/dashboards" class="btn btn-primary btn-sm">Login</a>
+      <a href="/go" id="header-login-btn" class="btn btn-primary btn-sm">Login</a>
     </div>
   </header>
 
@@ -1304,7 +1304,7 @@ footer {
     <div class="reveal">
       <h2>Ready to run your agents?</h2>
       <p>Sign in, create a dashboard, and start building in seconds. No installs required.</p>
-      <a href="/go" class="btn btn-primary" style="font-size: 1rem; padding: 14px 32px;">
+      <a href="/go" id="cta-login-btn" class="btn btn-primary" style="font-size: 1rem; padding: 14px 32px;">
         Login
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
       </a>
@@ -1477,19 +1477,109 @@ document.addEventListener('keydown', (e) => {
    CHAT BAR — postMessage to parent if authed, else redirect /go
    ═══════════════════════════════════════════════════════════════ */
 var _parentAuthStatus = false; // set by parent postMessage
+var _loginUrl = null; // popup login URL from parent
+var _loginPopup = null; // reference to login popup window
+var _popupPollTimer = null; // timer for polling popup.closed
+var _pendingSubmit = null; // { prompt, chatBarBottom } when user submitted while unauthenticated
+
+function openLoginPopup(e) {
+  if (_parentAuthStatus) return; // already logged in, let href="/dashboards" work
+  if (!_loginUrl) return; // no popup URL available, let href="/go" work
+
+  e.preventDefault();
+  var w = 500, h = 600;
+  var left = Math.round(screen.width / 2 - w / 2);
+  var top = Math.round(screen.height / 2 - h / 2);
+  _loginPopup = window.open(
+    _loginUrl,
+    'orcabot-login',
+    'width=' + w + ',height=' + h + ',left=' + left + ',top=' + top + ',popup=yes'
+  );
+  // If popup was blocked, fall back to redirect
+  if (!_loginPopup) {
+    window.top.location.href = '/go';
+    return;
+  }
+  // Poll for popup close as fallback
+  clearInterval(_popupPollTimer);
+  _popupPollTimer = setInterval(function() {
+    if (_loginPopup && _loginPopup.closed) {
+      clearInterval(_popupPollTimer);
+      _loginPopup = null;
+      // Popup closed without postMessage — notify parent to check auth
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'login-popup-closed' }, window.location.origin);
+      }
+    }
+  }, 500);
+}
+
+function onLoginComplete(user) {
+  _parentAuthStatus = true;
+  clearInterval(_popupPollTimer);
+  // Forward to parent (page.tsx) with any pending prompt
+  if (window.parent !== window) {
+    var msg = { type: 'login-auth-complete', user: user };
+    if (_pendingSubmit) {
+      msg.pendingPrompt = _pendingSubmit.prompt;
+      msg.chatBarBottom = _pendingSubmit.chatBarBottom;
+    }
+    window.parent.postMessage(msg, window.location.origin);
+  }
+  _pendingSubmit = null;
+  // Update buttons immediately
+  updateLoginButtons(true);
+  // Close popup if still open
+  if (_loginPopup && !_loginPopup.closed) {
+    _loginPopup.close();
+  }
+  _loginPopup = null;
+}
+
+function updateLoginButtons(authenticated) {
+  var headerBtn = document.getElementById('header-login-btn');
+  var ctaBtn = document.getElementById('cta-login-btn');
+  if (authenticated) {
+    if (headerBtn) { headerBtn.href = '/dashboards'; headerBtn.textContent = 'Dashboards'; headerBtn.onclick = null; }
+    if (ctaBtn) { ctaBtn.href = '/dashboards'; ctaBtn.innerHTML = 'Dashboards <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>'; ctaBtn.onclick = null; }
+  } else {
+    if (headerBtn) { headerBtn.href = '/go'; headerBtn.textContent = 'Login'; headerBtn.onclick = openLoginPopup; }
+    if (ctaBtn) { ctaBtn.href = '/go'; ctaBtn.innerHTML = 'Login <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>'; ctaBtn.onclick = openLoginPopup; }
+  }
+}
 
 function initChatBar() {
   var input = document.getElementById('chat-input');
   var sendBtn = document.getElementById('chat-send');
   var submitted = false;
 
-  // Listen for auth status from parent frame (same-origin only)
+  // Listen for auth status and login completion from parent frame
   window.addEventListener('message', function(e) {
     if (e.origin !== window.location.origin) return;
     if (e.data && e.data.type === 'orcabot_auth_status') {
       _parentAuthStatus = !!e.data.authenticated;
+      if (e.data.loginUrl) _loginUrl = e.data.loginUrl;
+      updateLoginButtons(_parentAuthStatus);
+    }
+    // Login completion from popup (popup → window.opener which is this iframe)
+    if (e.data && e.data.type === 'login-auth-complete') {
+      onLoginComplete(e.data.user);
     }
   });
+
+  // BroadcastChannel fallback for login completion (same pattern as integration OAuth)
+  try {
+    var bc = new BroadcastChannel('orcabot-oauth');
+    bc.onmessage = function(e) {
+      if (e.data && e.data.type === 'login-auth-complete') {
+        onLoginComplete(e.data.user);
+      }
+    };
+  } catch(ignored) {}
+
+  // Wire up onclick for login buttons (popup mode)
+  document.getElementById('header-login-btn').onclick = openLoginPopup;
+  document.getElementById('cta-login-btn').onclick = openLoginPopup;
 
   function handleSend() {
     var query = input.value.trim();
@@ -1498,16 +1588,16 @@ function initChatBar() {
     // Always set localStorage as safety net
     localStorage.setItem('orcabot_initial_prompt', query);
 
+    // Calculate chat bar position for transition animation
+    var chatBar = input.closest('.chat-bar');
+    var rect = chatBar.getBoundingClientRect();
+    var chatBarBottom = window.innerHeight - rect.bottom;
+
     // If parent signaled authenticated, use postMessage for smooth transition
     if (_parentAuthStatus && window.parent !== window) {
       submitted = true;
       input.disabled = true;
       sendBtn.disabled = true;
-
-      // Calculate chat bar position relative to viewport bottom
-      var chatBar = input.closest('.chat-bar');
-      var rect = chatBar.getBoundingClientRect();
-      var chatBarBottom = window.innerHeight - rect.bottom;
 
       window.parent.postMessage({
         type: 'orcabot_splash_submit',
@@ -1517,7 +1607,17 @@ function initChatBar() {
       return;
     }
 
-    // Fallback: redirect to /go (unauthenticated or not in iframe)
+    // Not authenticated — try popup login with pending prompt
+    if (_loginUrl) {
+      submitted = true;
+      input.disabled = true;
+      sendBtn.disabled = true;
+      _pendingSubmit = { prompt: query, chatBarBottom: chatBarBottom };
+      openLoginPopup({ preventDefault: function(){} });
+      return;
+    }
+
+    // Fallback: redirect to /go (no popup URL available)
     (window.top || window).location.href = '/go';
   }
 

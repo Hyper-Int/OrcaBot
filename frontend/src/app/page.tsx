@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v12-smooth-transition
+// REVISION: splash-v14-popup-login
 "use client";
 
-const MODULE_REVISION = "splash-v12-smooth-transition";
+const MODULE_REVISION = "splash-v14-popup-login";
 console.log(
   `[page] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSplashTransitionStore } from "@/stores/splash-transition-store";
 import { createDashboard } from "@/lib/api/cloudflare/dashboards";
+import { API } from "@/config/env";
 
 export default function Home() {
   const router = useRouter();
@@ -31,9 +32,10 @@ export default function Home() {
     if (!iframe?.contentWindow) return;
 
     // The iframe may not be loaded yet, so try on load too
+    const loginUrl = `${API.cloudflare.base}/auth/google/login?mode=popup`;
     const sendAuth = () => {
       iframe.contentWindow?.postMessage(
-        { type: "orcabot_auth_status", authenticated: isAuthenticated },
+        { type: "orcabot_auth_status", authenticated: isAuthenticated, loginUrl },
         window.location.origin
       );
     };
@@ -100,6 +102,97 @@ export default function Home() {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [isAuthenticated, router, startTransition, setAnimating, reset]);
+
+  // Listen for login completion from splash iframe (popup OAuth flow)
+  React.useEffect(() => {
+    function handleLoginComplete(data: {
+      user: { id: string; email: string; name: string };
+      pendingPrompt?: string;
+      chatBarBottom?: number;
+    }) {
+      const { user, pendingPrompt, chatBarBottom } = data;
+      console.log(
+        `[page] Login auth complete: ${user.email}${pendingPrompt ? `, pendingPrompt="${pendingPrompt.slice(0, 40)}"` : ""}`
+      );
+      useAuthStore.getState().setUser(user);
+
+      if (pendingPrompt) {
+        // User submitted a prompt before logging in — create dashboard
+        if (creatingRef.current) return;
+        creatingRef.current = true;
+
+        localStorage.setItem("orcabot_initial_prompt", pendingPrompt);
+        const store = useSplashTransitionStore.getState();
+        store.startTransition(pendingPrompt, chatBarBottom || 0);
+
+        const dashName =
+          pendingPrompt.slice(0, 40) + (pendingPrompt.length > 40 ? "..." : "");
+
+        createDashboard(dashName)
+          .then(({ dashboard }) => {
+            console.log(
+              `[page] Dashboard created after login: ${dashboard.id}`
+            );
+            useSplashTransitionStore.getState().setAnimating(dashboard.id);
+            router.push(`/dashboards/${dashboard.id}`);
+          })
+          .catch((err) => {
+            console.error("[page] Failed to create dashboard:", err);
+            creatingRef.current = false;
+            useSplashTransitionStore.getState().reset();
+            toast.error("Failed to create dashboard");
+            router.push("/dashboards");
+          });
+      } else {
+        // Simple login — go to dashboards list
+        router.push("/dashboards");
+      }
+    }
+
+    function handleMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === "login-auth-complete" && e.data.user) {
+        handleLoginComplete(e.data);
+      }
+      if (e.data?.type === "login-popup-closed") {
+        // Popup closed without postMessage — check if session cookie was set
+        console.log("[page] Login popup closed, checking auth...");
+        fetch(API.cloudflare.usersMe, { credentials: "include" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then(
+            (data: {
+              user?: { id: string; email: string; name: string };
+            } | null) => {
+              if (data?.user) {
+                // Check if there's a pending prompt in localStorage
+                const pendingPrompt =
+                  localStorage.getItem("orcabot_initial_prompt") || undefined;
+                handleLoginComplete({ user: data.user, pendingPrompt });
+              }
+            }
+          )
+          .catch(() => {});
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+
+    // BroadcastChannel fallback (same pattern as integration OAuth)
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel("orcabot-oauth");
+      bc.onmessage = (e: MessageEvent) => {
+        if (e.data?.type === "login-auth-complete" && e.data.user) {
+          handleLoginComplete(e.data);
+        }
+      };
+    } catch {}
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      try { bc?.close(); } catch {}
+    };
+  }, [router]);
 
   // Hide the iframe when the transition overlay is active
   const iframeHidden = phase !== "idle" && phase !== "done";

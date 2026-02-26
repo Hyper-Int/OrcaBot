@@ -73,12 +73,13 @@ export default function RootLayout({
               (function() {
                 try {
                   var stored = localStorage.getItem('theme-storage');
+                  var theme = 'midnight'; // default for first-time users
                   if (stored) {
                     var parsed = JSON.parse(stored);
-                    var theme = parsed.state && parsed.state.theme;
-                    if (theme === 'dark' || theme === 'midnight') {
-                      document.documentElement.classList.add(theme);
-                    }
+                    theme = (parsed.state && parsed.state.theme) || 'midnight';
+                  }
+                  if (theme === 'dark' || theme === 'midnight') {
+                    document.documentElement.classList.add(theme);
                   }
                   if (new URLSearchParams(window.location.search).get('egress') === '1') {
                     localStorage.setItem('orcabot_egress_enabled', '1');

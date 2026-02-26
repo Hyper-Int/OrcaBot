@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: popup-login-v1-oauth-popup
+const moduleRevision = "popup-login-v1-oauth-popup";
+console.log(`[auth/google] REVISION: ${moduleRevision} loaded at ${new Date().toISOString()}`);
+
 import type { Env } from '../types';
 import { buildSessionCookie, createUserSession } from './sessions';
 import { processPendingInvitations } from '../members/handler';
@@ -196,11 +200,13 @@ export async function loginWithGoogle(
     return renderErrorPage('Google OAuth is not configured.');
   }
 
+  const requestUrl = new URL(request.url);
+  const isPopupMode = requestUrl.searchParams.get('mode') === 'popup';
+
   // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
-  if (env.TURNSTILE_SECRET_KEY) {
-    const turnstileToken = new URL(request.url).searchParams.get(
-      'turnstile_token'
-    );
+  // Skip Turnstile in popup mode — Google OAuth consent screen provides bot protection
+  if (env.TURNSTILE_SECRET_KEY && !isPopupMode) {
+    const turnstileToken = requestUrl.searchParams.get('turnstile_token');
     if (!turnstileToken) {
       return renderErrorPage('Bot verification required. Please try again.');
     }
@@ -216,7 +222,8 @@ export async function loginWithGoogle(
 
   const state = crypto.randomUUID();
   const redirectUri = `${getRedirectBase(request, env)}/auth/google/callback`;
-  const postLoginRedirect = resolvePostLoginRedirect(request, env);
+  // In popup mode, store sentinel "popup" so callback knows to render completion page
+  const postLoginRedirect = isPopupMode ? 'popup' : resolvePostLoginRedirect(request, env);
 
   await createAuthState(env, state, postLoginRedirect);
 
@@ -316,6 +323,18 @@ export async function callbackGoogle(
   const session = await createUserSession(env, userId);
   const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
+  // Popup mode: render completion page with postMessage instead of redirect
+  if (postLoginRedirect === 'popup') {
+    const frontendOrigin = env.FRONTEND_URL
+      ? new URL(env.FRONTEND_URL).origin
+      : new URL(request.url).origin;
+    return renderLoginCompletePage(frontendOrigin, cookie, {
+      id: userId,
+      email: userInfo.email,
+      name: userInfo.name || userInfo.email.split('@')[0],
+    });
+  }
+
   return new Response(null, {
     status: 302,
     headers: {
@@ -323,4 +342,57 @@ export async function callbackGoogle(
       'Set-Cookie': cookie,
     },
   });
+}
+
+function renderLoginCompletePage(
+  frontendOrigin: string,
+  cookie: string,
+  user: { id: string; email: string; name: string }
+): Response {
+  const payload = JSON.stringify({
+    type: 'login-auth-complete',
+    user: { id: user.id, email: user.email, name: user.name },
+  });
+  return new Response(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Signed in</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 32px; }
+      .card { max-width: 520px; margin: 0 auto; text-align: center; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 0 0 16px; color: #4b5563; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Signed in</h1>
+      <p>You can return to OrcaBot.</p>
+    </div>
+    <script>
+      try {
+        if (window.opener) {
+          window.opener.postMessage(${payload}, ${JSON.stringify(frontendOrigin)});
+        }
+      } catch {}
+      try {
+        var bc = new BroadcastChannel('orcabot-oauth');
+        bc.postMessage(${payload});
+        bc.close();
+      } catch {}
+      setTimeout(function() { window.close(); }, 200);
+    </script>
+  </body>
+</html>`,
+    {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Security-Policy': `frame-ancestors ${frontendOrigin}`,
+        'Set-Cookie': cookie,
+      },
+    }
+  );
 }
