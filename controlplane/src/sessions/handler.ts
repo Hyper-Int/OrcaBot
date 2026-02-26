@@ -296,14 +296,18 @@ export async function ensureDashbоardSandbоx(
     }
 
     // Validate session still exists on sandbox (may be stale after redeploy).
-    // Only a definitive 404 (session gone) triggers cleanup. Transient errors
-    // (network flap, 502, timeout) return existing info — the caller's createPty
-    // stale-session catch will handle true failures, and a retry will re-check.
+    // REVISION: session-recovery-v2-reprovision-on-5xx-validation
+    // 404 means missing session state; 502/503 generally means stale machine
+    // routing (Fly-Replay to dead/absent machine). Both should reprovision.
     try {
       const checkRes = await sandboxFetch(
         env,
         `/sessions/${existingSandbox.sandbox_session_id}/ptys`,
-        { machineId: existingSandbox.sandbox_machine_id || undefined }
+        {
+          machineId: existingSandbox.sandbox_machine_id || undefined,
+          timeoutMs: 5_000,
+          retries: 0,
+        }
       );
 
       if (checkRes.ok) {
@@ -320,9 +324,17 @@ export async function ensureDashbоardSandbоx(
           DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
         `).bind(dashboardId).run();
         // Fall through to create new sandbox below
+      } else if (
+        (checkRes.status === 502 || checkRes.status === 503)
+        && existingSandbox.sandbox_machine_id
+      ) {
+        console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status} for machine ${existingSandbox.sandbox_machine_id}, clearing for reprovision`);
+        await env.DB.prepare(`
+          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+        `).bind(dashboardId).run();
+        // Fall through to create new sandbox below
       } else {
-        // Non-404 error (502, 503, etc.) — could be transient; return existing info
-        // rather than destroying the sandbox record and forcing a full reprovision
+        // Other non-404 responses may be transient; keep existing mapping.
         console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status}, returning existing sandbox (may be transient)`);
         return {
           sandboxSessionId: existingSandbox.sandbox_session_id,
@@ -1032,6 +1044,40 @@ async function triggerMirrorSync(
   });
 }
 
+// REVISION: session-recovery-v2-stale-existing-session-guard
+async function isExistingSessionReusable(
+  sandbox: SandboxClient,
+  existingSession: Record<string, unknown>
+): Promise<boolean> {
+  const fastTimeoutMs = 5_000;
+  const status = (existingSession.status as string) || '';
+  if (status === 'creating') {
+    const createdAt = existingSession.created_at as string | undefined;
+    if (!createdAt) return false;
+    const ageMs = Date.now() - new Date(createdAt).getTime();
+    return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 45_000;
+  }
+
+  const sandboxSessionId = (existingSession.sandbox_session_id as string) || '';
+  const sandboxMachineId = (existingSession.sandbox_machine_id as string) || '';
+  const ptyId = (existingSession.pty_id as string) || '';
+  if (!sandboxSessionId || !ptyId) {
+    return false;
+  }
+
+  const healthy = await sandbox.health(sandboxMachineId || undefined, fastTimeoutMs);
+  if (!healthy) {
+    return false;
+  }
+
+  try {
+    const ptys = await sandbox.listPtys(sandboxSessionId, sandboxMachineId || undefined, fastTimeoutMs);
+    return ptys.some((pty) => pty.id === ptyId);
+  } catch {
+    return false;
+  }
+}
+
 // Create a session for a terminal item
 export async function createSessiоn(
   env: EnvWithDriveCache,
@@ -1062,28 +1108,45 @@ export async function createSessiоn(
     return Response.json({ error: 'E79202: Terminal item not found' }, { status: 404 });
   }
 
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+
   // Check if session already exists for this item
   const existingSession = await env.DB.prepare(`
     SELECT * FROM sessions WHERE item_id = ? AND status IN ('creating', 'active')
   `).bind(itemId).first();
 
   if (existingSession) {
-    return Response.json({
-      session: {
-        id: existingSession.id,
-        dashboardId: existingSession.dashboard_id,
-        itemId: existingSession.item_id,
-        ownerUserId: existingSession.owner_user_id,
-        ownerName: existingSession.owner_name,
-        sandboxSessionId: existingSession.sandbox_session_id,
-        sandboxMachineId: existingSession.sandbox_machine_id,
-        ptyId: existingSession.pty_id,
-        status: existingSession.status,
-        region: existingSession.region,
-        createdAt: existingSession.created_at,
-        stoppedAt: existingSession.stopped_at,
-      }
-    });
+    const reusable = await isExistingSessionReusable(
+      sandbox,
+      existingSession as Record<string, unknown>
+    );
+    if (!reusable) {
+      const staleId = (existingSession.id as string) || itemId;
+      const staleStatus = (existingSession.status as string) || 'unknown';
+      console.warn(`[createSession] Retiring stale existing session ${staleId} (status=${staleStatus})`);
+      await env.DB.prepare(`
+        UPDATE sessions
+        SET status = 'stopped', stopped_at = ?
+        WHERE id = ?
+      `).bind(new Date().toISOString(), staleId).run();
+    } else {
+      return Response.json({
+        session: {
+          id: existingSession.id,
+          dashboardId: existingSession.dashboard_id,
+          itemId: existingSession.item_id,
+          ownerUserId: existingSession.owner_user_id,
+          ownerName: existingSession.owner_name,
+          sandboxSessionId: existingSession.sandbox_session_id,
+          sandboxMachineId: existingSession.sandbox_machine_id,
+          ptyId: existingSession.pty_id,
+          status: existingSession.status,
+          region: existingSession.region,
+          createdAt: existingSession.created_at,
+          stoppedAt: existingSession.stopped_at,
+        }
+      });
+    }
   }
 
   const id = generateId();
@@ -1114,9 +1177,6 @@ export async function createSessiоn(
       VALUES (?, ?, ?, ?, ?, '', '', '', 'creating', 'local', ?)
     `).bind(id, dashboardId, itemId, userId, userName, now).run();
   }
-
-  // Create sandbox session and PTY
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
 
   try {
     const terminalConfig = parseTerminalConfig(item.content);
