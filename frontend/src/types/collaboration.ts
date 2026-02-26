@@ -328,6 +328,7 @@ export type UICommandType =
   | 'create_todo'
   | 'create_note'
   | 'create_terminal'
+  | 'create_integration'
   | 'update_item'
   | 'delete_item'
   | 'connect_nodes'
@@ -385,6 +386,16 @@ export interface CreateTerminalCommand extends UICommandBase {
   name?: string;
   boot_command?: string;
   agentic?: boolean;
+  position?: { x: number; y: number };
+  size?: { width: number; height: number };
+}
+
+/**
+ * Create integration command
+ */
+export interface CreateIntegrationCommand extends UICommandBase {
+  type: 'create_integration';
+  provider: string;
   position?: { x: number; y: number };
   size?: { width: number; height: number };
 }
@@ -466,6 +477,7 @@ export type UICommand =
   | CreateTodoCommand
   | CreateNoteCommand
   | CreateTerminalCommand
+  | CreateIntegrationCommand
   | UpdateItemCommand
   | DeleteItemCommand
   | ConnectNodesCommand

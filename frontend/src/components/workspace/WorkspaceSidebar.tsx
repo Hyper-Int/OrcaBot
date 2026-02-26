@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v24-folder-import
-const MODULE_REVISION = "workspace-sidebar-v24-folder-import";
+// REVISION: workspace-sidebar-v25-hide-lost-found
+const MODULE_REVISION = "workspace-sidebar-v25-hide-lost-found";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -130,6 +130,15 @@ const SIDEBAR_WIDTH_KEY = "orcabot:sidebar-width";
 const DEFAULT_WIDTH = 168;
 const MIN_WIDTH = 160;
 const MAX_WIDTH = 400;
+const HIDDEN_SYSTEM_ENTRY_NAMES = new Set(["lost+found"]);
+
+function isHiddenSystemEntry(entry: Pick<SessionFileEntry, "name" | "path">): boolean {
+  return (
+    HIDDEN_SYSTEM_ENTRY_NAMES.has(entry.name) ||
+    entry.path === "/lost+found" ||
+    entry.path.startsWith("/lost+found/")
+  );
+}
 
 interface WorkspaceSidebarProps {
   dashboardId: string;
@@ -329,7 +338,8 @@ export function WorkspaceSidebar({
     async (path: string) => {
       if (!sessionId) return;
       try {
-        const entries = await listSessionFiles(sessionId, path);
+        const entries = (await listSessionFiles(sessionId, path))
+          .filter((entry) => !isHiddenSystemEntry(entry));
         entries.sort((a, b) => {
           if (a.is_dir && !b.is_dir) return -1;
           if (!a.is_dir && b.is_dir) return 1;
@@ -399,11 +409,13 @@ export function WorkspaceSidebar({
   const mergePreviewEntries = React.useCallback(
     (target: Record<string, SessionFileEntry[]>, source: Record<string, SessionFileEntry[]>) => {
       Object.entries(source).forEach(([path, entries]) => {
+        const visibleEntries = entries.filter((entry) => !isHiddenSystemEntry(entry));
+        if (visibleEntries.length === 0) return;
         if (!target[path]) {
-          target[path] = [...entries];
+          target[path] = [...visibleEntries];
           return;
         }
-        target[path] = [...target[path], ...entries];
+        target[path] = [...target[path], ...visibleEntries];
       });
       Object.keys(target).forEach((key) => {
         target[key].sort((a, b) => {
@@ -419,6 +431,7 @@ export function WorkspaceSidebar({
   const buildSnapshotPreviewEntries = React.useCallback((files: SessionFileEntry[]) => {
     const entryMap: Record<string, SessionFileEntry[]> = {};
     for (const file of files) {
+      if (isHiddenSystemEntry(file)) continue;
       const parent = file.path.split("/").slice(0, -1).join("/") || "/";
       if (!entryMap[parent]) entryMap[parent] = [];
       entryMap[parent].push(file);
@@ -1028,9 +1041,11 @@ export function WorkspaceSidebar({
   const renderFileTree = React.useCallback(
     (path: string, depth = 0): React.ReactNode => {
       const entries = fileEntries[path] || [];
-      const filteredEntries = showHiddenFiles
-        ? entries
-        : entries.filter((entry) => !entry.name.startsWith("."));
+      const filteredEntries = entries.filter((entry) => {
+        if (isHiddenSystemEntry(entry)) return false;
+        if (showHiddenFiles) return true;
+        return !entry.name.startsWith(".");
+      });
       return filteredEntries.map((entry) => {
         const isExpanded = expandedPaths.has(entry.path);
         const isDir = entry.is_dir;

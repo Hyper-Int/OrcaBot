@@ -104,6 +104,10 @@ var defaultDomains = []string{
 	"dl.google.com",
 	"storage.googleapis.com",
 	"objects.githubusercontent.com",
+
+	// Cloud metadata & auth
+	"metadata.google.internal",
+	"auth.openai.com",
 }
 
 // NewAllowlist creates an Allowlist with default domains.

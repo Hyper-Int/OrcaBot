@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v51-analytics
-console.log(`[dashboard] REVISION: dashboard-v51-analytics loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v53-reconnect-after-connected
+console.log(`[dashboard] REVISION: dashboard-v53-reconnect-after-connected loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -2515,6 +2515,8 @@ export default function DashboardPage() {
     createEdgeFn,
     deleteEdgeFn,
     onCommandExecuted: handleCommandExecuted,
+    computePlacement,
+    ensureVisible,
   });
 
   // Connect UI command execution to collaboration WebSocket
@@ -3388,6 +3390,67 @@ export default function DashboardPage() {
   const edgesToRender = pendingEdge ? [...edges, pendingEdge] : edges;
   const extraNodes = cursorNode ? [cursorNode] : [];
 
+  // Connection status indicator (hooks must be above early returns)
+  const isCollaborationConnected = collabState.connectionState === "connected";
+
+  // Track whether WS has ever connected — only show reconnect banner after
+  // an established connection drops, not during the initial connection phase.
+  const hasEverConnectedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isCollaborationConnected) {
+      hasEverConnectedRef.current = true;
+    }
+  }, [isCollaborationConnected]);
+
+  const isReconnectingRaw = hasEverConnectedRef.current &&
+    (collabState.connectionState === "reconnecting" ||
+     collabState.connectionState === "disconnected");
+
+  // Debounced reconnection banner:
+  // - Only shown after connection was previously established (not initial connect)
+  // - Don't show if disconnection lasts less than 500ms (avoids brief yellow flash)
+  // - Once shown, keep visible for at least 3s so it's readable
+  const [showReconnectBanner, setShowReconnectBanner] = React.useState(false);
+  const reconnectTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bannerShownAtRef = React.useRef<number>(0);
+  const MIN_DISPLAY_MS = 3000;
+  const SHOW_DELAY_MS = 500;
+
+  React.useEffect(() => {
+    if (isReconnectingRaw) {
+      // Wait 500ms before showing — if connection restores faster, skip the banner entirely
+      if (!showReconnectBanner && !reconnectTimerRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          bannerShownAtRef.current = Date.now();
+          setShowReconnectBanner(true);
+        }, SHOW_DELAY_MS);
+      }
+    } else {
+      // Connection restored — cancel pending show timer
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      // If banner is visible, keep it for the remaining minimum display time
+      if (showReconnectBanner) {
+        const elapsed = Date.now() - bannerShownAtRef.current;
+        const remaining = Math.max(0, MIN_DISPLAY_MS - elapsed);
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          setShowReconnectBanner(false);
+        }, remaining);
+      }
+    }
+
+    return () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+  }, [isReconnectingRaw, showReconnectBanner]);
+
   if (!isAuthResolved || !isAuthenticated) {
     return null;
   }
@@ -3445,17 +3508,12 @@ export default function DashboardPage() {
     );
   }
 
-  // Connection status indicator
-  const isCollaborationConnected = collabState.connectionState === "connected";
-  const isReconnecting = collabState.connectionState === "reconnecting" ||
-                         collabState.connectionState === "disconnected";
-
   return (
     <div className="h-screen flex flex-col bg-[var(--background)]">
       <PaywallDialog />
-      {/* Reconnection banner - shows when disconnected but we have cached data */}
-      {isReconnecting && (
-        <div className="bg-[var(--status-warning)] text-[var(--background)] px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2">
+      {/* Reconnection banner - debounced: 500ms delay to show, 3s minimum display */}
+      {showReconnectBanner && (
+        <div className="bg-[var(--status-warning)] text-[var(--background)] px-4 py-2 text-center text-sm font-medium flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-2 duration-300">
           <div className="w-2 h-2 rounded-full bg-current animate-pulse" />
           Connection lost. Reconnecting...
         </div>

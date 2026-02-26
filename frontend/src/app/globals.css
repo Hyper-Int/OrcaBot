@@ -277,6 +277,24 @@
   to { transform: translateX(-50%); }
 }
 
+/* Force dark blue background on autofill inside chat input bar.
+   Chrome overrides background-color on :-webkit-autofill — the only
+   reliable counter is a large inset box-shadow in the desired color
+   plus an extremely long transition delay to prevent Chrome's UA paint. */
+input.chat-input-splash:-webkit-autofill,
+input.chat-input-splash:-webkit-autofill:hover,
+input.chat-input-splash:-webkit-autofill:focus,
+input.chat-input-splash:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 9999px rgb(11, 22, 59) inset !important;
+  box-shadow: 0 0 0 9999px rgb(11, 22, 59) inset !important;
+  -webkit-text-fill-color: #e8edf5 !important;
+  caret-color: #00e5ff !important;
+  background-color: rgb(11, 22, 59) !important;
+  background-image: none !important;
+  color: #e8edf5 !important;
+  transition: background-color 600000s 0s, color 600000s 0s !important;
+}
+
 @keyframes marquee-right {
   from { transform: translateX(-50%); }
   to { transform: translateX(0); }
@@ -312,6 +330,9 @@ body {
 :focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
+}
+input.chat-input-splash:focus-visible {
+  outline: none;
 }
 
 /* ===== Scrollbar Styling ===== */
@@ -679,3 +700,5 @@ body {
 .metro-edge-chevrons {
   animation: metro-chevron-flow 0.6s linear infinite;
 }
+
+/* Chat entry animation removed — chat bar appears instantly on dashboard */

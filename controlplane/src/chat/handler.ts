@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v14-url-history-json
+// REVISION: chat-v16-friendly-errors
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v14-url-history-json loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v16-friendly-errors loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import {
@@ -58,6 +58,11 @@ TERMINAL CREATION RULES:
 - To create a plain shell terminal: use create_terminal with no boot_command, agentic=false
 - NEVER create a plain terminal and then use terminal_start_agent to start an agent. Always use boot_command on create_terminal instead.
 - terminal_start_agent is only for starting agents in EXISTING terminals that are already open.
+
+INTEGRATION RULES:
+- To set up an integration (Gmail, GitHub, Slack, etc.), use create_integration to add the block to the dashboard.
+- The block handles OAuth connection via its built-in Connect button. NEVER give users raw URLs.
+- After creating the integration block, create a terminal and use connect_nodes to wire them if the user wants an agent to use the integration.
 
 When working with dashboards, use dashboard_list first to find existing ones, or dashboard_create to make a new one.`;
 
@@ -153,24 +158,6 @@ const INTEGRATION_TOOLS: GeminiTool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
-    },
-  },
-  {
-    name: 'integration_get_connect_url',
-    description: 'Get the OAuth URL to connect a new integration. User must visit this URL to authorize.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        provider: {
-          type: 'string',
-          description: 'The provider to connect (gmail, github, slack, discord, google_calendar, google_drive, etc.)',
-        },
-        dashboard_id: {
-          type: 'string',
-          description: 'The dashboard ID for context (optional)',
-        },
-      },
-      required: ['provider'],
     },
   },
   {
@@ -513,11 +500,11 @@ function generateId(): string {
 
 // Available integration providers
 // Only list providers that have working OAuth connect URLs
+// Provider names here must match valid dashboard_items.type values in the DB
+// (e.g. 'calendar' not 'google_calendar', 'gmail' not 'google_gmail')
 const AVAILABLE_PROVIDERS = [
   { provider: 'gmail', name: 'Gmail', description: 'Read and send emails' },
-  { provider: 'github', name: 'GitHub', description: 'Access repositories and issues' },
-  { provider: 'google_calendar', name: 'Google Calendar', description: 'Manage calendar events' },
-  { provider: 'google_drive', name: 'Google Drive', description: 'Access files and folders' },
+  { provider: 'calendar', name: 'Google Calendar', description: 'Manage calendar events' },
   { provider: 'slack', name: 'Slack', description: 'Send and receive messages' },
   { provider: 'discord', name: 'Discord', description: 'Send and receive messages' },
 ];
@@ -535,14 +522,19 @@ function getConnectUrl(env: Env, provider: string, dashboardId?: string, request
     return null;
   }
 
+  // Accept both block type names (calendar, contacts) and provider names (google_calendar)
   const providerMap: Record<string, string> = {
     gmail: '/integrations/google/gmail/connect',
-    github: '/integrations/github/connect',
+    calendar: '/integrations/google/calendar/connect',
     google_calendar: '/integrations/google/calendar/connect',
-    google_drive: '/integrations/google/drive/connect',
+    contacts: '/integrations/google/contacts/connect',
     google_contacts: '/integrations/google/contacts/connect',
+    sheets: '/integrations/google/sheets/connect',
     google_sheets: '/integrations/google/sheets/connect',
+    forms: '/integrations/google/forms/connect',
     google_forms: '/integrations/google/forms/connect',
+    google_drive: '/integrations/google/drive/connect',
+    github: '/integrations/github/connect',
     slack: '/integrations/slack/connect',
     discord: '/integrations/discord/connect',
   };
@@ -628,7 +620,7 @@ async function executeTool(
       return {
         result: {
           providers: AVAILABLE_PROVIDERS,
-          message: 'Use integration_get_connect_url to get the OAuth URL for a provider',
+          message: 'Use create_integration to add a provider block to the dashboard. The block handles OAuth connection via its built-in Connect button.',
         },
         isError: false,
       };
@@ -674,32 +666,6 @@ async function executeTool(
       };
     }
 
-    if (toolName === 'integration_get_connect_url') {
-      const provider = args.provider as string;
-      const dashboardId = args.dashboard_id as string | undefined;
-      const url = getConnectUrl(env, provider, dashboardId, requestOrigin);
-
-      if (!url) {
-        const knownProviders = AVAILABLE_PROVIDERS.map(p => p.provider);
-        const errorMsg = knownProviders.includes(provider)
-          ? `Cannot generate connect URL for ${provider}: server base URL is not configured (OAUTH_REDIRECT_BASE).`
-          : `Unknown provider: ${provider}. Available: ${knownProviders.join(', ')}`;
-        return {
-          result: { error: errorMsg },
-          isError: true,
-        };
-      }
-
-      return {
-        result: {
-          provider,
-          connect_url: url,
-          message: `To connect ${provider}, the user must visit this URL and complete OAuth authorization`,
-        },
-        isError: false,
-      };
-    }
-
     if (toolName === 'integration_list_terminal_attachments') {
       const response = await integrationPolicies.listDashboardIntegrationLabels(
         env,
@@ -734,7 +700,7 @@ async function executeTool(
       if (!userIntegration && provider !== 'browser') {
         return {
           result: {
-            error: `No ${provider} connection found. The user needs to connect ${provider} first using integration_get_connect_url.`,
+            error: `No ${provider} connection found. Use create_integration to add the ${provider} block to the dashboard — the user can connect via its built-in Connect button.`,
           },
           isError: true,
         };
@@ -1443,7 +1409,8 @@ export async function streamMessage(
                 buildFunctionResponse(tc.name, result),
               ];
             } else if (chunk.type === 'error') {
-              const errorEvent: ChatStreamEvent = { type: 'error', error: chunk.error || 'Unknown error' };
+              console.error('[chat] Gemini API error (raw):', chunk.error);
+              const errorEvent: ChatStreamEvent = { type: 'error', error: 'Something went wrong — please try again.' };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
             }
           }
@@ -1484,7 +1451,7 @@ export async function streamMessage(
         console.error('[chat] Streaming error:', error);
         const errorEvent: ChatStreamEvent = {
           type: 'error',
-          error: error instanceof Error ? error.message : 'Streaming failed',
+          error: 'Something went wrong — please try again.',
         };
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
         controller.close();
