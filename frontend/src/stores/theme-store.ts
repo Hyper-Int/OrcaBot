@@ -4,8 +4,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// REVISION: midnight-theme-v1-add-midnight-option
-const MODULE_REVISION = "midnight-theme-v1-add-midnight-option";
+// REVISION: midnight-theme-v2-default-midnight
+const MODULE_REVISION = "midnight-theme-v2-default-midnight";
 console.log(`[theme-store] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 type Theme = "light" | "dark" | "midnight";
@@ -21,7 +21,7 @@ interface ThemeState {
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      theme: "light",
+      theme: "midnight",
       setTheme: (theme) => {
         set({ theme });
         applyTheme(theme);
