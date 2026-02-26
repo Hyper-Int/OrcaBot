@@ -107,7 +107,7 @@ export default function Home() {
   return (
     <iframe
       ref={iframeRef}
-      src="/splash_claude.html"
+      src="/splash.html"
       style={{
         width: "100%",
         height: "100vh",
