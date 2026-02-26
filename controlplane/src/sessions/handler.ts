@@ -1181,6 +1181,32 @@ export async function createSessiоn(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir } = terminalConfig;
+    let appliedSecretNames: string[] = [];
+
+    const applyDashboardSecretsBeforePtyStart = async (
+      sandboxSessionId: string,
+      sandboxMachineId: string
+    ): Promise<string[]> => {
+      const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
+      const secrets = await getSecretsWithProtection(env, userId, dashboardId);
+      const approvedDomains = await getApprovedDomainsForDashboard(env, userId, dashboardId);
+      const secretNames = Object.keys(secrets);
+
+      if (secretNames.length > 0 || approvedDomains.length > 0) {
+        await sandbox.updateEnv(
+          sandboxSessionId,
+          {
+            secrets: secretNames.length > 0 ? secrets : undefined,
+            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
+            // PTYs started after this call load from .env at process start.
+            applyNow: false,
+          },
+          sandboxMachineId || undefined
+        );
+      }
+
+      return secretNames;
+    };
 
     // Use ensureDashboardSandbox which checks machine health via Fly API,
     // handles destroyed machines (FlyMachineNotFoundError → reprovision),
@@ -1192,6 +1218,14 @@ export async function createSessiоn(
       return sandboxResult;
     }
     let { sandboxSessionId, sandboxMachineId } = sandboxResult;
+
+    // Apply dashboard secrets before PTY start so agent apps inherit env at launch.
+    try {
+      appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
+    } catch (err) {
+      console.error('[createSession] Failed to pre-apply secrets before PTY start:', err);
+      // Non-fatal - continue with session creation
+    }
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
     // If the session is stale (sandbox redeployed), clear it and create a fresh one
@@ -1253,6 +1287,14 @@ export async function createSessiоn(
       sandboxSessionId = freshResult.sandboxSessionId;
       sandboxMachineId = freshResult.sandboxMachineId;
 
+      // Fresh sandbox starts empty; pre-apply secrets before launching PTY.
+      try {
+        appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
+      } catch (secretErr) {
+        console.error('[createSession] Failed to pre-apply secrets on reprovisioned sandbox:', secretErr);
+        // Non-fatal - continue with session creation
+      }
+
       // Regenerate integration token with fresh sandbox session ID
       const freshIntegrationToken = await createPtyToken(
         ptyId,
@@ -1293,36 +1335,12 @@ export async function createSessiоn(
       console.error('[createSession] Failed to migrate integrations:', err);
     }
 
-    // Auto-apply dashboard secrets to the new session
-    try {
-      const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
-      const secrets = await getSecretsWithProtection(env, userId, dashboardId);
-      const approvedDomains = await getApprovedDomainsForDashboard(env, userId, dashboardId);
-      const secretNames = Object.keys(secrets);
-      if (secretNames.length > 0 || approvedDomains.length > 0) {
-        // Convert to the format expected by sandbox: { name: { value, brokerProtected } }
-        // applyNow: true because the PTY is already running at this point —
-        // .env was empty when the PTY started, so we must inject env vars into the live shell
-        await sandbox.updateEnv(
-          sandboxSessionId,
-          {
-            secrets: secretNames.length > 0 ? secrets : undefined,
-            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-            applyNow: true,
-          },
-          sandboxMachineId || undefined
-        );
-      }
-      // Track applied secret names for deletion tracking (upsert in case row exists from sandbox creation)
-      await env.DB.prepare(`
-        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
-      `).bind(dashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(secretNames), now).run();
-    } catch (err) {
-      console.error('Failed to auto-apply secrets:', err);
-      // Non-fatal - continue with session creation
-    }
+    // Track applied secret names for deletion tracking (upsert in case row exists from sandbox creation)
+    await env.DB.prepare(`
+      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
+    `).bind(dashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(appliedSecretNames), now).run();
 
     const session: Session = {
       id,
