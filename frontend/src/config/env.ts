@@ -226,6 +226,8 @@ export const API = {
     // Subscriptions
     subscriptionCheckout: `${CLOUDFLARE_API_URL}/subscriptions/checkout`,
     subscriptionPortal: `${CLOUDFLARE_API_URL}/subscriptions/portal`,
+    // Admin
+    adminMetrics: `${CLOUDFLARE_API_URL}/admin/metrics`,
     // Chat
     chat: `${CLOUDFLARE_API_URL}/chat`,
     chatMessage: `${CLOUDFLARE_API_URL}/chat/message`,
