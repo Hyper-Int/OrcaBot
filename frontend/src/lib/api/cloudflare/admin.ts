@@ -20,11 +20,20 @@ export interface AdminMetrics {
   blockTypeDistribution: { type: string; count: number }[];
   integrationAdoption: { provider: string; count: number }[];
   subscriptionBreakdown: { status: string; count: number }[];
-  topUsers: { user_id: string; email: string; name: string; event_count: number }[];
+  topUsers: {
+    user_id: string;
+    email: string;
+    name: string;
+    session_count: number;
+    event_count: number;
+  }[];
   retention7d: { totalEligible: number; retained: number; rate: number };
   totals: { users: number; dashboards: number; sessions: number };
 }
 
-export async function getAdminMetrics(): Promise<AdminMetrics> {
-  return apiGet<AdminMetrics>(API.cloudflare.adminMetrics);
+export async function getAdminMetrics(excludeAdmins?: boolean): Promise<AdminMetrics> {
+  const url = excludeAdmins
+    ? `${API.cloudflare.adminMetrics}?excludeAdmins=1`
+    : API.cloudflare.adminMetrics;
+  return apiGet<AdminMetrics>(url);
 }

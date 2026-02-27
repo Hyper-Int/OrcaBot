@@ -362,28 +362,28 @@ export default function DashboardsPage() {
               <TrialBanner />
               {isAdmin && (
                 <>
-                <Tooltip content="Platform metrics">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => router.push("/admin")}
-                    leftIcon={<BarChart3 className="w-4 h-4" />}
-                  >
-                    Metrics
-                  </Button>
-                </Tooltip>
-                <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
-                  <Button
-                  variant={adminMode ? "danger" : "ghost"}
-                  size="sm"
-                  onClick={() => setAdminMode(!adminMode)}
-                  leftIcon={<Shield className="w-4 h-4" />}
-                >
-                  {adminMode ? "Admin" : "Admin"}
-                </Button>
-              </Tooltip>
-              </>
-            )}
+                  <Tooltip content="Platform metrics">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => router.push("/admin")}
+                      leftIcon={<BarChart3 className="w-4 h-4" />}
+                    >
+                      Metrics
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content={adminMode ? "Exit admin mode" : "Enter admin mode"}>
+                    <Button
+                      variant={adminMode ? "danger" : "ghost"}
+                      size="sm"
+                      onClick={() => setAdminMode(!adminMode)}
+                      leftIcon={<Shield className="w-4 h-4" />}
+                    >
+                      {adminMode ? "Admin" : "Admin"}
+                    </Button>
+                  </Tooltip>
+                </>
+              )}
               {!DESKTOP_MODE && (
                 <div className="flex items-center gap-2">
                   <Avatar name={user?.name || "User"} size="sm" />

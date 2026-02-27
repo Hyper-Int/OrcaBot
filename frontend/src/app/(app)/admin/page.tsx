@@ -13,12 +13,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 
-import {
-  Button,
-  Skeleton,
-  ThemeToggle,
-  Tooltip,
-} from "@/components/ui";
+import { Button, Skeleton, ThemeToggle, Tooltip } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
 import { getAdminMetrics, type AdminMetrics } from "@/lib/api/cloudflare";
 
@@ -116,6 +111,7 @@ function DataTable<T extends Record<string, unknown>>({
 export default function AdminMetricsPage() {
   const router = useRouter();
   const { isAuthenticated, isAuthResolved, isAdmin } = useAuthStore();
+  const [excludeAdmins, setExcludeAdmins] = React.useState(false);
 
   // Auth + admin gate
   React.useEffect(() => {
@@ -132,8 +128,8 @@ export default function AdminMetricsPage() {
     refetch,
     isFetching,
   } = useQuery<AdminMetrics>({
-    queryKey: ["admin-metrics"],
-    queryFn: getAdminMetrics,
+    queryKey: ["admin-metrics", excludeAdmins],
+    queryFn: () => getAdminMetrics(excludeAdmins),
     enabled: isAuthenticated && isAuthResolved && isAdmin,
     refetchInterval: 5 * 60 * 1000, // 5 minutes
   });
@@ -158,6 +154,15 @@ export default function AdminMetricsPage() {
             </span>
           </div>
           <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-[var(--foreground-muted)] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={excludeAdmins}
+                onChange={(e) => setExcludeAdmins(e.target.checked)}
+                className="rounded border-[var(--border)]"
+              />
+              Exclude admins
+            </label>
             <Tooltip content="Refresh metrics">
               <Button
                 variant="secondary"
@@ -351,7 +356,7 @@ export default function AdminMetricsPage() {
               />
             </section>
 
-            {/* Subscription Breakdown */}
+            {/* Subscription Breakdown + Retention Detail */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <DataTable
                 title="Subscription Breakdown"
@@ -404,6 +409,7 @@ export default function AdminMetricsPage() {
                   { key: "rank", label: "#", align: "right" },
                   { key: "email", label: "Email" },
                   { key: "name", label: "Name" },
+                  { key: "session_count", label: "Sessions", align: "right" },
                   { key: "event_count", label: "Events", align: "right" },
                 ]}
                 rows={metrics.topUsers.slice(0, 20).map((u, i) => ({
