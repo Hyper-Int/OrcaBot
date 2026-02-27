@@ -190,7 +190,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 	// Initialize state cache: load from disk and sync from server
 	// REVISION: state-cache-v3-wired
 	if err := s.stateCache.Load(); err != nil {
-		log.Printf("[session] Failed to load state cache: %v", err)
+		log.Printf("[session] Failed to load state cache: dashboardID=%s session=%s err=%v", s.DashboardID, s.ID, err)
 	}
 
 	// Sync from server in background if we have a token
@@ -199,7 +199,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 			controlPlaneURL := os.Getenv("CONTROLPLANE_URL")
 			if controlPlaneURL != "" {
 				if err := s.stateCache.SyncFromServer(mcpToken, controlPlaneURL); err != nil {
-					log.Printf("[session] Failed to sync state cache: %v", err)
+					log.Printf("[session] Failed to sync state cache: dashboardID=%s session=%s err=%v", s.DashboardID, s.ID, err)
 				}
 			}
 		}()
@@ -556,6 +556,7 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	}
 	envVars["ORCABOT_SESSION_ID"] = s.ID
 	envVars["ORCABOT_PTY_ID"] = ptyID
+	envVars["DASHBOARD_ID"] = s.DashboardID
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
 	// Point agents to the localhost-only MCP server (no auth required)
@@ -755,6 +756,7 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	}
 	envVars["ORCABOT_SESSION_ID"] = s.ID
 	envVars["ORCABOT_PTY_ID"] = ptyID
+	envVars["DASHBOARD_ID"] = s.DashboardID
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
 	// Point agents to the localhost-only MCP server (no auth required)
@@ -1047,7 +1049,7 @@ func (s *Session) OnDriveIntegrationAttached(ptyToken string) {
 	defer s.driveSyncMu.Unlock()
 
 	s.driveSyncRefCount++
-	log.Printf("[session] Drive integration attached (refCount=%d)", s.driveSyncRefCount)
+	log.Printf("[session] Drive integration attached: dashboardID=%s session=%s refCount=%d", s.DashboardID, s.ID, s.driveSyncRefCount)
 
 	if s.driveSyncer != nil {
 		// Already running — update the token so we don't use a stale one
@@ -1067,7 +1069,7 @@ func (s *Session) OnDriveIntegrationAttached(ptyToken string) {
 	s.driveSyncer = syncer
 	syncer.Start()
 
-	log.Printf("[session] Drive sync started")
+	log.Printf("[session] Drive sync started: dashboardID=%s session=%s", s.DashboardID, s.ID)
 }
 
 // OnDriveIntegrationDetached decrements the Drive sync reference count.
@@ -1079,12 +1081,12 @@ func (s *Session) OnDriveIntegrationDetached() {
 	if s.driveSyncRefCount > 0 {
 		s.driveSyncRefCount--
 	}
-	log.Printf("[session] Drive integration detached (refCount=%d)", s.driveSyncRefCount)
+	log.Printf("[session] Drive integration detached: dashboardID=%s session=%s refCount=%d", s.DashboardID, s.ID, s.driveSyncRefCount)
 
 	if s.driveSyncRefCount == 0 && s.driveSyncer != nil {
 		s.driveSyncer.Stop()
 		s.driveSyncer = nil
-		log.Printf("[session] Drive sync stopped and cleaned up")
+		log.Printf("[session] Drive sync stopped and cleaned up: dashboardID=%s session=%s", s.DashboardID, s.ID)
 	}
 }
 
@@ -1092,7 +1094,7 @@ func (s *Session) OnDriveIntegrationDetached() {
 func (s *Session) broadcastDriveSyncEvent(event drivesync.SyncEvent) {
 	data, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("[session] failed to marshal drive sync event: %v", err)
+		log.Printf("[session] failed to marshal drive sync event: dashboardID=%s session=%s err=%v", s.DashboardID, s.ID, err)
 		return
 	}
 
@@ -1123,13 +1125,13 @@ func (s *Session) NotifyIntegrations(ptyID string, providers []string, ptyToken 
 
 	// Detect newly attached Drive
 	if curr["google_drive"] && !prev["google_drive"] {
-		log.Printf("[session] Drive integration attached via PTY %s", ptyID)
+		log.Printf("[session] Drive integration attached via PTY %s: dashboardID=%s session=%s", ptyID, s.DashboardID, s.ID)
 		go s.OnDriveIntegrationAttached(ptyToken)
 	}
 
 	// Detect detached Drive
 	if !curr["google_drive"] && prev["google_drive"] {
-		log.Printf("[session] Drive integration detached via PTY %s", ptyID)
+		log.Printf("[session] Drive integration detached via PTY %s: dashboardID=%s session=%s", ptyID, s.DashboardID, s.ID)
 		go s.OnDriveIntegrationDetached()
 	}
 

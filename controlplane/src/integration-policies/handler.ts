@@ -187,7 +187,7 @@ async function checkRateLimit(
     return { allowed: true };
   } catch (e) {
     // If rate limiting fails, deny the request (fail closed for security)
-    console.error('[rate-limit] Failed to check rate limit (failing closed):', e);
+    console.error(`[rate-limit] Failed to check rate limit (failing closed) (terminalIntegrationId=${terminalIntegrationId}, provider=${provider}, action=${action}):`, e);
     return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
   }
 }

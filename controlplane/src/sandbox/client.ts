@@ -186,7 +186,7 @@ export class SandboxClient {
     });
     if (!res.ok) {
       const errorText = await res.text();
-      console.error(`[sandbox] Failed to update env: ${res.status} - ${errorText}`);
+      console.error(`[sandbox] Failed to update env: ${res.status} sessionId=${sessionId} - ${errorText}`);
       throw new Error(`Failed to update env: ${res.status}`);
     }
   }

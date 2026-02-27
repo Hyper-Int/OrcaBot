@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v21-whatsapp-bridge-retry-restart
-const integrationsRevision = "integrations-v21-whatsapp-bridge-retry-restart";
+// REVISION: integrations-v24-propagate-error-message
+const integrationsRevision = "integrations-v24-propagate-error-message";
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -1184,7 +1184,7 @@ export async function callbackGооgleDrive(
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
 
-  console.log('Google Drive token exchange redirect_uri:', redirectUri);
+  console.log(`Google Drive token exchange redirect_uri: ${redirectUri} dashboardId=${dashboardId}`);
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1193,7 +1193,7 @@ export async function callbackGооgleDrive(
 
   if (!tokenResponse.ok) {
     const errBody = await tokenResponse.text().catch(() => '');
-    console.error('Google Drive token exchange failed:', tokenResponse.status, errBody);
+    console.error(`Google Drive token exchange failed: ${tokenResponse.status} ${errBody} dashboardId=${dashboardId}`);
     return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
@@ -1519,7 +1519,7 @@ export async function setGithubRepо(
       branch
     );
   } catch (error) {
-    console.error('Failed to record GitHub repo history:', error);
+    console.error(`Failed to record GitHub repo history: dashboardId=${data.dashboardId}`, error);
   }
 
   try {
@@ -3526,7 +3526,7 @@ async function startSandboxMirrorSync(
   // SECURITY: Validate provider against whitelist before any database operations
   const tableName = getMirrorTableName(provider);
   if (!tableName) {
-    console.error(`[integrations] Invalid mirror provider: ${provider}`);
+    console.error(`[integrations] Invalid mirror provider: ${provider} dashboardId=${dashboardId}`);
     return;
   }
 
@@ -4687,7 +4687,7 @@ export async function callbackBоx(
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
 
-  console.log('Box token exchange redirect_uri:', redirectUri);
+  console.log(`Box token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://api.box.com/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -4696,7 +4696,7 @@ export async function callbackBоx(
 
   if (!tokenResponse.ok) {
     const errBody = await tokenResponse.text().catch(() => '');
-    console.error('Box token exchange failed:', tokenResponse.status, errBody);
+    console.error(`Box token exchange failed: ${tokenResponse.status} ${errBody} dashboardId=${stateData.metadata.dashboardId}`);
     return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
@@ -4812,7 +4812,7 @@ export async function callbackОnedrive(
   body.set('redirect_uri', redirectUri);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
 
-  console.log('OneDrive token exchange redirect_uri:', redirectUri);
+  console.log(`OneDrive token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -4821,7 +4821,7 @@ export async function callbackОnedrive(
 
   if (!tokenResponse.ok) {
     const errBody = await tokenResponse.text().catch(() => '');
-    console.error('OneDrive token exchange failed:', tokenResponse.status, errBody);
+    console.error(`OneDrive token exchange failed: ${tokenResponse.status} ${errBody} dashboardId=${stateData.metadata.dashboardId}`);
     return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
   }
 
@@ -6647,7 +6647,7 @@ export async function setupCalendarMirror(
   try {
     await runCalendarSync(env, auth.user!.id, data.dashboardId, accessToken);
   } catch (error) {
-    console.error('Initial calendar sync failed:', error);
+    console.error(`Initial calendar sync failed: dashboardId=${data.dashboardId}`, error);
   }
 
   return Response.json({ ok: true, emailAddress: profile.email });
@@ -7572,7 +7572,7 @@ export async function setupContactsMirror(
   try {
     await runContactsSync(env, auth.user!.id, data.dashboardId, accessToken);
   } catch (error) {
-    console.error('Initial contacts sync failed:', error);
+    console.error(`Initial contacts sync failed: dashboardId=${data.dashboardId}`, error);
   }
 
   return Response.json({ ok: true, emailAddress: profile.email });
@@ -9672,6 +9672,31 @@ export async function getSlackStatus(
   });
 }
 
+async function deleteTerminalIntegrationBindingsForProvider(
+  env: EnvWithDriveCache,
+  userId: string,
+  provider: string,
+): Promise<void> {
+  const userIntegrations = await env.DB.prepare(`
+    SELECT id FROM user_integrations WHERE user_id = ? AND provider = ?
+  `).bind(userId, provider).all<{ id: string }>();
+
+  for (const ui of userIntegrations.results || []) {
+    const tiRows = await env.DB.prepare(`
+      SELECT id FROM terminal_integrations WHERE user_integration_id = ?
+    `).bind(ui.id).all<{ id: string }>();
+
+    for (const ti of tiRows.results || []) {
+      // Delete children first (no ON DELETE CASCADE).
+      await env.DB.prepare(`DELETE FROM integration_audit_log WHERE terminal_integration_id = ?`).bind(ti.id).run();
+      await env.DB.prepare(`DELETE FROM high_risk_confirmations WHERE terminal_integration_id = ?`).bind(ti.id).run();
+      await env.DB.prepare(`DELETE FROM integration_policies WHERE terminal_integration_id = ?`).bind(ti.id).run();
+    }
+
+    await env.DB.prepare(`DELETE FROM terminal_integrations WHERE user_integration_id = ?`).bind(ui.id).run();
+  }
+}
+
 /**
  * Disconnect Slack integration for a user.
  * DELETE /integrations/slack?dashboard_id=...
@@ -9690,6 +9715,8 @@ export async function disconnectSlack(
     UPDATE messaging_subscriptions SET status = 'paused', user_integration_id = NULL, updated_at = datetime('now')
     WHERE user_id = ? AND provider = 'slack'
   `).bind(auth.user!.id).run();
+
+  await deleteTerminalIntegrationBindingsForProvider(env, auth.user!.id, 'slack');
 
   // Delete the user's Slack integration
   await env.DB.prepare(`
@@ -9869,7 +9896,7 @@ export async function callbackDiscord(
 
   if (!tokenResponse.ok) {
     const errText = await tokenResponse.text().catch(() => '');
-    console.error(`[integrations] Discord token exchange failed: ${tokenResponse.status} ${errText}`);
+    console.error(`[integrations] Discord token exchange failed: ${tokenResponse.status} ${errText} dashboardId=${dashboardId}`);
     return renderErrorPage('Failed to exchange Discord token.');
   }
 
@@ -10041,6 +10068,8 @@ export async function disconnectDiscord(
     UPDATE messaging_subscriptions SET status = 'paused', user_integration_id = NULL, updated_at = datetime('now')
     WHERE user_id = ? AND provider = 'discord'
   `).bind(auth.user!.id).run();
+
+  await deleteTerminalIntegrationBindingsForProvider(env, auth.user!.id, 'discord');
 
   await env.DB.prepare(`
     DELETE FROM user_integrations WHERE user_id = ? AND provider = 'discord'
@@ -10594,6 +10623,8 @@ export async function disconnectMessaging(
     return Response.json({ error: 'E79557: Unknown messaging provider' }, { status: 400 });
   }
 
+  await deleteTerminalIntegrationBindingsForProvider(env, auth.user!.id, provider);
+
   await env.DB.prepare(
     'DELETE FROM user_integrations WHERE user_id = ? AND provider = ?'
   ).bind(auth.user!.id, provider).run();
@@ -10694,7 +10725,7 @@ export async function connectWhatsAppPersonal(
     }
 
     // Bridge has no session — restart it (with hybrid config if applicable)
-    console.log(`[integrations] Stale bridge session for subscription ${existing.id}, restarting`);
+    console.log(`[integrations] Stale bridge session for subscription ${existing.id}, restarting dashboardId=${body.dashboardId}`);
     const callbackUrl = `${(env.OAUTH_REDIRECT_BASE || new URL(request.url).origin).replace(/\/$/, '')}/internal/bridge/inbound`;
     const restartIsHybrid = existing.hybrid_mode === 1 && !!env.WHATSAPP_BUSINESS_PHONE;
     try {
@@ -10703,6 +10734,7 @@ export async function connectWhatsAppPersonal(
         userId: auth.user!.id,
         provider: 'whatsapp',
         callbackUrl,
+        dashboardId: body.dashboardId,
         config: restartIsHybrid ? { hybridMode: true, businessPhoneJid: `${env.WHATSAPP_BUSINESS_PHONE}@s.whatsapp.net` } : undefined,
       });
       return Response.json({
@@ -10713,7 +10745,7 @@ export async function connectWhatsAppPersonal(
       });
     } catch (err) {
       // Bridge totally unreachable — clean up the stale subscription so user can retry
-      console.error('[integrations] Bridge unreachable, cleaning up stale subscription:', err);
+      console.error(`[integrations] Bridge unreachable, cleaning up stale subscription: dashboardId=${body.dashboardId}`, err);
       await env.DB.prepare('DELETE FROM messaging_subscriptions WHERE id = ?').bind(existing.id).run();
       // Fall through to create a fresh subscription below
     }
@@ -10770,6 +10802,7 @@ export async function connectWhatsAppPersonal(
       userId: auth.user!.id,
       provider: 'whatsapp',
       callbackUrl,
+      dashboardId: body.dashboardId,
       config: isHybridMode ? { hybridMode: true, businessPhoneJid } : undefined,
     });
 
@@ -10782,7 +10815,7 @@ export async function connectWhatsAppPersonal(
   } catch (err) {
     // Roll back subscription if bridge call fails
     await env.DB.prepare('DELETE FROM messaging_subscriptions WHERE id = ?').bind(subscriptionId).run();
-    console.error('[integrations] Bridge startSession failed:', err);
+    console.error(`[integrations] Bridge startSession failed: dashboardId=${body.dashboardId}`, err);
     return Response.json(
       { error: 'Failed to start WhatsApp connection — bridge service unavailable' },
       { status: 502 },
@@ -10816,9 +10849,9 @@ export async function getWhatsAppQr(
 
   // Look up subscription and verify ownership
   const sub = await env.DB.prepare(`
-    SELECT id, webhook_id, status, hybrid_mode FROM messaging_subscriptions
+    SELECT id, webhook_id, status, hybrid_mode, dashboard_id FROM messaging_subscriptions
     WHERE id = ? AND user_id = ? AND provider = 'whatsapp'
-  `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string; hybrid_mode: number }>();
+  `).bind(subscriptionId, auth.user!.id).first<{ id: string; webhook_id: string; status: string; hybrid_mode: number; dashboard_id: string }>();
 
   if (!sub) {
     return Response.json({ error: 'E79565: Subscription not found' }, { status: 404 });
@@ -10838,8 +10871,8 @@ export async function getWhatsAppQr(
 
     if (qrResult && qrResult.status === 'error') {
       // Bridge explicitly exhausted all reconnect attempts — propagate error to user (do not auto-restart).
-      console.log(`[integrations] Bridge session for ${sub.webhook_id} reached error state after max retries`);
-      return Response.json({ status: 'error', qrCode: null });
+      console.log(`[integrations] Bridge session for ${sub.webhook_id} reached error state: ${qrResult.error || 'unknown'}`);
+      return Response.json({ status: 'error', qrCode: null, error: qrResult.error || null });
     }
 
     if (!qrResult) {
@@ -10853,6 +10886,7 @@ export async function getWhatsAppQr(
           userId: auth.user!.id,
           provider: 'whatsapp',
           callbackUrl,
+          dashboardId: sub.dashboard_id,
           config: restartIsHybrid ? { hybridMode: true, businessPhoneJid: `${env.WHATSAPP_BUSINESS_PHONE}@s.whatsapp.net` } : undefined,
         });
         return Response.json({
@@ -10876,6 +10910,7 @@ export async function getWhatsAppQr(
     return Response.json({
       status: qrResult.status,
       qrCode: qrResult.qrCode || null,
+      reconnectAttempts: qrResult.reconnectAttempts ?? 0,
     });
   } catch (err) {
     console.error('[integrations] Bridge getQrCode failed:', err);

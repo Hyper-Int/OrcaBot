@@ -86,7 +86,7 @@ export async function executeScheduleByEdges(
   ).run();
 
   if (terminals.length === 0) {
-    console.log(`[executor] Schedule ${schedule.id} has no connected terminals — marked complete`);
+    console.log(`[executor] Schedule ${schedule.id} dashboardId=${dashboardId} has no connected terminals — marked complete`);
     return {
       id: executionId,
       scheduleId: schedule.id,
@@ -118,9 +118,9 @@ export async function executeScheduleByEdges(
       },
     });
     agentTaskId = agentTask.id;
-    console.log(`[executor] Created agent task ${agentTaskId} for schedule ${schedule.id}`);
+    console.log(`[executor] Created agent task ${agentTaskId} for schedule ${schedule.id} dashboardId=${dashboardId}`);
   } catch (error) {
-    console.error('[executor] Failed to create agent task:', error);
+    console.error(`[executor] Failed to create agent task dashboardId=${dashboardId}:`, error);
     // Non-fatal: continue with execution even if task creation fails
   }
 
@@ -174,7 +174,7 @@ export async function executeScheduleByEdges(
         if (!command) {
           // No command to run — mark terminal completed immediately (no-op)
           terminal.status = 'completed';
-          console.log(`[executor] No command for existing PTY ${terminal.ptyId} — marked completed`);
+          console.log(`[executor] No command for existing PTY ${terminal.ptyId} dashboardId=${dashboardId} — marked completed`);
         } else {
           // Fire-and-forget: dispatch command to existing PTY and mark completed immediately.
           // A long-running shell PTY won't exit after a single command, so we can't rely on
@@ -188,7 +188,7 @@ export async function executeScheduleByEdges(
           );
 
           terminal.status = 'completed';
-          console.log(`[executor] Wrote command to existing PTY ${terminal.ptyId} for terminal ${terminal.itemId} — marked completed (fire-and-forget)`);
+          console.log(`[executor] Wrote command to existing PTY ${terminal.ptyId} for terminal ${terminal.itemId} dashboardId=${dashboardId} — marked completed (fire-and-forget)`);
         }
       } else {
         // No active PTY — need a command to justify creating one
@@ -196,7 +196,7 @@ export async function executeScheduleByEdges(
         if (!command) {
           // No command and no existing PTY — nothing to do, mark completed
           terminal.status = 'completed';
-          console.log(`[executor] No command and no active PTY for terminal ${terminal.itemId} — marked completed`);
+          console.log(`[executor] No command and no active PTY for terminal ${terminal.itemId} dashboardId=${dashboardId} — marked completed`);
         } else {
           // Create a new PTY with the command as boot command
           const ptyId = generateId();
@@ -245,11 +245,11 @@ export async function executeScheduleByEdges(
             now,
           ).run();
 
-          console.log(`[executor] Created PTY ${ptyId} for terminal ${terminal.itemId}`);
+          console.log(`[executor] Created PTY ${ptyId} for terminal ${terminal.itemId} dashboardId=${dashboardId}`);
         }
       }
     } catch (error) {
-      console.error(`[executor] Failed to trigger terminal ${terminal.itemId}:`, error);
+      console.error(`[executor] Failed to trigger terminal ${terminal.itemId} dashboardId=${dashboardId}:`, error);
       terminal.status = 'failed';
       terminal.error = error instanceof Error ? error.message : 'Unknown error';
     }
@@ -272,9 +272,9 @@ export async function executeScheduleByEdges(
       try {
         const taskStatus = execStatus === 'failed' ? 'cancelled' : 'completed';
         await updateTaskStatusInternal(env, agentTaskId, taskStatus);
-        console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus} (callback-finalized)`);
+        console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus} dashboardId=${dashboardId} (callback-finalized)`);
       } catch (error) {
-        console.error('[executor] Failed to update agent task:', error);
+        console.error(`[executor] Failed to update agent task dashboardId=${dashboardId}:`, error);
       }
     }
 
@@ -334,9 +334,9 @@ export async function executeScheduleByEdges(
     try {
       const taskStatus = finalStatus === 'failed' ? 'cancelled' : 'completed';
       await updateTaskStatusInternal(env, agentTaskId, taskStatus, finalError || undefined);
-      console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus}`);
+      console.log(`[executor] Updated agent task ${agentTaskId} to ${taskStatus} dashboardId=${dashboardId}`);
     } catch (error) {
-      console.error('[executor] Failed to update agent task:', error);
+      console.error(`[executor] Failed to update agent task dashboardId=${dashboardId}:`, error);
     }
   }
 

@@ -94,7 +94,7 @@ async function broadcastTaskCreate(env: Env, dashboardId: string, task: AgentTas
       body: JSON.stringify(task),
     }));
   } catch (error) {
-    console.error('[agent-state] Failed to broadcast task_create:', error);
+    console.error(`[agent-state] Failed to broadcast task_create (dashboardId=${dashboardId}):`, error);
   }
 }
 
@@ -107,7 +107,7 @@ async function broadcastTaskUpdate(env: Env, dashboardId: string, task: AgentTas
       body: JSON.stringify(task),
     }));
   } catch (error) {
-    console.error('[agent-state] Failed to broadcast task_update:', error);
+    console.error(`[agent-state] Failed to broadcast task_update (dashboardId=${dashboardId}):`, error);
   }
 }
 
@@ -120,7 +120,7 @@ async function broadcastTaskDelete(env: Env, dashboardId: string, taskId: string
       body: JSON.stringify({ taskId }),
     }));
   } catch (error) {
-    console.error('[agent-state] Failed to broadcast task_delete:', error);
+    console.error(`[agent-state] Failed to broadcast task_delete (dashboardId=${dashboardId}):`, error);
   }
 }
 
@@ -134,7 +134,7 @@ async function broadcastMemoryUpdate(env: Env, dashboardId: string, key: string,
       body: JSON.stringify({ key, memory, sessionId: sessionId ?? null }),
     }));
   } catch (error) {
-    console.error('[agent-state] Failed to broadcast memory_update:', error);
+    console.error(`[agent-state] Failed to broadcast memory_update (dashboardId=${dashboardId}):`, error);
   }
 }
 
@@ -1156,7 +1156,7 @@ export async function cleanupExpiredMemory(env: Env): Promise<number> {
         row.session_id as string | null
       );
     } catch (error) {
-      console.error('[agent-state] Failed to broadcast expired memory deletion:', error);
+      console.error(`[agent-state] Failed to broadcast expired memory deletion (dashboardId=${row.dashboard_id}):`, error);
     }
   }
 

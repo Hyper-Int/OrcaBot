@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-delivery-v25-directional-edges
-const MODULE_REVISION = 'messaging-delivery-v25-directional-edges';
+// REVISION: messaging-delivery-v27-fix-retry-keepbuffered-condition
+const MODULE_REVISION = 'messaging-delivery-v27-fix-retry-keepbuffered-condition';
 console.log(`[messaging-delivery] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -184,7 +184,47 @@ export async function deliverOrWakeAndDrain(
   }
 
   // 4. Claim and fan out buffered messages to all targets (terminals + items)
-  await claimAndFanOut(env, sandbox, dashboardId, messagingItemId, provider, terminalPtys, itemTargets);
+  const connectedTerminalEdgeCount = connectedTerminals.results?.length ?? 0;
+  await claimAndFanOut(env, sandbox, dashboardId, messagingItemId, provider, terminalPtys, itemTargets, connectedTerminalEdgeCount);
+}
+
+/**
+ * Deliver with fast in-process retries and backoff.
+ *
+ * Called from the webhook handler inside ctx.waitUntil(). After the initial attempt,
+ * if messages are still buffered (e.g. sandbox starting up, transient PTY failure),
+ * retries at 1s → 3s → 5s intervals before giving up and leaving to the minutely cron.
+ *
+ * The minutely cron (retryBufferedMessages + wakeAndDrainStaleMessages) is still a backstop
+ * for cases where the Worker's waitUntil budget is exhausted before all retries complete.
+ */
+export async function deliverWithRetry(
+  env: Env,
+  dashboardId: string,
+  messagingItemId: string,
+  userId: string,
+  provider: string,
+  retryDelaysMs = [1000, 3000, 5000],
+): Promise<void> {
+  await deliverOrWakeAndDrain(env, dashboardId, messagingItemId, userId, provider);
+
+  for (const delayMs of retryDelaysMs) {
+    // Check if any messages are still buffered before sleeping
+    const remaining = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM inbound_messages im
+      JOIN messaging_subscriptions ms ON ms.id = im.subscription_id
+      WHERE im.dashboard_id = ? AND im.status = 'buffered'
+        AND im.provider = ?
+        AND ms.item_id = ? AND ms.status = 'active'
+        AND im.expires_at > datetime('now')
+    `).bind(dashboardId, provider, messagingItemId).first<{ count: number }>();
+
+    if (!remaining?.count) break; // All delivered
+
+    console.log(`[delivery] ${remaining.count} message(s) still buffered for dashboard ${dashboardId} — retrying in ${delayMs}ms`);
+    await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+    await deliverOrWakeAndDrain(env, dashboardId, messagingItemId, userId, provider);
+  }
 }
 
 interface TerminalPty {
@@ -381,6 +421,7 @@ async function claimAndFanOut(
   provider: string,
   terminalPtys: TerminalPty[],
   itemTargets: ItemTarget[] = [],
+  connectedTerminalEdgeCount = 0,
 ): Promise<void> {
   // Select buffered messages from ACTIVE subscriptions connected to this messaging block.
   // Filter by provider to prevent cross-provider leakage: if a single messaging block
@@ -501,18 +542,33 @@ async function claimAndFanOut(
 
       // Check if all targets have been delivered (combining previous + new)
       const allDeliveredIds = [...alreadyDelivered, ...newlyDelivered];
-      const allTargetIds = [
-        ...terminalPtys.map(p => p.terminalItemId),
-        ...itemTargets.map(t => t.itemId),
-      ];
       const allTargetsHandled = newlyDelivered.length > 0 || alreadyDelivered.size > 0;
 
-      if (!failedTargets.length && allTargetsHandled) {
+      // If terminal edges exist but no PTYs were resolved (sandbox down or D1 lag),
+      // keep buffered so the retry cron can attempt terminal delivery once the sandbox
+      // recovers. This must NOT check newlyDeliveredToItems — on retry rounds the note
+      // is already in alreadyDelivered so no new item delivery happens, but terminals
+      // are still unresolved and must not be skipped.
+      const keepBufferedForTerminalRetry = connectedTerminalEdgeCount > 0 && terminalPtys.length === 0;
+
+      if (!failedTargets.length && allTargetsHandled && !keepBufferedForTerminalRetry) {
         await env.DB.prepare(`
           UPDATE inbound_messages
           SET status = 'delivered', delivered_at = datetime('now'), delivered_terminals = ?
           WHERE id = ?
         `).bind(JSON.stringify(allDeliveredIds), msg.id).run();
+      } else if (keepBufferedForTerminalRetry) {
+        // Terminal edges exist but no PTYs resolved — keep buffered for retry.
+        // Respect the max-attempts limit so this doesn't retry forever.
+        const newStatus = attemptsAfterClaim >= 3 ? 'failed' : 'buffered';
+        await env.DB.prepare(`
+          UPDATE inbound_messages SET status = ?, delivered_terminals = ? WHERE id = ?
+        `).bind(newStatus, JSON.stringify(allDeliveredIds), msg.id).run();
+        if (newStatus === 'buffered') {
+          console.log(`[delivery] Message ${msg.id}: ${connectedTerminalEdgeCount} terminal edge(s) unresolved — keeping buffered for terminal retry`);
+        } else {
+          console.log(`[delivery] Message ${msg.id}: terminal edges unresolved after max attempts — marking failed`);
+        }
       } else if (failedTargets.length) {
         const newStatus = attemptsAfterClaim >= 3 ? 'failed' : 'buffered';
         await env.DB.prepare(`
@@ -905,7 +961,7 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
 
       if (!terminalPtys.length && !itemTargets.length) continue;
 
-      await claimAndFanOut(env, terminalPtys.length ? sandbox : null, row.dashboard_id, row.messaging_item_id, row.provider, terminalPtys, itemTargets);
+      await claimAndFanOut(env, terminalPtys.length ? sandbox : null, row.dashboard_id, row.messaging_item_id, row.provider, terminalPtys, itemTargets, connectedTerminals.results?.length ?? 0);
     } catch (err) {
       console.error(`[delivery] Retry failed for dashboard ${row.dashboard_id}:`, err);
     }

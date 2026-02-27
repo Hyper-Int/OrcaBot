@@ -184,11 +184,11 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// REVISION: env-live-injection-v2-disable-runtime-apply
+	// Runtime PTY env injection causes command bytes to leak into foreground TUIs.
+	// Always apply via .env + next PTY start.
 	if req.ApplyNow {
-		if err := applyEnvToPTYs(session, effectiveEnvVars, req.Unset); err != nil {
-			http.Error(w, "E79748: Failed to update terminal env", http.StatusInternalServerError)
-			return
-		}
+		fmt.Fprintf(os.Stderr, "[env] REVISION: env-live-injection-v2-disable-runtime-apply session=%s apply_now=true ignored\n", session.ID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

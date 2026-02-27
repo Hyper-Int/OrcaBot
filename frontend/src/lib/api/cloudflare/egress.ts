@@ -57,7 +57,6 @@ export async function approveEgress(
 export async function listPendingEgressApprovals(
   dashboardId: string,
 ): Promise<PendingEgressApproval[]> {
-  console.log(`[egress-api] listPendingEgressApprovals called at ${new Date().toISOString()}`);
   const response = await apiGet<{ pending: PendingEgressApproval[] }>(
     `${API.cloudflare.base}/dashboards/${dashboardId}/egress/pending`
   );

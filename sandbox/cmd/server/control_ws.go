@@ -33,7 +33,7 @@ func (s *Server) handleControlWebSocket(w http.ResponseWriter, r *http.Request) 
 
 	conn, err := ws.Upgrade(w, r)
 	if err != nil {
-		log.Printf("control websocket upgrade failed: %v", err)
+		log.Printf("control websocket upgrade failed: dashboardID=%s session=%s err=%v", session.DashboardID, session.ID, err)
 		return
 	}
 	defer conn.Close()
@@ -82,11 +82,10 @@ func (s *Server) handleControlWebSocket(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
+		// REVISION: env-live-injection-v2-disable-runtime-apply
+		// Never inject env commands into live PTYs; updates apply on next shell/app start.
 		if msg.ApplyNow {
-			if err := applyEnvToPTYs(session, msg.Set, msg.Unset); err != nil {
-				conn.WriteJSON(controlResponse{Type: "error", Error: "E79748: Failed to update terminal env"})
-				continue
-			}
+			log.Printf("[control_ws] REVISION env-live-injection-v2-disable-runtime-apply dashboardID=%s session=%s apply_now=true ignored", session.DashboardID, session.ID)
 		}
 
 		conn.WriteJSON(controlResponse{Type: "env_result", Status: "ok"})

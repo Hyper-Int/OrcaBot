@@ -115,12 +115,12 @@ export async function autoApplySecretsToSessions(
         `).bind(sessionDashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(currentNames)).run();
 
       } catch (error) {
-        console.error(`[secrets] Failed to apply to session ${sandboxSessionId}:`, error);
+        console.error(`[secrets] Failed to apply to session ${sandboxSessionId} dashboardId=${sessionDashboardId}:`, error);
         // Continue with other sessions
       }
     }
   } catch (error) {
-    console.error('[secrets] Failed to auto-apply secrets:', error);
+    console.error(`[secrets] Failed to auto-apply secrets dashboardId=${dashboardId}:`, error);
     // Non-fatal - don't throw
   }
 }
@@ -232,7 +232,7 @@ export async function createSecret(
     const key = await getEncryptionKey(env);
     encryptedValue = await encryptSecret(data.value, key);
   } catch (error) {
-    console.error('Failed to encrypt secret:', error);
+    console.error(`[secrets] Failed to encrypt secret dashboardId=${effectiveDashboardId}:`, error);
     return Response.json({ error: 'E79739: Failed to encrypt secret' }, { status: 500 });
   }
 
@@ -263,7 +263,7 @@ export async function createSecret(
 
   // Auto-apply to active sessions (non-blocking)
   autoApplySecretsToSessions(env, userId, effectiveDashboardId).catch(err => {
-    console.error('[secrets] Background auto-apply failed:', err);
+    console.error(`[secrets] Background auto-apply failed dashboardId=${effectiveDashboardId}:`, err);
   });
 
   return Response.json({ secret: formatSecret(row as Record<string, unknown>) });
@@ -299,7 +299,7 @@ export async function deleteSecret(
 
   // Auto-apply to active sessions (non-blocking) - this will remove the deleted secret
   autoApplySecretsToSessions(env, userId, effectiveDashboardId).catch(err => {
-    console.error('[secrets] Background auto-apply failed:', err);
+    console.error(`[secrets] Background auto-apply failed dashboardId=${effectiveDashboardId}:`, err);
   });
 
   return new Response(null, { status: 204 });
@@ -387,7 +387,7 @@ export async function getSecretsWithProtection(
       }
       result[name] = { value: decryptedValue, brokerProtected };
     } catch (error) {
-      console.error(`Failed to decrypt secret ${name}:`, error);
+      console.error(`[secrets] Failed to decrypt secret ${name} dashboardId=${dashboardId}:`, error);
       // Skip secrets that fail to decrypt rather than exposing errors
     }
   }
@@ -437,7 +437,7 @@ export async function updateSecretProtection(
 
   // Auto-apply to active sessions (non-blocking) - protection change affects broker config
   autoApplySecretsToSessions(env, userId, effectiveDashboardId).catch(err => {
-    console.error('[secrets] Background auto-apply failed:', err);
+    console.error(`[secrets] Background auto-apply failed dashboardId=${effectiveDashboardId}:`, err);
   });
 
   return Response.json({ secret: formatSecret(row as Record<string, unknown>) });
@@ -682,7 +682,7 @@ export async function approveSecretDomain(
 
   // Auto-apply to active sessions so they get the new approval immediately
   autoApplySecretsToSessions(env, userId, effectiveDashboardId).catch(err => {
-    console.error('[secrets] Background auto-apply failed after domain approval:', err);
+    console.error(`[secrets] Background auto-apply failed after domain approval dashboardId=${effectiveDashboardId}:`, err);
   });
 
   return Response.json({ entry: formatAllowlistEntry(row as Record<string, unknown>) });

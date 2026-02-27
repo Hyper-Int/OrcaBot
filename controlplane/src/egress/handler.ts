@@ -91,14 +91,14 @@ export async function handleApproveEgress(
 
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      console.log(`[egress] Sandbox approve returned ${resp.status} for ${normalizedDomain}: ${errText}`);
+      console.log(`[egress] Sandbox approve returned ${resp.status} for ${normalizedDomain} dashboardId=${dashboardId}: ${errText}`);
       return Response.json(
         { error: `E79874: sandbox rejected decision (${resp.status})`, detail: errText },
         { status: 502 },
       );
     }
   } catch (err) {
-    console.log(`[egress] Failed to forward decision to sandbox: ${err}`);
+    console.log(`[egress] Failed to forward decision to sandbox dashboardId=${dashboardId}: ${err}`);
     return Response.json(
       { error: `E79875: failed to reach sandbox`, detail: String(err) },
       { status: 502 },
@@ -176,7 +176,7 @@ export async function handleListPendingEgress(
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      console.log(`[egress] Sandbox pending returned ${resp.status}: ${errText}`);
+      console.log(`[egress] Sandbox pending returned ${resp.status} dashboardId=${dashboardId}: ${errText}`);
       return Response.json(
         { error: `E79880: sandbox pending lookup failed (${resp.status})`, detail: errText },
         { status: 502 },
@@ -186,7 +186,7 @@ export async function handleListPendingEgress(
     const body = await resp.json() as { pending?: Array<{ domain: string; port: number; request_id: string }> };
     return Response.json({ pending: body.pending || [] });
   } catch (err) {
-    console.log(`[egress] Failed to fetch pending approvals from sandbox: ${err}`);
+    console.log(`[egress] Failed to fetch pending approvals from sandbox dashboardId=${dashboardId}: ${err}`);
     return Response.json(
       { error: 'E79881: failed to reach sandbox pending endpoint', detail: String(err) },
       { status: 502 },
@@ -252,7 +252,7 @@ export async function handleRevokeEgressDomain(
 
       if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
-        console.log(`[egress] Sandbox revoke returned ${resp.status} for ${entry.domain}: ${errText}`);
+        console.log(`[egress] Sandbox revoke returned ${resp.status} for ${entry.domain} dashboardId=${dashboardId}: ${errText}`);
         // Roll back D1 so state stays consistent
         await env.DB.prepare(`
           UPDATE egress_allowlist SET revoked_at = NULL
@@ -264,7 +264,7 @@ export async function handleRevokeEgressDomain(
         );
       }
     } catch (err) {
-      console.log(`[egress] Failed to forward revocation to sandbox: ${err}`);
+      console.log(`[egress] Failed to forward revocation to sandbox dashboardId=${dashboardId}: ${err}`);
       // Roll back D1 so state stays consistent
       await env.DB.prepare(`
         UPDATE egress_allowlist SET revoked_at = NULL

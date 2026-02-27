@@ -70,9 +70,10 @@ type jsonRPCError struct {
 
 // bridgeConfig holds env-derived configuration for the bridge
 type bridgeConfig struct {
-	mcpURL    string
-	ptyID     string
-	mcpSecret string // per-PTY auth nonce for proof-of-possession
+	mcpURL      string
+	ptyID       string
+	mcpSecret   string // per-PTY auth nonce for proof-of-possession
+	dashboardID string // dashboard this bridge belongs to (for log context)
 }
 
 var (
@@ -109,6 +110,7 @@ func main() {
 	}
 
 	// Priority 2: Environment variables
+	cfg.dashboardID = os.Getenv("DASHBOARD_ID")
 	if cfg.ptyID == "" {
 		cfg.ptyID = os.Getenv("ORCABOT_PTY_ID")
 	}
@@ -151,8 +153,8 @@ func main() {
 	if len(ptyPrefix) > 8 {
 		ptyPrefix = ptyPrefix[:8]
 	}
-	log.Printf("[mcp-bridge] final config: mcpURL=%s ptyID=%s... secretSet=%v", cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "")
-	fmt.Fprintf(os.Stderr, "mcp-bridge: using MCP URL: %s\n", cfg.mcpURL)
+	log.Printf("[mcp-bridge] final config: dashboardID=%s mcpURL=%s ptyID=%s... secretSet=%v", cfg.dashboardID, cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "")
+	fmt.Fprintf(os.Stderr, "mcp-bridge: dashboardID=%s using MCP URL: %s\n", cfg.dashboardID, cfg.mcpURL)
 
 	// Pre-warm integration tools in background. MCP clients (especially Codex CLI)
 	// may call tools/list before integrations are loaded (~40s after PTY creation).
@@ -422,7 +424,7 @@ func handleToolsList(cfg *bridgeConfig, req *jsonRPCRequest) *jsonRPCResponse {
 	}
 
 	if resp.StatusCode != 200 {
-		log.Printf("[mcp-bridge] handleToolsList: ERROR status=%d body=%s", resp.StatusCode, string(body))
+		log.Printf("[mcp-bridge] handleToolsList: dashboardID=%s ERROR status=%d body=%s", cfg.dashboardID, resp.StatusCode, string(body))
 		return errorResponse(req.ID, -32000, "Tools endpoint error: "+string(body))
 	}
 
@@ -508,9 +510,9 @@ func monitorToolChanges(cfg *bridgeConfig) {
 	var lastToolKey string
 	if names, err := fetchToolNames(cfg); err == nil {
 		lastToolKey = strings.Join(names, ",")
-		log.Printf("[mcp-bridge] tool monitor: baseline established with %d tools", len(names))
+		log.Printf("[mcp-bridge] tool monitor: dashboardID=%s baseline established with %d tools", cfg.dashboardID, len(names))
 	} else {
-		log.Printf("[mcp-bridge] tool monitor: baseline fetch failed (will retry): %v", err)
+		log.Printf("[mcp-bridge] tool monitor: dashboardID=%s baseline fetch failed (will retry): %v", cfg.dashboardID, err)
 	}
 
 	// Wait for initialization to complete (integrations may be attached during this window)
@@ -524,7 +526,7 @@ func monitorToolChanges(cfg *bridgeConfig) {
 	for {
 		names, err := fetchToolNames(cfg)
 		if err != nil {
-			log.Printf("[mcp-bridge] tool monitor: fetch error: %v", err)
+			log.Printf("[mcp-bridge] tool monitor: dashboardID=%s fetch error: %v", cfg.dashboardID, err)
 			time.Sleep(10 * time.Second)
 			continue
 		}
@@ -536,7 +538,7 @@ func monitorToolChanges(cfg *bridgeConfig) {
 			if lastToolKey != "" {
 				oldCount = strings.Count(lastToolKey, ",") + 1
 			}
-			log.Printf("[mcp-bridge] tool list changed: %d -> %d tools", oldCount, len(names))
+			log.Printf("[mcp-bridge] tool list changed: dashboardID=%s %d -> %d tools", cfg.dashboardID, oldCount, len(names))
 
 			// Invalidate warmup cache so the next tools/list call does a live fetch.
 			// Without this, agents that re-fetch after notifications/tools/list_changed
@@ -587,7 +589,7 @@ func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
 
 	req, err := http.NewRequest("POST", toolsChangedURL, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[mcp-bridge] failed to create tools-changed request: %v", err)
+		log.Printf("[mcp-bridge] failed to create tools-changed request: dashboardID=%s err=%v", cfg.dashboardID, err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -597,11 +599,11 @@ func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Printf("[mcp-bridge] failed to send tools-changed: %v", err)
+		log.Printf("[mcp-bridge] failed to send tools-changed: dashboardID=%s err=%v", cfg.dashboardID, err)
 		return
 	}
 	resp.Body.Close()
-	log.Printf("[mcp-bridge] notified sandbox: tools changed %d -> %d", oldCount, newCount)
+	log.Printf("[mcp-bridge] notified sandbox: dashboardID=%s tools changed %d -> %d", cfg.dashboardID, oldCount, newCount)
 }
 
 func errorResponse(id interface{}, code int, message string) *jsonRPCResponse {

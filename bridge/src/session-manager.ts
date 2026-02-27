@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-manager-v7-clean-logging
-console.log(`[session-manager] REVISION: session-manager-v7-clean-logging loaded at ${new Date().toISOString()}`);
+// REVISION: session-manager-v8-dashboardid-in-logs
+console.log(`[session-manager] REVISION: session-manager-v8-dashboardid-in-logs loaded at ${new Date().toISOString()}`);
 
 import { WhatsAppProvider } from './providers/whatsapp.js';
 
@@ -32,6 +32,7 @@ export interface BridgeSession {
   sessionId: string;
   userId: string;
   provider: string;
+  dashboardId?: string;
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   callbackUrl: string;
   providerInstance: BridgeProvider;
@@ -45,6 +46,7 @@ interface StartSessionConfig {
   userId: string;
   provider: string;
   callbackUrl: string;
+  dashboardId?: string;
   config?: Record<string, unknown>;
 }
 
@@ -74,6 +76,7 @@ export class SessionManager {
       sessionId: config.sessionId,
       userId: config.userId,
       provider: config.provider,
+      dashboardId: config.dashboardId,
       status: 'connecting',
       callbackUrl: config.callbackUrl,
       providerInstance: provider,
@@ -86,7 +89,7 @@ export class SessionManager {
     } catch (err) {
       session.status = 'error';
       session.error = err instanceof Error ? err.message : 'Failed to start';
-      console.error(`[session-manager] Failed to start session ${config.sessionId}:`, err);
+      console.error(`[session-manager] Failed to start session ${config.sessionId} (dashboard=${config.dashboardId}):`, err);
     }
 
     return {
@@ -103,10 +106,10 @@ export class SessionManager {
     try {
       await session.providerInstance.stop();
     } catch (err) {
-      console.error(`[session-manager] Error stopping session ${sessionId}:`, err);
+      console.error(`[session-manager] Error stopping session ${sessionId} (dashboard=${session.dashboardId}):`, err);
     }
     this.sessions.delete(sessionId);
-    console.log(`[session-manager] Session ${sessionId} stopped`);
+    console.log(`[session-manager] Session ${sessionId} stopped (dashboard=${session.dashboardId})`);
   }
 
   async stopAll(): Promise<void> {
@@ -118,6 +121,10 @@ export class SessionManager {
 
   getSession(sessionId: string): BridgeSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  getDashboardId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.dashboardId;
   }
 
   listSessions(): Array<{
@@ -138,7 +145,7 @@ export class SessionManager {
   async forwardMessage(sessionId: string, message: NormalizedMessage): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      console.warn(`[session-manager] forwardMessage for unknown session ${sessionId}`);
+      console.warn(`[session-manager] forwardMessage for unknown session ${sessionId} (no dashboard context)`);
       return;
     }
 
@@ -160,15 +167,15 @@ export class SessionManager {
 
       if (!resp.ok) {
         const respBody = await resp.text().catch(() => '');
-        console.error(`[session-manager] Callback failed for session ${sessionId}: ${resp.status} ${respBody.slice(0, 200)}`);
+        console.error(`[session-manager] Callback failed for session ${sessionId} (dashboard=${session.dashboardId}): ${resp.status} ${respBody.slice(0, 200)}`);
       }
 
       session.lastMessageAt = new Date();
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        console.error(`[session-manager] Callback timed out for session ${sessionId}`);
+        console.error(`[session-manager] Callback timed out for session ${sessionId} (dashboard=${session.dashboardId})`);
       } else {
-        console.error(`[session-manager] Callback error for session ${sessionId}:`, err);
+        console.error(`[session-manager] Callback error for session ${sessionId} (dashboard=${session.dashboardId}):`, err);
       }
     }
   }
@@ -186,7 +193,7 @@ export class SessionManager {
     if (status === 'connected') {
       session.connectedAt = new Date();
     }
-    console.log(`[session-manager] Session ${sessionId} status: ${status}${error ? ` (${error})` : ''}`);
+    console.log(`[session-manager] Session ${sessionId} (dashboard=${session.dashboardId}) status: ${status}${error ? ` (${error})` : ''}`);
   }
 
   private createProvider(config: StartSessionConfig): BridgeProvider {
@@ -198,6 +205,7 @@ export class SessionManager {
           this.dataDir,
           this,
           config.config as import('./providers/whatsapp.js').HybridConfig | undefined,
+          config.dashboardId,
         );
       default:
         throw new Error(`Unsupported provider: ${config.provider}`);
