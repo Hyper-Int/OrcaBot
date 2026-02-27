@@ -67,7 +67,7 @@ async function refreshOAuthToken(
   if (provider === 'gmail' || provider === 'google_drive' || provider === 'google_calendar') {
     // Google OAuth refresh
     if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-      console.error('[token-refresh] Google OAuth not configured for token refresh');
+      console.error(`[token-refresh] Google OAuth not configured for token refresh (userIntegrationId=${userIntegrationId}, provider=${provider})`);
       return null;
     }
     tokenUrl = 'https://oauth2.googleapis.com/token';
@@ -80,7 +80,7 @@ async function refreshOAuthToken(
   } else if (provider === 'github') {
     // GitHub OAuth refresh
     if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
-      console.error('[token-refresh] GitHub OAuth not configured for token refresh');
+      console.error(`[token-refresh] GitHub OAuth not configured for token refresh (userIntegrationId=${userIntegrationId}, provider=${provider})`);
       return null;
     }
     tokenUrl = 'https://github.com/login/oauth/access_token';
@@ -108,7 +108,7 @@ async function refreshOAuthToken(
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
-      console.error(`[token-refresh] OAuth refresh failed for ${provider}:`, response.status, errBody);
+      console.error(`[token-refresh] OAuth refresh failed for ${provider} (userIntegrationId=${userIntegrationId}):`, response.status, errBody);
 
       // Check for invalid_grant (revoked/expired refresh token)
       const isInvalidGrant = errBody.includes('invalid_grant') ||
@@ -117,7 +117,7 @@ async function refreshOAuthToken(
 
       if (isInvalidGrant) {
         // Mark the integration as needing reconnection
-        console.warn(`[token-refresh] Refresh token invalid for ${provider}, user needs to reconnect`);
+        console.warn(`[token-refresh] Refresh token invalid for ${provider} (userIntegrationId=${userIntegrationId}), user needs to reconnect`);
       }
       return null;
     }
@@ -129,7 +129,7 @@ async function refreshOAuthToken(
     };
 
     if (!tokenData.access_token) {
-      console.error(`[token-refresh] OAuth refresh returned no access_token for ${provider}`);
+      console.error(`[token-refresh] OAuth refresh returned no access_token for ${provider} (userIntegrationId=${userIntegrationId})`);
       return null;
     }
 
@@ -153,10 +153,10 @@ async function refreshOAuthToken(
       `).bind(tokenData.access_token, expiresAt, userIntegrationId).run();
     }
 
-    console.log(`[token-refresh] OAuth token refreshed successfully for ${provider}`);
+    console.log(`[token-refresh] OAuth token refreshed successfully for ${provider} (userIntegrationId=${userIntegrationId})`);
     return tokenData.access_token;
   } catch (err) {
-    console.error(`[token-refresh] OAuth refresh error for ${provider}:`, err);
+    console.error(`[token-refresh] OAuth refresh error for ${provider} (userIntegrationId=${userIntegrationId}):`, err);
     return null;
   }
 }

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-provider-v15-strip-pii-from-logs
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v15-strip-pii-from-logs loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v18-fast-fail-405
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v18-fast-fail-405 loaded at ${new Date().toISOString()}`);
 
 import makeWASocket, {
   DisconnectReason,
@@ -59,16 +59,22 @@ export class WhatsAppProvider implements BridgeProvider {
     private dataDir: string,
     private sessionManager: SessionManager,
     private config?: HybridConfig,
+    private dashboardId?: string,
   ) {
     // Auth dir scoped by sessionId (not just userId) to prevent credential
     // collisions when the same user has multiple WhatsApp blocks/connections.
     this.authDir = `${dataDir}/whatsapp-sessions/${userId}/${sessionId}`;
   }
 
+  /** Log context suffix for consistent dashboard filtering */
+  private get logCtx(): string {
+    return `session=${this.sessionId} dashboard=${this.dashboardId ?? 'unknown'}`;
+  }
+
   async start(): Promise<void> {
     // Guard against overlapping start() calls (e.g. rapid reconnects)
     if (this.starting) {
-      console.warn(`[whatsapp] Session ${this.sessionId} start() already in progress, skipping`);
+      console.warn(`[whatsapp] ${this.logCtx} start() already in progress, skipping`);
       return;
     }
     this.starting = true;
@@ -103,7 +109,7 @@ export class WhatsAppProvider implements BridgeProvider {
           try {
             this.currentQr = await QRCode.toDataURL(qr);
           } catch (err) {
-            console.error(`[whatsapp] Failed to generate QR data URL:`, err);
+            console.error(`[whatsapp] ${this.logCtx} Failed to generate QR data URL:`, err);
           }
         }
 
@@ -112,16 +118,16 @@ export class WhatsAppProvider implements BridgeProvider {
           this.status = 'connected';
           this.reconnectAttempts = 0;
           this.sessionManager.updateSessionStatus(this.sessionId, 'connected');
-          console.log(`[whatsapp] Session ${this.sessionId} connected`);
+          console.log(`[whatsapp] ${this.logCtx} connected`);
 
           // In hybrid mode, resolve business phone LID and initiate handshake
           if (this.config?.hybridMode && this.config.businessPhoneJid) {
             // Proactively resolve the LID for the business phone number
             this.resolveBusinessLid().catch(err => {
-              console.warn(`[whatsapp] LID resolution failed (will capture from handshake):`, err);
+              console.warn(`[whatsapp] ${this.logCtx} LID resolution failed (will capture from handshake):`, err);
             });
             this.performHandshake().catch(err => {
-              console.error(`[whatsapp] Handshake failed for session ${this.sessionId}:`, err);
+              console.error(`[whatsapp] ${this.logCtx} Handshake failed:`, err);
             });
           }
         }
@@ -129,6 +135,14 @@ export class WhatsAppProvider implements BridgeProvider {
         if (connection === 'close') {
           const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const errorMsg = (lastDisconnect?.error as Error)?.message || 'unknown';
+
+          // statusCode 405 = WhatsApp "Connection Failure" (noise protocol handshake rejected).
+          // This happens when the server rejects us at the transport level — typically
+          // rate limiting or an IP block. If we haven't gotten a QR yet (never passed
+          // the handshake), retrying won't help. Fail fast to surface the error quickly
+          // instead of wasting 15 minutes on exponential backoff.
+          const connectionFailure = statusCode === 405 && !this.currentQr;
 
           if (loggedOut || this.stopped) {
             this.status = 'disconnected';
@@ -137,12 +151,20 @@ export class WhatsAppProvider implements BridgeProvider {
               'disconnected',
               loggedOut ? 'Logged out from WhatsApp' : 'Stopped',
             );
-            console.log(`[whatsapp] Session ${this.sessionId} disconnected (logged out: ${loggedOut})`);
+            console.log(`[whatsapp] ${this.logCtx} disconnected (logged out: ${loggedOut}, statusCode: ${statusCode})`);
+          } else if (connectionFailure) {
+            console.error(`[whatsapp] ${this.logCtx} connection rejected by WhatsApp (statusCode=405, no QR ever generated) — likely IP block or rate limit, giving up immediately`);
+            this.status = 'error';
+            this.sessionManager.updateSessionStatus(
+              this.sessionId,
+              'error',
+              'WhatsApp rejected the connection (rate limited or IP blocked)',
+            );
           } else {
             this.reconnectAttempts++;
 
             if (this.reconnectAttempts > MAX_RECONNECT_RETRIES) {
-              console.error(`[whatsapp] Session ${this.sessionId} exceeded ${MAX_RECONNECT_RETRIES} reconnect attempts, giving up`);
+              console.error(`[whatsapp] ${this.logCtx} exceeded ${MAX_RECONNECT_RETRIES} reconnect attempts, giving up. Last error: statusCode=${statusCode} msg="${errorMsg}"`);
               this.status = 'error';
               this.sessionManager.updateSessionStatus(
                 this.sessionId,
@@ -156,7 +178,7 @@ export class WhatsAppProvider implements BridgeProvider {
               BASE_RECONNECT_DELAY_MS * Math.pow(2, this.reconnectAttempts - 1),
               MAX_RECONNECT_DELAY_MS,
             );
-            console.log(`[whatsapp] Session ${this.sessionId} connection closed, reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_RETRIES})...`);
+            console.log(`[whatsapp] ${this.logCtx} connection closed (statusCode=${statusCode}, err="${errorMsg}"), reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_RETRIES})...`);
             this.status = 'connecting';
             this.sessionManager.updateSessionStatus(this.sessionId, 'connecting');
             setTimeout(() => {
@@ -177,11 +199,11 @@ export class WhatsAppProvider implements BridgeProvider {
           const remoteJid = msg.key.remoteJid;
           const fromMe = msg.key.fromMe;
           // Log message routing without content (privacy: bridge sees all personal messages)
-          console.log(`[whatsapp] Message: from=${fromMe ? 'me' : 'other'} hybrid=${!!this.config?.hybridMode}`);
+          console.log(`[whatsapp] ${this.logCtx} Message: from=${fromMe ? 'me' : 'other'} hybrid=${!!this.config?.hybridMode}`);
 
           // Skip non-chat JIDs (newsletters, broadcast lists) — these are not conversations
           if (remoteJid?.endsWith('@newsletter') || remoteJid?.endsWith('@broadcast')) {
-            console.log(`[whatsapp] Skipping non-chat JID: ${remoteJid}`);
+            console.log(`[whatsapp] ${this.logCtx} Skipping non-chat JID: ${remoteJid}`);
             continue;
           }
 
@@ -198,18 +220,18 @@ export class WhatsAppProvider implements BridgeProvider {
                   // Capture LID from handshake for future comparisons
                   if (!this.resolvedBusinessLid && remoteJid !== this.config.businessPhoneJid) {
                     this.resolvedBusinessLid = remoteJid!;
-                    console.log(`[whatsapp] Captured business LID from handshake: ${this.resolvedBusinessLid}`);
+                    console.log(`[whatsapp] ${this.logCtx} Captured business LID from handshake: ${this.resolvedBusinessLid}`);
                   }
                 } else if (text) {
                   const normalized = this.normalizeOutgoingMessage(msg);
                   if (normalized) {
-                    console.log(`[whatsapp] Forwarding outgoing to OrcaBot`);
+                    console.log(`[whatsapp] ${this.logCtx} Forwarding outgoing to OrcaBot`);
                     void this.sessionManager.forwardMessage(this.sessionId, normalized);
                   }
                 }
               } else if (!this.resolvedBusinessLid && text && HANDSHAKE_MESSAGES.has(text.trim())) {
                 this.resolvedBusinessLid = remoteJid!;
-                console.log(`[whatsapp] Captured business LID from handshake: ${this.resolvedBusinessLid}`);
+                console.log(`[whatsapp] ${this.logCtx} Captured business LID from handshake: ${this.resolvedBusinessLid}`);
               }
             }
             continue;
@@ -225,7 +247,7 @@ export class WhatsAppProvider implements BridgeProvider {
             if (!this.resolvedBusinessLid && text && HANDSHAKE_MESSAGES.has(text.trim())
                 && remoteJid && remoteJid !== this.config.businessPhoneJid) {
               this.resolvedBusinessLid = remoteJid;
-              console.log(`[whatsapp] Captured business LID from handshake reply`);
+              console.log(`[whatsapp] ${this.logCtx} Captured business LID from handshake reply`);
               continue; // Don't forward handshake sentinel
             }
 
@@ -240,7 +262,7 @@ export class WhatsAppProvider implements BridgeProvider {
 
           const normalized = this.normalizeMessage(msg);
           if (normalized) {
-            console.log(`[whatsapp] Forwarding inbound message`);
+            console.log(`[whatsapp] ${this.logCtx} Forwarding inbound message`);
             void this.sessionManager.forwardMessage(this.sessionId, normalized);
           }
         }
@@ -272,7 +294,7 @@ export class WhatsAppProvider implements BridgeProvider {
 
     const result = await this.sock.sendMessage(normalizedJid, { text });
     const messageId = result?.key?.id || '';
-    console.log(`[whatsapp] Session ${this.sessionId} sent message: ${messageId}`);
+    console.log(`[whatsapp] ${this.logCtx} sent message: ${messageId}`);
     return { messageId };
   }
 
@@ -288,6 +310,10 @@ export class WhatsAppProvider implements BridgeProvider {
 
   getQrCode(): string | null {
     return this.currentQr;
+  }
+
+  getReconnectAttempts(): number {
+    return this.reconnectAttempts;
   }
 
   /** Trigger a handshake with the business number (used for 24h window refresh) */
@@ -310,11 +336,11 @@ export class WhatsAppProvider implements BridgeProvider {
         const resolved = results[0].jid;
         if (resolved && resolved !== this.config.businessPhoneJid) {
           this.resolvedBusinessLid = resolved;
-          console.log(`[whatsapp] Resolved business LID via onWhatsApp: ${this.config.businessPhoneJid} -> ${resolved}`);
+          console.log(`[whatsapp] ${this.logCtx} Resolved business LID via onWhatsApp: ${this.config.businessPhoneJid} -> ${resolved}`);
         }
       }
     } catch (err) {
-      console.warn(`[whatsapp] onWhatsApp resolution failed:`, err);
+      console.warn(`[whatsapp] ${this.logCtx} onWhatsApp resolution failed:`, err);
     }
   }
 
@@ -322,11 +348,11 @@ export class WhatsAppProvider implements BridgeProvider {
   private async performHandshake(): Promise<void> {
     if (!this.sock || !this.config?.businessPhoneJid) return;
 
-    console.log(`[whatsapp] Initiating handshake with ${this.config.businessPhoneJid} for session ${this.sessionId}`);
+    console.log(`[whatsapp] ${this.logCtx} Initiating handshake with ${this.config.businessPhoneJid}`);
 
     try {
       await this.sock.sendMessage(this.config.businessPhoneJid, { text: HANDSHAKE_TEXT });
-      console.log(`[whatsapp] Handshake message sent for session ${this.sessionId}`);
+      console.log(`[whatsapp] ${this.logCtx} Handshake message sent`);
 
       // Resolve the user's own phone number from the connected socket
       const myJid = this.sock.user?.id || '';
@@ -350,7 +376,7 @@ export class WhatsAppProvider implements BridgeProvider {
       };
       await this.sessionManager.forwardMessage(this.sessionId, handshakeNotification);
     } catch (err) {
-      console.error(`[whatsapp] Failed to send handshake message for session ${this.sessionId}:`, err);
+      console.error(`[whatsapp] ${this.logCtx} Failed to send handshake message:`, err);
     }
   }
 

@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v15-retry-restarts-session
+// REVISION: whatsapp-block-v16-reconnect-status
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v15-retry-restarts-session";
+const MODULE_REVISION = "whatsapp-block-v16-reconnect-status";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -170,10 +170,10 @@ async function connectWhatsAppPersonal(
 
 async function pollWhatsAppQr(
   subscriptionId: string,
-): Promise<{ status: string; qrCode: string | null }> {
+): Promise<{ status: string; qrCode: string | null; reconnectAttempts?: number; error?: string | null }> {
   const url = new URL(`${API.cloudflare.base}/integrations/whatsapp/qr`);
   url.searchParams.set("subscription_id", subscriptionId);
-  return apiGet<{ status: string; qrCode: string | null }>(url.toString());
+  return apiGet<{ status: string; qrCode: string | null; reconnectAttempts?: number; error?: string | null }>(url.toString());
 }
 
 // ============================================
@@ -299,6 +299,8 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
   const [personalQrCode, setPersonalQrCode] = React.useState<string | null>(null);
   const [personalStatus, setPersonalStatus] = React.useState<string | null>(null);
   const [personalSubId, setPersonalSubId] = React.useState<string | null>(null);
+  const [reconnectAttempts, setReconnectAttempts] = React.useState<number>(0);
+  const [connectionError, setConnectionError] = React.useState<string | null>(null);
   const qrPollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const initialLoadDone = React.useRef(false);
@@ -381,11 +383,14 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
         const poll = await pollWhatsAppQr(subId);
         setPersonalStatus(poll.status);
         if (poll.qrCode) setPersonalQrCode(poll.qrCode);
+        if (typeof poll.reconnectAttempts === "number") setReconnectAttempts(poll.reconnectAttempts);
+        if (poll.error) setConnectionError(poll.error);
 
         if (poll.status === "connected") {
           if (qrPollRef.current) clearInterval(qrPollRef.current);
           qrPollRef.current = null;
           setPersonalQrCode(null);
+          setConnectionError(null);
           await loadIntegration();
         } else if (poll.status === "error") {
           // Bridge reported an error — stop polling, let user retry
@@ -756,10 +761,13 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
           <div className="flex flex-col items-center justify-center h-full p-4">
             {personalStatus === "error" ? (
               <>
-                <p className="text-xs text-red-500 text-center mb-2">Connection lost</p>
+                <p className="text-xs text-red-500 text-center mb-2">Connection failed</p>
+                {connectionError && (
+                  <p className="text-[10px] text-[var(--text-muted)] text-center mb-2 max-w-[200px]">{connectionError}</p>
+                )}
                 <Button
                   size="sm"
-                  onClick={() => { void handleConnectPersonal(); }}
+                  onClick={() => { setConnectionError(null); setReconnectAttempts(0); void handleConnectPersonal(); }}
                   className="nodrag gap-2"
                   style={{ backgroundColor: WHATSAPP_GREEN, color: "#fff" }}
                 >
@@ -783,8 +791,15 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
               <>
                 <Loader2 className="w-6 h-6 animate-spin text-[var(--text-muted)] mb-2" />
                 <p className="text-xs text-[var(--text-muted)]">
-                  {personalStatus === "connecting" ? "Generating QR code..." : "Waiting for connection..."}
+                  {reconnectAttempts > 0
+                    ? `Reconnecting... (${reconnectAttempts}/8)`
+                    : "Connecting to WhatsApp..."}
                 </p>
+                {reconnectAttempts >= 4 && (
+                  <p className="text-[10px] text-[var(--text-muted)] text-center mt-1 max-w-[200px]">
+                    Taking longer than expected. WhatsApp may be rate limiting this connection.
+                  </p>
+                )}
               </>
             )}
           </div>

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: bridge-v4-hybrid-handshake
-const MODULE_REVISION = 'bridge-v4-hybrid-handshake';
+// REVISION: bridge-v6-reconnect-attempts-in-qr
+const MODULE_REVISION = 'bridge-v6-reconnect-attempts-in-qr';
 console.log(`[bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import express from 'express';
@@ -48,7 +48,7 @@ app.get('/health', (_req, res) => {
 
 app.post('/sessions', requireAuth, async (req, res) => {
   try {
-    const { sessionId, userId, provider, callbackUrl, config } = req.body;
+    const { sessionId, userId, provider, callbackUrl, dashboardId, config } = req.body;
     if (!sessionId || !userId || !provider || !callbackUrl) {
       res.status(400).json({ error: 'sessionId, userId, provider, and callbackUrl are required' });
       return;
@@ -59,12 +59,13 @@ app.post('/sessions', requireAuth, async (req, res) => {
       userId,
       provider,
       callbackUrl,
+      dashboardId,
       config,
     });
 
     res.json(result);
   } catch (err) {
-    console.error('[bridge] Failed to start session:', err);
+    console.error(`[bridge] Failed to start session ${req.body?.sessionId} (dashboard=${req.body?.dashboardId}):`, err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Internal error' });
   }
 });
@@ -78,7 +79,7 @@ app.delete('/sessions/:sessionId', requireAuth, async (req, res) => {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
-    console.error('[bridge] Failed to stop session:', err);
+    console.error(`[bridge] Failed to stop session ${req.params.sessionId} (dashboard=${sessionManager.getDashboardId(req.params.sessionId as string)}):`, err);
     res.status(500).json({ error: 'Internal error' });
   }
 });
@@ -111,11 +112,12 @@ app.get('/sessions/:sessionId/qr', requireAuth, (req, res) => {
     return;
   }
   const qrCode = session.providerInstance.getQrCode?.();
+  const reconnectAttempts = (session.providerInstance as { getReconnectAttempts?: () => number }).getReconnectAttempts?.() ?? 0;
   if (!qrCode) {
-    res.json({ status: session.status, qrCode: null, ...(session.error && { error: session.error }) });
+    res.json({ status: session.status, qrCode: null, reconnectAttempts, ...(session.error && { error: session.error }) });
     return;
   }
-  res.json({ status: 'awaiting_scan', qrCode });
+  res.json({ status: 'awaiting_scan', qrCode, reconnectAttempts: 0 });
 });
 
 // POST /sessions/:sessionId/send -- Send outbound message via bridge
@@ -147,7 +149,7 @@ app.post('/sessions/:sessionId/send', requireAuth, async (req, res) => {
     const result = await provider.sendMessage(jid, text);
     res.json({ ok: true, messageId: result.messageId });
   } catch (err) {
-    console.error('[bridge] Failed to send message:', err);
+    console.error(`[bridge] Failed to send message for session ${req.params.sessionId} (dashboard=${sessionManager.getDashboardId(req.params.sessionId as string)}):`, err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Send failed' });
   }
 });
@@ -172,7 +174,7 @@ app.post('/sessions/:sessionId/handshake', requireAuth, async (req, res) => {
     const result = await provider.triggerHandshake();
     res.json({ ok: result, timestamp: new Date().toISOString() });
   } catch (err) {
-    console.error('[bridge] Handshake failed:', err);
+    console.error(`[bridge] Handshake failed for session ${req.params.sessionId} (dashboard=${sessionManager.getDashboardId(req.params.sessionId as string)}):`, err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Handshake failed' });
   }
 });

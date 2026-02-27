@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: bridge-client-v3-hybrid-handshake
-const MODULE_REVISION = 'bridge-client-v3-hybrid-handshake';
+// REVISION: bridge-client-v5-reconnect-attempts
+const MODULE_REVISION = 'bridge-client-v5-reconnect-attempts';
 console.log(`[bridge-client] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -32,6 +32,8 @@ interface SessionStatusResponse {
 interface QrResponse {
   status: string;
   qrCode?: string | null;
+  reconnectAttempts?: number;
+  error?: string | null;
 }
 
 export class BridgeClient {
@@ -55,6 +57,7 @@ export class BridgeClient {
     userId: string;
     provider: string;
     callbackUrl: string;
+    dashboardId?: string;
     config?: Record<string, unknown>;
   }): Promise<StartSessionResponse> {
     const resp = await this.bridgeFetch('/sessions', {

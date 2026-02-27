@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v18-dashboard-eager-provision
-const sessionsRevision = "sessions-v18-dashboard-eager-provision";
+// REVISION: sessions-v19-transitional-state-handling
+const sessionsRevision = "sessions-v19-transitional-state-handling";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -276,6 +276,26 @@ export async function ensureDashbоardSandbоx(
           await env.DB.prepare(`
             UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
           `).bind(dashboardId).run();
+        }
+        if (machine.state === 'created' || machine.state === 'starting' || machine.state === 'replacing') {
+          // Machine is mid-replacement or mid-boot — wait for it instead of reprovisioning
+          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} in state '${machine.state}', waiting for started (up to 90s)...`);
+          try {
+            await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 90);
+            await env.DB.prepare(`
+              UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
+            `).bind(dashboardId).run();
+          } catch (waitErr) {
+            if (waitErr instanceof FlyMachineNotFoundError) {
+              console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} disappeared while waiting, clearing for reprovision`);
+              await env.DB.prepare(`
+                DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
+              `).bind(dashboardId).run();
+              return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
+            }
+            // Otherwise fall through to session validation (may work if machine just came up)
+            console.warn(`[ensureDashboardSandbox] waitForState failed for machine ${existingSandbox.sandbox_machine_id}: ${waitErr instanceof Error ? waitErr.message : waitErr}`);
+          }
         }
       } catch (err) {
         if (err instanceof FlyMachineNotFoundError) {
@@ -653,8 +673,18 @@ async function coldProvisionMachine(
     // Disable autostop so Fly doesn't hibernate this active dashboard machine
     await fly.disableAutostop(machineId); // best-effort, non-throwing
 
-    // Step 4: Create sandbox session pinned to the new machine
-    const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);
+    // Step 4: Create sandbox session with retry (server may not be listening immediately after started)
+    let sandboxSession!: { id: string; machineId?: string };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId, egressEnabled);
+        break;
+      } catch (sessionErr) {
+        if (attempt === 2) throw sessionErr;
+        console.warn(`[coldProvisionMachine] createSession attempt ${attempt + 1}/3 failed: ${sessionErr instanceof Error ? sessionErr.message : sessionErr}. Retrying in 5s...`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
 
     // Step 4b: Clean up lost+found (ext4 creates this on new volumes)
     try {
@@ -1844,9 +1874,12 @@ export async function updateSessiоnEnv(
   }
 
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  if (payload.applyNow) {
+    console.warn(`[updateSessionEnv] Ignoring applyNow=true for session ${sessionId}; env changes apply on next PTY start`);
+  }
   await sandbox.updateEnv(
     session.sandbox_session_id as string,
-    { set, unset, applyNow: payload.applyNow },
+    { set, unset, applyNow: false },
     (session.sandbox_machine_id as string) || undefined
   );
 

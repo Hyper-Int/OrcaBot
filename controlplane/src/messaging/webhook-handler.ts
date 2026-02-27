@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v47-replies-only-filter
-const MODULE_REVISION = 'messaging-webhook-v47-replies-only-filter';
+// REVISION: messaging-webhook-v50-deliver-with-retry
+const MODULE_REVISION = 'messaging-webhook-v50-deliver-with-retry';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -26,7 +26,7 @@ console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Da
  */
 
 import type { Env, MessagingPolicy } from '../types';
-import { deliverOrWakeAndDrain } from './delivery';
+import { deliverWithRetry } from './delivery';
 
 /** Messaging providers use edge-based authorization + terminal_integrations for policy (repliesOnly, etc.). */
 const MESSAGING_PROVIDERS = new Set(['whatsapp', 'slack', 'discord', 'teams', 'matrix', 'google_chat']);
@@ -194,6 +194,7 @@ function parseSlackEvent(body: Record<string, unknown>): NormalizedMessage | nul
   // Only handle subtypes that represent actual user messages:
   // - undefined (no subtype) = standard new message from a user
   // - 'message_changed' = edited message, real text is in event.message.text
+  // - 'message_replied' = thread reply event, real text is in event.message.text
   // - 'file_share' = message with a file attachment
   // - 'thread_broadcast' = thread reply broadcast to channel
   // All other subtypes (message_deleted, channel_join, channel_leave, etc.)
@@ -203,25 +204,34 @@ function parseSlackEvent(body: Record<string, unknown>): NormalizedMessage | nul
     'file_share',
     'thread_broadcast',
     'message_changed',
+    'message_replied',
   ]);
   if (!ACCEPTED_SUBTYPES.has(subtype)) return null;
 
-  // For message_changed, the actual text lives under event.message.
+  // For message_changed/message_replied, the actual text lives under event.message.
   // Use a composite platformMessageId (original_ts:edit:event_ts) so edits
   // don't collide with the original message on the dedup unique index.
   let text: string;
   let user: string;
   let messageId: string;
-  if (subtype === 'message_changed') {
+  if (subtype === 'message_changed' || subtype === 'message_replied') {
     const inner = event.message as Record<string, unknown> | undefined;
     if (!inner) return null;
     // Ignore bot edits
     if (inner.bot_id) return null;
     text = (inner.text as string) || '';
     user = (inner.user as string) || '';
-    const originalTs = (inner.ts as string) || '';
-    const editEventTs = (event.ts as string) || '';
-    messageId = `${originalTs}:edit:${editEventTs}`;
+    const innerTs = (inner.ts as string) || '';
+    const eventTs = (event.ts as string) || '';
+
+    if (subtype === 'message_changed') {
+      messageId = `${innerTs}:edit:${eventTs}`;
+    } else {
+      const threadTs = (inner.thread_ts as string) || '';
+      // Ignore parent-thread summary events; keep only concrete reply messages.
+      if (!threadTs || !innerTs || threadTs === innerTs) return null;
+      messageId = (inner.client_msg_id as string) || innerTs || eventTs;
+    }
   } else {
     text = (event.text as string) || '';
     user = (event.user as string) || '';
@@ -240,7 +250,7 @@ function parseSlackEvent(body: Record<string, unknown>): NormalizedMessage | nul
     text,
     metadata: {
       // For message_changed, thread_ts is on the inner event.message, not the outer event
-      thread_ts: subtype === 'message_changed'
+      thread_ts: (subtype === 'message_changed' || subtype === 'message_replied')
         ? ((event.message as Record<string, unknown> | undefined)?.thread_ts ?? event.thread_ts)
         : event.thread_ts,
       ts: event.ts,
@@ -555,6 +565,7 @@ async function resolveChannelName(
   provider: string,
   channelId: string,
   userId: string,
+  dashboardId?: string,
 ): Promise<string | null> {
   if (!channelId) return null;
 
@@ -589,7 +600,7 @@ async function resolveChannelName(
       return null;
     }
   } catch (err) {
-    console.error(`[webhook] Failed to resolve channel name for ${provider}/${channelId}:`, err);
+    console.error(`[webhook] Failed to resolve channel name for ${provider}/${channelId} (dashboard=${dashboardId ?? 'unknown'}):`, err);
   }
 
   return null;
@@ -608,6 +619,7 @@ async function resolveSlackSenderName(
   env: Env,
   senderId: string,
   userId: string,
+  dashboardId?: string,
 ): Promise<string | null> {
   if (!senderId) return null;
 
@@ -638,7 +650,7 @@ async function resolveSlackSenderName(
     // Prefer display_name > real_name > name (Slack username)
     return data.user.profile?.display_name || data.user.real_name || data.user.name || null;
   } catch (err) {
-    console.error(`[webhook] Failed to resolve Slack sender name for ${senderId}:`, err);
+    console.error(`[webhook] Failed to resolve Slack sender name for ${senderId} (dashboard=${dashboardId ?? 'unknown'}):`, err);
     return null;
   }
 }
@@ -1005,14 +1017,14 @@ async function processSubscriptionMessage(
     const resolvePromises: Promise<void>[] = [];
 
     resolvePromises.push(
-      resolveChannelName(env, provider, message.channelId, subscription.user_id as string)
+      resolveChannelName(env, provider, message.channelId, subscription.user_id as string, subscription.dashboard_id as string)
         .then(name => { if (name) message.channelName = name; })
         .catch(() => { /* best-effort */ }),
     );
 
     if (provider === 'slack' && message.senderId) {
       resolvePromises.push(
-        resolveSlackSenderName(env, message.senderId, subscription.user_id as string)
+        resolveSlackSenderName(env, message.senderId, subscription.user_id as string, subscription.dashboard_id as string)
           .then(name => { if (name) message.senderName = name; })
           .catch(() => { /* best-effort */ }),
       );
@@ -1247,7 +1259,7 @@ async function processSubscriptionMessage(
     console.warn(`[webhook] Failed to broadcast inbound_message to DO for dashboard ${dashboardId}:`, err);
   }
 
-  await deliverOrWakeAndDrain(env, dashboardId, messagingItemId, userId, provider).catch(err => {
+  await deliverWithRetry(env, dashboardId, messagingItemId, userId, provider).catch(err => {
     console.error(`[webhook] Background delivery failed for dashboard ${dashboardId}:`, err);
   });
 }
@@ -1445,7 +1457,7 @@ export async function createSubscription(
             }
           }
         } catch (err) {
-          console.error(`[messaging] auth.test backfill failed for integration ${row.id}:`, err);
+          console.error(`[messaging] auth.test backfill failed for integration ${row.id} (dashboard=${dashboardId}):`, err);
         }
       }
       intTeamMap.push({ id: row.id, token: row.access_token, teamId });
@@ -1566,7 +1578,7 @@ export async function createSubscription(
         resolvedTeamId ?? existing.team_id,
         existing.id,
       ).run();
-      console.log(`[messaging] Reconciled subscription ${existing.id} metadata: ` +
+      console.log(`[messaging] Reconciled subscription ${existing.id} metadata (dashboard=${dashboardId}): ` +
         `name=${data.channelName ?? 'unchanged'}, team=${resolvedTeamId ?? 'unchanged'}`);
     }
 
@@ -1800,9 +1812,9 @@ export async function deleteSubscription(
 ): Promise<void> {
   // Load subscription before deleting to check provider and webhook_id
   const sub = await env.DB.prepare(`
-    SELECT provider, webhook_id FROM messaging_subscriptions
+    SELECT provider, webhook_id, dashboard_id FROM messaging_subscriptions
     WHERE id = ? AND user_id = ?
-  `).bind(subscriptionId, userId).first<{ provider: string; webhook_id: string }>();
+  `).bind(subscriptionId, userId).first<{ provider: string; webhook_id: string; dashboard_id: string }>();
 
   // Delete the subscription row first
   await env.DB.prepare(`
@@ -1824,7 +1836,7 @@ export async function deleteSubscription(
         await deregisterTelegramWebhook(env, userId);
       } catch (err) {
         // Best-effort: log but don't block
-        console.error(`[subscription] Failed to deregister Telegram webhook for user ${userId}:`, err);
+        console.error(`[subscription] Failed to deregister Telegram webhook for user ${userId} (dashboard=${sub.dashboard_id}):`, err);
       }
     }
   }
@@ -1839,7 +1851,7 @@ export async function deleteSubscription(
       console.log(`[subscription] Stopped bridge session ${sub.webhook_id}`);
     } catch (err) {
       // Best-effort: bridge may already be stopped or unreachable
-      console.error(`[subscription] Failed to stop bridge session ${sub.webhook_id}:`, err);
+      console.error(`[subscription] Failed to stop bridge session ${sub.webhook_id} (dashboard=${sub.dashboard_id}):`, err);
     }
   }
 }
@@ -1948,7 +1960,7 @@ export async function handleBridgeInbound(
           }, env.WHATSAPP_ACCESS_TOKEN!);
           console.log(`[bridge-inbound] Handshake reply sent to ${replyPhone}`);
         } catch (err) {
-          console.error('[bridge-inbound] Handshake reply failed:', err);
+          console.error(`[bridge-inbound] Handshake reply failed (dashboard=${sub.dashboard_id}):`, err);
         }
       })());
     }
@@ -2000,7 +2012,7 @@ export async function handleBridgeInbound(
   // Process in background (same pattern as webhook handler)
   ctx.waitUntil(
     processSubscriptionMessage(env, body.provider, sub, message, body as Record<string, unknown>, ctx).catch(err => {
-      console.error(`[bridge-inbound] processSubscriptionMessage failed for sub=${sub.id}:`, err);
+      console.error(`[bridge-inbound] processSubscriptionMessage failed for sub=${sub.id} (dashboard=${sub.dashboard_id}):`, err);
     }),
   );
 

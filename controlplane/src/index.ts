@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v10-analytics
-console.log(`[controlplane] REVISION: controlplane-v10-analytics loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v11-ws-proxy-race-fix
+console.log(`[controlplane] REVISION: controlplane-v11-ws-proxy-race-fix loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -443,6 +443,9 @@ async function getSessiоnWithAccess(
       JOIN dashboard_members dm ON s.dashboard_id = dm.dashboard_id
       WHERE s.id = ? AND dm.user_id = ?
     `).bind(sessionId, userId).first();
+  if (session) {
+    console.log(`[req] session=${sessionId} dashboardId=${session.dashboard_id}`);
+  }
   return session as Record<string, unknown> | null;
 }
 
@@ -867,6 +870,15 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // Parse path segments
   const segments = path.split('/').filter(Boolean);
+
+  // Request breadcrumb: log dashboard-scoped requests for filtering
+  if (method !== 'OPTIONS') {
+    if (segments[0] === 'dashboards' && segments[1]) {
+      console.log(`[req] ${method} /${segments.slice(2).join('/')} dashboardId=${segments[1]}`);
+    } else if (segments[0] === 'sessions' && segments[1]) {
+      console.log(`[req] ${method} /sessions/${segments.slice(2).join('/')} sessionId=${segments[1]}`);
+    }
+  }
 
   // Compute preferred Fly region from user's CF edge location
   const warmPoolRegions = env.FLY_WARM_POOL_REGIONS
@@ -2463,6 +2475,16 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     );
 
     if (proxyResponse.status === 404 && session.status !== 'stopped') {
+      // Grace period: don't mark as stopped if session was created < 30s ago.
+      // During initial provisioning there's a race between createPty returning
+      // and the PTY being fully ready on the sandbox. Marking the session as
+      // stopped kills the frontend's retry loop and leaves the terminal stuck.
+      const sessionAgeMs = Date.now() - new Date(session.created_at as string).getTime();
+      if (sessionAgeMs < 30_000) {
+        console.warn(`[ws-proxy] PTY 404 for session ${session.id} (age=${Math.round(sessionAgeMs / 1000)}s) — within grace period, not marking stopped`);
+        return Response.json({ error: 'E79740: PTY not ready yet' }, { status: 404 });
+      }
+
       const now = new Date().toISOString();
       await env.DB.prepare(`
         UPDATE sessions SET status = 'stopped', stopped_at = ? WHERE id = ?

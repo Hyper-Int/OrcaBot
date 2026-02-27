@@ -1102,7 +1102,7 @@ async function executeTool(
       isError: true,
     };
   } catch (error) {
-    console.error(`[chat] Tool execution error for ${toolName}:`, error);
+    console.error(`[chat] Tool execution error for ${toolName} (dashboardId=${args.dashboard_id || 'N/A'}):`, error);
     return {
       result: { error: error instanceof Error ? error.message : 'Tool execution failed' },
       isError: true,
@@ -1409,7 +1409,7 @@ export async function streamMessage(
                 buildFunctionResponse(tc.name, result),
               ];
             } else if (chunk.type === 'error') {
-              console.error('[chat] Gemini API error (raw):', chunk.error);
+              console.error(`[chat] Gemini API error (raw) (dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
               const errorEvent: ChatStreamEvent = { type: 'error', error: 'Something went wrong — please try again.' };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
             }
@@ -1448,7 +1448,7 @@ export async function streamMessage(
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
         controller.close();
       } catch (error) {
-        console.error('[chat] Streaming error:', error);
+        console.error(`[chat] Streaming error (dashboardId=${dashboardId || 'N/A'}):`, error);
         const errorEvent: ChatStreamEvent = {
           type: 'error',
           error: 'Something went wrong — please try again.',

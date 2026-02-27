@@ -214,7 +214,7 @@ export async function addMember(
         html: emailContent.html,
       });
     } catch (e) {
-      console.error('Failed to send access granted email:', e);
+      console.error(`[members] Failed to send access granted email (dashboardId=${dashboardId}):`, e);
       // Don't fail the request if email fails
     }
 
@@ -274,7 +274,7 @@ export async function addMember(
       html: emailContent.html,
     });
   } catch (e) {
-    console.error('Failed to send invitation email:', e);
+    console.error(`[members] Failed to send invitation email (dashboardId=${dashboardId}):`, e);
     // Don't fail the request if email fails
   }
 
@@ -442,7 +442,7 @@ export async function resendInvitation(
       html: emailContent.html,
     });
   } catch (e) {
-    console.error('Failed to send invitation email:', e);
+    console.error(`[members] Failed to send invitation email (dashboardId=${dashboardId}):`, e);
     return Response.json({ error: 'E79079: Failed to send email' }, { status: 500 });
   }
 
