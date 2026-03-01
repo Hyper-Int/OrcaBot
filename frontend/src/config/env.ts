@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v6-target-modes
-const MODULE_REVISION = "desktop-env-v6-target-modes";
+// REVISION: desktop-env-v7-user-setup
+const MODULE_REVISION = "desktop-env-v7-user-setup";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -228,6 +228,8 @@ export const API = {
     subscriptionPortal: `${CLOUDFLARE_API_URL}/subscriptions/portal`,
     // Admin
     adminMetrics: `${CLOUDFLARE_API_URL}/admin/metrics`,
+    // User setup/onboarding
+    userSetup: `${CLOUDFLARE_API_URL}/user/setup`,
     // Chat
     chat: `${CLOUDFLARE_API_URL}/chat`,
     chatMessage: `${CLOUDFLARE_API_URL}/chat/message`,

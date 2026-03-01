@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v16-friendly-errors
+// REVISION: chat-v18-user-key-auto-detect
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v16-friendly-errors loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v18-user-key-auto-detect loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import {
@@ -30,6 +30,7 @@ import * as dashboards from '../dashboards/handler';
 import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
+import { decryptSecret, getEncryptionKey, hasEncryptionKey, isEncryptedValue } from '../crypto/secrets';
 
 // System prompt for Orcabot
 const ORCABOT_SYSTEM_PROMPT = `You are Orcabot, the AI assistant for Orca — a sandboxed, multiplayer AI coding platform.
@@ -64,7 +65,14 @@ INTEGRATION RULES:
 - The block handles OAuth connection via its built-in Connect button. NEVER give users raw URLs.
 - After creating the integration block, create a terminal and use connect_nodes to wire them if the user wants an agent to use the integration.
 
-When working with dashboards, use dashboard_list first to find existing ones, or dashboard_create to make a new one.`;
+When working with dashboards, use dashboard_list first to find existing ones, or dashboard_create to make a new one.
+
+AI PROVIDER SETUP (when user has NO stored keys and wants to set one up):
+- The three supported coding agents are: Claude Code (needs ANTHROPIC_API_KEY), Gemini CLI (needs GEMINI_API_KEY), and Codex (needs OPENAI_API_KEY).
+- If no keys are stored, ask which provider they want and use secrets_create to store it with dashboard_id="_global".
+- Keys are stored encrypted and are never visible to AI agents (secrets broker protection).
+- After storing the key, offer to create a terminal with the chosen agent.
+- If user already has a key stored (see USER'S AI PROVIDER KEYS section injected at runtime), skip asking and use that provider directly.`;
 
 // ============================================
 // Tool Definitions
@@ -315,11 +323,11 @@ const SECRETS_TOOLS: GeminiTool[] = [
       properties: {
         dashboard_id: {
           type: 'string',
-          description: 'The dashboard ID',
+          description: 'The dashboard ID, or "_global" to store the secret for all dashboards (use "_global" for API keys like ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY)',
         },
         name: {
           type: 'string',
-          description: 'The name of the secret (e.g., OPENAI_API_KEY)',
+          description: 'The name of the secret (e.g., OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY)',
         },
         value: {
           type: 'string',
@@ -1212,11 +1220,11 @@ async function loadHistory(
  * Note: Gemini 3 requires thoughtSignature for function calls.
  * We skip any function call/response pairs without thoughtSignature (legacy data).
  */
-function historyToGeminiMessages(history: ChatMessage[], dashboardId?: string): GeminiMessage[] {
+function historyToGeminiMessages(history: ChatMessage[], dashboardId?: string, baseSystemPrompt?: string): GeminiMessage[] {
   const messages: GeminiMessage[] = [];
 
   // Add system prompt as first user message (Gemini doesn't have system role)
-  let systemPrompt = ORCABOT_SYSTEM_PROMPT;
+  let systemPrompt = baseSystemPrompt ?? ORCABOT_SYSTEM_PROMPT;
   if (dashboardId) {
     systemPrompt += `\n\nCURRENT CONTEXT:\n- The user is viewing dashboard_id: "${dashboardId}". Use this as the dashboard_id for all tool calls unless the user explicitly refers to a different dashboard.`;
   }
@@ -1272,13 +1280,20 @@ function historyToGeminiMessages(history: ChatMessage[], dashboardId?: string): 
  *
  * POST /chat/message
  */
+// Priority order for auto-selecting coding agent when user has multiple keys
+const AI_CODING_PRIORITY = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'] as const;
+const AI_PROVIDER_LABELS: Record<string, { agent: string; bootCmd: string }> = {
+  ANTHROPIC_API_KEY: { agent: 'Claude Code', bootCmd: 'claude' },
+  OPENAI_API_KEY:    { agent: 'Codex',       bootCmd: 'codex' },
+  GEMINI_API_KEY:    { agent: 'Gemini CLI',  bootCmd: 'gemini' },
+};
+
 export async function streamMessage(
   request: Request,
   env: Env,
   userId: string
 ): Promise<Response> {
-  const apiKey = env.GEMINI_ORCABOT_KEY;
-  if (!apiKey) {
+  if (!env.GEMINI_ORCABOT_KEY) {
     return Response.json(
       { error: 'Orcabot Gemini API key not configured' },
       { status: 500 }
@@ -1297,6 +1312,43 @@ export async function streamMessage(
     return Response.json({ error: 'E79227: Message is required' }, { status: 400 });
   }
 
+  // ---- Detect user's stored AI provider keys ----
+  const keyPlaceholders = AI_CODING_PRIORITY.map(() => '?').join(', ');
+  const userKeyRows = await env.DB.prepare(
+    `SELECT name, value FROM user_secrets WHERE user_id = ? AND dashboard_id = '_global' AND name IN (${keyPlaceholders}) ORDER BY name`
+  ).bind(userId, ...AI_CODING_PRIORITY).all<{ name: string; value: string }>();
+
+  const userKeyNames = (userKeyRows.results || []).map(r => r.name);
+
+  // Choose best provider in priority order
+  const bestKeyName = AI_CODING_PRIORITY.find(k => userKeyNames.includes(k));
+  const bestProvider = bestKeyName ? AI_PROVIDER_LABELS[bestKeyName] : null;
+
+  // Build dynamic system prompt addendum so Orcabot knows which agent to use
+  let systemPrompt = ORCABOT_SYSTEM_PROMPT;
+  if (userKeyNames.length > 0 && bestProvider) {
+    const available = userKeyNames.map(k => `${AI_PROVIDER_LABELS[k]?.agent ?? k} (${k})`).join(', ');
+    systemPrompt += `\n\nUSER'S AI PROVIDER KEYS (already stored — do NOT ask for them again):
+The user has: ${available}.
+When they ask to set up a coding agent or terminal, automatically use ${bestProvider.agent} (boot_command="${bestProvider.bootCmd}") — do NOT ask which provider they want.
+If they explicitly name a different provider they have a key for, use that one instead.`;
+  }
+
+  // ---- Use user's Gemini key for Orcabot chat if available (saves system quota) ----
+  let apiKey = env.GEMINI_ORCABOT_KEY;
+  const geminiKeyRow = (userKeyRows.results || []).find(r => r.name === 'GEMINI_API_KEY');
+  if (geminiKeyRow && hasEncryptionKey(env)) {
+    try {
+      const encKey = await getEncryptionKey(env);
+      const decrypted = isEncryptedValue(geminiKeyRow.value)
+        ? await decryptSecret(geminiKeyRow.value, encKey)
+        : geminiKeyRow.value;
+      if (decrypted) apiKey = decrypted;
+    } catch {
+      // Fall back to system key if decryption fails
+    }
+  }
+
   // Load conversation history
   const history = await loadHistory(env, userId, dashboardId || null, 20);
 
@@ -1304,7 +1356,7 @@ export async function streamMessage(
   await saveMessage(env, userId, dashboardId || null, 'user', message);
 
   // Build Gemini messages (inject dashboardId as context so model knows the active dashboard)
-  const geminiMessages = historyToGeminiMessages(history, dashboardId);
+  const geminiMessages = historyToGeminiMessages(history, dashboardId, systemPrompt);
   geminiMessages.push(buildTextMessage('user', message));
 
   // Get available tools

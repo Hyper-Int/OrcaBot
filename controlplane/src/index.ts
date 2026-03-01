@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v11-ws-proxy-race-fix
-console.log(`[controlplane] REVISION: controlplane-v11-ws-proxy-race-fix loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v14-gemini-key-only
+console.log(`[controlplane] REVISION: controlplane-v14-gemini-key-only loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -902,7 +902,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       || segments[0] === 'webhooks'       // Webhooks (Stripe, messaging)
       || segments[0] === 'internal'       // Internal sandbox routes
       || segments[0] === 'analytics'      // Analytics event ingestion
-      || (segments[0] === 'users' && segments[1] === 'me'); // User info
+      || (segments[0] === 'users' && segments[1] === 'me') // User info
+      || (segments[0] === 'user' && segments[1] === 'setup'); // AI provider onboarding
     if (!isExemptRoute) {
       if (!(await hasActiveAccess(env, auth.user.id, auth.user.email, auth.user.createdAt))) {
         return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
@@ -2431,6 +2432,59 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       isAdmin: isAdminEmail(env, auth.user!.email),
       subscription,
     });
+  }
+
+  // GET /user/setup - Check if user needs AI provider setup
+  // Returns { needsAiSetup: boolean } based on whether user has AI keys and has dismissed the prompt
+  if (segments[0] === 'user' && segments[1] === 'setup' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const userId = auth.user!.id;
+
+    // Check if user has any AI provider keys stored globally
+    const AI_KEY_NAMES = ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY'];
+    const placeholders = AI_KEY_NAMES.map(() => '?').join(', ');
+    const aiKey = await env.DB.prepare(
+      `SELECT id FROM user_secrets WHERE user_id = ? AND dashboard_id = '_global' AND name IN (${placeholders}) LIMIT 1`
+    ).bind(userId, ...AI_KEY_NAMES).first();
+
+    const hasAiKey = !!aiKey;
+
+    // Check if user has dismissed the setup prompt.
+    // Wrapped in try/catch: user_onboarding table may not exist if init-db hasn't run yet.
+    let dismissed = false;
+    try {
+      const onboarding = await env.DB.prepare(
+        `SELECT ai_setup_dismissed_at FROM user_onboarding WHERE user_id = ?`
+      ).bind(userId).first<{ ai_setup_dismissed_at: string | null }>();
+      dismissed = !!onboarding?.ai_setup_dismissed_at;
+    } catch (e) {
+      // Table doesn't exist yet — treat as not dismissed. Will be created on next init-db.
+      console.warn('[user/setup] user_onboarding query failed (table may not exist yet):', e);
+    }
+
+    console.log(`[user/setup] userId=${userId} hasAiKey=${hasAiKey} dismissed=${dismissed} needsAiSetup=${!hasAiKey && !dismissed}`);
+    return Response.json({ needsAiSetup: !hasAiKey && !dismissed });
+  }
+
+  // POST /user/setup/ai-dismissed - Mark AI setup prompt as dismissed
+  if (segments[0] === 'user' && segments[1] === 'setup' && segments[2] === 'ai-dismissed' && segments.length === 3 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const userId = auth.user!.id;
+
+    try {
+      await env.DB.prepare(`
+        INSERT INTO user_onboarding (user_id, ai_setup_dismissed_at, created_at)
+        VALUES (?, datetime('now'), datetime('now'))
+        ON CONFLICT(user_id) DO UPDATE SET ai_setup_dismissed_at = datetime('now')
+      `).bind(userId).run();
+    } catch (e) {
+      // Table doesn't exist yet — dismiss is a best-effort operation.
+      console.warn('[user/setup/ai-dismissed] user_onboarding insert failed (table may not exist yet):', e);
+    }
+
+    return Response.json({ ok: true });
   }
 
   // DELETE /sessions/:id - Stop session
