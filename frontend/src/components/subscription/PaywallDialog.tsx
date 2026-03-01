@@ -78,7 +78,7 @@ export function PaywallDialog() {
           <div className="flex items-center gap-3 p-4 rounded-lg border border-[var(--border)] bg-[var(--background-surface)]">
             <CreditCard className="h-5 w-5 shrink-0 text-[var(--foreground-muted)]" />
             <div>
-              <div className="font-semibold text-lg">$20/month</div>
+              <div className="font-semibold text-lg">$30/month</div>
               <div className="text-sm text-[var(--foreground-muted)]">
                 Unlimited dashboards, terminals, and integrations
               </div>

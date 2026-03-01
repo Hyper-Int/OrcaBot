@@ -1,13 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: subscription-check-v7-stripe-trial-end
-const MODULE_REVISION = "subscription-check-v7-stripe-trial-end";
+// REVISION: subscription-check-v8-7day-trial
+const MODULE_REVISION = "subscription-check-v8-7day-trial";
 console.log(`[subscription-check] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env, SubscriptionStatus, SubscriptionInfo } from "../types";
 
-const TRIAL_DURATION_DAYS = 3;
+const TRIAL_DURATION_DAYS = 7;
 
 /**
  * Parse a comma-separated list of emails into a Set (lowercase).

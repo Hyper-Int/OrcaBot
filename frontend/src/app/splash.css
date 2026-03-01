@@ -5,7 +5,7 @@
   --bg-plane:   #071428;
   --bg-surface: #0d1e3a;
   --bg-card:    #0f2240;
-  --bg-glass:   rgba(11, 22, 59, 0.55);
+  --bg-glass:   var(--chat-input-bg-glass);
   --border:     rgba(56, 97, 150, 0.22);
   --border-glow: rgba(59, 130, 246, 0.4);
   --text:       #e8edf5;
