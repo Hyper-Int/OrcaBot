@@ -1,13 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-provider-v18-fast-fail-405
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v18-fast-fail-405 loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v19-fetch-latest-version
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v19-fetch-latest-version loaded at ${new Date().toISOString()}`);
 
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
+  fetchLatestBaileysVersion,
   getContentType,
   Browsers,
   type WASocket,
@@ -92,7 +93,10 @@ export class WhatsAppProvider implements BridgeProvider {
 
       const { state, saveCreds } = this.authState;
 
+      const { version } = await fetchLatestBaileysVersion();
+
       this.sock = makeWASocket({
+        version,
         auth: {
           creds: state.creds,
           keys: makeCacheableSignalKeyStore(state.keys, logger),
