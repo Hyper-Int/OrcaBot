@@ -1406,6 +1406,24 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   } catch {
     // Index already exists.
   }
+
+  // One-time migrations table — tracks data migrations that must run exactly once.
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+
+  // Reset all trials to now — gives every user a fresh 7-day trial from this deploy.
+  // Users with active Stripe subscriptions are unaffected (Stripe status takes priority).
+  const trialReset = await db.prepare(`
+    SELECT name FROM schema_migrations WHERE name = 'reset_trials_2026_03_01'
+  `).first();
+  if (!trialReset) {
+    await db.prepare(`UPDATE users SET trial_started_at = datetime('now')`).run();
+    await db.prepare(`INSERT INTO schema_migrations (name) VALUES ('reset_trials_2026_03_01')`).run();
+  }
 }
 
 // All valid integration providers - add new providers here

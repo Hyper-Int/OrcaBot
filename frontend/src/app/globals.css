@@ -104,6 +104,10 @@
   --duration-fast: 100ms;
   --duration-normal: 200ms;
   --duration-slow: 300ms;
+
+  /* Chat input bar — single source of truth for all instances */
+  --chat-input-bg: rgba(25, 46, 89, 0.91);
+  --chat-input-bg-glass: rgba(25, 46, 89, 0.65);
 }
 
 /* ===== Dark Theme ===== */

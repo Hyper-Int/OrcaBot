@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-transition-v6-no-morph
+// REVISION: splash-transition-v7-lighter-input-bar
 "use client";
 
 const MODULE_REVISION = "splash-transition-v6-no-morph";
@@ -147,7 +147,7 @@ export function SplashTransitionOverlay() {
               alignItems: "center",
               gap: "0.5rem",
               padding: "0.625rem 1rem",
-              background: "rgba(11, 22, 59, 0.85)",
+              background: "var(--chat-input-bg)",
               backdropFilter: "blur(20px)",
               borderRadius: "1rem",
             }}

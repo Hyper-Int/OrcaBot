@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v23-newest-first
+// REVISION: chat-v26-ring-border
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v23-newest-first";
+const CHAT_PANEL_REVISION = "chat-v26-ring-border";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
 // Fixed height for the input bar (py-2.5 = 20px padding + ~24px content = 44px).
@@ -258,7 +258,7 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
     >
       {/* Outer card: theme background for messages area */}
       <div className={cn(
-        "bg-background/95 backdrop-blur-lg border rounded-2xl shadow-lg overflow-hidden",
+        "bg-background/95 backdrop-blur-lg ring-2 ring-white/[0.30] rounded-2xl shadow-lg overflow-hidden",
         isAtSplashPosition && "flex flex-col flex-1 min-h-0"
       )}>
         {/* Input Bar — matches splash page dark blue glass style, on top */}
@@ -266,7 +266,7 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
           ref={inputBarRef}
           className="flex items-center gap-2 px-4 py-2.5 rounded-t-2xl"
           style={{
-            background: "rgba(11, 22, 59, 0.85)",
+            background: "var(--chat-input-bg)",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
             borderBottom: isExpanded ? "1px solid rgba(0, 229, 255, 0.15)" : undefined,

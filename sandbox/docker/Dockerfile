@@ -78,7 +78,8 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \
 # Install Node.js 22 (required by Claude Code, Codex, Gemini CLI)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g npm@latest
 
 # Pre-warm npm cache with Claude Code dependencies (for fast user-initiated install)
 # We install then uninstall so the package is NOT distributed, but deps remain cached.
