@@ -7,8 +7,6 @@ import { getPost, getAllPosts } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
 import type { Metadata } from "next";
 
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = {
   title: "Blog - OrcaBot",
   description:
