@@ -636,6 +636,30 @@ input.chat-input-splash:focus-visible {
   line-height: 1.6;
 }
 
+/* ===== Blog ===== */
+.blog-title-anchor {
+  text-decoration: none;
+}
+
+.blog-title-anchor:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+
+.blog-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--background-elevated);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.blog-card-link:hover .blog-card {
+  border-color: var(--foreground-subtle);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
 /* ===== Orcabot UI Guidance Highlights ===== */
 @keyframes orcabot-pulse {
   0%, 100% {
