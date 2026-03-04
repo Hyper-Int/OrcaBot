@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v15-internal-token-fingerprint-logging
+// REVISION: main-v17-anthropic-key-live-pty-check
 
 package main
 
@@ -33,7 +33,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v15-internal-token-fingerprint-logging"
+const mainRevision = "main-v17-anthropic-key-live-pty-check"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -237,6 +237,10 @@ func (s *Server) MCPLocalHandler() http.Handler {
 
 	// PTY scrollback - returns recent terminal output (localhost only, PTY-authed)
 	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.handleScrollback)
+
+	// Anthropic key for Claude Code apiKeyHelper - returns ANTHROPIC_API_KEY only,
+	// authenticated by a dedicated single-purpose token (not ORCABOT_MCP_SECRET).
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/anthropic-key", s.handleAnthropicKey)
 
 	return mux
 }
@@ -581,6 +585,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[handleCreatePTY] E79708 PTY creation failed: sessionId=%s command=%q ptyId=%q workingDir=%q err=%v",
 			r.PathValue("sessionId"), req.Command, req.PtyID, req.WorkingDir, err)
+		if errors.Is(err, sessions.ErrInvalidPTYID) {
+			http.Error(w, "E79755: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1283,6 +1291,42 @@ func (s *Server) handleScrollback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(text))
+}
+
+// handleAnthropicKey returns the brokered ANTHROPIC_API_KEY for Claude Code's apiKeyHelper.
+// Authenticated by a dedicated single-purpose token stored in session memory and embedded
+// literally in settings.local.json — not the general ORCABOT_MCP_SECRET. This token
+// can ONLY be used to fetch ANTHROPIC_API_KEY; no other keys are accessible via this endpoint.
+func (s *Server) handleAnthropicKey(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	ptyId := r.PathValue("ptyId")
+
+	// Validate the dedicated api key token (NOT the MCP secret)
+	token := r.Header.Get("X-Api-Key-Token")
+	storedToken := session.GetApiKeyToken(ptyId)
+	if storedToken == "" || token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) != 1 {
+		http.Error(w, "E79742: Invalid api key token", http.StatusForbidden)
+		return
+	}
+
+	// Reject tokens for PTYs that are no longer active.
+	if session.GetHub(ptyId) == nil {
+		http.Error(w, "E79736: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	key := session.Broker().GetAnthropicKey(session.ID)
+	if key == "" {
+		http.Error(w, "E79743: Anthropic key not brokered for this session", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(key))
 }
 
 // forwardEgressAudit sends runtime egress decisions to the control plane audit log.
