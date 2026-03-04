@@ -3,7 +3,7 @@
 
 package main
 
-// REVISION: metrics-v2-topprocs
+// REVISION: metrics-v3-timeval-cast
 
 import (
 	"bufio"
@@ -286,7 +286,7 @@ func processStartTime(pid int) time.Time {
 }
 
 func timevalToMs(tv syscall.Timeval) int64 {
-	return (tv.Sec * 1000) + (tv.Usec / 1000)
+	return (tv.Sec * 1000) + (int64(tv.Usec) / 1000)
 }
 
 // getSystemMemoryStats returns used and total memory in MB and usage percentage

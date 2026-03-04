@@ -40,7 +40,9 @@ clean:
 
 # Build Docker image
 docker-build:
-	docker build -f docker/Dockerfile -t orcabot-sandbox .
+	docker build -f docker/Dockerfile \
+		--build-arg SANDBOX_GIT_COMMIT=$$(git log -n 1 --format=%H -- .) \
+		-t orcabot-sandbox .
 
 # Run Docker container locally
 docker-run: docker-build
@@ -50,12 +52,15 @@ docker-run: docker-build
 # After deploy, invalidates the warm pool so new dashboards get fresh machines.
 # The cron reaper (reapUntrackedFlyResources) will destroy the orphaned Fly machines.
 deploy:
-	fly deploy --build-arg TALKITO_VERSION=$$(date +%s)
+	fly deploy \
+		--build-arg TALKITO_VERSION=$$(date +%s) \
+		--build-arg SANDBOX_GIT_COMMIT=$$(git log -n 1 --format=%H -- .)
 	@$(MAKE) invalidate-warm-pool
 
 # Deploy without cache (full rebuild)
 deploy-fresh:
-	fly deploy --no-cache
+	fly deploy --no-cache \
+		--build-arg SANDBOX_GIT_COMMIT=$$(git log -n 1 --format=%H -- .)
 	@$(MAKE) invalidate-warm-pool
 
 # Destroy all running sandbox machines (use after deploy to clear stale state)

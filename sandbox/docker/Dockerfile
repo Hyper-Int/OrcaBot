@@ -28,6 +28,10 @@ FROM debian:bookworm-slim
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# REVISION: sandbox-version-cli-v1-build-arg
+ARG SANDBOX_GIT_COMMIT=unknown
+ENV ORCABOT_SANDBOX_VERSION=${SANDBOX_GIT_COMMIT}
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
@@ -132,7 +136,9 @@ RUN apt-get update && apt-get purge -y --auto-remove \
 COPY docker/xdg-open.sh /usr/local/bin/xdg-open
 COPY docker/gio /usr/local/bin/gio
 COPY docker/chromium-wrapper.sh /usr/local/bin/chromium-wrapper
+COPY docker/orcabot /usr/local/bin/orcabot
 RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio /usr/local/bin/chromium-wrapper \
+    /usr/local/bin/orcabot \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/open \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/x-www-browser \
     && ln -sf /usr/local/bin/xdg-open /usr/local/bin/sensible-browser \
