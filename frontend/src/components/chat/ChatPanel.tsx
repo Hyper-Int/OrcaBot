@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v26-ring-border
+// REVISION: chat-v33-setup-race-fix
 
 "use client";
 
@@ -12,7 +12,8 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v26-ring-border";
+const CHAT_PANEL_REVISION = "chat-v33-setup-race-fix";
+const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
 // Fixed height for the input bar (py-2.5 = 20px padding + ~24px content = 44px).
@@ -38,20 +39,34 @@ import { Button } from "@/components/ui/button";
 import { useChat, type PendingToolCall } from "@/hooks/useChat";
 import type { ChatMessage, AnyUIGuidanceCommand } from "@/lib/api/cloudflare/chat";
 import { useSplashTransitionStore } from "@/stores/splash-transition-store";
+import { AiProviderSetupCard } from "./AiProviderSetupCard";
 
 interface ChatPanelProps {
   dashboardId?: string;
   className?: string;
   /** Callback when a UI guidance command is received */
   onUICommand?: (command: AnyUIGuidanceCommand) => void;
+  /** True when the user has no AI provider keys and hasn't dismissed the setup prompt */
+  needsAiSetup?: boolean;
+  /** Called after the AI setup prompt is auto-sent so the parent can persist the dismiss */
+  onAiSetupDismiss?: () => void;
 }
 
-export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProps) {
-  const [isExpanded, setIsExpanded] = React.useState(!!dashboardId);
+export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, onAiSetupDismiss }: ChatPanelProps) {
+  // Start minimized by default on dashboard pages. Will expand if:
+  // - coming from splash transition (isTransitionTarget)
+  // - user needs AI provider setup (needsAiSetup)
+  const [isExpanded, setIsExpanded] = React.useState(false);
+  const [showSetupCard, setShowSetupCard] = React.useState(false);
+  // Persists the provider names saved via the setup card — shown as a permanent bubble in chat
+  const [setupSavedKeys, setSetupSavedKeys] = React.useState<string[]>([]);
   const [inputValue, setInputValue] = React.useState("");
   const inputBarRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const initialPromptConsumedRef = React.useRef(false);
+  // Holds a splash-bar prompt that was deferred because needsAiSetup=true.
+  // Sent after the user completes (or skips) AI provider setup.
+  const deferredPromptRef = React.useRef<string | null>(null);
 
   // Splash transition integration
   const transitionPhase = useSplashTransitionStore((s) => s.phase);
@@ -73,10 +88,12 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
   // very first render — no one-frame flash of the normal (small) layout.
   const [isAtSplashPosition, setIsAtSplashPosition] = React.useState(isTransitionTarget);
 
-  // Signal ready to the overlay when this panel mounts as the transition target
+  // Signal ready to the overlay when this panel mounts as the transition target.
+  // Also expand the chat for splash transitions (since we default to minimized now).
   React.useEffect(() => {
     if (!isTransitionTarget) return;
     setIsAtSplashPosition(true);  // also covers late transitions
+    setIsExpanded(true);
     setChatPanelReady();
   }, [isTransitionTarget, setChatPanelReady]);
 
@@ -122,7 +139,13 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
   // which triggers an effect re-run. If we returned cleanup, the timer would be
   // cleared before it fires. The ref guard prevents any double-execution.
   React.useEffect(() => {
-    if (!dashboardId || isLoading || isStreaming || initialPromptConsumedRef.current) return;
+    if (!dashboardId || isLoading || isStreaming) return;
+    // Wait until the setup check has resolved — undefined means the query is still
+    // in flight. Without this guard the prompt fires immediately with needsAiSetup=false
+    // (the default), sets initialPromptConsumedRef, and the deferral never activates
+    // even when the query later returns needsAiSetup=true.
+    if (needsAiSetup === undefined) return;
+    if (initialPromptConsumedRef.current) return;
 
     // Prefer transition store prompt over localStorage
     const prompt = (isTransitionTarget && transitionPrompt)
@@ -135,6 +158,22 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
     }
     localStorage.removeItem("orcabot_initial_prompt");
     initialPromptConsumedRef.current = true;
+
+    // Special keyword: show the AI provider setup card instead of sending to AI
+    if (prompt.toLowerCase().includes(AI_ONBOARD_KEYWORD)) {
+      setIsExpanded(true);
+      setShowSetupCard(true);
+      return;
+    }
+
+    // If the user needs AI provider setup, defer this message until after setup is done.
+    // This prevents the splash-bar prompt from populating messages and hiding the setup card.
+    if (needsAiSetup) {
+      deferredPromptRef.current = prompt;
+      setIsExpanded(true);
+      return;
+    }
+
     setInputValue(prompt);
     setIsExpanded(true);
     // Brief delay to show the prompt in the input before sending
@@ -142,7 +181,36 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
       setInputValue("");
       sendMessage(prompt);
     }, 1000);
-  }, [dashboardId, isLoading, isStreaming, sendMessage, isTransitionTarget, transitionPrompt]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboardId, isLoading, isStreaming, sendMessage, isTransitionTarget, transitionPrompt, needsAiSetup]);
+
+  // AI provider setup: expand the chat so the inline setup card is visible.
+  // No auto-message — the AiProviderSetupCard renders directly in the messages area.
+  React.useEffect(() => {
+    if (needsAiSetup && dashboardId) {
+      setIsExpanded(true);
+    }
+  }, [needsAiSetup, dashboardId]);
+
+  // Called when the setup card is dismissed or completed.
+  // savedKeys is provided when keys were saved, omitted when user skipped.
+  // Sends any prompt that was deferred during the setup flow.
+  const handleSetupCardDone = React.useCallback((savedKeys?: string[]) => {
+    setShowSetupCard(false);
+    onAiSetupDismiss?.();
+    if (savedKeys && savedKeys.length > 0) {
+      setSetupSavedKeys(savedKeys);
+    }
+    const deferred = deferredPromptRef.current;
+    if (deferred) {
+      deferredPromptRef.current = null;
+      setInputValue(deferred);
+      setTimeout(() => {
+        setInputValue("");
+        sendMessage(deferred);
+      }, 600);
+    }
+  }, [onAiSetupDismiss, sendMessage]);
 
   // Handle send message
   const handleSend = async () => {
@@ -407,11 +475,32 @@ export function ChatPanel({ dashboardId, className, onUICommand }: ChatPanelProp
               </div>
             )}
 
+            {/* AI provider setup card — shown when user has no keys or force_ai_onboard keyword used */}
+            {/* Note: intentionally shown even in splash position (isAtSplashPosition) */}
+            {(needsAiSetup || showSetupCard) && !hasMessages && !isLoading && (
+              <AiProviderSetupCard onDone={handleSetupCardDone} />
+            )}
+
             {/* Completed messages — reversed so newest is at top */}
             {messages.filter(m => m.role !== "tool").slice().reverse().map(renderMessage)}
 
-            {/* Empty state placeholder — only when NOT at splash position */}
-            {!hasMessages && !isLoading && !isAtSplashPosition && (
+            {/* Persistent setup confirmation — shown at bottom (oldest) after card is dismissed with saved keys */}
+            {setupSavedKeys.length > 0 && (
+              <div className="flex gap-3 py-2">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-gradient-to-br from-cyan-400 to-blue-500">
+                  <Image src="/orca.png" alt="Orcabot" width={32} height={32} className="w-full h-full object-cover" />
+                </div>
+                <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-muted text-sm" style={{ color: "var(--foreground)" }}>
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                    <span>{setupSavedKeys.join(" & ")} key{setupSavedKeys.length > 1 ? "s" : ""} saved — encrypted and broker-protected.</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Empty state placeholder — only when NOT at splash position and no setup needed */}
+            {!hasMessages && !isLoading && !isAtSplashPosition && !needsAiSetup && setupSavedKeys.length === 0 && (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <div className="w-16 h-16 rounded-full overflow-hidden mb-4 ring-4 ring-primary/20">
                   <Image

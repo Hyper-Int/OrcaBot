@@ -978,10 +978,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_dashboard ON chat_messages(dashboard_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_user_dashboard ON chat_messages(user_id, dashboard_id, created_at);
+
+-- User onboarding state (AI provider setup tracking)
+-- ai_setup_dismissed_at: null = user has not seen/dismissed the AI setup prompt
+-- Dismissed when the setup prompt is auto-sent, so refreshes don't re-trigger
+CREATE TABLE IF NOT EXISTS user_onboarding (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  ai_setup_dismissed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v11-analytics-events";
+const SCHEMA_REVISION = "schema-v12-user-onboarding";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);

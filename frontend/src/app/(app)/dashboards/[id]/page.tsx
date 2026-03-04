@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v53-reconnect-after-connected
-console.log(`[dashboard] REVISION: dashboard-v53-reconnect-after-connected loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v54-ai-setup-prompt
+console.log(`[dashboard] REVISION: dashboard-v54-ai-setup-prompt loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -113,6 +113,7 @@ import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
 import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
+import { getUserSetup, dismissAiSetup } from "@/lib/api/cloudflare/user-setup";
 
 // Optimistic updates disabled by default - set NEXT_PUBLIC_OPTIMISTIC_UPDATE=true to enable
 const OPTIMISTIC_UPDATE_ENABLED = process.env.NEXT_PUBLIC_OPTIMISTIC_UPDATE === "true";
@@ -709,6 +710,26 @@ export default function DashboardPage() {
     enabled: isAuthenticated && isAuthResolved && !!dashboardId && edgesFromData.length > 0,
     staleTime: 30000,
   });
+
+  // Check if user needs AI provider setup (no keys stored, hasn't dismissed the prompt)
+  const { data: userSetupData, isLoading: isSetupLoading } = useQuery({
+    queryKey: ["user-setup"],
+    queryFn: getUserSetup,
+    enabled: isAuthenticated && isAuthResolved,
+    staleTime: Infinity, // Only check once per session; invalidated if a key is stored
+    gcTime: 1000 * 60 * 60, // Cache for 1 hour
+  });
+  // While the setup query is in flight, pass undefined so ChatPanel waits before
+  // consuming the initial prompt — avoids the race where the prompt is sent before
+  // we know needsAiSetup=true, permanently skipping the onboarding card.
+  const needsAiSetup = isSetupLoading ? undefined : (userSetupData?.needsAiSetup ?? false);
+
+  const handleAiSetupDismiss = React.useCallback(() => {
+    // Fire-and-forget: mark dismissed so page refreshes don't re-trigger the prompt
+    dismissAiSetup().catch(() => {});
+    // Invalidate so future queries reflect dismissed state
+    queryClient.setQueryData(["user-setup"], { needsAiSetup: false });
+  }, [queryClient]);
 
   // Restore template viewport if this dashboard was just created from a template.
   // Uses requestAnimationFrame retry since ReactFlow instance may not be ready
@@ -4260,7 +4281,12 @@ export default function DashboardPage() {
       />
 
       {/* Orcabot Chat Panel */}
-      <ChatPanel dashboardId={dashboardId} onUICommand={uiGuidance.handleCommand} />
+      <ChatPanel
+        dashboardId={dashboardId}
+        onUICommand={uiGuidance.handleCommand}
+        needsAiSetup={needsAiSetup}
+        onAiSetupDismiss={handleAiSetupDismiss}
+      />
 
       {/* UI Guidance Overlay for Orcabot onboarding */}
       <UIGuidanceOverlay
