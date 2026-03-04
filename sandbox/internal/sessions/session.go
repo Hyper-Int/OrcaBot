@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v13-cleanup-stale-api-key-token
+// REVISION: session-v14-unset-anthropic-key-env
 
 // Package sessions manages session lifecycle.
 //
@@ -656,6 +656,11 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
 				}
+				// Remove ANTHROPIC_API_KEY from the PTY env entirely — apiKeyHelper is the
+				// sole auth source. Leaving the dummy brokered value causes Claude Code to
+				// complain about conflicting auth ("Both a token and an API key are set").
+				// ANTHROPIC_BASE_URL remains set so API calls still route through the broker.
+				delete(envVars, "ANTHROPIC_API_KEY")
 			}
 		}
 
@@ -879,6 +884,11 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
 				}
+				// Remove ANTHROPIC_API_KEY from the PTY env entirely — apiKeyHelper is the
+				// sole auth source. Leaving the dummy brokered value causes Claude Code to
+				// complain about conflicting auth ("Both a token and an API key are set").
+				// ANTHROPIC_BASE_URL remains set so API calls still route through the broker.
+				delete(envVars, "ANTHROPIC_API_KEY")
 			}
 		}
 
