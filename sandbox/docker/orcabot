@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# REVISION: sandbox-version-cli-v1-commit-hash
+case "${1:-}" in
+  --version|-v|version)
+    printf '%s\n' "${ORCABOT_SANDBOX_VERSION:-unknown}"
+    ;;
+  *)
+    echo "Usage: orcabot --version" >&2
+    exit 2
+    ;;
+esac
