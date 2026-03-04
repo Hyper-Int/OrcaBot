@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v15-no-iframe
+// REVISION: splash-v16-blog-link
 "use client";
 
-const MODULE_REVISION = "splash-v15-no-iframe";
+const MODULE_REVISION = "splash-v16-blog-link";
 console.log(
   `[page] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -567,6 +567,7 @@ export default function Home() {
           <nav className="header-nav">
             <a href="#about">About</a>
             <a href="#demos">Demos</a>
+            <a href="/blog">Blog</a>
             <a href="#features">Features</a>
             <a href="#security">Security</a>
             <a href="#usecases">Use Cases</a>
@@ -1323,6 +1324,7 @@ export default function Home() {
               OrcaBot. Sandboxed, multiplayer AI coding platform.
             </span>
             <div className="footer-links">
+              <a href="/blog">Blog</a>
               <a href="/privacy">Privacy Policy</a>
               <a href="/terms">Terms of Service</a>
             </div>

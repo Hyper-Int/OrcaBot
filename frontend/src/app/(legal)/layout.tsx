@@ -18,6 +18,9 @@ export default function LegalLayout({
             <span className="text-body font-semibold text-[var(--foreground)]">OrcaBot</span>
           </Link>
           <nav className="flex gap-6">
+            <Link href="/blog" className="text-caption text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
+              Blog
+            </Link>
             <Link href="/terms" className="text-caption text-[var(--foreground-muted)] hover:text-[var(--foreground)] transition-colors">
               Terms of Service
             </Link>
