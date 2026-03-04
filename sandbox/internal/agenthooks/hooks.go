@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hooks-v2-mcp-secret-auth
+// REVISION: hooks-v4-claude-api-key-helper
 
 package agenthooks
 
@@ -16,8 +16,8 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 )
 
-// REVISION: hooks-v3-gemini-debug-gated
-const agentHooksRevision = "hooks-v3-gemini-debug-gated"
+// REVISION: hooks-v4-claude-api-key-helper
+const agentHooksRevision = "hooks-v4-claude-api-key-helper"
 
 var agentHooksRevisionLogOnce sync.Once
 
@@ -324,6 +324,53 @@ func mergeClaudeHookSettings(settingsPath, scriptPath string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote hooks to %s\n", settingsPath)
+	return nil
+}
+
+// SetClaudeApiKeyHelper writes an apiKeyHelper entry to ~/.claude/settings.local.json
+// that fetches the Anthropic API key from a dedicated sandbox endpoint at runtime.
+//
+// Security properties:
+//   - The token is a dedicated single-purpose credential, separate from ORCABOT_MCP_SECRET
+//   - It is NOT set in the PTY environment — only embedded here in this file
+//   - The endpoint is hardcoded to return ANTHROPIC_API_KEY only (no ?name= parameter)
+//   - The session ID and PTY ID are embedded as literals, not env vars
+//
+// A determined LLM could read this file and call the endpoint itself to get the
+// Anthropic key — but that key is already powering its session. It cannot use this
+// token to access any other key or any other endpoint.
+func SetClaudeApiKeyHelper(workspaceRoot, sessionID, ptyID, token string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .claude dir: %w", err)
+	}
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &settings); jsonErr != nil {
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	// All values are embedded as literals — no env var expansion needed or used.
+	// MCP_LOCAL_PORT defaults to 8081 if somehow unset.
+	settings["apiKeyHelper"] = fmt.Sprintf(
+		`curl -sf -H "X-Api-Key-Token: %s" "http://localhost:${MCP_LOCAL_PORT:-8081}/sessions/%s/ptys/%s/anthropic-key"`,
+		token, sessionID, ptyID,
+	)
+
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write settings: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[agenthooks] Set Claude apiKeyHelper (brokered) in %s\n", settingsPath)
 	return nil
 }
 

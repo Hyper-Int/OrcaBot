@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// REVISION: broker-v4-session-namespaced-keys
-const brokerRevision = "broker-v4-session-namespaced-keys"
+// REVISION: broker-v5-get-anthropic-key
+const brokerRevision = "broker-v5-get-anthropic-key"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
@@ -123,6 +123,19 @@ func (b *SecretsBroker) RemoveConfigForSession(providerID, sessionID string) {
 	if config, exists := b.configs[providerID]; exists && config.SessionID == sessionID {
 		delete(b.configs, providerID)
 	}
+}
+
+// GetAnthropicKey returns the plaintext Anthropic API key for the given session,
+// or "" if not brokered. Intentionally narrow — only returns ANTHROPIC_API_KEY,
+// never other secrets. Used exclusively by the Claude apiKeyHelper endpoint.
+func (b *SecretsBroker) GetAnthropicKey(sessionID string) string {
+	key := ConfigKey(sessionID, "anthropic")
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if config, exists := b.configs[key]; exists {
+		return config.SecretValue
+	}
+	return ""
 }
 
 // SetOnApprovalNeeded sets the callback for domain approval notifications.

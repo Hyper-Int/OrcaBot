@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v9-egress-per-session-opt-in
+// REVISION: session-v13-cleanup-stale-api-key-token
 
 // Package sessions manages session lifecycle.
 //
@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,11 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v9-egress-per-session-opt-in"
+const sessionRevision = "session-v13-cleanup-stale-api-key-token"
+
+// Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
+// This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
+var ptyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
@@ -79,9 +84,10 @@ func (s *Session) SetEgressEnabled(enabled bool) {
 }
 
 var (
-	ErrPTYNotFound = errors.New("pty not found")
-	ErrAgentExists = errors.New("agent already exists")
-	ErrNoAgent     = errors.New("no agent in session")
+	ErrPTYNotFound  = errors.New("pty not found")
+	ErrInvalidPTYID = errors.New("invalid pty id")
+	ErrAgentExists  = errors.New("agent already exists")
+	ErrNoAgent      = errors.New("no agent in session")
 )
 
 // AgentType represents the type of coding agent
@@ -139,6 +145,12 @@ type Session struct {
 	mcpSecrets   map[string]string // ptyID -> random nonce
 	mcpSecretsMu sync.RWMutex
 
+	// Per-PTY dedicated tokens for Claude apiKeyHelper endpoint.
+	// Separate from mcpSecrets so they can only be used for one purpose.
+	// REVISION: claude-api-key-token-v1
+	apiKeyTokens   map[string]string // ptyID -> random token
+	apiKeyTokensMu sync.RWMutex
+
 	// Execution IDs for schedule/recipe tracking (per-PTY)
 	// REVISION: server-side-cron-v1-execution-tracking
 	executionIDs   map[string]string // ptyID -> schedule_execution ID
@@ -176,6 +188,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		secrets:           make(map[string]string),
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
 		mcpSecrets:        make(map[string]string), // REVISION: mcp-secret-v1-nonce
+		apiKeyTokens:      make(map[string]string), // REVISION: claude-api-key-token-v1
 		executionIDs:      make(map[string]string), // REVISION: server-side-cron-v1-execution-tracking
 		knownProviders:    make(map[string]map[string]bool),
 		stateCache:        statecache.NewCache(workspaceRoot),
@@ -629,6 +642,23 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
+		// For Claude Code: if ANTHROPIC_API_KEY is brokered, generate a dedicated
+		// single-purpose token and write apiKeyHelper to settings.local.json.
+		// The token is separate from ORCABOT_MCP_SECRET and NOT set in the PTY env,
+		// so it can only be discovered by reading settings.local.json. The endpoint
+		// it calls is hardcoded to return ANTHROPIC_API_KEY only — no ?name= param.
+		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
+			apiKeyToken, tokenErr := id.New()
+			if tokenErr == nil {
+				s.apiKeyTokensMu.Lock()
+				s.apiKeyTokens[ptyID] = apiKeyToken
+				s.apiKeyTokensMu.Unlock()
+				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+				}
+			}
+		}
+
 		// Gemini CLI overwrites ~/.gemini/settings.json on startup, losing our hooks
 		// and UI settings. Point it to a system override file (highest precedence).
 		if agentType == mcp.AgentTypeGemini {
@@ -638,6 +668,13 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 
 	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
 	if err != nil {
+		// PTY never started; remove per-PTY secrets/tokens created earlier in this flow.
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
 		return nil, err
 	}
 
@@ -656,6 +693,10 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		s.mcpSecretsMu.Lock()
 		delete(s.mcpSecrets, ptyID)
 		s.mcpSecretsMu.Unlock()
+		// Clean up api key token (if set)
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
 	})
 
 	go hub.Run()
@@ -713,6 +754,8 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
 		}
+	} else if !ptyIDPattern.MatchString(ptyID) {
+		return nil, fmt.Errorf("%w: must match %s", ErrInvalidPTYID, ptyIDPattern.String())
 	}
 
 	// Generate per-PTY MCP auth nonce (proof-of-possession for localhost MCP requests)
@@ -825,6 +868,20 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
+		// For Claude Code: if ANTHROPIC_API_KEY is brokered, generate a dedicated
+		// single-purpose token and write apiKeyHelper to settings.local.json.
+		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
+			apiKeyToken, tokenErr := id.New()
+			if tokenErr == nil {
+				s.apiKeyTokensMu.Lock()
+				s.apiKeyTokens[ptyID] = apiKeyToken
+				s.apiKeyTokensMu.Unlock()
+				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+				}
+			}
+		}
+
 		// Gemini CLI overwrites ~/.gemini/settings.json on startup, losing our hooks
 		// and UI settings. Point it to a system override file (highest precedence).
 		if agentType == mcp.AgentTypeGemini {
@@ -834,6 +891,16 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 
 	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
 	if err != nil {
+		// PTY never started; remove per-PTY secrets/tokens created earlier in this flow.
+		s.integrationTokensMu.Lock()
+		delete(s.integrationTokens, ptyID)
+		s.integrationTokensMu.Unlock()
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
 		return nil, err
 	}
 
@@ -845,13 +912,16 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		s.mu.Lock()
 		delete(s.ptys, ptyID)
 		s.mu.Unlock()
-		// Also clean up integration token and MCP secret
+		// Also clean up integration token, MCP secret, and api key token
 		s.integrationTokensMu.Lock()
 		delete(s.integrationTokens, ptyID)
 		s.integrationTokensMu.Unlock()
 		s.mcpSecretsMu.Lock()
 		delete(s.mcpSecrets, ptyID)
 		s.mcpSecretsMu.Unlock()
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
 	})
 
 	go hub.Run()
@@ -882,6 +952,15 @@ func (s *Session) GetMCPSecret(ptyID string) string {
 	s.mcpSecretsMu.RLock()
 	defer s.mcpSecretsMu.RUnlock()
 	return s.mcpSecrets[ptyID]
+}
+
+// GetApiKeyToken returns the dedicated Claude apiKeyHelper token for a PTY.
+// Returns "" if none was generated (PTY has no brokered Anthropic key).
+// REVISION: claude-api-key-token-v1
+func (s *Session) GetApiKeyToken(ptyID string) string {
+	s.apiKeyTokensMu.RLock()
+	defer s.apiKeyTokensMu.RUnlock()
+	return s.apiKeyTokens[ptyID]
 }
 
 // GetStateCache returns the state cache for tasks/memory.
