@@ -4,7 +4,7 @@
 "use client";
 
 // REVISION: terminal-block-v7-analytics
-const TERMINAL_BLOCK_REVISION = "terminal-block-v7-analytics";
+const TERMINAL_BLOCK_REVISION = "terminal-block-v8-input-dark-mode";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -2710,7 +2710,7 @@ export function TerminalBlock({
                           placeholder="NAME"
                           value={newSecretName}
                           onChange={(e) => setNewSecretName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                          className="h-6 text-xs flex-1 nodrag font-mono bg-white"
+                          className="h-6 text-xs flex-1 nodrag font-mono"
                           autoComplete="off"
                           data-form-type="other"
                         />
@@ -2721,7 +2721,7 @@ export function TerminalBlock({
                           placeholder="Value"
                           value={newSecretValue}
                           onChange={(e) => setNewSecretValue(e.target.value)}
-                          className="h-6 text-xs flex-1 nodrag bg-white"
+                          className="h-6 text-xs flex-1 nodrag"
                           autoComplete="off"
                           data-form-type="other"
                           data-lpignore="true"
@@ -2865,7 +2865,7 @@ export function TerminalBlock({
                           placeholder="NAME"
                           value={newEnvVarName}
                           onChange={(e) => setNewEnvVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                          className="h-6 text-xs flex-1 nodrag font-mono bg-white"
+                          className="h-6 text-xs flex-1 nodrag font-mono"
                           autoComplete="off"
                           data-form-type="other"
                         />
@@ -2875,7 +2875,7 @@ export function TerminalBlock({
                           placeholder="Value"
                           value={newEnvVarValue}
                           onChange={(e) => setNewEnvVarValue(e.target.value)}
-                          className="h-6 text-xs flex-1 nodrag bg-white"
+                          className="h-6 text-xs flex-1 nodrag"
                           autoComplete="off"
                           data-form-type="other"
                           data-lpignore="true"

@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: ai-setup-card-v2-saved-keys-callback
+// REVISION: ai-setup-card-v3-skip-onclick-fix
 
 "use client";
 
-const REVISION = "ai-setup-card-v2-saved-keys-callback";
+const REVISION = "ai-setup-card-v3-skip-onclick-fix";
 console.log(`[AiProviderSetupCard] REVISION: ${REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -180,7 +180,7 @@ export function AiProviderSetupCard({ onDone }: AiProviderSetupCardProps) {
           </Button>
           <button
             type="button"
-            onClick={onDone}
+            onClick={() => onDone()}
             disabled={saving}
             className="flex items-center gap-1 text-xs hover:underline disabled:opacity-50"
             style={{ color: "var(--foreground-subtle)" }}
