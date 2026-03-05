@@ -637,8 +637,25 @@ input.chat-input-splash:focus-visible {
 }
 
 /* ===== Blog ===== */
+/* Force consistent colours on the dark blog background regardless of user theme */
+.blog-page {
+  --foreground: #ffffff;
+  --foreground-muted: rgba(255, 255, 255, 0.65);
+  --foreground-subtle: rgba(255, 255, 255, 0.4);
+  --border: rgba(255, 255, 255, 0.1);
+}
+
+.blog-nav-desktop { display: flex; gap: 1.5rem; }
+.blog-nav-burger  { display: none; background: none; border: none; cursor: pointer; padding: 0.5rem; flex-direction: column; gap: 5px; }
+
+@media (max-width: 639px) {
+  .blog-nav-desktop { display: none; }
+  .blog-nav-burger  { display: flex; }
+}
+
 .blog-title-anchor {
   text-decoration: none;
+  color: #ffffff;
 }
 
 .blog-title-anchor:hover {

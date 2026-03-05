@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v16-blog-link
+// REVISION: splash-v18-mobile-nav
 "use client";
 
-const MODULE_REVISION = "splash-v16-blog-link";
+const MODULE_REVISION = "splash-v18-mobile-nav";
 console.log(
   `[page] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -17,6 +17,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useSplashTransitionStore } from "@/stores/splash-transition-store";
 import { createDashboard } from "@/lib/api/cloudflare/dashboards";
 import { API } from "@/config/env";
+import { MobileNav } from "@/components/MobileNav";
 
 /* ═══════════════════════════════════════════════════════════════
    DATA
@@ -564,13 +565,7 @@ export default function Home() {
             <img src="/orca.png" alt="OrcaBot" />
             <span>OrcaBot</span>
           </a>
-          <nav className="header-nav">
-            <a href="#about">About</a>
-            <a href="#demos">Demos</a>
-            <a href="/blog">Blog</a>
-            <a href="#features">Features</a>
-            <a href="#security">Security</a>
-            <a href="#usecases">Use Cases</a>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
             <a
               href={headerLoginHref}
               className="btn btn-primary btn-sm"
@@ -578,7 +573,18 @@ export default function Home() {
             >
               {headerLoginText}
             </a>
-          </nav>
+            <MobileNav
+              links={[
+                { href: "#about", label: "About" },
+                { href: "#demos", label: "Demos" },
+                { href: "/blog", label: "Blog" },
+                { href: "#features", label: "Features" },
+                { href: "#security", label: "Security" },
+                { href: "#usecases", label: "Use Cases" },
+              ]}
+              absolute
+            />
+          </div>
         </header>
 
         {/* HERO */}
@@ -591,6 +597,9 @@ export default function Home() {
             <input
               ref={chatInputRef}
               type="text"
+              id="chat-prompt"
+              name="chat-prompt"
+              autoComplete="off"
               placeholder={
                 isMobile
                   ? "Describe what you want to build..."
