@@ -12,6 +12,8 @@ export interface Dashboard {
   updatedAt: string;
   /** Number of secrets configured for this dashboard */
   secretsCount?: number;
+  /** Number of active links to/from this dashboard */
+  linkedCount?: number;
 }
 
 /**

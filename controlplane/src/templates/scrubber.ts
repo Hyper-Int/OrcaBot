@@ -1,11 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: template-scrubber-v2-preserve-notes
+
 /**
  * Scrubs sensitive data from dashboard items before template export.
  *
  * Scrubbing rules by item type:
- * - note: Clear text content (color preserved in metadata)
+ * - note: Preserve text content (color preserved in metadata)
  * - todo: Clear item text, keep structure (item count, completed states)
  * - terminal: Keep name only, clear sessionId/ptyId
  * - link: Keep URL and title (assumed public)
@@ -50,8 +52,8 @@ export function scrubItemContent(
     switch (type) {
       case 'note': {
         // Notes store plain text in content; color is in metadata (handled separately)
-        // Just clear the content
-        return '';
+        // Preserve the content — notes contain only user text, not credentials
+        return content;
       }
 
       case 'todo': {

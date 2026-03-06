@@ -987,10 +987,44 @@ CREATE TABLE IF NOT EXISTS user_onboarding (
   ai_setup_dismissed_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ============================================
+-- Dashboard Links (bidirectional live sync)
+-- ============================================
+
+-- Each row represents a live link between two dashboards
+CREATE TABLE IF NOT EXISTS dashboard_links (
+  id TEXT PRIMARY KEY,
+  dashboard_a_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  dashboard_b_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(dashboard_a_id, dashboard_b_id)
+);
+CREATE INDEX IF NOT EXISTS idx_links_a ON dashboard_links(dashboard_a_id);
+CREATE INDEX IF NOT EXISTS idx_links_b ON dashboard_links(dashboard_b_id);
+
+-- Maps items between linked dashboards
+CREATE TABLE IF NOT EXISTS link_item_map (
+  link_id TEXT NOT NULL REFERENCES dashboard_links(id) ON DELETE CASCADE,
+  item_a_id TEXT NOT NULL,
+  item_b_id TEXT NOT NULL,
+  PRIMARY KEY (link_id, item_a_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_link_item_b ON link_item_map(link_id, item_b_id);
+
+-- Maps edges between linked dashboards
+CREATE TABLE IF NOT EXISTS link_edge_map (
+  link_id TEXT NOT NULL REFERENCES dashboard_links(id) ON DELETE CASCADE,
+  edge_a_id TEXT NOT NULL,
+  edge_b_id TEXT NOT NULL,
+  PRIMARY KEY (link_id, edge_a_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge_b_id);
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v12-user-onboarding";
+const SCHEMA_REVISION = "schema-v13-dashboard-links";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);

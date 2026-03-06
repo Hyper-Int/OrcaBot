@@ -5,9 +5,10 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v4-eager-vm-claim
+// REVISION: dashboards-v6-link-sync-with-rbac
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
+import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
 import { populateFromTemplate } from '../templates/handler';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { FlyMachinesClient } from '../sandbox/fly-machines';
@@ -18,7 +19,7 @@ function generateId(): string {
 }
 
 // Format a raw DB dashboard row to camelCase
-function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsCount?: number } {
+function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsCount?: number; linkedCount?: number } {
   return {
     id: row.id as string,
     name: row.name as string,
@@ -26,6 +27,7 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     secretsCount: row.secrets_count !== undefined ? Number(row.secrets_count) : undefined,
+    linkedCount: row.linked_count !== undefined ? Number(row.linked_count) : undefined,
   };
 }
 
@@ -115,7 +117,8 @@ export async function listDashbоards(
 ): Promise<Response> {
   const result = await env.DB.prepare(`
     SELECT d.*,
-      (SELECT COUNT(*) FROM user_secrets us WHERE us.dashboard_id = d.id AND us.user_id = ?) as secrets_count
+      (SELECT COUNT(*) FROM user_secrets us WHERE us.dashboard_id = d.id AND us.user_id = ?) as secrets_count,
+      (SELECT COUNT(*) FROM dashboard_links dl WHERE dl.dashboard_a_id = d.id OR dl.dashboard_b_id = d.id) as linked_count
     FROM dashboards d
     JOIN dashboard_members dm ON d.id = dm.dashboard_id
     WHERE dm.user_id = ?
@@ -429,6 +432,11 @@ export async function upsertItem(
     body: JSON.stringify(formattedItem),
   }));
 
+  // Propagate to linked dashboards (best-effort, non-blocking)
+  syncItemToLinked(env, dashboardId, formattedItem, 'upsert', userId).catch(err =>
+    console.error('[dashboards] syncItemToLinked error:', err)
+  );
+
   return Response.json({ item: formattedItem }, { status: existing ? 200 : 201 });
 }
 
@@ -493,6 +501,16 @@ export async function deleteItem(
       method: 'DELETE',
       body: JSON.stringify({ edgeId: edge.id }),
     }));
+  }
+
+  // Propagate deletions to linked dashboards (best-effort)
+  syncItemToLinked(env, dashboardId, { id: itemId } as DashboardItem, 'delete', userId).catch(err =>
+    console.error('[dashboards] syncItemToLinked delete error:', err)
+  );
+  for (const edge of edgeRows.results) {
+    syncEdgeToLinked(env, dashboardId, { id: edge.id } as DashboardEdge, 'delete', userId).catch(err =>
+      console.error('[dashboards] syncEdgeToLinked delete error:', err)
+    );
   }
 
   return new Response(null, { status: 204 });
@@ -564,6 +582,11 @@ export async function createEdge(
     body: JSON.stringify(formattedEdge),
   }));
 
+  // Propagate to linked dashboards (best-effort)
+  syncEdgeToLinked(env, dashboardId, formattedEdge, 'upsert', userId).catch(err =>
+    console.error('[dashboards] syncEdgeToLinked error:', err)
+  );
+
   return Response.json({ edge: formattedEdge }, { status: 201 });
 }
 
@@ -589,6 +612,11 @@ export async function deleteEdge(
     method: 'DELETE',
     body: JSON.stringify({ edgeId }),
   }));
+
+  // Propagate to linked dashboards (best-effort)
+  syncEdgeToLinked(env, dashboardId, { id: edgeId } as DashboardEdge, 'delete', userId).catch(err =>
+    console.error('[dashboards] syncEdgeToLinked delete error:', err)
+  );
 
   return new Response(null, { status: 204 });
 }

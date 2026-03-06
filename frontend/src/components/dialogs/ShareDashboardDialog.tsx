@@ -1,11 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: share-dialog-v2-linked-dashboards
+
 "use client";
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import {
   Mail,
   Trash2,
@@ -15,6 +18,9 @@ import {
   Eye,
   Clock,
   Loader2,
+  Link2,
+  ExternalLink,
+  Copy,
 } from "lucide-react";
 
 import {
@@ -36,6 +42,12 @@ import {
   type DashboardMember,
   type DashboardInvitation,
 } from "@/lib/api/cloudflare/members";
+import {
+  createDashboardLink,
+  getDashboardLinks,
+  deleteDashboardLink,
+  type LinkInfo,
+} from "@/lib/api/cloudflare/links";
 
 interface ShareDashboardDialogProps {
   open: boolean;
@@ -59,10 +71,14 @@ export function ShareDashboardDialog({
   currentUserRole,
 }: ShareDashboardDialogProps) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [email, setEmail] = React.useState("");
   const [selectedRole, setSelectedRole] = React.useState<"editor" | "viewer">(
     "viewer"
   );
+  const [newLinkId, setNewLinkId] = React.useState<string | null>(null);
+  const [newLinkedDashboardId, setNewLinkedDashboardId] = React.useState<string | null>(null);
+  const [newLinkedDashboardName, setNewLinkedDashboardName] = React.useState<string | null>(null);
 
   const isOwner = currentUserRole === "owner";
 
@@ -71,6 +87,9 @@ export function ShareDashboardDialog({
     if (open) {
       setEmail("");
       setSelectedRole("viewer");
+      setNewLinkId(null);
+      setNewLinkedDashboardId(null);
+      setNewLinkedDashboardName(null);
     }
   }, [open]);
 
@@ -175,6 +194,41 @@ export function ShareDashboardDialog({
     },
   });
 
+  // Fetch existing links
+  const { data: linksData, isLoading: linksLoading } = useQuery({
+    queryKey: ["dashboard-links", dashboardId],
+    queryFn: () => getDashboardLinks(dashboardId),
+    enabled: open,
+  });
+
+  // Create link mutation
+  const createLinkMutation = useMutation({
+    mutationFn: () => createDashboardLink(dashboardId),
+    onSuccess: (result) => {
+      setNewLinkId(result.linkId);
+      setNewLinkedDashboardId(result.linkedDashboardId);
+      setNewLinkedDashboardName(result.linkedDashboardName);
+      queryClient.invalidateQueries({ queryKey: ["dashboard-links", dashboardId] });
+      queryClient.invalidateQueries({ queryKey: ["dashboards"] });
+      toast.success(`Linked dashboard created: ${result.linkedDashboardName}`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to create linked dashboard");
+    },
+  });
+
+  // Delete link mutation
+  const deleteLinkMutation = useMutation({
+    mutationFn: (linkId: string) => deleteDashboardLink(dashboardId, linkId),
+    onSuccess: () => {
+      toast.success("Dashboard unlinked");
+      queryClient.invalidateQueries({ queryKey: ["dashboard-links", dashboardId] });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Failed to unlink dashboard");
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
@@ -247,6 +301,112 @@ export function ShareDashboardDialog({
         {error && (
           <div className="text-sm text-[var(--status-error)] py-4">
             Failed to load members. Please try again.
+          </div>
+        )}
+
+        {/* Linked Dashboards section */}
+        {isOwner && (
+          <div className="border-t border-[var(--border)] pt-4 mt-2">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-medium text-[var(--foreground)] flex items-center gap-1.5">
+                <Link2 className="w-4 h-4" />
+                Linked Dashboards
+              </h4>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => createLinkMutation.mutate()}
+                disabled={createLinkMutation.isPending}
+              >
+                {createLinkMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                ) : (
+                  <Link2 className="w-3.5 h-3.5 mr-1" />
+                )}
+                Create Linked Dashboard
+              </Button>
+            </div>
+
+            <p className="text-xs text-[var(--foreground-muted)] mb-3">
+              A linked dashboard stays in live sync — edits in either propagate to the other. Secrets and integrations are not shared.
+            </p>
+
+            {/* Newly created link success state */}
+            {newLinkedDashboardId && newLinkedDashboardName && (
+              <div className="rounded-md border border-[var(--status-success)] bg-[var(--status-success)]/10 px-3 py-2 mb-3 space-y-2">
+                <p className="text-sm font-medium text-[var(--status-success)]">
+                  Linked dashboard created!
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      navigator.clipboard.writeText(
+                        `${window.location.origin}/dashboards/${newLinkedDashboardId}`
+                      );
+                      toast.success("Link copied");
+                    }}
+                  >
+                    <Copy className="w-3.5 h-3.5 mr-1" />
+                    Copy link
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      onOpenChange(false);
+                      router.push(`/dashboards/${newLinkedDashboardId}`);
+                    }}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                    Go to {newLinkedDashboardName}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Existing links */}
+            {linksLoading && (
+              <div className="flex items-center gap-2 text-xs text-[var(--foreground-muted)]">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Loading links...
+              </div>
+            )}
+            {linksData && linksData.length > 0 && (
+              <div className="space-y-2">
+                {linksData.map((link: LinkInfo) => (
+                  <div
+                    key={link.id}
+                    className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Link2 className="w-3.5 h-3.5 flex-shrink-0 text-[var(--foreground-muted)]" />
+                      <button
+                        className="text-sm text-[var(--foreground)] truncate hover:underline text-left"
+                        onClick={() => {
+                          onOpenChange(false);
+                          router.push(`/dashboards/${link.linkedDashboardId}`);
+                        }}
+                      >
+                        {link.linkedDashboardName}
+                      </button>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteLinkMutation.mutate(link.id)}
+                      disabled={deleteLinkMutation.isPending}
+                      title="Unlink"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-[var(--status-error)]" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {linksData && linksData.length === 0 && !newLinkedDashboardId && (
+              <p className="text-xs text-[var(--foreground-muted)]">No linked dashboards yet.</p>
+            )}
           </div>
         )}
 
