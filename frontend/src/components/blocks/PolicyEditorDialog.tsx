@@ -22,6 +22,7 @@ import {
   type GitHubPolicy,
   type BrowserPolicy,
   type MessagingPolicy,
+  type TwitterPolicy,
   type SecurityLevel,
   getProviderDisplayName,
   getSecurityLevelColor,
@@ -541,6 +542,37 @@ const MessagingPolicyEditor: React.FC<{
   );
 };
 
+// Twitter/X Policy Editor
+const TwitterPolicyEditor: React.FC<{
+  policy: TwitterPolicy;
+  onChange: (policy: TwitterPolicy) => void;
+}> = ({ policy, onChange }) => {
+  const update = <K extends keyof TwitterPolicy>(key: K, value: TwitterPolicy[K]) => {
+    onChange({ ...policy, [key]: value });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Section title="Read">
+        <Toggle label="Can search tweets" checked={policy.canSearch} onChange={(v) => update("canSearch", v)} description="Search recent tweets" />
+        <Toggle label="Can read tweets" checked={policy.canRead} onChange={(v) => update("canRead", v)} description="View tweets, mentions, and user profiles" />
+      </Section>
+
+      <Section title="Engage">
+        <Toggle label="Can retweet" checked={policy.canRetweet} onChange={(v) => update("canRetweet", v)} warning description="Retweet posts on your behalf" />
+        <Toggle label="Can like" checked={policy.canLike} onChange={(v) => update("canLike", v)} warning description="Like tweets on your behalf" />
+        <Toggle label="Can reply" checked={policy.canReply} onChange={(v) => update("canReply", v)} warning description="Reply to tweets on your behalf" />
+      </Section>
+
+      <Section title="Write">
+        <Toggle label="Can post tweets" checked={policy.canPost} onChange={(v) => update("canPost", v)} warning description="Post new tweets on your behalf" />
+        <Toggle label="Can follow users" checked={policy.canFollow} onChange={(v) => update("canFollow", v)} warning description="Follow accounts on your behalf" />
+        <Toggle label="Can delete tweets" checked={policy.canDeleteTweet} onChange={(v) => update("canDeleteTweet", v)} warning description="Permanently delete your tweets" />
+      </Section>
+    </div>
+  );
+};
+
 // Generic Simple Policy Editor (for Contacts, Sheets, Forms)
 const SimplePolicyEditor: React.FC<{
   policy: ContactsPolicy | SheetsPolicy | FormsPolicy;
@@ -694,6 +726,13 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
         return (
           <SimplePolicyEditor
             policy={policy as ContactsPolicy | SheetsPolicy | FormsPolicy}
+            onChange={(p) => setPolicy(p)}
+          />
+        );
+      case "twitter":
+        return (
+          <TwitterPolicyEditor
+            policy={policy as TwitterPolicy}
             onChange={(p) => setPolicy(p)}
           />
         );

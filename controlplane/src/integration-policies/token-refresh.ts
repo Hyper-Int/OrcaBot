@@ -90,6 +90,71 @@ async function refreshOAuthToken(
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
     });
+  } else if (provider === 'twitter') {
+    // Twitter OAuth 2.0 refresh — uses Basic auth header (client_id:client_secret base64)
+    if (!env.TWITTER_CLIENT_ID || !env.TWITTER_CLIENT_SECRET) {
+      console.error('[token-refresh] Twitter OAuth not configured for token refresh');
+      return null;
+    }
+    tokenUrl = 'https://api.twitter.com/2/oauth2/token';
+    body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: env.TWITTER_CLIENT_ID,
+    });
+    // Twitter uses Basic auth for token refresh
+    const basicAuth = btoa(`${env.TWITTER_CLIENT_ID}:${env.TWITTER_CLIENT_SECRET}`);
+    try {
+      const response = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+          'Authorization': `Basic ${basicAuth}`,
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '');
+        console.error(`[token-refresh] Twitter refresh failed:`, response.status, errBody);
+        return null;
+      }
+
+      const tokenData = await response.json() as {
+        access_token?: string;
+        expires_in?: number;
+        refresh_token?: string;
+      };
+
+      if (!tokenData.access_token) {
+        console.error(`[token-refresh] Twitter refresh returned no access_token`);
+        return null;
+      }
+
+      const expiresIn = tokenData.expires_in || 7200;
+      const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+      if (tokenData.refresh_token) {
+        await env.DB.prepare(`
+          UPDATE user_integrations
+          SET access_token = ?, refresh_token = ?, expires_at = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(tokenData.access_token, tokenData.refresh_token, expiresAt, userIntegrationId).run();
+      } else {
+        await env.DB.prepare(`
+          UPDATE user_integrations
+          SET access_token = ?, expires_at = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(tokenData.access_token, expiresAt, userIntegrationId).run();
+      }
+
+      console.log(`[token-refresh] Twitter token refreshed successfully`);
+      return tokenData.access_token;
+    } catch (err) {
+      console.error(`[token-refresh] Twitter refresh error:`, err);
+      return null;
+    }
   } else {
     // Browser and other providers don't use OAuth refresh
     console.warn(`[token-refresh] OAuth refresh not supported for provider: ${provider}`);

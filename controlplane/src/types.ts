@@ -119,6 +119,10 @@ export interface Env {
   /** Cloudflare Turnstile secret key for bot verification on login.
    *  Set via: wrangler secret put TURNSTILE_SECRET_KEY */
   TURNSTILE_SECRET_KEY?: string;
+  /** Twitter/X OAuth 2.0 client ID */
+  TWITTER_CLIENT_ID?: string;
+  /** Twitter/X OAuth 2.0 client secret */
+  TWITTER_CLIENT_SECRET?: string;
 }
 
 // Subscription types
@@ -151,7 +155,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -234,7 +238,7 @@ export interface UserIntegration {
   id: string;
   userId: string;
   provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'google_contacts' | 'google_sheets' | 'google_forms' | 'box' | 'onedrive'
-    | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
+    | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter';
   accessToken: string;
   refreshToken: string | null;
   scope: string | null;
@@ -634,7 +638,8 @@ export type IntegrationProvider =
   | 'whatsapp'
   | 'teams'
   | 'matrix'
-  | 'google_chat';
+  | 'google_chat'
+  | 'twitter';
 
 /** Messaging providers that support inbound/outbound messaging */
 export type MessagingProvider = 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
@@ -1021,6 +1026,21 @@ export interface TelegramPolicy extends MessagingPolicy {
 }
 
 /**
+ * Twitter/X policy configuration
+ * Default: read-only (canSearch + canRead). No DMs for privacy.
+ */
+export interface TwitterPolicy extends BasePolicy {
+  canSearch: boolean;
+  canRead: boolean;
+  canRetweet: boolean;
+  canLike: boolean;
+  canReply: boolean;
+  canPost: boolean;
+  canFollow: boolean;
+  canDeleteTweet: boolean;
+}
+
+/**
  * Type-safe policy lookup by provider
  */
 export type PolicyForProvider<P extends IntegrationProvider> =
@@ -1041,6 +1061,7 @@ export type PolicyForProvider<P extends IntegrationProvider> =
   P extends 'teams' ? MessagingPolicy :
   P extends 'matrix' ? MessagingPolicy :
   P extends 'google_chat' ? MessagingPolicy :
+  P extends 'twitter' ? TwitterPolicy :
   never;
 
 /**
@@ -1060,7 +1081,8 @@ export type AnyPolicy =
   | MessagingPolicy
   | SlackPolicy
   | DiscordPolicy
-  | TelegramPolicy;
+  | TelegramPolicy
+  | TwitterPolicy;
 
 /**
  * Terminal integration binding (immutable once created)
@@ -1172,6 +1194,7 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   teams: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   matrix: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   google_chat: ['canSend', 'canEditMessages', 'canDeleteMessages'],
+  twitter: ['canPost', 'canRetweet', 'canFollow', 'canDeleteTweet'],
 };
 
 // ============================================

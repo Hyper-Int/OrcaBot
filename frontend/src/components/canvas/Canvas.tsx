@@ -53,6 +53,7 @@ import { WhatsAppBlock } from "@/components/blocks/WhatsAppBlock";
 import { TeamsBlock } from "@/components/blocks/TeamsBlock";
 import { MatrixBlock } from "@/components/blocks/MatrixBlock";
 import { GoogleChatBlock } from "@/components/blocks/GoogleChatBlock";
+import { TwitterBlock } from "@/components/blocks/TwitterBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -82,6 +83,7 @@ const nodeTypes: NodeTypes = {
   teams: TeamsBlock,
   matrix: MatrixBlock,
   google_chat: GoogleChatBlock,
+  twitter: TwitterBlock,
   cursor: CursorNode,
 };
 

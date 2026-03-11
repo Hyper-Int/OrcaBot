@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v14-fix-token-refresh-in-validate
-console.log(`[integration-handler] REVISION: handler-v14-fix-token-refresh-in-validate loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v16-attach-orphan-cleanup
+console.log(`[integration-handler] REVISION: handler-v16-attach-orphan-cleanup loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -23,6 +23,7 @@ import type {
   BoxPolicy,
   GitHubPolicy,
   BrowserPolicy,
+  TwitterPolicy,
   HighRiskConfirmation,
 } from '../types';
 import { HIGH_RISK_CAPABILITIES } from '../types';
@@ -284,6 +285,13 @@ export function calculateSecurityLevel(
       return 'restricted';
     }
 
+    case 'twitter': {
+      const p = policy as TwitterPolicy;
+      if (p.canPost || p.canFollow || p.canDeleteTweet) return 'full';
+      if (p.canRetweet || p.canLike || p.canReply) return 'elevated';
+      return 'restricted';
+    }
+
     default: {
       // Exhaustive check
       const _exhaustive: never = provider;
@@ -442,6 +450,18 @@ export function createDefaultFullAccessPolicy(provider: IntegrationProvider): An
         canUploadFiles: true,
         canReadHistory: true,
       } as import('../types').MessagingPolicy;
+
+    case 'twitter':
+      return {
+        canSearch: true,
+        canRead: true,
+        canRetweet: true,
+        canLike: true,
+        canReply: true,
+        canPost: true,
+        canFollow: true,
+        canDeleteTweet: false, // Deleting still off by default — destructive
+      } as TwitterPolicy;
 
     default: {
       const _exhaustive: never = provider;
@@ -611,6 +631,18 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canUploadFiles: false,
         canReadHistory: true,
       } as import('../types').MessagingPolicy;
+
+    case 'twitter':
+      return {
+        canSearch: true,
+        canRead: true,
+        canRetweet: false,
+        canLike: false,
+        canReply: false,
+        canPost: false,
+        canFollow: false,
+        canDeleteTweet: false,
+      } as TwitterPolicy;
 
     default: {
       const _exhaustive: never = provider;
@@ -846,6 +878,19 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'google_chat.get_member': 'canReceive', // Non-channel-targeted
     'google_chat.update_message': 'canEditMessages',
     'google_chat.delete_message': 'canDeleteMessages',
+  },
+  twitter: {
+    'twitter.search': 'canSearch',
+    'twitter.get_tweet': 'canRead',
+    'twitter.get_mentions': 'canRead',
+    'twitter.get_timeline': 'canRead',
+    'twitter.get_user': 'canRead',
+    'twitter.post': 'canPost',
+    'twitter.reply': 'canReply',
+    'twitter.like': 'canLike',
+    'twitter.retweet': 'canRetweet',
+    'twitter.follow': 'canFollow',
+    'twitter.delete_tweet': 'canDeleteTweet',
   },
 };
 
@@ -1480,6 +1525,7 @@ export async function listAvailableIntegrations(
     'onedrive',
     'box',
     'github',
+    'twitter',
   ];
 
   for (const provider of allProviders) {
@@ -1661,17 +1707,31 @@ export async function attachIntegration(
 
   // Check if already attached (non-deleted)
   const existing = await env.DB.prepare(`
-    SELECT id FROM terminal_integrations
-    WHERE terminal_id = ? AND provider = ? AND deleted_at IS NULL
+    SELECT ti.id, ti.user_integration_id,
+      CASE WHEN ui.id IS NOT NULL THEN 1 ELSE 0 END as ui_exists
+    FROM terminal_integrations ti
+    LEFT JOIN user_integrations ui ON ti.user_integration_id = ui.id
+    WHERE ti.terminal_id = ? AND ti.provider = ? AND ti.deleted_at IS NULL
   `)
     .bind(terminalId, provider)
-    .first();
+    .first<{ id: string; user_integration_id: string | null; ui_exists: number }>();
 
   if (existing) {
-    return Response.json(
-      { error: `${provider} is already attached to this terminal` },
-      { status: 409 }
-    );
+    // If the existing row is an orphan (its user_integration_id references a deleted
+    // user_integrations row), clean it up and allow re-attachment.
+    const isOrphan = existing.user_integration_id !== null && existing.ui_exists === 0;
+    if (isOrphan) {
+      console.log(`[attachIntegration] Cleaning up orphaned terminal_integration id=${existing.id} for provider=${provider}`);
+      await env.DB.prepare(`DELETE FROM integration_audit_log WHERE terminal_integration_id = ?`).bind(existing.id).run();
+      await env.DB.prepare(`DELETE FROM high_risk_confirmations WHERE terminal_integration_id = ?`).bind(existing.id).run();
+      await env.DB.prepare(`DELETE FROM integration_policies WHERE terminal_integration_id = ?`).bind(existing.id).run();
+      await env.DB.prepare(`DELETE FROM terminal_integrations WHERE id = ?`).bind(existing.id).run();
+    } else {
+      return Response.json(
+        { error: `${provider} is already attached to this terminal` },
+        { status: 409 }
+      );
+    }
   }
 
   // Get account email from OAuth metadata if available

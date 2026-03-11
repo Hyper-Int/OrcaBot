@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v4-clean-startup
+// REVISION: browser-v6-liveness-check
 package browser
 
 import (
@@ -43,8 +43,8 @@ type Controller struct {
 	processes []*exec.Cmd
 }
 
-// REVISION: browser-v5-log-filter
-const browserRevision = "browser-v5-log-filter"
+// REVISION: browser-v6-liveness-check
+const browserRevision = "browser-v6-liveness-check"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -313,6 +313,35 @@ func (c *Controller) Stop() {
 }
 
 func (c *Controller) Status() Status {
+	c.mu.Lock()
+	running := c.running
+	wsPort := c.wsPort
+	c.mu.Unlock()
+
+	// If we think the browser is running, verify websockify is still listening.
+	// If it's gone the processes died unexpectedly and we need to allow a restart.
+	if running && wsPort > 0 {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", wsPort), 200*time.Millisecond)
+		if err == nil {
+			conn.Close()
+		} else {
+			c.mu.Lock()
+			// Only clear if no concurrent Start() has already replaced the state.
+			if c.running && c.wsPort == wsPort {
+				log.Printf("[browser] websockify port %d gone, processes exited unexpectedly — clearing state", wsPort)
+				for _, p := range c.processes {
+					if p.Process != nil {
+						_ = p.Process.Kill()
+					}
+				}
+				c.processes = nil
+				c.running = false
+				c.ready = false
+			}
+			c.mu.Unlock()
+		}
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.statusLocked()

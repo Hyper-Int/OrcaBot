@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v27-hybrid-24h-window
-const MODULE_REVISION = 'gateway-v27-hybrid-24h-window';
+// REVISION: gateway-v28-twitter-account-id-server-only
+const MODULE_REVISION = 'gateway-v28-twitter-account-id-server-only';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -51,6 +51,7 @@ import { executeWhatsAppAction } from './api-clients/whatsapp';
 import { executeTeamsAction } from './api-clients/teams';
 import { executeMatrixAction } from './api-clients/matrix';
 import { executeGoogleChatAction } from './api-clients/google_chat';
+import { executeTwitterAction } from './api-clients/twitter';
 
 // ============================================
 // Types
@@ -506,6 +507,8 @@ async function executeProviderAPI(
       return executeMatrixAction(action, args, accessToken);
     case 'google_chat':
       return executeGoogleChatAction(action, args, accessToken);
+    case 'twitter':
+      return executeTwitterAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');
@@ -1038,6 +1041,21 @@ export async function handleGatewayExecute(
     } catch (err) {
       // Non-fatal: don't block outbound if window check fails
       console.error('[gateway] Hybrid window check error:', err);
+    }
+  }
+
+  // 9f. Twitter: always overwrite account_id from stored metadata — never trust sandbox-supplied value
+  if (provider === 'twitter' && ti.user_integration_id) {
+    const twitterMeta = await env.DB.prepare(`
+      SELECT metadata FROM user_integrations WHERE id = ?
+    `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
+    if (twitterMeta?.metadata) {
+      try {
+        const meta = JSON.parse(twitterMeta.metadata) as { twitter_user_id?: string };
+        if (meta.twitter_user_id) {
+          body.args.account_id = meta.twitter_user_id;
+        }
+      } catch { /* ignore parse errors */ }
     }
   }
 

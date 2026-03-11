@@ -1,8 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v24-propagate-error-message
-const integrationsRevision = "integrations-v24-propagate-error-message";
+// REVISION: integrations-v27-twitter-disconnect-orphan-cleanup
+const integrationsRevision = "integrations-v27-twitter-disconnect-orphan-cleanup";
+
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
 import type { EnvWithDriveCache } from '../storage/drive-cache';
@@ -81,6 +82,17 @@ const SLACK_SCOPE = [
   // already removed in integration_tools.go for this reason.
   'reactions:write',
   'chat:write.customize',
+];
+
+const TWITTER_SCOPE = [
+  'tweet.read',
+  'tweet.write',
+  'users.read',
+  'follows.read',
+  'follows.write',
+  'like.read',
+  'like.write',
+  'offline.access',
 ];
 
 const DRIVE_AUTO_SYNC_LIMIT_BYTES = 1024 * 1024 * 1024;
@@ -10916,4 +10928,125 @@ export async function getWhatsAppQr(
     console.error('[integrations] Bridge getQrCode failed:', err);
     return Response.json({ status: 'error', qrCode: null, error: 'E79567: Bridge unavailable' });
   }
+}
+
+// ============================================
+// Twitter / X Integration (OAuth 2.0 with PKCE)
+// ============================================
+
+/** Generate a random code verifier for PKCE (43-128 chars, RFC 7636) */
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Generate a code challenge (S256) from a verifier */
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+export async function saveTwitterCredentials(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  let body: { bearer_token?: string };
+  try {
+    body = await request.json() as { bearer_token?: string };
+  } catch {
+    return Response.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const bearerToken = (body.bearer_token || '').trim();
+  if (!bearerToken) {
+    return Response.json({ error: 'bearer_token is required' }, { status: 400 });
+  }
+
+  // App-only Bearer tokens have no user identity — store directly without verification
+  // (verification would require a paid API tier endpoint; errors surface on first tool use)
+  const metadata = JSON.stringify({ token_type: 'app-only' });
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'twitter', ?, NULL, NULL, 'bearer', NULL, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    auth.user!.id,
+    bearerToken,
+    metadata
+  ).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function getTwitterIntegration(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const integration = await env.DB.prepare(`
+    SELECT metadata FROM user_integrations WHERE user_id = ? AND provider = 'twitter'
+  `).bind(auth.user!.id).first<{ metadata: string | null }>();
+
+  if (!integration) {
+    return Response.json({ connected: false });
+  }
+
+  let username = '';
+  try {
+    const meta = JSON.parse(integration.metadata || '{}') as { username?: string };
+    username = meta.username || '';
+  } catch { /* ignore */ }
+
+  return Response.json({ connected: true, username });
+}
+
+export async function disconnectTwitter(
+  _request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const userId = auth.user!.id;
+
+  // Hard-delete ALL terminal_integrations for this user+provider, including orphaned rows
+  // where user_integration_id points to a previously-deleted user_integrations row.
+  // Query by user_id+provider to catch both normal and orphaned rows.
+  const tiRows = await env.DB.prepare(`
+    SELECT id FROM terminal_integrations WHERE user_id = ? AND provider = 'twitter'
+  `).bind(userId).all<{ id: string }>();
+
+  for (const ti of tiRows.results || []) {
+    await env.DB.prepare(`DELETE FROM integration_audit_log WHERE terminal_integration_id = ?`).bind(ti.id).run();
+    await env.DB.prepare(`DELETE FROM high_risk_confirmations WHERE terminal_integration_id = ?`).bind(ti.id).run();
+    await env.DB.prepare(`DELETE FROM integration_policies WHERE terminal_integration_id = ?`).bind(ti.id).run();
+  }
+
+  if (tiRows.results?.length) {
+    await env.DB.prepare(`DELETE FROM terminal_integrations WHERE user_id = ? AND provider = 'twitter'`).bind(userId).run();
+  }
+
+  await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'twitter'`).bind(userId).run();
+
+  return Response.json({ ok: true });
 }
