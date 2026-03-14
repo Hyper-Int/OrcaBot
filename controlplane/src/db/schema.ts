@@ -1683,4 +1683,14 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
     db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active ON terminal_integrations(terminal_id, provider) WHERE deleted_at IS NULL`),
     db.prepare(`PRAGMA foreign_keys=ON`),
   ]);
+
+  // Blog subscribers table
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS blog_subscribers (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      unsubscribe_token TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
 }

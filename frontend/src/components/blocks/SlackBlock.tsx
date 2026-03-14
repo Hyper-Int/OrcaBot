@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: slack-block-v11-clean-logging
+// REVISION: slack-block-v12-help-button
 
 "use client";
 
-const MODULE_REVISION = "slack-block-v11-clean-logging";
+const MODULE_REVISION = "slack-block-v12-help-button";
 console.log(`[SlackBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -39,6 +39,8 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { slackDoc } from "@/docs/content/slack";
 
 // ============================================
 // Slack types
@@ -459,6 +461,7 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
         {integration?.teamName || status?.teamName || "Slack"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={slackDoc} />
         {integration?.connected && (
           <Button
             variant="ghost"

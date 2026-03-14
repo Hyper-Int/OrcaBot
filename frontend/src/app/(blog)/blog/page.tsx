@@ -1,22 +1,22 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: blog-v3-anchors
+// REVISION: blog-v6-scroll-video
 
 import { getPost, getAllPosts } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
 import type { Metadata } from "next";
+import { BlogSubscribe } from "@/components/BlogSubscribe";
+import { ScrollVideo } from "@/components/ScrollVideo";
+
+const MODULE_REVISION = "blog-v6-scroll-video";
+console.log(`[blog-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export const metadata: Metadata = {
   title: "Blog - OrcaBot",
   description:
     "Updates, insights, and behind-the-scenes from the OrcaBot team.",
 };
-
-// Strip leading date prefix (YYYY-MM-DD-) from slug for clean anchors
-function slugToAnchor(slug: string): string {
-  return slug.replace(/^\d{4}-\d{2}-\d{2}-/, "");
-}
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return "";
@@ -60,8 +60,16 @@ export default function BlogIndexPage() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "5rem" }}>
           {posts.map((post) => (
-            <article key={post!.slug} id={slugToAnchor(post!.slug)}>
-              {post!.coverImage && (
+            <article key={post!.slug} id={post!.slug}>
+              {post!.coverVideo ? (
+                <div style={{ marginBottom: "2rem" }}>
+                  <ScrollVideo
+                    src={post!.coverVideo}
+                    poster={post!.coverImage ?? undefined}
+                    alt={post!.title}
+                  />
+                </div>
+              ) : post!.coverImage ? (
                 <img
                   src={post!.coverImage}
                   alt={post!.title}
@@ -74,7 +82,7 @@ export default function BlogIndexPage() {
                     marginBottom: "2rem",
                   }}
                 />
-              )}
+              ) : null}
 
               {/* Post header */}
               <header style={{ marginBottom: "2rem" }}>
@@ -104,7 +112,7 @@ export default function BlogIndexPage() {
                   }}
                 >
                   <a
-                    href={`#${slugToAnchor(post!.slug)}`}
+                    href={`#${post!.slug}`}
                     className="text-[var(--foreground)] blog-title-anchor"
                   >
                     {post!.title}
@@ -137,6 +145,11 @@ export default function BlogIndexPage() {
           ))}
         </div>
       )}
+
+      {/* Subscribe form */}
+      <div style={{ marginTop: "4rem" }}>
+        <BlogSubscribe />
+      </div>
     </div>
   );
 }

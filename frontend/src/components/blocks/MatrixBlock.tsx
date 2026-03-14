@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: matrix-block-v2-fix-chat-id-matching
+// REVISION: matrix-block-v3-help-button
 
 "use client";
 
-const MODULE_REVISION = "matrix-block-v2-fix-chat-id-matching";
+const MODULE_REVISION = "matrix-block-v3-help-button";
 console.log(`[MatrixBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -37,6 +37,8 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import { MatrixIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { matrixDoc } from "@/docs/content/matrix";
 
 // ============================================
 // Matrix types
@@ -349,6 +351,7 @@ export function MatrixBlock({ id, data, selected }: NodeProps<MatrixNode>) {
         {integration?.accountName || "Matrix"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={matrixDoc} />
         {integration?.connected && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />

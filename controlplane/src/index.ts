@@ -48,6 +48,7 @@ import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
+import * as blog from './blog/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
 // Export Durable Objects
@@ -995,6 +996,38 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       console.error('Failed to send interest registration emails:', error);
       return Response.json({ error: 'E79408: Failed to register interest. Please try again.' }, { status: 500 });
     }
+  }
+
+  // POST /blog/subscribe - Subscribe to blog notifications (no auth required)
+  if (segments[0] === 'blog' && segments[1] === 'subscribe' && segments.length === 2 && method === 'POST') {
+    const ipLimitResult = await checkRateLimitIp(request, env);
+    if (!ipLimitResult.allowed) {
+      return ipLimitResult.response!;
+    }
+    const data = await request.json() as { email?: string };
+    const email = typeof data.email === 'string' ? data.email.trim() : '';
+    return blog.subscribe(env, email);
+  }
+
+  // GET /blog/unsubscribe?token=xxx - Unsubscribe from blog (no auth required)
+  if (segments[0] === 'blog' && segments[1] === 'unsubscribe' && segments.length === 2 && method === 'GET') {
+    const token = url.searchParams.get('token') || '';
+    return blog.unsubscribe(env, token);
+  }
+
+  // POST /blog/notify - Send new post notification to all subscribers (admin only)
+  if (segments[0] === 'blog' && segments[1] === 'notify' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (!isAdminEmail(env, auth.user!.email)) {
+      return Response.json({ error: 'E79504: Admin access required' }, { status: 403 });
+    }
+    const data = await request.json() as { title?: string; description?: string; slug?: string };
+    return blog.notifySubscribers(env, request.url, {
+      title: data.title || '',
+      description: data.description || '',
+      slug: data.slug || '',
+    });
   }
 
   // POST /bug-reports - Submit bug report (requires auth)

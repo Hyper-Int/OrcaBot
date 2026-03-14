@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v16-reconnect-status
+// REVISION: whatsapp-block-v17-help-button
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v16-reconnect-status";
+const MODULE_REVISION = "whatsapp-block-v17-help-button";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -39,6 +39,8 @@ import { WhatsAppIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { whatsappDoc } from "@/docs/content/whatsapp";
 
 // ============================================
 // WhatsApp types
@@ -507,6 +509,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
         {integration?.accountName || "WhatsApp"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={whatsappDoc} />
         {(integration?.connected || (personalSubId && personalStatus === "connected")) && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />

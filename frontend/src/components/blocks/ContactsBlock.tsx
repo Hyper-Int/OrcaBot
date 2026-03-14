@@ -1,3 +1,4 @@
+// REVISION: contacts-help-v1-add-help-button
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -49,6 +50,11 @@ import {
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { contactsDoc } from "@/docs/content/contacts";
+
+const MODULE_REVISION = "contacts-help-v1-add-help-button";
+console.log(`[ContactsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 interface ContactsData extends Record<string, unknown> {
   content: string;
@@ -288,6 +294,7 @@ export function ContactsBlock({ id, data, selected }: NodeProps<ContactsNode>) {
         {integration?.emailAddress || status?.emailAddress || "Contacts"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={contactsDoc} />
         {integration?.connected && integration?.linked && (
           <Button
             variant="ghost"

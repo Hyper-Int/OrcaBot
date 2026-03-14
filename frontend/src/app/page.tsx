@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: splash-v18-mobile-nav
+// REVISION: splash-v19-shared-header
 "use client";
 
-const MODULE_REVISION = "splash-v18-mobile-nav";
+const MODULE_REVISION = "splash-v19-shared-header";
 console.log(
   `[page] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -17,7 +17,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useSplashTransitionStore } from "@/stores/splash-transition-store";
 import { createDashboard } from "@/lib/api/cloudflare/dashboards";
 import { API } from "@/config/env";
-import { MobileNav } from "@/components/MobileNav";
+import { SiteHeader } from "@/components/SiteHeader";
 
 /* ═══════════════════════════════════════════════════════════════
    DATA
@@ -527,8 +527,13 @@ export default function Home() {
 
   // ─── Derived ───────────────────────────────────────────────
   const splashHidden = phase !== "idle" && phase !== "done";
-  const headerLoginHref = isAuthenticated ? "/dashboards" : "/go";
-  const headerLoginText = isAuthenticated ? "Dashboards" : "Sign In";
+  const splashExtraLinks = [
+    { href: "#about", label: "About" },
+    { href: "#demos", label: "Demos" },
+    { href: "#features", label: "Features" },
+    { href: "#security", label: "Security" },
+    { href: "#usecases", label: "Use Cases" },
+  ];
   const ctaHref = isAuthenticated ? "/dashboards" : "/go";
   const ctaText = isAuthenticated ? "Dashboards" : "Get Started Free";
 
@@ -560,32 +565,13 @@ export default function Home() {
       {/* ═══ CONTENT ═══ */}
       <div className="sp-content">
         {/* HEADER */}
-        <header className="sp-header">
-          <a href="/" className="header-logo">
-            <img src="/orca.png" alt="OrcaBot" />
-            <span>OrcaBot</span>
-          </a>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <a
-              href={headerLoginHref}
-              className="btn btn-primary btn-sm"
-              onClick={handleLoginClick}
-            >
-              {headerLoginText}
-            </a>
-            <MobileNav
-              links={[
-                { href: "#about", label: "About" },
-                { href: "#demos", label: "Demos" },
-                { href: "/blog", label: "Blog" },
-                { href: "#features", label: "Features" },
-                { href: "#security", label: "Security" },
-                { href: "#usecases", label: "Use Cases" },
-              ]}
-              absolute
-            />
-          </div>
-        </header>
+        <SiteHeader
+          position="fixed"
+          glass
+          showHome={false}
+          extraLinks={splashExtraLinks}
+          onLoginClick={handleLoginClick}
+        />
 
         {/* HERO */}
         <div className="hero">

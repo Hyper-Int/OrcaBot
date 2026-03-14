@@ -1,7 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: gmail-block-v2-help-button
+
 "use client";
+
+const MODULE_REVISION = "gmail-block-v2-help-button";
+console.log(`[GmailBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
@@ -50,6 +55,8 @@ import {
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { gmailDoc } from "@/docs/content/gmail";
 
 interface GmailData extends Record<string, unknown> {
   content: string;
@@ -312,6 +319,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         {integration?.emailAddress || status?.emailAddress || "Gmail"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={gmailDoc} />
         {integration?.connected && integration?.linked && (
           <Button
             variant="ghost"

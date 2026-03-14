@@ -1,13 +1,17 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: blog-v1-post
+// REVISION: blog-v2-scroll-video
 
 import { getPost, getAllPosts } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { ScrollVideo } from "@/components/ScrollVideo";
+
+const MODULE_REVISION = "blog-v2-scroll-video";
+console.log(`[blog-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -63,8 +67,17 @@ export default async function BlogPostPage({ params }: Props) {
         </Link>
       </div>
 
-      {/* Cover image */}
-      {post.coverImage && (
+      {/* Cover image/video */}
+      {post.coverVideo ? (
+        <div style={{ marginBottom: "2rem" }}>
+          <ScrollVideo
+            src={post.coverVideo}
+            poster={post.coverImage ?? undefined}
+            alt={post.title}
+            style={{ maxHeight: "400px" }}
+          />
+        </div>
+      ) : post.coverImage ? (
         <img
           src={post.coverImage}
           alt={post.title}
@@ -77,7 +90,7 @@ export default async function BlogPostPage({ params }: Props) {
             marginBottom: "2rem",
           }}
         />
-      )}
+      ) : null}
 
       {/* Post header */}
       <header style={{ marginBottom: "2.5rem" }}>

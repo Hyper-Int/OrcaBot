@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: google-chat-block-v2-readonly-spaces
+// REVISION: google-chat-block-v3-help-button
 
 "use client";
 
-const MODULE_REVISION = "google-chat-block-v2-readonly-spaces";
+const MODULE_REVISION = "google-chat-block-v3-help-button";
 console.log(`[GoogleChatBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -38,6 +38,8 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import { GoogleChatIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { googleChatDoc } from "@/docs/content/google-chat";
 
 // ============================================
 // Google Chat types
@@ -266,6 +268,7 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
         {integration?.accountName || "Google Chat"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={googleChatDoc} />
         {integration?.connected && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />

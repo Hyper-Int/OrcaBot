@@ -33,7 +33,7 @@ if (!fs.existsSync(BLOG_DIR)) {
 const files = fs.readdirSync(BLOG_DIR).filter((f) => f.endsWith(".md")).sort().reverse();
 
 const posts = files.map((file) => {
-  const slug = file.replace(/\.md$/, "");
+  const slug = file.replace(/\.md$/, "").replace(/^\d{4}-\d{2}-\d{2}-/, "");
   const raw = fs.readFileSync(path.join(BLOG_DIR, file), "utf-8");
   const { frontmatter, content } = parseFrontmatter(raw);
   return {
@@ -43,6 +43,7 @@ const posts = files.map((file) => {
     description: frontmatter.description || "",
     author: frontmatter.author || null,
     coverImage: frontmatter.coverImage || null,
+    coverVideo: frontmatter.coverVideo || null,
     content,
   };
 });

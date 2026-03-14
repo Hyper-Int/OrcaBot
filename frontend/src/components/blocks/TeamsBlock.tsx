@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v1-initial
+// REVISION: teams-block-v2-help-button
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v1-initial";
+const MODULE_REVISION = "teams-block-v2-help-button";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -38,6 +38,8 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import { TeamsIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { teamsDoc } from "@/docs/content/teams";
 
 // ============================================
 // Teams types
@@ -347,6 +349,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         {integration?.accountName || "Teams"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={teamsDoc} />
         {integration?.connected && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
