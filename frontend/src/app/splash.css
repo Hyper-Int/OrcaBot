@@ -467,7 +467,7 @@
 .splash-page .carousel-slide.active { opacity: 1; pointer-events: auto; }
 
 .splash-page .carousel-slide video,
-.splash-page .carousel-slide img { width: 100%; height: 100%; object-fit: inherit; }
+.splash-page .carousel-slide img { width: 100%; height: 100%; object-fit: fill; }
 
 .splash-page .carousel-info { margin-top: 24px; min-height: 100px; }
 

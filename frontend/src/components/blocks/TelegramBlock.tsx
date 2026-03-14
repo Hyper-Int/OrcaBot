@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: telegram-block-v2-fix-chat-id-matching
+// REVISION: telegram-block-v3-help-button
 
 "use client";
 
-const MODULE_REVISION = "telegram-block-v2-fix-chat-id-matching";
+const MODULE_REVISION = "telegram-block-v3-help-button";
 console.log(`[TelegramBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -37,6 +37,8 @@ import { apiFetch, apiGet } from "@/lib/api/client";
 import { TelegramIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { telegramDoc } from "@/docs/content/telegram";
 
 // ============================================
 // Telegram types
@@ -348,6 +350,7 @@ export function TelegramBlock({ id, data, selected }: NodeProps<TelegramNode>) {
         {integration?.botName || "Telegram"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={telegramDoc} />
         {integration?.connected && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />

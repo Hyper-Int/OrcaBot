@@ -15,6 +15,7 @@ export interface BlogPost {
   description: string;
   author?: string | null;
   coverImage?: string | null;
+  coverVideo?: string | null;
   content: string;
 }
 
@@ -23,13 +24,14 @@ export type BlogPostMeta = Omit<BlogPost, "content">;
 const posts = postsData as BlogPost[];
 
 export function getAllPosts(): BlogPostMeta[] {
-  return posts.map(({ slug, title, date, description, author, coverImage }) => ({
+  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo }) => ({
     slug,
     title,
     date,
     description,
     author,
     coverImage,
+    coverVideo,
   }));
 }
 

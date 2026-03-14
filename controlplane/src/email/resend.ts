@@ -355,6 +355,52 @@ export function buildBugReportEmail(params: {
 }
 
 /**
+ * Build new blog post notification email for subscribers
+ */
+export function buildBlogPostEmail(params: {
+  title: string;
+  description: string;
+  postUrl: string;
+  unsubscribeUrl: string;
+}): { subject: string; html: string } {
+  return {
+    subject: `New from OrcaBot: ${params.title}`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #0066ff 0%, #0052cc 100%); padding: 32px; border-radius: 12px 12px 0 0;">
+    <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 600;">${escapeHtml(params.title)}</h1>
+  </div>
+
+  <div style="background: #ffffff; padding: 32px; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
+    <p style="margin: 0 0 16px; font-size: 16px;">
+      ${escapeHtml(params.description)}
+    </p>
+
+    <p style="margin: 24px 0;">
+      <a href="${escapeHtml(params.postUrl)}"
+         style="display: inline-block; padding: 14px 28px; background: #0066ff; color: white; text-decoration: none; border-radius: 8px; font-weight: 500; font-size: 16px;">
+        Read the post
+      </a>
+    </p>
+  </div>
+
+  <p style="margin: 24px 0 0; color: #999; font-size: 12px; text-align: center;">
+    OrcaBot Blog &middot;
+    <a href="${escapeHtml(params.unsubscribeUrl)}" style="color: #999;">Unsubscribe</a>
+  </p>
+</body>
+</html>
+    `.trim(),
+  };
+}
+
+/**
  * Escape HTML special characters
  */
 function escapeHtml(str: string): string {

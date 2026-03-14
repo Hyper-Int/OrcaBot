@@ -1,3 +1,4 @@
+// REVISION: forms-help-v1-add-help-button
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -47,6 +48,11 @@ import {
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { formsDoc } from "@/docs/content/forms";
+
+const MODULE_REVISION = "forms-help-v1-add-help-button";
+console.log(`[FormsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 interface FormsData extends Record<string, unknown> {
   content: string;
@@ -311,6 +317,7 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
         {integration?.formTitle || integration?.emailAddress || "Forms"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={formsDoc} />
         {integration?.connected && integration?.linked && viewMode === "detail" && (
           <Button
             variant="ghost"

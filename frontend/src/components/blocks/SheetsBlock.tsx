@@ -1,3 +1,4 @@
+// REVISION: sheets-help-v1-add-help-button
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
@@ -46,6 +47,11 @@ import {
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { sheetsDoc } from "@/docs/content/sheets";
+
+const MODULE_REVISION = "sheets-help-v1-add-help-button";
+console.log(`[SheetsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 interface SheetsData extends Record<string, unknown> {
   content: string;
@@ -311,6 +317,7 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
         {integration?.spreadsheetName || integration?.emailAddress || "Sheets"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={sheetsDoc} />
         {integration?.connected && integration?.linked && viewMode === "detail" && (
           <Button
             variant="ghost"

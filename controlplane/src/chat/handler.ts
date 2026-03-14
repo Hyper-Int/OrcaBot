@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v18-user-key-auto-detect
+// REVISION: chat-v19-help-docs-grounding
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v18-user-key-auto-detect loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v19-help-docs-grounding loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import {
@@ -31,6 +31,7 @@ import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
 import { decryptSecret, getEncryptionKey, hasEncryptionKey, isEncryptedValue } from '../crypto/secrets';
+import { HELP_DOCS_GROUNDING } from './help-docs';
 
 // System prompt for Orcabot
 const ORCABOT_SYSTEM_PROMPT = `You are Orcabot, the AI assistant for Orca — a sandboxed, multiplayer AI coding platform.
@@ -1325,7 +1326,7 @@ export async function streamMessage(
   const bestProvider = bestKeyName ? AI_PROVIDER_LABELS[bestKeyName] : null;
 
   // Build dynamic system prompt addendum so Orcabot knows which agent to use
-  let systemPrompt = ORCABOT_SYSTEM_PROMPT;
+  let systemPrompt = ORCABOT_SYSTEM_PROMPT + '\n\n' + HELP_DOCS_GROUNDING;
   if (userKeyNames.length > 0 && bestProvider) {
     const available = userKeyNames.map(k => `${AI_PROVIDER_LABELS[k]?.agent ?? k} (${k})`).join(', ');
     systemPrompt += `\n\nUSER'S AI PROVIDER KEYS (already stored — do NOT ask for them again):

@@ -18,6 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://orcabot.com"),
   title: "OrcaBot - Agentic AI Orchestration",
   description:
     "Run AI agents in secure sandboxes. Multiplayer dashboards, built-in browser, secrets protection, and persistent background processes.",

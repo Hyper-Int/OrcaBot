@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: twitter-block-v3-rename-to-x
+// REVISION: twitter-block-v4-help-button
 
 "use client";
 
-const MODULE_REVISION = "twitter-block-v3-rename-to-x";
+const MODULE_REVISION = "twitter-block-v4-help-button";
 console.log(`[TwitterBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -38,6 +38,8 @@ import { API } from "@/config/env";
 import { apiGet, apiDelete, apiPost } from "@/lib/api/client";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { twitterDoc } from "@/docs/content/twitter";
 
 // ============================================
 // Types
@@ -228,6 +230,7 @@ export function TwitterBlock({ id, data, selected }: NodeProps<TwitterNode>) {
         {username ? `@${username}` : "X"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={twitterDoc} />
         {connected && (
           <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={refreshing} title="Refresh" className="nodrag">
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />

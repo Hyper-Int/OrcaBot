@@ -1,7 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: calendar-block-v2-help-button
+
 "use client";
+
+const MODULE_REVISION = "calendar-block-v2-help-button";
+console.log(`[CalendarBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
@@ -45,6 +50,8 @@ import {
 import { API } from "@/config/env";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { calendarDoc } from "@/docs/content/calendar";
 
 interface CalendarData extends Record<string, unknown> {
   content: string;
@@ -309,6 +316,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
         {integration?.emailAddress || status?.emailAddress || "Calendar"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={calendarDoc} />
         {integration?.connected && integration?.linked && (
           <Button
             variant="ghost"

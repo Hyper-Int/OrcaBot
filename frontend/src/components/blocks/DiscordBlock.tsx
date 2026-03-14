@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: discord-block-v3-clean-logging
+// REVISION: discord-block-v4-help-button
 
 "use client";
 
-const MODULE_REVISION = "discord-block-v3-clean-logging";
+const MODULE_REVISION = "discord-block-v4-help-button";
 console.log(`[DiscordBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -39,6 +39,8 @@ import { DiscordIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { discordDoc } from "@/docs/content/discord";
 
 // ============================================
 // Discord types
@@ -408,6 +410,7 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
         {integration?.guildName || "Discord"}
       </div>
       <div className="flex items-center gap-1">
+        <HelpButton doc={discordDoc} />
         {integration?.connected && (
           <Button
             variant="ghost"
