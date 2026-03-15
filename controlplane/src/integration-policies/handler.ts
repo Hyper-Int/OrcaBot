@@ -24,6 +24,7 @@ import type {
   GitHubPolicy,
   BrowserPolicy,
   TwitterPolicy,
+  OutlookCalendarPolicy,
   HighRiskConfirmation,
 } from '../types';
 import { HIGH_RISK_CAPABILITIES } from '../types';
@@ -292,6 +293,20 @@ export function calculateSecurityLevel(
       return 'restricted';
     }
 
+    case 'outlook': {
+      const p = policy as import('../types').OutlookPolicy;
+      if (p.canSend || p.canDelete || p.canForward) return 'full';
+      if (p.canReply || p.canArchive || p.canMarkRead) return 'elevated';
+      return 'restricted';
+    }
+
+    case 'outlook_calendar': {
+      const p = policy as OutlookCalendarPolicy;
+      if (p.canDelete) return 'full';
+      if (p.canCreate || p.canUpdate) return 'elevated';
+      return 'restricted';
+    }
+
     default: {
       // Exhaustive check
       const _exhaustive: never = provider;
@@ -462,6 +477,26 @@ export function createDefaultFullAccessPolicy(provider: IntegrationProvider): An
         canFollow: true,
         canDeleteTweet: false, // Deleting still off by default — destructive
       } as TwitterPolicy;
+
+    case 'outlook':
+      return {
+        canRead: true,
+        canSearch: true,
+        canSend: true,
+        canReply: true,
+        canForward: true,
+        canArchive: true,
+        canDelete: false, // Deleting still off by default — destructive
+        canMarkRead: true,
+      } as import('../types').OutlookPolicy;
+
+    case 'outlook_calendar':
+      return {
+        canRead: true,
+        canCreate: true,
+        canUpdate: true,
+        canDelete: false, // Deleting still off by default — destructive
+      } as OutlookCalendarPolicy;
 
     default: {
       const _exhaustive: never = provider;
@@ -643,6 +678,26 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canFollow: false,
         canDeleteTweet: false,
       } as TwitterPolicy;
+
+    case 'outlook':
+      return {
+        canRead: true,
+        canSearch: true,
+        canSend: false,
+        canReply: false,
+        canForward: false,
+        canArchive: false,
+        canDelete: false,
+        canMarkRead: false,
+      } as import('../types').OutlookPolicy;
+
+    case 'outlook_calendar':
+      return {
+        canRead: true,
+        canCreate: false,
+        canUpdate: false,
+        canDelete: false,
+      } as OutlookCalendarPolicy;
 
     default: {
       const _exhaustive: never = provider;
@@ -892,6 +947,27 @@ const ACTION_TO_CAPABILITY: Record<string, Record<string, string>> = {
     'twitter.follow': 'canFollow',
     'twitter.delete_tweet': 'canDeleteTweet',
   },
+  outlook: {
+    'outlook.search': 'canSearch',
+    'outlook.get': 'canRead',
+    'outlook.send': 'canSend',
+    'outlook.reply': 'canReply',
+    'outlook.forward': 'canForward',
+    'outlook.archive': 'canArchive',
+    'outlook.delete': 'canDelete',
+    'outlook.mark_read': 'canMarkRead',
+    'outlook.mark_unread': 'canMarkRead',
+    'outlook.list_folders': 'canRead',
+  },
+  outlook_calendar: {
+    'outlook_calendar.list_calendars': 'canRead',
+    'outlook_calendar.list_events': 'canRead',
+    'outlook_calendar.get_event': 'canRead',
+    'outlook_calendar.search_events': 'canRead',
+    'outlook_calendar.create_event': 'canCreate',
+    'outlook_calendar.update_event': 'canUpdate',
+    'outlook_calendar.delete_event': 'canDelete',
+  },
 };
 
 export interface EnforcementResult {
@@ -1036,6 +1112,51 @@ export async function enforcePolicy(
     }
   }
 
+  // Outlook sendPolicy enforcement (same pattern as Gmail)
+  if (provider === 'outlook' && context) {
+    const outlookPolicy = policy as import('../types').OutlookPolicy;
+
+    if (action === 'outlook.send' || action === 'outlook.reply' || action === 'outlook.forward') {
+      if (outlookPolicy.sendPolicy) {
+        const { allowedRecipients, allowedDomains } = outlookPolicy.sendPolicy;
+
+        if (allowedDomains?.length || allowedRecipients?.length) {
+          // For outlook.reply, the gateway pre-fetches the original message sender
+          // and injects it into derivedContext as recipient/recipientDomain.
+          const allRecipients = context.recipients?.length
+            ? context.recipients
+            : context.recipient ? [context.recipient] : [];
+          const allDomains = context.recipientDomains?.length
+            ? context.recipientDomains
+            : context.recipientDomain ? [context.recipientDomain] : [];
+
+          if (allRecipients.length === 0) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: 'No recipients provided for send operation',
+            };
+          }
+
+          for (let i = 0; i < allRecipients.length; i++) {
+            const recipient = allRecipients[i]?.toLowerCase();
+            const recipientDomain = allDomains[i]?.toLowerCase();
+
+            const domainAllowed = allowedDomains?.some(d => d.toLowerCase() === recipientDomain);
+            const recipientAllowed = allowedRecipients?.some(r => r.toLowerCase() === recipient);
+            if (!domainAllowed && !recipientAllowed) {
+              return {
+                allowed: false,
+                decision: 'denied',
+                reason: `Recipient ${recipient} not in allowed list`,
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+
   // GitHub repoFilter enforcement for direct actions (get_repo, list_issues, get_file, etc.)
   if (provider === 'github' && context) {
     const githubPolicy = policy as GitHubPolicy;
@@ -1125,6 +1246,32 @@ export async function enforcePolicy(
             decision: 'denied',
             reason: `Cannot create events in calendar ${calendarId}`,
           };
+        }
+      }
+    }
+  }
+
+  // Outlook Calendar calendarFilter enforcement (same pattern as Google Calendar)
+  if (provider === 'outlook_calendar' && context) {
+    const outlookCalPolicy = policy as OutlookCalendarPolicy;
+
+    // Skip calendarFilter for actions that don't target a specific calendar
+    const isCalendarScoped = action !== 'outlook_calendar.list_calendars';
+
+    if (isCalendarScoped) {
+      const calendarId = context.calendarId?.toLowerCase() || 'primary';
+
+      if (outlookCalPolicy.calendarFilter && outlookCalPolicy.calendarFilter.mode !== 'all') {
+        const { calendarIds } = outlookCalPolicy.calendarFilter;
+        if (calendarIds?.length) {
+          const allowed = calendarIds.some(id => id.toLowerCase() === calendarId || (calendarId === 'primary' && id === 'primary'));
+          if (!allowed) {
+            return {
+              allowed: false,
+              decision: 'denied',
+              reason: `Calendar ${calendarId} not in allowlist`,
+            };
+          }
         }
       }
     }
@@ -1526,6 +1673,8 @@ export async function listAvailableIntegrations(
     'box',
     'github',
     'twitter',
+    'outlook',
+    'outlook_calendar',
   ];
 
   for (const provider of allProviders) {

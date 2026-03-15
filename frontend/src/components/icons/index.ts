@@ -16,6 +16,8 @@ export {
   TelegramIcon,
   WhatsAppIcon,
   TeamsIcon,
+  OutlookIcon,
+  OutlookCalendarIcon,
   MatrixIcon,
   GoogleChatIcon,
 } from "./MessagingIcons";

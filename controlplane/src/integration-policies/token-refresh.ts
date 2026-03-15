@@ -21,12 +21,13 @@ export async function getAccessToken(
   provider: IntegrationProvider
 ): Promise<string | null> {
   const userInt = await env.DB.prepare(`
-    SELECT access_token, refresh_token, expires_at
+    SELECT access_token, refresh_token, expires_at, metadata
     FROM user_integrations WHERE id = ?
   `).bind(userIntegrationId).first<{
     access_token: string;
     refresh_token: string | null;
     expires_at: string | null;
+    metadata: string | null;
   }>();
 
   if (!userInt) {
@@ -40,7 +41,20 @@ export async function getAccessToken(
     const bufferMs = 5 * 60 * 1000; // 5 minute buffer
 
     if (expiresAt.getTime() - bufferMs < now.getTime()) {
-      // Token is expired or about to expire - try to refresh
+      // Token is expired or about to expire - try to refresh.
+      // For bot_framework auth, use client_credentials with app_id + app_secret
+      // instead of the standard refresh_token grant.
+      let meta: Record<string, unknown> | null = null;
+      if (userInt.metadata) {
+        try { meta = JSON.parse(userInt.metadata) as Record<string, unknown>; } catch { /* ignore */ }
+      }
+      if (meta?.auth_type === 'bot_framework' && meta?.app_id && userInt.refresh_token) {
+        const newToken = await refreshBotFrameworkToken(
+          env, userIntegrationId, meta.app_id as string, userInt.refresh_token
+        );
+        if (newToken) return newToken;
+        return null;
+      }
       if (userInt.refresh_token) {
         const newToken = await refreshOAuthToken(env, userIntegrationId, provider, userInt.refresh_token);
         if (newToken) {
@@ -52,6 +66,52 @@ export async function getAccessToken(
   }
 
   return userInt.access_token;
+}
+
+/**
+ * Refresh a Bot Framework token using client_credentials grant.
+ * Bot Framework integrations store app_id in metadata and app_secret as refresh_token.
+ * Unlike OAuth refresh_token grants, client_credentials always works as long as the
+ * credentials are valid — there is no refresh_token to expire.
+ */
+async function refreshBotFrameworkToken(
+  env: Env,
+  userIntegrationId: string,
+  appId: string,
+  appSecret: string,
+): Promise<string | null> {
+  try {
+    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: appId,
+        client_secret: appSecret,
+        scope: 'https://graph.microsoft.com/.default',
+      }),
+    });
+    if (!response.ok) {
+      console.error(`[token-refresh] Bot Framework client_credentials failed: ${response.status}`);
+      return null;
+    }
+    const tokenData = await response.json() as { access_token: string; expires_in?: number };
+    const expiresAt = tokenData.expires_in
+      ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+      : null;
+
+    await env.DB.prepare(`
+      UPDATE user_integrations
+      SET access_token = ?, expires_at = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(tokenData.access_token, expiresAt, userIntegrationId).run();
+
+    console.log(`[token-refresh] Bot Framework token refreshed for integration ${userIntegrationId}`);
+    return tokenData.access_token;
+  } catch (err) {
+    console.error(`[token-refresh] Bot Framework refresh error:`, err);
+    return null;
+  }
 }
 
 async function refreshOAuthToken(
@@ -155,6 +215,20 @@ async function refreshOAuthToken(
       console.error(`[token-refresh] Twitter refresh error:`, err);
       return null;
     }
+  } else if (provider === 'teams' || provider === 'outlook' || provider === 'onedrive' || provider === 'outlook_calendar') {
+    const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+    const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      console.error(`[token-refresh] Microsoft OAuth not configured for ${provider} refresh (userIntegrationId=${userIntegrationId})`);
+      return null;
+    }
+    tokenUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+    body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    });
   } else {
     // Browser and other providers don't use OAuth refresh
     console.warn(`[token-refresh] OAuth refresh not supported for provider: ${provider}`);

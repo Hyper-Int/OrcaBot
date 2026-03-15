@@ -123,6 +123,12 @@ export interface Env {
   TWITTER_CLIENT_ID?: string;
   /** Twitter/X OAuth 2.0 client secret */
   TWITTER_CLIENT_SECRET?: string;
+  /** Microsoft shared client ID for Teams/Outlook/OneDrive OAuth */
+  MICROSOFT_CLIENT_ID?: string;
+  /** Microsoft shared client secret for Teams/Outlook/OneDrive OAuth */
+  MICROSOFT_CLIENT_SECRET?: string;
+  /** Teams Bot Framework shared secret for webhook verification (HMAC-SHA256) */
+  TEAMS_BOT_SECRET?: string;
 }
 
 // Subscription types
@@ -155,7 +161,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -238,7 +244,7 @@ export interface UserIntegration {
   id: string;
   userId: string;
   provider: 'google_drive' | 'github' | 'gmail' | 'google_calendar' | 'google_contacts' | 'google_sheets' | 'google_forms' | 'box' | 'onedrive'
-    | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter';
+    | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook';
   accessToken: string;
   refreshToken: string | null;
   scope: string | null;
@@ -639,7 +645,9 @@ export type IntegrationProvider =
   | 'teams'
   | 'matrix'
   | 'google_chat'
-  | 'twitter';
+  | 'twitter'
+  | 'outlook'
+  | 'outlook_calendar';
 
 /** Messaging providers that support inbound/outbound messaging */
 export type MessagingProvider = 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
@@ -1041,6 +1049,44 @@ export interface TwitterPolicy extends BasePolicy {
 }
 
 /**
+ * Outlook policy configuration
+ */
+export interface OutlookPolicy extends BasePolicy {
+  canRead: boolean;
+  canSearch: boolean;
+  canSend: boolean;
+  canReply: boolean;
+  canForward: boolean;
+  canArchive: boolean;
+  canDelete: boolean;
+  canMarkRead: boolean;
+  senderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    domains?: string[];
+    addresses?: string[];
+  };
+  sendPolicy?: {
+    allowedRecipients?: string[];
+    allowedDomains?: string[];
+    maxPerHour?: number;
+  };
+}
+
+/**
+ * Outlook Calendar policy configuration
+ */
+export interface OutlookCalendarPolicy extends BasePolicy {
+  canRead: boolean;
+  calendarFilter?: {
+    mode: 'all' | 'allowlist';
+    calendarIds?: string[];
+  };
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+/**
  * Type-safe policy lookup by provider
  */
 export type PolicyForProvider<P extends IntegrationProvider> =
@@ -1062,6 +1108,8 @@ export type PolicyForProvider<P extends IntegrationProvider> =
   P extends 'matrix' ? MessagingPolicy :
   P extends 'google_chat' ? MessagingPolicy :
   P extends 'twitter' ? TwitterPolicy :
+  P extends 'outlook' ? OutlookPolicy :
+  P extends 'outlook_calendar' ? OutlookCalendarPolicy :
   never;
 
 /**
@@ -1082,7 +1130,9 @@ export type AnyPolicy =
   | SlackPolicy
   | DiscordPolicy
   | TelegramPolicy
-  | TwitterPolicy;
+  | TwitterPolicy
+  | OutlookPolicy
+  | OutlookCalendarPolicy;
 
 /**
  * Terminal integration binding (immutable once created)
@@ -1195,6 +1245,8 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   matrix: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   google_chat: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   twitter: ['canPost', 'canRetweet', 'canFollow', 'canDeleteTweet'],
+  outlook: ['canSend', 'canDelete', 'canForward'],
+  outlook_calendar: ['canDelete'],
 };
 
 // ============================================

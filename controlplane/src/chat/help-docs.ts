@@ -173,14 +173,44 @@ Key details:
 - Personal mode: phone must stay connected to internet.
 - Business API credentials from Meta Developer Portal.
 
-## Microsoft Teams Integration (Early Stage)
-Connect a Teams bot.
+## Microsoft Teams Integration
+Connect Microsoft Teams for messaging.
 
-Setup: Register bot in Azure Bot Service → paste token → Connect Bot.
+Setup options:
+1. OAuth: Click "Connect with Microsoft" for outbound MCP tools (read, send, list). Does not support inbound message delivery.
+2. Bot Framework credentials: Register bot in Azure Bot Service → paste App ID + App Secret. Supports both outbound tools and inbound message delivery via webhook.
 
 Key details:
-- Outbound messaging works. Inbound webhooks coming soon.
-- Channel list is read-only (no subscription toggles yet).
+- OAuth provides auto-refreshing tokens and outbound MCP tools only.
+- Bot Framework credentials enable both outbound tools and inbound webhooks. Tokens auto-refresh using the stored App Secret.
+- Inbound delivery requires Bot Framework credentials with Azure Bot messaging endpoint configured.
+- Wire the Teams block to a terminal to enable MCP tools.
+- Available tools: teams_list_teams, teams_list_channels, teams_read_messages, teams_send_message, teams_reply_thread, teams_get_member, teams_edit_message, teams_delete_message.
+
+## Microsoft Outlook Integration
+Connect Outlook to read, search, send, and manage emails via Microsoft Graph API.
+
+Setup: Click "Connect Microsoft Outlook" → sign in with your Microsoft account.
+
+Key details:
+- OAuth-based authentication with auto-refreshing tokens.
+- No webhooks needed — LLM uses MCP tools to interact with mail.
+- Wire the Outlook block to a terminal to enable MCP tools.
+- Available tools: outlook_search, outlook_get, outlook_send, outlook_reply, outlook_forward, outlook_archive, outlook_delete, outlook_mark_read, outlook_mark_unread, outlook_list_folders.
+- Policy controls: canRead, canSearch, canSend, canReply, canForward, canArchive, canDelete, canMarkRead.
+- Sender filter: restrict which senders' emails the LLM can see.
+- Send policy: restrict recipient domains for outbound emails.
+
+## Microsoft Outlook Calendar Integration
+Connect Outlook Calendar to view, create, and manage calendar events via Microsoft Graph API.
+
+Setup: Click "Connect Outlook Calendar" → sign in with your Microsoft account.
+
+Key details:
+- OAuth-based authentication with auto-refreshing tokens.
+- Wire the Outlook Calendar block to a terminal to enable MCP tools.
+- Available tools: outlook_calendar_list_events, outlook_calendar_get_event, outlook_calendar_create_event, outlook_calendar_update_event, outlook_calendar_delete_event, outlook_calendar_list_calendars, outlook_calendar_search_events.
+- Policy controls: canRead, canCreate, canUpdate, canDelete.
 
 ## Matrix Integration (Early Stage)
 Connect to Matrix decentralized chat.

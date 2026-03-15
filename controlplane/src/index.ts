@@ -1958,9 +1958,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       // WhatsApp Personal (bridge/Baileys — QR code pairing)
       'POST whatsapp/connect-personal': integrations.connectWhatsAppPersonal,
       'GET whatsapp/qr': integrations.getWhatsAppQr,
-      // Teams (token-based)
+      // Teams (OAuth + token-based fallback)
+      'GET teams/connect': integrations.connectTeams,
+      'GET teams/callback': integrations.callbackTeams,
       'POST teams/connect-token': integrations.connectMessagingToken,
       'GET teams': integrations.getMessagingIntegration,
+      'GET teams/status': integrations.getTeamsStatus,
       'GET teams/channels': integrations.listMessagingChannels,
       'DELETE teams': integrations.disconnectMessaging,
       // Matrix (token-based)
@@ -1977,6 +1980,16 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'POST twitter/credentials': integrations.saveTwitterCredentials,
       'GET twitter': integrations.getTwitterIntegration,
       'DELETE twitter': integrations.disconnectTwitter,
+      // Outlook (OAuth — Microsoft Graph Mail API)
+      'GET outlook/connect': integrations.connectOutlook,
+      'GET outlook/callback': integrations.callbackOutlook,
+      'GET outlook': integrations.getOutlookIntegration,
+      'DELETE outlook': integrations.disconnectOutlook,
+      // Outlook Calendar (OAuth — Microsoft Graph Calendar API)
+      'GET outlook/calendar/connect': integrations.connectOutlookCalendar,
+      'GET outlook/calendar/callback': integrations.callbackOutlookCalendar,
+      'GET outlook/calendar': integrations.getOutlookCalendarIntegration,
+      'DELETE outlook/calendar': integrations.disconnectOutlookCalendar,
     };
 
     const handler = integrationRoutes[routeKey];
@@ -3154,6 +3167,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       channelId?: string;
       channelName?: string;
       chatId?: string;
+      teamId?: string;
     };
     if (!data.dashboardId || !data.itemId || !data.provider) {
       return Response.json({ error: 'E79418: dashboardId, itemId, and provider are required' }, { status: 400 });
@@ -3163,7 +3177,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     // But only providers with signature verification + message parsing in webhook-handler.ts are accepted.
     // Only providers with implemented webhook signature verification are allowed.
     // teams, matrix, google_chat are excluded until JWT/shared-secret verification is added.
-    const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram', 'whatsapp'];
+    const WEBHOOK_READY_PROVIDERS = ['slack', 'discord', 'telegram', 'whatsapp', 'teams'];
     if (!WEBHOOK_READY_PROVIDERS.includes(data.provider)) {
       return Response.json({ error: `E79419: Provider '${data.provider}' does not have webhook support yet` }, { status: 400 });
     }
@@ -3211,6 +3225,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         channelId: data.channelId,
         channelName: data.channelName,
         chatId: data.chatId,
+        teamId: data.teamId,
       }, webhookBaseUrl);
       return Response.json(result, { status: 201 });
     } catch (err) {

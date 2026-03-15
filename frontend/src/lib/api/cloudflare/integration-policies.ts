@@ -27,7 +27,9 @@ export type IntegrationProvider =
   | "teams"
   | "matrix"
   | "google_chat"
-  | "twitter";
+  | "twitter"
+  | "outlook"
+  | "outlook_calendar";
 
 export type MessagingProvider = "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat";
 
@@ -352,6 +354,38 @@ export interface TwitterPolicy extends BasePolicy {
   canDeleteTweet: boolean;
 }
 
+export interface OutlookPolicy extends BasePolicy {
+  canRead: boolean;
+  canSearch: boolean;
+  canSend: boolean;
+  canReply: boolean;
+  canForward: boolean;
+  canArchive: boolean;
+  canDelete: boolean;
+  canMarkRead: boolean;
+  senderFilter?: {
+    mode: "all" | "allowlist" | "blocklist";
+    domains?: string[];
+    addresses?: string[];
+  };
+  sendPolicy?: {
+    allowedRecipients?: string[];
+    allowedDomains?: string[];
+    maxPerHour?: number;
+  };
+}
+
+export interface OutlookCalendarPolicy extends BasePolicy {
+  canRead: boolean;
+  calendarFilter?: {
+    mode: "all" | "allowlist";
+    calendarIds?: string[];
+  };
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
 export type AnyPolicy =
   | GmailPolicy
   | CalendarPolicy
@@ -367,7 +401,9 @@ export type AnyPolicy =
   | SlackPolicy
   | DiscordPolicy
   | TelegramPolicy
-  | TwitterPolicy;
+  | TwitterPolicy
+  | OutlookPolicy
+  | OutlookCalendarPolicy;
 
 export interface AvailableIntegration {
   provider: IntegrationProvider;
@@ -619,6 +655,8 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   matrix: ["canSend", "canEditMessages", "canDeleteMessages"],
   google_chat: ["canSend", "canEditMessages", "canDeleteMessages"],
   twitter: ["canPost", "canRetweet", "canFollow", "canDeleteTweet"],
+  outlook: ["canSend", "canDelete", "canForward"],
+  outlook_calendar: ["canDelete"],
 };
 
 /**
@@ -644,6 +682,8 @@ export function getProviderDisplayName(provider: IntegrationProvider): string {
     matrix: "Matrix",
     google_chat: "Google Chat",
     twitter: "X",
+    outlook: "Outlook",
+    outlook_calendar: "Outlook Calendar",
   };
   return names[provider] || provider;
 }
@@ -671,6 +711,8 @@ export function getProviderIcon(provider: IntegrationProvider): string {
     matrix: "Network",
     google_chat: "MessageCircle",
     twitter: "X",
+    outlook: "Mail",
+    outlook_calendar: "Calendar",
   };
   return icons[provider] || "Plug";
 }
@@ -909,6 +951,26 @@ export function createReadOnlyPolicy(provider: IntegrationProvider): AnyPolicy {
         canDeleteTweet: false,
       } as TwitterPolicy;
 
+    case "outlook":
+      return {
+        canRead: true,
+        canSearch: true,
+        canSend: false,
+        canReply: false,
+        canForward: false,
+        canArchive: false,
+        canDelete: false,
+        canMarkRead: false,
+      } as OutlookPolicy;
+
+    case "outlook_calendar":
+      return {
+        canRead: true,
+        canCreate: false,
+        canUpdate: false,
+        canDelete: false,
+      } as OutlookCalendarPolicy;
+
     default: {
       const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${provider}`);
@@ -941,6 +1003,8 @@ export const BLOCK_TYPE_TO_PROVIDER: Partial<Record<string, IntegrationProvider>
   matrix: "matrix",
   google_chat: "google_chat",
   twitter: "twitter",
+  outlook: "outlook",
+  outlook_calendar: "outlook_calendar",
 };
 
 /**

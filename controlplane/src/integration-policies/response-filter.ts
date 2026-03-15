@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: response-filter-v9-twitter-user-fields-action-name
-console.log(`[response-filter] REVISION: response-filter-v9-twitter-user-fields-action-name loaded at ${new Date().toISOString()}`);
+// REVISION: response-filter-v11-outlook-sender-fail-closed
+console.log(`[response-filter] REVISION: response-filter-v11-outlook-sender-fail-closed loaded at ${new Date().toISOString()}`);
 
 /**
  * Response Filtering
@@ -23,6 +23,8 @@ import type {
   CalendarPolicy,
   MessagingPolicy,
   TwitterPolicy,
+  OutlookPolicy,
+  OutlookCalendarPolicy,
 } from '../types';
 import { globToRegex } from './handler';
 
@@ -62,6 +64,10 @@ export function filterResponse(
       return filterMessagingResponse(action, response, policy as MessagingPolicy);
     case 'twitter':
       return filterTwitterResponse(action, response, policy as TwitterPolicy);
+    case 'outlook':
+      return filterOutlookResponse(action, response, policy as OutlookPolicy);
+    case 'outlook_calendar':
+      return filterOutlookCalendarResponse(action, response, policy as OutlookCalendarPolicy);
     default:
       return { data: response, filtered: false };
   }
@@ -752,4 +758,190 @@ function filterObjectFields(
     }
   }
   return result;
+}
+
+// ============================================
+// Outlook Filtering
+// ============================================
+
+interface OutlookMessage {
+  id?: string;
+  subject?: string;
+  from?: { emailAddress?: { address?: string; name?: string } };
+  toRecipients?: Array<{ emailAddress?: { address?: string; name?: string } }>;
+  receivedDateTime?: string;
+  bodyPreview?: string;
+  body?: { contentType?: string; content?: string };
+  hasAttachments?: boolean;
+  attachments?: Array<{ name?: string; contentType?: string; size?: number }>;
+}
+
+function filterOutlookResponse(
+  action: string,
+  response: unknown,
+  policy: OutlookPolicy
+): FilterResult {
+  if (!response || typeof response !== 'object') {
+    return { data: response, filtered: false };
+  }
+
+  // searchMessages() returns a bare array; handle that before casting to Record
+  if (action === 'outlook.search' || action === 'outlook.get') {
+    // Normalize: bare array (from searchMessages), { value: [...] }, or single message object
+    let messages: OutlookMessage[];
+    let responseWasArray = false;
+    let responseHadValue = false;
+    if (Array.isArray(response)) {
+      messages = response as OutlookMessage[];
+      responseWasArray = true;
+    } else {
+      const resp = response as Record<string, unknown>;
+      if (Array.isArray(resp.value)) {
+        messages = resp.value as OutlookMessage[];
+        responseHadValue = true;
+      } else {
+        messages = [resp as unknown as OutlookMessage];
+      }
+    }
+    let removedCount = 0;
+
+    const filtered = messages.filter(msg => {
+      // Sender filter enforcement
+      if (policy.senderFilter && policy.senderFilter.mode !== 'all') {
+        const senderAddr = msg.from?.emailAddress?.address?.toLowerCase();
+
+        if (!senderAddr) {
+          // No sender identity — fail closed under allowlist, pass under blocklist
+          if (policy.senderFilter.mode === 'allowlist') {
+            removedCount++;
+            return false;
+          }
+          // Blocklist: no sender to match against, so allow through
+          return true;
+        }
+
+        const senderDomain = senderAddr.split('@')[1] || '';
+
+        if (policy.senderFilter.mode === 'allowlist') {
+          const addrMatch = policy.senderFilter.addresses?.some(a => a.toLowerCase() === senderAddr);
+          const domainMatch = policy.senderFilter.domains?.some(d => d.toLowerCase() === senderDomain);
+          if (!addrMatch && !domainMatch) {
+            removedCount++;
+            return false;
+          }
+        } else if (policy.senderFilter.mode === 'blocklist') {
+          const addrMatch = policy.senderFilter.addresses?.some(a => a.toLowerCase() === senderAddr);
+          const domainMatch = policy.senderFilter.domains?.some(d => d.toLowerCase() === senderDomain);
+          if (addrMatch || domainMatch) {
+            removedCount++;
+            return false;
+          }
+        }
+      }
+      return true;
+    }).map(msg => {
+      // Strip large HTML bodies — return plain text extract
+      if (msg.body?.contentType === 'html' && msg.body.content) {
+        const plainText = msg.body.content
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 5000);
+        msg.body = { contentType: 'text', content: plainText };
+      }
+
+      // Strip attachment binary data (keep metadata only)
+      if (msg.attachments) {
+        msg.attachments = msg.attachments.map(att => ({
+          name: att.name,
+          contentType: att.contentType,
+          size: att.size,
+        }));
+      }
+
+      return msg;
+    });
+
+    if (responseWasArray) {
+      return {
+        data: filtered,
+        filtered: removedCount > 0,
+        removedCount,
+      };
+    }
+    if (responseHadValue) {
+      return {
+        data: { ...(response as Record<string, unknown>), value: filtered },
+        filtered: removedCount > 0,
+        removedCount,
+      };
+    }
+    // Single message path (outlook.get): if the message was filtered out by senderFilter,
+    // do NOT fall back to the original response — that would leak the blocked message.
+    if (removedCount > 0 && filtered.length === 0) {
+      return {
+        data: { error: 'Message blocked by sender filter policy' },
+        filtered: true,
+        removedCount,
+      };
+    }
+    return {
+      data: filtered[0] ?? response,
+      filtered: removedCount > 0,
+      removedCount,
+    };
+  }
+
+  return { data: response, filtered: false };
+}
+
+// ============================================
+// Outlook Calendar Filtering
+// ============================================
+
+function filterOutlookCalendarResponse(
+  action: string,
+  response: unknown,
+  policy: OutlookCalendarPolicy
+): FilterResult {
+  // Calendar response filtering is mostly pass-through since events are scoped
+  // by calendarId at request time (enforcePolicy validates the calendarId).
+  // For list_calendars, we filter to only show allowed calendars if calendarFilter is set.
+  if (!policy.calendarFilter || policy.calendarFilter.mode === 'all') {
+    return { data: response, filtered: false };
+  }
+
+  const { calendarIds } = policy.calendarFilter;
+  if (!calendarIds?.length) {
+    return { data: response, filtered: false };
+  }
+
+  // Only filter list_calendars responses
+  if (action === 'outlook_calendar.list_calendars') {
+    if (response && typeof response === 'object' && 'calendars' in response) {
+      const listResponse = response as { calendars: Array<{ id: string; name: string; isDefaultCalendar?: boolean }> };
+      const calendars = listResponse.calendars || [];
+      const originalCount = calendars.length;
+
+      const filtered = calendars.filter(cal => {
+        const calId = cal.id.toLowerCase();
+        return calendarIds.some(id =>
+          id.toLowerCase() === calId ||
+          (id === 'primary' && cal.isDefaultCalendar)
+        );
+      });
+
+      const removedCount = originalCount - filtered.length;
+      return {
+        data: { ...listResponse, calendars: filtered },
+        filtered: removedCount > 0,
+        removedCount,
+      };
+    }
+  }
+
+  // Events are already scoped by calendarId at request time - no response filtering needed
+  return { data: response, filtered: false };
 }

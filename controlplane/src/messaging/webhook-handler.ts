@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v50-deliver-with-retry
-const MODULE_REVISION = 'messaging-webhook-v50-deliver-with-retry';
+// REVISION: messaging-webhook-v56-teams-require-team-id
+const MODULE_REVISION = 'messaging-webhook-v56-teams-require-team-id';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -26,6 +26,7 @@ console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Da
  */
 
 import type { Env, MessagingPolicy } from '../types';
+import { getAccessToken } from '../integration-policies/token-refresh';
 import { deliverWithRetry } from './delivery';
 
 /** Messaging providers use edge-based authorization + terminal_integrations for policy (repliesOnly, etc.). */
@@ -176,6 +177,130 @@ async function verifyWhatsAppSignature(request: Request, appSecret: string): Pro
     mismatch |= signature.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return mismatch === 0;
+}
+
+// ============================================
+// Bot Framework JWT Verification (Teams)
+// ============================================
+
+// Cache for JWKS keys — Bot Framework rotates keys infrequently
+let jwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
+const JWKS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+interface JwtHeader { alg: string; kid: string; typ?: string }
+interface JwtPayload { iss?: string; aud?: string; exp?: number; nbf?: number; [key: string]: unknown }
+interface OpenIdConfig { jwks_uri: string; issuer: string }
+interface JwksResponse { keys: Array<{ kid: string; kty: string; n: string; e: string; use?: string; [key: string]: unknown }> }
+
+function base64UrlDecode(str: string): Uint8Array {
+  // Convert base64url to base64
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) base64 += '=';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function fetchBotFrameworkJwks(): Promise<JwksResponse['keys']> {
+  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_CACHE_TTL_MS) {
+    return jwksCache.keys as JwksResponse['keys'];
+  }
+
+  // Bot Framework Channel tokens use this OpenID config
+  const openIdResp = await fetch('https://login.botframework.com/v1/.well-known/openidconfiguration');
+  if (!openIdResp.ok) throw new Error(`Failed to fetch Bot Framework OpenID config: ${openIdResp.status}`);
+  const openIdConfig = await openIdResp.json() as OpenIdConfig;
+
+  const jwksResp = await fetch(openIdConfig.jwks_uri);
+  if (!jwksResp.ok) throw new Error(`Failed to fetch Bot Framework JWKS: ${jwksResp.status}`);
+  const jwks = await jwksResp.json() as JwksResponse;
+
+  jwksCache = { keys: jwks.keys as JsonWebKey[], fetchedAt: Date.now() };
+  return jwks.keys;
+}
+
+async function verifyBotFrameworkJwt(token: string, expectedAudience: string): Promise<boolean> {
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+
+  // Decode header and payload
+  let header: JwtHeader;
+  let payload: JwtPayload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[0]))) as JwtHeader;
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1]))) as JwtPayload;
+  } catch {
+    console.error('[webhook] Teams JWT decode failed');
+    return false;
+  }
+
+  // Only RS256 is expected from Bot Framework
+  if (header.alg !== 'RS256') {
+    console.error(`[webhook] Teams JWT unexpected algorithm: ${header.alg}`);
+    return false;
+  }
+
+  // Validate claims before signature (fast-fail)
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.exp && payload.exp < now) {
+    console.error('[webhook] Teams JWT expired');
+    return false;
+  }
+  if (payload.nbf && payload.nbf > now + 300) { // 5min clock skew tolerance
+    console.error('[webhook] Teams JWT not yet valid');
+    return false;
+  }
+  // Bot Framework issuer
+  if (payload.iss !== 'https://api.botframework.com') {
+    console.error(`[webhook] Teams JWT unexpected issuer: ${payload.iss}`);
+    return false;
+  }
+  // Audience must be our app's client ID
+  if (payload.aud !== expectedAudience) {
+    console.error(`[webhook] Teams JWT audience mismatch: expected ${expectedAudience}, got ${payload.aud}`);
+    return false;
+  }
+
+  // Fetch JWKS and find matching key
+  const keys = await fetchBotFrameworkJwks();
+  const matchingKey = keys.find(k => k.kid === header.kid);
+  if (!matchingKey) {
+    // Key rotation: try invalidating cache once
+    jwksCache = null;
+    const freshKeys = await fetchBotFrameworkJwks();
+    const retryKey = freshKeys.find(k => k.kid === header.kid);
+    if (!retryKey) {
+      console.error(`[webhook] Teams JWT key not found: kid=${header.kid}`);
+      return false;
+    }
+    return verifyJwtSignature(parts, retryKey);
+  }
+
+  return verifyJwtSignature(parts, matchingKey);
+}
+
+async function verifyJwtSignature(
+  parts: string[],
+  jwk: { kty: string; n: string; e: string; [key: string]: unknown }
+): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      'jwk',
+      { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+
+    const signatureBytes = base64UrlDecode(parts[2]);
+    const dataBytes = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+
+    return crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signatureBytes, dataBytes);
+  } catch (err) {
+    console.error('[webhook] Teams JWT signature verification error:', err);
+    return false;
+  }
 }
 
 // ============================================
@@ -566,6 +691,7 @@ async function resolveChannelName(
   channelId: string,
   userId: string,
   dashboardId?: string,
+  teamId?: string,
 ): Promise<string | null> {
   if (!channelId) return null;
 
@@ -598,6 +724,27 @@ async function resolveChannelName(
       // (snowflakes), which are globally unique and always available in webhook payloads.
       // Channel name resolution is skipped; ID-based matching is authoritative.
       return null;
+    }
+
+    if (provider === 'teams') {
+      // Teams inbound parser stores channel ID in both channelId and channelName.
+      // Resolve the actual display name via Graph API so channel-name policies work.
+      if (!teamId) return null;
+      const integration = await env.DB.prepare(
+        `SELECT id FROM user_integrations WHERE user_id = ? AND provider = 'teams'`
+      ).bind(userId).first<{ id: string }>();
+      if (!integration) return null;
+
+      const token = await getAccessToken(env, integration.id, 'teams');
+      if (!token) return null;
+
+      const response = await fetch(
+        `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}?$select=displayName`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (!response.ok) return null;
+      const data = await response.json() as { displayName?: string };
+      return data.displayName || null;
     }
   } catch (err) {
     console.error(`[webhook] Failed to resolve channel name for ${provider}/${channelId} (dashboard=${dashboardId ?? 'unknown'}):`, err);
@@ -763,7 +910,70 @@ export async function handleInboundWebhook(
         }
         break;
       }
-      case 'teams':
+      case 'teams': {
+        // Bot Framework sends Authorization: Bearer <JWT> signed by Microsoft Azure AD.
+        // The JWT audience is the bot's App ID. For OAuth-connected integrations this is
+        // the global MICROSOFT_CLIENT_ID; for manually connected bots it's the per-user
+        // app_id stored in user_integrations metadata. We try both.
+        const authHeader = request.headers.get('Authorization') || '';
+        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+        if (!token || token === authHeader) {
+          console.error('[webhook] Teams webhook missing or malformed Authorization Bearer header');
+          signatureValid = false;
+          break;
+        }
+
+        // Collect candidate audience values: global app ID + per-subscription bot app ID
+        const audienceCandidates: string[] = [];
+        const globalAppId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+        if (globalAppId) audienceCandidates.push(globalAppId);
+
+        // Look up the subscription's bot app_id from metadata (for manually connected bots)
+        if (hookId) {
+          try {
+            const sub = await env.DB.prepare(`
+              SELECT user_integration_id FROM messaging_subscriptions WHERE webhook_id = ? AND status = 'active' LIMIT 1
+            `).bind(hookId).first<{ user_integration_id: string | null }>();
+            if (sub?.user_integration_id) {
+              const intRow = await env.DB.prepare(`
+                SELECT metadata FROM user_integrations WHERE id = ?
+              `).bind(sub.user_integration_id).first<{ metadata: string | null }>();
+              if (intRow?.metadata) {
+                try {
+                  const meta = JSON.parse(intRow.metadata) as { app_id?: string };
+                  if (meta.app_id && !audienceCandidates.includes(meta.app_id)) {
+                    audienceCandidates.push(meta.app_id);
+                  }
+                } catch { /* ignore parse error */ }
+              }
+            }
+          } catch (err) {
+            console.warn('[webhook] Failed to look up Teams subscription bot app_id:', err);
+          }
+        }
+
+        if (audienceCandidates.length > 0) {
+          try {
+            // Try each candidate audience until one succeeds
+            for (const aud of audienceCandidates) {
+              signatureValid = await verifyBotFrameworkJwt(token, aud);
+              if (signatureValid) break;
+            }
+            if (!signatureValid) {
+              console.error('[webhook] Teams Bot Framework JWT verification failed for all audience candidates');
+            }
+          } catch (err) {
+            console.error('[webhook] Teams JWT verification error:', err);
+            signatureValid = false;
+          }
+        } else if (env.DEV_AUTH_ENABLED === 'true') {
+          signatureValid = true;
+        } else {
+          console.error('[webhook] No Microsoft App ID available for Teams JWT verification (set MICROSOFT_CLIENT_ID or use manual bot credentials)');
+          return Response.json({ error: 'E79434: Server configuration error' }, { status: 500 });
+        }
+        break;
+      }
       case 'matrix':
       case 'google_chat': {
         // These providers require JWT or shared-secret verification that is not yet implemented.
@@ -918,8 +1128,21 @@ export async function handleInboundWebhook(
       WHERE provider = 'matrix' AND chat_id = ? AND status = 'active'
     `).bind(chatId).all();
     subscriptions = results.results || [];
+  } else if (p === 'teams' && hookId) {
+    // Teams: Azure Bot Service uses a SINGLE endpoint per bot registration, so
+    // multiple subscriptions share the same webhook_id per user_integration_id.
+    // Route by webhook_id (from URL) + channel_id (from the activity) to ensure
+    // messages are only delivered to subscriptions belonging to THIS bot, not to
+    // subscriptions on the same channel connected through a different bot.
+    const channelId = message.channelId;
+    if (!channelId) return Response.json({ ok: true });
+    const results = await env.DB.prepare(`
+      SELECT * FROM messaging_subscriptions
+      WHERE provider = 'teams' AND webhook_id = ? AND channel_id = ? AND status = 'active'
+    `).bind(hookId, channelId).all();
+    subscriptions = results.results || [];
   } else {
-    // Slack/Discord: find all active subscriptions for this channel
+    // Slack/Discord/Google Chat: find all active subscriptions for this channel
     const channelId = message.channelId;
     if (!channelId) {
       return Response.json({ ok: true }); // No channel in event — can't route
@@ -1013,11 +1236,12 @@ async function processSubscriptionMessage(
 ): Promise<void> {
   // Resolve channel name and sender name from platform API (best-effort, bounded).
   const RESOLVE_TIMEOUT_MS = 1500;
-  if ((provider === 'slack' || provider === 'discord') && message.channelId) {
+  if ((provider === 'slack' || provider === 'discord' || provider === 'teams') && message.channelId) {
     const resolvePromises: Promise<void>[] = [];
 
     resolvePromises.push(
-      resolveChannelName(env, provider, message.channelId, subscription.user_id as string, subscription.dashboard_id as string)
+      resolveChannelName(env, provider, message.channelId, subscription.user_id as string, subscription.dashboard_id as string,
+        message.metadata?.team_id as string | undefined)
         .then(name => { if (name) message.channelName = name; })
         .catch(() => { /* best-effort */ }),
     );
@@ -1131,8 +1355,13 @@ async function processSubscriptionMessage(
     // If any policy has repliesOnly=true, filter out top-level channel messages
     const repliesOnly = parsedMsgPolicies.some(p => p.repliesOnly === true);
     if (repliesOnly) {
-      const threadTs = message.metadata?.thread_ts;
-      if (!threadTs) {
+      // Check for thread/reply context — different platforms use different fields:
+      //   Slack: thread_ts
+      //   Teams: reply_to_id (reply in thread)
+      //   Discord: referenced_message (not typically in metadata)
+      const isReply = message.metadata?.thread_ts
+        || message.metadata?.reply_to_id;
+      if (!isReply) {
         // Top-level channel message — filtered out by repliesOnly policy
         return;
       }
@@ -1359,6 +1588,9 @@ export async function createSubscription(
   if ((provider === 'slack' || provider === 'discord' || provider === 'teams' || provider === 'google_chat') && !data.channelId) {
     throw new Error(`channelId is required for ${provider} subscriptions`);
   }
+  if (provider === 'teams' && !data.teamId) {
+    throw new Error('teamId is required for Teams subscriptions — outbound send needs it to address the channel');
+  }
   if ((provider === 'telegram' || provider === 'matrix') && !data.chatId) {
     throw new Error(`chatId is required for ${provider} subscriptions`);
   }
@@ -1546,6 +1778,42 @@ export async function createSubscription(
     }
   }
 
+  // Resolve integration ID for Teams.
+  // Teams subscriptions MUST be bound to a user_integration_id so that:
+  // 1. JWT audience verification can recover the per-bot app_id from metadata
+  // 2. Shared webhook_id reuse logic (Azure Bot has one endpoint per bot) can key off integration
+  // Inbound delivery requires Bot Framework credentials (auth_type: 'bot_framework').
+  // OAuth-only integrations have no bot registration to receive webhooks from.
+  if (provider === 'teams') {
+    const teamsInts = await env.DB.prepare(
+      `SELECT id, metadata FROM user_integrations WHERE user_id = ? AND provider = 'teams'`
+    ).bind(userId).all<{ id: string; metadata: string | null }>();
+
+    const intRows = teamsInts.results || [];
+    if (intRows.length === 0) {
+      throw new SubscriptionError(
+        'TEAMS_RECONNECT_REQUIRED',
+        'No Teams integration found. Please connect Teams first.',
+      );
+    }
+
+    // Check auth_type — only bot_framework integrations can receive inbound webhooks
+    let meta: Record<string, unknown> | null = null;
+    if (intRows[0].metadata) {
+      try { meta = JSON.parse(intRows[0].metadata) as Record<string, unknown>; } catch { /* */ }
+    }
+    if (meta?.auth_type !== 'bot_framework') {
+      throw new SubscriptionError(
+        'TEAMS_BOT_REQUIRED',
+        'Inbound message subscriptions require Bot Framework credentials. ' +
+        'OAuth connections support outbound tools only. ' +
+        'Disconnect and reconnect with a Bot App ID + Secret to enable inbound messages.',
+      );
+    }
+
+    resolvedIntegrationId = intRows[0].id;
+  }
+
   // Guard against duplicate active subscriptions for the same block + provider + channel + chat.
   // Multi-channel per block is allowed — each (channel_id, chat_id) pair gets its own row.
   // The partial unique index uses COALESCE(..., '') on both columns to match this check.
@@ -1606,8 +1874,22 @@ export async function createSubscription(
   }
 
   const id = crypto.randomUUID();
-  const webhookId = crypto.randomUUID();
+  let webhookId = crypto.randomUUID();
   const webhookSecret = crypto.randomUUID(); // Used for webhook signature verification
+
+  // Teams: Azure Bot Service has a SINGLE messaging endpoint per bot registration.
+  // Reuse the same webhook_id for all subscriptions sharing the same user_integration_id
+  // so that deleting one subscription doesn't orphan the Azure-configured endpoint.
+  if (provider === 'teams' && resolvedIntegrationId) {
+    const existingTeamsSub = await env.DB.prepare(`
+      SELECT webhook_id FROM messaging_subscriptions
+      WHERE provider = 'teams' AND user_integration_id = ? AND status IN ('pending', 'active')
+      LIMIT 1
+    `).bind(resolvedIntegrationId).first<{ webhook_id: string }>();
+    if (existingTeamsSub) {
+      webhookId = existingTeamsSub.webhook_id;
+    }
+  }
 
   await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
@@ -1671,6 +1953,15 @@ export async function createSubscription(
       throw err;
     }
   }
+
+  // For Teams: no programmatic webhook registration is needed.
+  // Bot Framework delivers ALL activities to the messaging endpoint configured in the
+  // Azure Bot registration. The webhook handler filters by channel_id to match subscriptions.
+  // The user must configure their Azure Bot messaging endpoint to:
+  //   {webhookBaseUrl}/webhooks/teams/{webhookId}
+  // We return the webhookId so the frontend can display the full URL for the user to copy.
+  // Note: unlike Discord/Telegram, we cannot register this automatically because
+  // the Azure Bot Service portal is the only place to set the messaging endpoint.
 
   return { id, webhookId };
 }
@@ -1777,10 +2068,10 @@ async function ensureDiscordSlashCommand(env: Env, guildId: string): Promise<voi
 
 /**
  * List messaging subscriptions for a dashboard.
- * Returns a redacted shape — webhook_id, webhook_secret, and user_id are never
- * exposed. webhook_id/webhook_secret are sensitive (especially for Telegram
- * where the URL is the secret). user_id is an internal identifier that peers
- * on the same dashboard don't need and shouldn't see.
+ * Returns a redacted shape — webhook_secret and user_id are never exposed.
+ * webhook_id is included only for providers where the user must manually
+ * configure the endpoint (Teams). For Telegram the webhook URL IS the secret,
+ * so webhook_id stays redacted there.
  */
 export async function listSubscriptions(
   env: Env,
@@ -1788,7 +2079,7 @@ export async function listSubscriptions(
 ): Promise<unknown[]> {
   const result = await env.DB.prepare(`
     SELECT id, dashboard_id, item_id, provider,
-           channel_id, channel_name, chat_id,
+           channel_id, channel_name, chat_id, webhook_id,
            status, last_message_at, error_message,
            created_at, updated_at
     FROM messaging_subscriptions
@@ -1796,7 +2087,16 @@ export async function listSubscriptions(
     ORDER BY created_at DESC
   `).bind(dashboardId).all();
 
-  return result.results || [];
+  // Redact webhook_id for providers where the URL is secret
+  const REDACT_WEBHOOK_ID = new Set(['telegram', 'whatsapp']);
+  return (result.results || []).map((row) => {
+    const r = row as Record<string, unknown>;
+    if (REDACT_WEBHOOK_ID.has(r.provider as string)) {
+      const { webhook_id: _, ...rest } = r;
+      return rest;
+    }
+    return r;
+  });
 }
 
 /**
