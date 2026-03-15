@@ -37,15 +37,19 @@ This is non-negotiable. Never speculate about deployment issues - add logs that 
 - Multiplayer dashboards (Figma-like collaboration)
 
 ## Structure
-- `frontend` — Next.js dashboard UI
+- `frontend` — Next.js dashboard UI (includes blog, docs, admin)
 - `controlplane` — Cloudflare Worker control plane
 - `sandbox` — Go sandbox server
+- `bridge` — Node.js messaging bridge service (WhatsApp via Baileys), deployed on Fly
+- `desktop` — Tauri native desktop app (bundles entire stack locally with VM sandbox)
 - `e2e` — Playwright end-to-end tests (external, against running instance)
 
 ## App Guides
 - Frontend: `frontend/CLAUDE.md`
 - Control plane: `controlplane/CLAUDE.md`
 - Sandbox: `sandbox/CLAUDE.md`
+- Bridge: `bridge/CLAUDE.md`
+- Desktop: `desktop/CLAUDE.md`
 
 ## Deploy (Prod)
 ```
@@ -125,22 +129,24 @@ The egress proxy is gated behind a feature flag for safe rollout:
 - **Per-user opt-in**: Add `?egress=1` to any OrcaBot URL (persists to localStorage)
 - Without either trigger, the proxy runs but no PTY processes route through it
 
-## OAuth Integrations (Gmail/Drive/GitHub/Calendar)
+## OAuth Integrations (Gmail/Drive/GitHub/Calendar/Twitter)
 - Control plane provides connect + callback endpoints:
   - `/integrations/google/drive/connect` + `/callback`
   - `/integrations/google/gmail/connect` + `/callback`
   - `/integrations/google/calendar/connect` + `/callback`
   - `/integrations/github/connect` + `/callback`
+  - `/integrations/twitter/connect` + `/callback`
 - Required env vars on Cloudflare:
   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
   - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+  - `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET`
   - `OAUTH_REDIRECT_BASE` (optional; defaults to request origin)
 - D1 tables: `oauth_states`, `user_integrations`, `terminal_integrations`, `integration_policies`
 
 ## Integration Policy Enforcement (Security-Critical)
 
 Orcabot uses a **component integration gate** model: on the dashboard canvas, users draw edges
-from terminal blocks to integration blocks (Gmail, GitHub, Drive, Calendar). Only attached
+from terminal blocks to integration blocks (Gmail, GitHub, Drive, Calendar, Twitter). Only attached
 integrations are visible as MCP tools to the LLM in that terminal. Each attachment has a policy
 that controls what actions are allowed and what data the LLM can see.
 
@@ -166,7 +172,7 @@ LLM (in sandbox PTY)
     3. Check rate limits
     4. enforcePolicy() — boolean logic
     5. Get OAuth access token (refresh if expired)
-    6. Call Gmail/GitHub/Drive/Calendar API
+    6. Call Gmail/GitHub/Drive/Calendar/Twitter API
     7. Filter response based on policy (sender allowlist, repo filter, etc.)
     8. Format response for LLM (decode base64, strip HTML, extract headers)
     9. Log audit entry
@@ -179,7 +185,7 @@ LLM (in sandbox PTY)
 - `controlplane/src/integration-policies/gateway.ts` — Gateway execute endpoint + PTY token verification
 - `controlplane/src/integration-policies/handler.ts` — Attach/detach integrations, policy CRUD
 - `controlplane/src/integration-policies/response-filter.ts` — Policy-based response filtering
-- `controlplane/src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar API wrappers
+- `controlplane/src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar, Twitter API wrappers
 - `controlplane/src/auth/pty-token.ts` — PTY token creation/verification
 - `sandbox/cmd/mcp-bridge/main.go` — stdio-to-HTTP bridge with tool change notifications
 - `sandbox/cmd/server/mcp.go` — MCP server with integration tool handling
@@ -241,6 +247,26 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Messages buffered in `inbound_messages` D1 table, broadcast via Durable Object, can trigger VM wake-up
 - Canvas edges from messaging blocks to terminals enable communication paths
 - Key files: `controlplane/src/messaging/webhook-handler.ts`
+
+### Messaging Bridge Service
+- Separate Node.js service in `bridge/` deployed on Fly
+- Handles WhatsApp connectivity via Baileys (unofficial WhatsApp Web API)
+- Session management for persistent WhatsApp connections
+- Control plane communicates with bridge via `controlplane/src/bridge/client.ts`
+
+### Subscriptions & Billing
+- Stripe-based subscription management
+- Paywall checks for feature gating
+- Key files: `controlplane/src/subscriptions/`
+
+### Blog & Documentation
+- Blog posts served via `controlplane/src/blog/handler.ts`
+- Frontend blog at `frontend/src/app/(blog)/` with markdown content in `frontend/content/blog/`
+- In-app documentation at `frontend/src/app/(docs)/` with content in `frontend/src/docs/content/`
+- AI chat with help docs: `controlplane/src/chat/handler.ts`, `controlplane/src/chat/help-docs.ts`
+
+### Email
+- Transactional email via Resend: `controlplane/src/email/resend.ts`
 
 ## E2E Testing
 
