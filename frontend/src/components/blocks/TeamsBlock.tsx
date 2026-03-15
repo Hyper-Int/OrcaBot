@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v2-help-button
+// REVISION: teams-block-v3-oauth-inbound
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v2-help-button";
+const MODULE_REVISION = "teams-block-v3-oauth-inbound";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -285,6 +285,30 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
     }
   };
 
+  const handleConnectOAuth = () => {
+    if (!dashboardId) return;
+    const base = API.cloudflare.base.replace(/\/$/, "");
+    const url = `${base}/integrations/teams/connect?dashboard_id=${dashboardId}&mode=popup`;
+    const popup = window.open(url, "teams-auth", "width=600,height=700");
+    if (!popup) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "teams-auth-complete") {
+        window.removeEventListener("message", onMessage);
+        loadIntegration();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    const pollTimer = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(pollTimer);
+        window.removeEventListener("message", onMessage);
+        loadIntegration();
+      }
+    }, 500);
+  };
+
+  const [showManualToken, setShowManualToken] = React.useState(false);
+
   const handleConnect = async () => {
     if (!tokenInput.trim() || !dashboardId) return;
     setConnecting(true);
@@ -471,26 +495,43 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
               Connect Microsoft Teams to send and receive messages
             </p>
             <div className="w-full space-y-2 nodrag">
-              <input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Paste your Teams bot token"
-                className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
-              />
               <Button
                 size="sm"
-                onClick={handleConnect}
-                disabled={!tokenInput.trim() || connecting}
+                onClick={handleConnectOAuth}
                 className="nodrag w-full"
                 style={{ backgroundColor: TEAMS_PURPLE, color: "#fff" }}
               >
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                Connect Bot
+                Connect with Microsoft
               </Button>
-              <p className="text-[9px] text-[var(--text-muted)] text-center">
-                Get a token from Azure Bot registration
-              </p>
+
+              <button
+                onClick={() => setShowManualToken(!showManualToken)}
+                className="text-[9px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] text-center w-full"
+              >
+                {showManualToken ? "Hide manual token" : "Or use manual token"}
+              </button>
+
+              {showManualToken && (
+                <>
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="Paste your Teams bot token"
+                    className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleConnect}
+                    disabled={!tokenInput.trim() || connecting}
+                    className="nodrag w-full"
+                    variant="ghost"
+                  >
+                    {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                    Connect Bot
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -541,7 +582,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
               <CheckCircle className="w-2.5 h-2.5 text-green-500" />
               <span>Connected</span>
               <span>&middot;</span>
-              <span>Inbound webhooks coming soon</span>
+              <span>Inbound + outbound active</span>
             </div>
           </div>
         </div>

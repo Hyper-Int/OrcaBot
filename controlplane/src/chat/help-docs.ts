@@ -173,14 +173,32 @@ Key details:
 - Personal mode: phone must stay connected to internet.
 - Business API credentials from Meta Developer Portal.
 
-## Microsoft Teams Integration (Early Stage)
-Connect a Teams bot.
+## Microsoft Teams Integration
+Connect Microsoft Teams for messaging.
 
-Setup: Register bot in Azure Bot Service → paste token → Connect Bot.
+Setup options:
+1. OAuth: Click "Connect with Microsoft" to sign in with your Microsoft account (recommended)
+2. Manual: Register bot in Azure Bot Service → paste token → Connect Bot
 
 Key details:
-- Outbound messaging works. Inbound webhooks coming soon.
-- Channel list is read-only (no subscription toggles yet).
+- Inbound and outbound messaging both active.
+- OAuth provides auto-refreshing tokens. Manual tokens may expire.
+- Wire the Teams block to a terminal to enable MCP tools.
+- Available tools: teams_list_teams, teams_list_channels, teams_read_messages, teams_send_message, teams_reply_thread, teams_get_member, teams_edit_message, teams_delete_message.
+
+## Microsoft Outlook Integration
+Connect Outlook to read, search, send, and manage emails via Microsoft Graph API.
+
+Setup: Click "Connect Microsoft Outlook" → sign in with your Microsoft account.
+
+Key details:
+- OAuth-based authentication with auto-refreshing tokens.
+- No webhooks needed — LLM uses MCP tools to interact with mail.
+- Wire the Outlook block to a terminal to enable MCP tools.
+- Available tools: outlook_search, outlook_get, outlook_send, outlook_reply, outlook_forward, outlook_archive, outlook_delete, outlook_mark_read, outlook_mark_unread, outlook_list_folders.
+- Policy controls: canRead, canSearch, canSend, canReply, canForward, canArchive, canDelete, canMarkRead, canManageFolders.
+- Sender filter: restrict which senders' emails the LLM can see.
+- Send policy: restrict recipient domains for outbound emails.
 
 ## Matrix Integration (Early Stage)
 Connect to Matrix decentralized chat.

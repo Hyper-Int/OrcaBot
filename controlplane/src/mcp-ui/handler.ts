@@ -181,7 +181,7 @@ export const UI_TOOLS = [
   },
   {
     name: 'create_integration',
-    description: 'Create an integration block on the dashboard. The block handles OAuth connection via its built-in Connect button. Supported providers: gmail, calendar, contacts, sheets, forms, slack, discord, telegram, whatsapp, teams, matrix, google_chat',
+    description: 'Create an integration block on the dashboard. The block handles OAuth connection via its built-in Connect button. Supported providers: gmail, calendar, contacts, sheets, forms, slack, discord, telegram, whatsapp, teams, matrix, google_chat, outlook',
     inputSchema: {
       type: 'object',
       properties: {

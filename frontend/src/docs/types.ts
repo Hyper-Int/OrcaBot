@@ -13,7 +13,7 @@ export interface DocEntry {
   /** URL-safe slug for linking */
   slug: string;
   /** Category for sidebar grouping, matching dashboard toolbar sections */
-  category: "getting-started" | "google" | "messaging" | "workspace" | "agents" | "blocks";
+  category: "getting-started" | "google" | "messaging" | "workspace" | "agents" | "blocks" | "integrations";
   /** Icon identifier (matches block type or lucide icon name) */
   icon: string;
   /** One-line summary shown in help popovers */

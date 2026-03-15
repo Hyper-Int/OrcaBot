@@ -47,6 +47,7 @@ import {
   TeamsIcon,
   MatrixIcon,
   GoogleChatIcon,
+  OutlookIcon,
 } from "@/components/icons";
 import { toast } from "sonner";
 
@@ -178,13 +179,19 @@ const googleTools: BlockTool[] = [
   { type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
 ];
 
+// Microsoft integrations
+const microsoftTools: BlockTool[] = [
+  { type: "outlook", icon: <OutlookIcon className="w-4 h-4" />, label: "Outlook" },
+  { type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
+];
+
 // Messaging integrations in their own section
 const messagingTools: BlockTool[] = [
   { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
   { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
   { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
   { type: "twitter", icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>, label: "X" },
-  // Telegram, Teams, Matrix, Google Chat hidden until ready
+  // Telegram, Matrix, Google Chat hidden until ready
 ];
 
 const terminalTools: BlockTool[] = [
@@ -3831,6 +3838,23 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarGoogleCollapsed && googleTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
+              {/* Microsoft integrations section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                {microsoftTools.map((tool) => (
                   <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"

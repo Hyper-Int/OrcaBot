@@ -763,7 +763,41 @@ export async function handleInboundWebhook(
         }
         break;
       }
-      case 'teams':
+      case 'teams': {
+        // Bot Framework HMAC-SHA256 verification using shared bot secret
+        const botSecret = env.TEAMS_BOT_SECRET;
+        if (botSecret) {
+          const authHeader = request.headers.get('Authorization') || '';
+          if (!authHeader) {
+            console.error('[webhook] Teams webhook missing Authorization header');
+            signatureValid = false;
+            break;
+          }
+          // Bot Framework sends: Bearer <token> or HMAC <signature>
+          // For shared-secret mode, verify HMAC-SHA256 of request body
+          const bodyText = await request.clone().text();
+          const encoder = new TextEncoder();
+          const key = await crypto.subtle.importKey(
+            'raw', encoder.encode(botSecret),
+            { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+          );
+          const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(bodyText));
+          const expectedSig = Array.from(new Uint8Array(sig))
+            .map(b => b.toString(16).padStart(2, '0')).join('');
+          // Accept if Authorization header contains the expected HMAC
+          const providedSig = authHeader.replace(/^(Bearer|HMAC)\s+/i, '').trim().toLowerCase();
+          signatureValid = providedSig === expectedSig;
+          if (!signatureValid) {
+            console.error('[webhook] Teams HMAC verification failed');
+          }
+        } else if (env.DEV_AUTH_ENABLED === 'true') {
+          signatureValid = true;
+        } else {
+          console.error('[webhook] TEAMS_BOT_SECRET not configured — rejecting webhook (set DEV_AUTH_ENABLED=true to bypass)');
+          return Response.json({ error: 'E79434: Server configuration error' }, { status: 500 });
+        }
+        break;
+      }
       case 'matrix':
       case 'google_chat': {
         // These providers require JWT or shared-secret verification that is not yet implemented.

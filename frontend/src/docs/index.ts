@@ -12,6 +12,7 @@ import { discordDoc } from "./content/discord";
 import { telegramDoc } from "./content/telegram";
 import { whatsappDoc } from "./content/whatsapp";
 import { teamsDoc } from "./content/teams";
+import { outlookDoc } from "./content/outlook";
 import { matrixDoc } from "./content/matrix";
 import { googleChatDoc } from "./content/google-chat";
 import { sheetsDoc } from "./content/sheets";
@@ -44,6 +45,7 @@ export const allDocs: Record<string, DocEntry> = {
   telegram: telegramDoc,
   whatsapp: whatsappDoc,
   teams: teamsDoc,
+  outlook: outlookDoc,
   matrix: matrixDoc,
   "google-chat": googleChatDoc,
   sheets: sheetsDoc,

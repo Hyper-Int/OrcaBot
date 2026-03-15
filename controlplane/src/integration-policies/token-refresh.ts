@@ -155,6 +155,20 @@ async function refreshOAuthToken(
       console.error(`[token-refresh] Twitter refresh error:`, err);
       return null;
     }
+  } else if (provider === 'teams' || provider === 'outlook' || provider === 'onedrive') {
+    const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+    const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      console.error(`[token-refresh] Microsoft OAuth not configured for ${provider} refresh (userIntegrationId=${userIntegrationId})`);
+      return null;
+    }
+    tokenUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+    body = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    });
   } else {
     // Browser and other providers don't use OAuth refresh
     console.warn(`[token-refresh] OAuth refresh not supported for provider: ${provider}`);

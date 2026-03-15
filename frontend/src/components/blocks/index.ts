@@ -18,3 +18,4 @@ export { SheetsBlock } from "./SheetsBlock";
 export { FormsBlock } from "./FormsBlock";
 export { SlackBlock } from "./SlackBlock";
 export { DiscordBlock } from "./DiscordBlock";
+export { default as OutlookBlock } from "./OutlookBlock";

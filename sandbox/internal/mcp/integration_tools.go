@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-tools] REVISION: integration-tools-v7-twitter loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-tools] REVISION: integration-tools-v8-outlook loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // IntegrationTool represents an MCP tool definition for an integration
@@ -51,6 +51,8 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return googleChatTools
 	case "twitter":
 		return twitterTools
+	case "outlook":
+		return outlookTools
 	default:
 		return nil
 	}
@@ -99,6 +101,7 @@ var allTools = map[string][]IntegrationTool{
 	"matrix":          matrixTools,
 	"google_chat":     googleChatTools,
 	"twitter":         twitterTools,
+	"outlook":         outlookTools,
 }
 
 // ============================================
@@ -1784,6 +1787,201 @@ var twitterTools = []IntegrationTool{
 			},
 			"required": ["tweet_id"]
 		}`),
+	},
+}
+
+// ============================================
+// Outlook Tools
+// ============================================
+
+var outlookTools = []IntegrationTool{
+	{
+		Name:        "outlook_search",
+		Description: "Search emails in Microsoft Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.search",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Search query (KQL syntax). Examples: 'from:boss@company.com', 'subject:invoice', 'hasAttachments:true'"
+				},
+				"limit": {
+					"type": "integer",
+					"description": "Maximum number of results (default: 10, max: 50)",
+					"default": 10
+				},
+				"folder": {
+					"type": "string",
+					"description": "Mail folder to search in (optional, e.g. 'inbox', 'sentitems')"
+				}
+			},
+			"required": ["query"]
+		}`),
+	},
+	{
+		Name:        "outlook_get",
+		Description: "Get a specific email by ID with full details",
+		Provider:    "outlook",
+		Action:      "outlook.get",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The Outlook message ID"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_send",
+		Description: "Send a new email via Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.send",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"to": {
+					"type": "string",
+					"description": "Recipient email address"
+				},
+				"subject": {
+					"type": "string",
+					"description": "Email subject"
+				},
+				"body": {
+					"type": "string",
+					"description": "Email body (plain text)"
+				},
+				"cc": {
+					"type": "string",
+					"description": "CC recipient email address (optional)"
+				},
+				"bcc": {
+					"type": "string",
+					"description": "BCC recipient email address (optional)"
+				}
+			},
+			"required": ["to", "subject", "body"]
+		}`),
+	},
+	{
+		Name:        "outlook_reply",
+		Description: "Reply to an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.reply",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to reply to"
+				},
+				"body": {
+					"type": "string",
+					"description": "Reply body text"
+				}
+			},
+			"required": ["message_id", "body"]
+		}`),
+	},
+	{
+		Name:        "outlook_forward",
+		Description: "Forward an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.forward",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to forward"
+				},
+				"to": {
+					"type": "string",
+					"description": "Recipient email address to forward to"
+				},
+				"body": {
+					"type": "string",
+					"description": "Optional comment to include with the forwarded message"
+				}
+			},
+			"required": ["message_id", "to"]
+		}`),
+	},
+	{
+		Name:        "outlook_archive",
+		Description: "Archive an email (move to Archive folder)",
+		Provider:    "outlook",
+		Action:      "outlook.archive",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to archive"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_delete",
+		Description: "Delete an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.delete",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to delete"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_mark_read",
+		Description: "Mark an email as read",
+		Provider:    "outlook",
+		Action:      "outlook.mark_read",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to mark as read"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_mark_unread",
+		Description: "Mark an email as unread",
+		Provider:    "outlook",
+		Action:      "outlook.mark_unread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to mark as unread"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_list_folders",
+		Description: "List mail folders in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.list_folders",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
 	},
 }
 

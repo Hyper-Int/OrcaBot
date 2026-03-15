@@ -54,6 +54,7 @@ import { TeamsBlock } from "@/components/blocks/TeamsBlock";
 import { MatrixBlock } from "@/components/blocks/MatrixBlock";
 import { GoogleChatBlock } from "@/components/blocks/GoogleChatBlock";
 import { TwitterBlock } from "@/components/blocks/TwitterBlock";
+import OutlookBlock from "@/components/blocks/OutlookBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -84,6 +85,7 @@ const nodeTypes: NodeTypes = {
   matrix: MatrixBlock,
   google_chat: GoogleChatBlock,
   twitter: TwitterBlock,
+  outlook: OutlookBlock,
   cursor: CursorNode,
 };
 

@@ -11050,3 +11050,359 @@ export async function disconnectTwitter(
 
   return Response.json({ ok: true });
 }
+
+// ============================================
+// Teams OAuth (upgrade from token-based)
+// ============================================
+
+const TEAMS_OAUTH_SCOPE = [
+  'offline_access',
+  'Team.ReadBasic.All',
+  'Channel.ReadBasic.All',
+  'ChannelMessage.Read.All',
+  'ChannelMessage.Send',
+  'User.Read',
+];
+
+export async function connectTeams(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+  const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return renderErrorPage('Microsoft OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const mode = url.searchParams.get('mode');
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const state = buildState();
+  await createState(env, auth.user!.id, 'teams', state, {
+    mode,
+    dashboardId,
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/teams/callback`;
+
+  const authUrl = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_mode', 'query');
+  authUrl.searchParams.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackTeams(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+  const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return renderErrorPage('Microsoft OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'teams');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/teams/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', clientId);
+  body.set('client_secret', clientSecret);
+  body.set('grant_type', 'authorization_code');
+  body.set('code', code);
+  body.set('redirect_uri', redirectUri);
+  body.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
+
+  console.log(`Teams token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
+  const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error(`Teams token exchange failed: ${tokenResponse.status} ${errBody}`);
+    return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: string;
+  };
+
+  // Fetch user profile
+  let displayName = 'Teams User';
+  let email = '';
+  try {
+    const profileResp = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (profileResp.ok) {
+      const profile = await profileResp.json() as { displayName?: string; userPrincipalName?: string; mail?: string };
+      displayName = profile.displayName || displayName;
+      email = profile.mail || profile.userPrincipalName || '';
+    }
+  } catch { /* non-fatal */ }
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'teams', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    TEAMS_OAUTH_SCOPE.join(' '),
+    tokenData.token_type || null,
+    expiresAt,
+    JSON.stringify({ provider: 'teams', display_name: displayName, email })
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (stateData.metadata?.mode === 'popup') {
+    const dashboardId = typeof stateData.metadata?.dashboardId === 'string'
+      ? stateData.metadata.dashboardId
+      : null;
+    return renderProviderAuthCompletePage(frontendUrl, 'Microsoft Teams', 'teams-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Microsoft Teams');
+}
+
+// ============================================
+// Outlook OAuth
+// ============================================
+
+const OUTLOOK_SCOPE = [
+  'offline_access',
+  'Mail.Read',
+  'Mail.ReadWrite',
+  'Mail.Send',
+  'User.Read',
+  'openid',
+  'email',
+];
+
+export async function connectOutlook(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+  const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return renderErrorPage('Microsoft OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const mode = url.searchParams.get('mode');
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const state = buildState();
+  await createState(env, auth.user!.id, 'outlook', state, {
+    mode,
+    dashboardId,
+  });
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/outlook/callback`;
+
+  const authUrl = new URL('https://login.microsoftonline.com/common/oauth2/v2.0/authorize');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_mode', 'query');
+  authUrl.searchParams.set('scope', OUTLOOK_SCOPE.join(' '));
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+export async function callbackOutlook(
+  request: Request,
+  env: EnvWithDriveCache
+): Promise<Response> {
+  const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+  const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return renderErrorPage('Microsoft OAuth is not configured.');
+  }
+
+  const url = new URL(request.url);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (!code || !state) {
+    return renderErrorPage('Missing authorization code.');
+  }
+
+  const stateData = await consumeState(env, state, 'outlook');
+  if (!stateData) {
+    return renderErrorPage('Invalid or expired state.');
+  }
+
+  const redirectBase = getRedirectBase(request, env);
+  const redirectUri = `${redirectBase}/integrations/outlook/callback`;
+
+  const body = new URLSearchParams();
+  body.set('client_id', clientId);
+  body.set('client_secret', clientSecret);
+  body.set('grant_type', 'authorization_code');
+  body.set('code', code);
+  body.set('redirect_uri', redirectUri);
+  body.set('scope', OUTLOOK_SCOPE.join(' '));
+
+  console.log(`Outlook token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
+  const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error(`Outlook token exchange failed: ${tokenResponse.status} ${errBody}`);
+    return renderErrorPage(`Failed to exchange token. ${tokenResponse.status}: ${errBody}`);
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+    token_type?: string;
+  };
+
+  // Fetch user profile for email
+  let displayName = 'Outlook User';
+  let email = '';
+  try {
+    const profileResp = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (profileResp.ok) {
+      const profile = await profileResp.json() as { displayName?: string; userPrincipalName?: string; mail?: string };
+      displayName = profile.displayName || displayName;
+      email = profile.mail || profile.userPrincipalName || '';
+    }
+  } catch { /* non-fatal */ }
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'outlook', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    OUTLOOK_SCOPE.join(' '),
+    tokenData.token_type || null,
+    expiresAt,
+    JSON.stringify({ provider: 'outlook', display_name: displayName, email })
+  ).run();
+
+  const frontendUrl = env.FRONTEND_URL || 'https://orcabot.com';
+  if (stateData.metadata?.mode === 'popup') {
+    const dashboardId = typeof stateData.metadata?.dashboardId === 'string'
+      ? stateData.metadata.dashboardId
+      : null;
+    return renderProviderAuthCompletePage(frontendUrl, 'Microsoft Outlook', 'outlook-auth-complete', dashboardId);
+  }
+
+  return renderSuccessPage('Microsoft Outlook');
+}
+
+export async function getOutlookIntegration(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const row = await env.DB.prepare(
+    'SELECT id, metadata FROM user_integrations WHERE user_id = ? AND provider = ?'
+  ).bind(auth.user!.id, 'outlook').first<{ id: string; metadata: string }>();
+
+  if (!row) {
+    return Response.json({ connected: false, accountName: null });
+  }
+
+  let meta: Record<string, unknown> = {};
+  try { meta = JSON.parse(row.metadata); } catch { /* empty */ }
+
+  return Response.json({
+    connected: true,
+    accountName: meta.email || meta.display_name || 'Connected',
+    provider: 'outlook',
+    metadata: meta,
+  });
+}
+
+export async function disconnectOutlook(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  await deleteTerminalIntegrationBindingsForProvider(env, auth.user!.id, 'outlook');
+  await env.DB.prepare(
+    'DELETE FROM user_integrations WHERE user_id = ? AND provider = ?'
+  ).bind(auth.user!.id, 'outlook').run();
+
+  return Response.json({ ok: true });
+}

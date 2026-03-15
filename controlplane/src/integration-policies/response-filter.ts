@@ -23,6 +23,7 @@ import type {
   CalendarPolicy,
   MessagingPolicy,
   TwitterPolicy,
+  OutlookPolicy,
 } from '../types';
 import { globToRegex } from './handler';
 
@@ -62,6 +63,8 @@ export function filterResponse(
       return filterMessagingResponse(action, response, policy as MessagingPolicy);
     case 'twitter':
       return filterTwitterResponse(action, response, policy as TwitterPolicy);
+    case 'outlook':
+      return filterOutlookResponse(action, response, policy as OutlookPolicy);
     default:
       return { data: response, filtered: false };
   }
@@ -752,4 +755,101 @@ function filterObjectFields(
     }
   }
   return result;
+}
+
+// ============================================
+// Outlook Filtering
+// ============================================
+
+interface OutlookMessage {
+  id?: string;
+  subject?: string;
+  from?: { emailAddress?: { address?: string; name?: string } };
+  toRecipients?: Array<{ emailAddress?: { address?: string; name?: string } }>;
+  receivedDateTime?: string;
+  bodyPreview?: string;
+  body?: { contentType?: string; content?: string };
+  hasAttachments?: boolean;
+  attachments?: Array<{ name?: string; contentType?: string; size?: number }>;
+}
+
+function filterOutlookResponse(
+  action: string,
+  response: unknown,
+  policy: OutlookPolicy
+): FilterResult {
+  if (!response || typeof response !== 'object') {
+    return { data: response, filtered: false };
+  }
+
+  const resp = response as Record<string, unknown>;
+
+  // For search results, apply sender filter and strip large bodies
+  if (action === 'outlook.search' || action === 'outlook.get') {
+    const messages = (Array.isArray(resp.value) ? resp.value : [resp]) as OutlookMessage[];
+    let removedCount = 0;
+
+    const filtered = messages.filter(msg => {
+      // Sender filter enforcement
+      if (policy.senderFilter && policy.senderFilter.mode !== 'all' && msg.from?.emailAddress?.address) {
+        const senderAddr = msg.from.emailAddress.address.toLowerCase();
+        const senderDomain = senderAddr.split('@')[1] || '';
+
+        if (policy.senderFilter.mode === 'allowlist') {
+          const addrMatch = policy.senderFilter.addresses?.some(a => a.toLowerCase() === senderAddr);
+          const domainMatch = policy.senderFilter.domains?.some(d => d.toLowerCase() === senderDomain);
+          if (!addrMatch && !domainMatch) {
+            removedCount++;
+            return false;
+          }
+        } else if (policy.senderFilter.mode === 'blocklist') {
+          const addrMatch = policy.senderFilter.addresses?.some(a => a.toLowerCase() === senderAddr);
+          const domainMatch = policy.senderFilter.domains?.some(d => d.toLowerCase() === senderDomain);
+          if (addrMatch || domainMatch) {
+            removedCount++;
+            return false;
+          }
+        }
+      }
+      return true;
+    }).map(msg => {
+      // Strip large HTML bodies — return plain text extract
+      if (msg.body?.contentType === 'html' && msg.body.content) {
+        const plainText = msg.body.content
+          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 5000);
+        msg.body = { contentType: 'text', content: plainText };
+      }
+
+      // Strip attachment binary data (keep metadata only)
+      if (msg.attachments) {
+        msg.attachments = msg.attachments.map(att => ({
+          name: att.name,
+          contentType: att.contentType,
+          size: att.size,
+        }));
+      }
+
+      return msg;
+    });
+
+    if (Array.isArray(resp.value)) {
+      return {
+        data: { ...resp, value: filtered },
+        filtered: removedCount > 0,
+        removedCount,
+      };
+    }
+    return {
+      data: filtered[0] || resp,
+      filtered: removedCount > 0,
+      removedCount,
+    };
+  }
+
+  return { data: response, filtered: false };
 }

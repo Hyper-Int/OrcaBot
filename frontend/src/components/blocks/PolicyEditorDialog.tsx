@@ -23,6 +23,7 @@ import {
   type BrowserPolicy,
   type MessagingPolicy,
   type TwitterPolicy,
+  type OutlookPolicy,
   type SecurityLevel,
   getProviderDisplayName,
   getSecurityLevelColor,
@@ -573,6 +574,104 @@ const TwitterPolicyEditor: React.FC<{
   );
 };
 
+// Outlook Policy Editor
+const OutlookPolicyEditor: React.FC<{
+  policy: OutlookPolicy;
+  onChange: (policy: OutlookPolicy) => void;
+}> = ({ policy, onChange }) => {
+  const update = <K extends keyof OutlookPolicy>(key: K, value: OutlookPolicy[K]) => {
+    onChange({ ...policy, [key]: value });
+  };
+
+  return (
+    <div className="space-y-4">
+      <Section title="Reading">
+        <Toggle label="Can read emails" checked={policy.canRead} onChange={(v) => update("canRead", v)} />
+        <Toggle label="Can search emails" checked={policy.canSearch} onChange={(v) => update("canSearch", v)} />
+        {(policy.canRead || policy.canSearch) && (
+          <div className="pl-4 space-y-2">
+            <div className="text-[10px] text-[var(--foreground-muted)]">
+              Filter by sender (optional):
+            </div>
+            <select
+              className="w-full px-2 py-1 text-xs rounded border border-[var(--border)] bg-[var(--background)]"
+              value={policy.senderFilter?.mode || "all"}
+              onChange={(e) =>
+                update("senderFilter", {
+                  mode: e.target.value as "all" | "allowlist" | "blocklist",
+                  domains: policy.senderFilter?.domains || [],
+                  addresses: policy.senderFilter?.addresses || [],
+                })
+              }
+            >
+              <option value="all">All senders</option>
+              <option value="allowlist">Only these domains</option>
+              <option value="blocklist">Block these domains</option>
+            </select>
+            {policy.senderFilter?.mode !== "all" && (
+              <DomainListInput
+                label={policy.senderFilter?.mode === "allowlist" ? "Allowed domains" : "Blocked domains"}
+                domains={policy.senderFilter?.domains || []}
+                onChange={(domains) =>
+                  update("senderFilter", { ...policy.senderFilter!, domains })
+                }
+              />
+            )}
+          </div>
+        )}
+      </Section>
+
+      <Section title="Actions">
+        <Toggle label="Can archive" checked={policy.canArchive} onChange={(v) => update("canArchive", v)} />
+        <Toggle label="Can mark as read" checked={policy.canMarkRead} onChange={(v) => update("canMarkRead", v)} />
+        <Toggle label="Can manage folders" checked={policy.canManageFolders} onChange={(v) => update("canManageFolders", v)} />
+        <Toggle
+          label="Can delete emails"
+          checked={policy.canDelete}
+          onChange={(v) => update("canDelete", v)}
+          warning
+          description="Permanently delete emails"
+        />
+      </Section>
+
+      <Section title="Sending">
+        <Toggle
+          label="Can send emails"
+          checked={policy.canSend}
+          onChange={(v) => update("canSend", v)}
+          warning
+          description="Send emails on your behalf"
+        />
+        <Toggle
+          label="Can reply to emails"
+          checked={policy.canReply}
+          onChange={(v) => update("canReply", v)}
+          warning
+          description="Reply to emails on your behalf"
+        />
+        <Toggle
+          label="Can forward emails"
+          checked={policy.canForward}
+          onChange={(v) => update("canForward", v)}
+          warning
+          description="Forward emails on your behalf"
+        />
+        {(policy.canSend || policy.canReply || policy.canForward) && (
+          <div className="pl-4 space-y-2">
+            <DomainListInput
+              label="Allowed recipient domains (empty = all)"
+              domains={policy.sendPolicy?.allowedDomains || []}
+              onChange={(domains) =>
+                update("sendPolicy", { ...policy.sendPolicy, allowedDomains: domains })
+              }
+            />
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+};
+
 // Generic Simple Policy Editor (for Contacts, Sheets, Forms)
 const SimplePolicyEditor: React.FC<{
   policy: ContactsPolicy | SheetsPolicy | FormsPolicy;
@@ -733,6 +832,13 @@ export const PolicyEditorDialog: React.FC<PolicyEditorDialogProps> = ({
         return (
           <TwitterPolicyEditor
             policy={policy as TwitterPolicy}
+            onChange={(p) => setPolicy(p)}
+          />
+        );
+      case "outlook":
+        return (
+          <OutlookPolicyEditor
+            policy={policy as OutlookPolicy}
             onChange={(p) => setPolicy(p)}
           />
         );

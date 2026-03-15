@@ -35,6 +35,7 @@ import type {
   CalendarPolicy,
   BrowserPolicy,
   MessagingPolicy,
+  OutlookPolicy,
 } from '../types';
 import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
@@ -52,6 +53,7 @@ import { executeTeamsAction } from './api-clients/teams';
 import { executeMatrixAction } from './api-clients/matrix';
 import { executeGoogleChatAction } from './api-clients/google_chat';
 import { executeTwitterAction } from './api-clients/twitter';
+import { executeOutlookAction } from './api-clients/outlook';
 
 // ============================================
 // Types
@@ -509,6 +511,8 @@ async function executeProviderAPI(
       return executeGoogleChatAction(action, args, accessToken);
     case 'twitter':
       return executeTwitterAction(action, args, accessToken);
+    case 'outlook':
+      return executeOutlookAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');

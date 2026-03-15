@@ -123,6 +123,12 @@ export interface Env {
   TWITTER_CLIENT_ID?: string;
   /** Twitter/X OAuth 2.0 client secret */
   TWITTER_CLIENT_SECRET?: string;
+  /** Microsoft shared client ID for Teams/Outlook/OneDrive OAuth */
+  MICROSOFT_CLIENT_ID?: string;
+  /** Microsoft shared client secret for Teams/Outlook/OneDrive OAuth */
+  MICROSOFT_CLIENT_SECRET?: string;
+  /** Teams Bot Framework shared secret for webhook verification (HMAC-SHA256) */
+  TEAMS_BOT_SECRET?: string;
 }
 
 // Subscription types
@@ -639,7 +645,8 @@ export type IntegrationProvider =
   | 'teams'
   | 'matrix'
   | 'google_chat'
-  | 'twitter';
+  | 'twitter'
+  | 'outlook';
 
 /** Messaging providers that support inbound/outbound messaging */
 export type MessagingProvider = 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat';
@@ -1041,6 +1048,31 @@ export interface TwitterPolicy extends BasePolicy {
 }
 
 /**
+ * Outlook policy configuration
+ */
+export interface OutlookPolicy extends BasePolicy {
+  canRead: boolean;
+  canSearch: boolean;
+  canSend: boolean;
+  canReply: boolean;
+  canForward: boolean;
+  canArchive: boolean;
+  canDelete: boolean;
+  canMarkRead: boolean;
+  canManageFolders: boolean;
+  senderFilter?: {
+    mode: 'all' | 'allowlist' | 'blocklist';
+    domains?: string[];
+    addresses?: string[];
+  };
+  sendPolicy?: {
+    allowedRecipients?: string[];
+    allowedDomains?: string[];
+    maxPerHour?: number;
+  };
+}
+
+/**
  * Type-safe policy lookup by provider
  */
 export type PolicyForProvider<P extends IntegrationProvider> =
@@ -1062,6 +1094,7 @@ export type PolicyForProvider<P extends IntegrationProvider> =
   P extends 'matrix' ? MessagingPolicy :
   P extends 'google_chat' ? MessagingPolicy :
   P extends 'twitter' ? TwitterPolicy :
+  P extends 'outlook' ? OutlookPolicy :
   never;
 
 /**
@@ -1082,7 +1115,8 @@ export type AnyPolicy =
   | SlackPolicy
   | DiscordPolicy
   | TelegramPolicy
-  | TwitterPolicy;
+  | TwitterPolicy
+  | OutlookPolicy;
 
 /**
  * Terminal integration binding (immutable once created)
@@ -1195,6 +1229,7 @@ export const HIGH_RISK_CAPABILITIES: Record<IntegrationProvider, string[]> = {
   matrix: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   google_chat: ['canSend', 'canEditMessages', 'canDeleteMessages'],
   twitter: ['canPost', 'canRetweet', 'canFollow', 'canDeleteTweet'],
+  outlook: ['canSend', 'canDelete', 'canForward'],
 };
 
 // ============================================
