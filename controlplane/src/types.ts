@@ -102,6 +102,11 @@ export interface Env {
   FLY_MACHINE_IMAGE?: string;
   /** Feature flag: set to "true" to enable per-dashboard machine provisioning */
   FLY_PROVISIONING_ENABLED?: string;
+  /** Feature flag: set to "true" to enable kernel-level egress proxy enforcement on sandbox machines.
+   *  Requires iptables NAT table access. Fly microVMs have CAP_NET_ADMIN by default (full VM kernel).
+   *  For Docker dev, also add cap_add: [NET_ADMIN] to docker-compose.yml.
+   *  Set via: wrangler secret put EGRESS_PROXY_ENABLED */
+  EGRESS_PROXY_ENABLED?: string;
   /** URL sandbox machines use to reach control plane (e.g., "https://api.orcabot.com") */
   FLY_SANDBOX_CONTROLPLANE_URL?: string;
   /** Comma-separated Fly regions for warm pool distribution (e.g., "sjc,ams").

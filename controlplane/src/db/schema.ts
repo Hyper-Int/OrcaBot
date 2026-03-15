@@ -1482,8 +1482,55 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
   const columnsToCopy = allNewColumns.filter(c => oldColumnNames.has(c));
   const columnList = columnsToCopy.join(', ');
 
+  // D1 local (miniflare) enforces FK constraints on DROP TABLE of a parent table
+  // and ignores PRAGMA foreign_keys=OFF inside db.batch(). To drop user_integrations
+  // we must first remove all child rows/refs pointing to it.
+  //
+  // Two child tables reference user_integrations:
+  //   - terminal_integrations.user_integration_id (nullable, but CHECK blocks nulling for OAuth rows)
+  //   - messaging_subscriptions.user_integration_id (nullable, column may not exist on old DBs)
+  //
+  // Strategy:
+  //   1. Save the current links so we can restore them after the swap (IDs are preserved).
+  //   2. Try to null out terminal_integrations.user_integration_id.
+  //      If the CHECK constraint blocks it (OAuth rows must keep user_integration_id NOT NULL),
+  //      delete those rows and their dependents instead. This is dev-only data; in prod
+  //      this migration already ran cleanly before terminal_integrations got its CHECK.
+  //   3. Null out messaging_subscriptions.user_integration_id (ignoring missing column).
+  //   4. Swap user_integrations via DROP + RENAME.
+  //   5. Restore saved links (terminal_integrations rows that were nulled, not deleted).
+
+  type LinkRow = { id: string; user_integration_id: string };
+
+  // Step 1: save links before any mutation
+  const termLinks = await db.prepare(
+    `SELECT id, user_integration_id FROM terminal_integrations WHERE user_integration_id IS NOT NULL`
+  ).all<LinkRow>().catch(() => ({ results: [] as LinkRow[] }));
+
+  const msgLinks = await db.prepare(
+    `SELECT id, user_integration_id FROM messaging_subscriptions WHERE user_integration_id IS NOT NULL`
+  ).all<LinkRow>().catch(() => ({ results: [] as LinkRow[] }));
+
+  // Step 2: null out terminal_integrations refs, or delete them if CHECK blocks it
+  const termNullOk = await db.prepare(
+    `UPDATE terminal_integrations SET user_integration_id = NULL WHERE user_integration_id IS NOT NULL`
+  ).run().then(() => true).catch(() => false);
+
+  if (!termNullOk) {
+    // CHECK (provider IN ('browser','whatsapp') OR user_integration_id IS NOT NULL) prevents nulling.
+    // Delete the blocking rows and their dependents (no ON DELETE CASCADE on these tables).
+    console.log(`[migrateUserIntegrationProviders] CHECK constraint blocks null-out — deleting ${termLinks.results.length} stale integration rows and their dependents`);
+    await db.prepare(`DELETE FROM high_risk_confirmations WHERE terminal_integration_id IN (SELECT id FROM terminal_integrations WHERE user_integration_id IS NOT NULL)`).run().catch(() => {});
+    await db.prepare(`DELETE FROM integration_audit_log   WHERE terminal_integration_id IN (SELECT id FROM terminal_integrations WHERE user_integration_id IS NOT NULL)`).run().catch(() => {});
+    await db.prepare(`DELETE FROM integration_policies    WHERE terminal_integration_id IN (SELECT id FROM terminal_integrations WHERE user_integration_id IS NOT NULL)`).run().catch(() => {});
+    await db.prepare(`DELETE FROM terminal_integrations WHERE user_integration_id IS NOT NULL`).run();
+  }
+
+  // Step 3: null out messaging_subscriptions refs (best-effort; column may not exist yet)
+  await db.prepare(`UPDATE messaging_subscriptions SET user_integration_id = NULL WHERE user_integration_id IS NOT NULL`).run().catch(() => {});
+
+  // Step 4: swap user_integrations
   await db.batch([
-    db.prepare(`PRAGMA foreign_keys=OFF`),
     db.prepare(`DROP TABLE IF EXISTS user_integrations_new`),
     db.prepare(`
       CREATE TABLE user_integrations_new (
@@ -1500,12 +1547,32 @@ async function migrateUserIntegrationProviders(db: D1Database): Promise<void> {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `),
-    db.prepare(`INSERT INTO user_integrations_new (${columnList}) SELECT ${columnList} FROM user_integrations`),
+    db.prepare(`INSERT INTO user_integrations_new (${columnList}) SELECT ${columnList} FROM user_integrations WHERE user_id IN (SELECT id FROM users)`),
     db.prepare(`DROP TABLE user_integrations`),
     db.prepare(`ALTER TABLE user_integrations_new RENAME TO user_integrations`),
     db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_integrations_user_provider ON user_integrations(user_id, provider)`),
-    db.prepare(`PRAGMA foreign_keys=ON`),
   ]);
+
+  // Step 5: restore refs that were nulled (not deleted) in step 2
+  const restoreStmts: ReturnType<D1Database['prepare']>[] = [];
+  if (termNullOk) {
+    for (const row of termLinks.results) {
+      restoreStmts.push(
+        db.prepare(`UPDATE terminal_integrations SET user_integration_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM user_integrations WHERE id = ?)`)
+          .bind(row.user_integration_id, row.id, row.user_integration_id)
+      );
+    }
+  }
+  for (const row of msgLinks.results) {
+    restoreStmts.push(
+      db.prepare(`UPDATE messaging_subscriptions SET user_integration_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM user_integrations WHERE id = ?)`)
+        .bind(row.user_integration_id, row.id, row.user_integration_id)
+    );
+  }
+  if (restoreStmts.length > 0) {
+    await db.batch(restoreStmts);
+  }
+  console.log(`[migrateUserIntegrationProviders] Done. Restored ${restoreStmts.length} FK links.`);
 }
 
 // Migrate schedules table to support edge-based schedules (recipe_id nullable, new columns)
@@ -1652,8 +1719,19 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
   // Recreate table with updated CHECK constraint
   console.log(`[migrateTerminalIntegrationProviders] Recreating terminal_integrations table. allProvidersPresent=${allProvidersPresent}, hasCorrectExemption=${hasCorrectExemption}`);
 
+  // PRAGMA foreign_keys=OFF is ignored by D1 inside db.batch() — filter the INSERT instead.
+  // user_integration_id is nullable so no filter needed for it.
+  const orphaned = await db.prepare(`
+    SELECT COUNT(*) as n FROM terminal_integrations
+    WHERE user_id NOT IN (SELECT id FROM users)
+       OR dashboard_id NOT IN (SELECT id FROM dashboards)
+       OR created_by NOT IN (SELECT id FROM users)
+  `).first<{ n: number }>();
+  if (orphaned?.n) {
+    console.log(`[migrateTerminalIntegrationProviders] Dropping ${orphaned.n} orphaned rows`);
+  }
+
   await db.batch([
-    db.prepare(`PRAGMA foreign_keys=OFF`),
     db.prepare(`DROP TABLE IF EXISTS terminal_integrations_new`),
     db.prepare(`
       CREATE TABLE terminal_integrations_new (
@@ -1679,6 +1757,9 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
         (id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by)
       SELECT id, terminal_id, item_id, dashboard_id, user_id, provider, user_integration_id, active_policy_id, account_email, account_label, deleted_at, created_at, updated_at, created_by
       FROM terminal_integrations
+      WHERE user_id IN (SELECT id FROM users)
+        AND dashboard_id IN (SELECT id FROM dashboards)
+        AND created_by IN (SELECT id FROM users)
     `),
     db.prepare(`DROP TABLE terminal_integrations`),
     db.prepare(`ALTER TABLE terminal_integrations_new RENAME TO terminal_integrations`),
@@ -1687,7 +1768,6 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_user ON terminal_integrations(user_id)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_terminal_integrations_item ON terminal_integrations(item_id)`),
     db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_terminal_integrations_unique_active ON terminal_integrations(terminal_id, provider) WHERE deleted_at IS NULL`),
-    db.prepare(`PRAGMA foreign_keys=ON`),
   ]);
 
   // Blog subscribers table

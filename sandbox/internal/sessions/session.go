@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v14-unset-anthropic-key-env
+// REVISION: session-v22-pool-empty-mcp-env
 
 // Package sessions manages session lifecycle.
 //
@@ -40,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v13-cleanup-stale-api-key-token"
+const sessionRevision = "session-v22-pool-empty-mcp-env"
 
 // Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
 // This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
@@ -50,15 +50,11 @@ func init() {
 	log.Printf("[session] REVISION: %s loaded at %s", sessionRevision, time.Now().Format(time.RFC3339))
 }
 
-// applyEgressProxyEnv injects proxy vars when egress proxy is globally enabled
-// (ORCABOT_EGRESS_PROXY_URL set by main.go) OR when the session has per-session opt-in.
-func applyEgressProxyEnv(envVars map[string]string, sessionEgressEnabled bool) {
+// applyEgressProxyEnv injects proxy vars when the egress proxy is globally enabled
+// (ORCABOT_EGRESS_PROXY_URL set by main.go via EGRESS_PROXY_ENABLED=true).
+// Per-session opt-in has been removed; the env var is the single gate.
+func applyEgressProxyEnv(envVars map[string]string) {
 	proxyURL := strings.TrimSpace(os.Getenv("ORCABOT_EGRESS_PROXY_URL"))
-	if proxyURL == "" && sessionEgressEnabled {
-		// Per-session opt-in but global is off — use hardcoded proxy URL
-		// (proxy is always started, just not globally advertised)
-		proxyURL = "http://127.0.0.1:8083"
-	}
 	if proxyURL == "" {
 		delete(envVars, "HTTP_PROXY")
 		delete(envVars, "HTTPS_PROXY")
@@ -72,15 +68,12 @@ func applyEgressProxyEnv(envVars map[string]string, sessionEgressEnabled bool) {
 	envVars["HTTPS_PROXY"] = proxyURL
 	envVars["http_proxy"] = proxyURL
 	envVars["https_proxy"] = proxyURL
-	envVars["NO_PROXY"] = "localhost,127.0.0.1"
-	envVars["no_proxy"] = "localhost,127.0.0.1"
-}
-
-// SetEgressEnabled enables per-session egress proxy opt-in.
-func (s *Session) SetEgressEnabled(enabled bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.egressEnabled = enabled
+	// 127.0.0.0/8 covers the full IPv4 loopback range (consistent with iptables ! -d 127.0.0.0/8).
+	// curl and wget honour CIDR notation; the proxy-side isLocalhost() uses net.IP.IsLoopback()
+	// as the authoritative gate for clients that send non-127.0.0.1 loopback addresses.
+	// REVISION: session-v22-pool-empty-mcp-env
+	envVars["NO_PROXY"] = "127.0.0.0/8,::1,localhost"
+	envVars["no_proxy"] = "127.0.0.0/8,::1,localhost"
 }
 
 var (
@@ -131,6 +124,10 @@ type Session struct {
 	broker     *broker.SecretsBroker
 	brokerPort int
 
+	// Egress proxy port: when >0, browser controller routes Chromium through the proxy.
+	// REVISION: browser-v7-proxy-server
+	egressProxyPort int
+
 	// Secrets tracking for output redaction
 	secrets   map[string]string // name -> value (for redaction)
 	secretsMu sync.RWMutex
@@ -156,9 +153,6 @@ type Session struct {
 	executionIDs   map[string]string // ptyID -> schedule_execution ID
 	executionIDsMu sync.RWMutex
 
-	// Per-session egress proxy opt-in (overrides global EGRESS_PROXY_ENABLED=false)
-	egressEnabled bool
-
 	// Drive sync: per-dashboard bidirectional sync with Google Drive
 	// REVISION: drivesync-v1
 	driveSyncer       *drivesync.Syncer
@@ -176,7 +170,10 @@ type Session struct {
 
 // NewSession creates a new session with workspace at the given root.
 // The broker is shared across all sessions in this sandbox.
-func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int) *Session {
+// egressProxyPort: when >0, the browser controller routes all Chromium traffic
+// through that port so redirects/subresources are subject to egress approval.
+// REVISION: browser-v7-proxy-server
+func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int, egressProxyPort int) *Session {
 	s := &Session{
 		ID:                id,
 		DashboardID:       dashboardID,
@@ -185,6 +182,7 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 		workspace:         fs.NewWоrkspace(workspaceRoot),
 		broker:            sharedBroker,
 		brokerPort:        brokerPort,
+		egressProxyPort:   egressProxyPort,
 		secrets:           make(map[string]string),
 		integrationTokens: make(map[string]string), // REVISION: integration-tokens-v1-storage
 		mcpSecrets:        make(map[string]string), // REVISION: mcp-secret-v1-nonce
@@ -196,9 +194,11 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 
 	// Wire up broker callback to notify control plane of pending domain approvals
 	// The callback receives sessionID from the broker (stored in provider config)
-	s.broker.SetOnApprovalNeeded(func(sessionID, secretName, domain string) {
-		go notifyApprovalNeeded(sessionID, secretName, domain)
-	})
+	if s.broker != nil {
+		s.broker.SetOnApprovalNeeded(func(sessionID, secretName, domain string) {
+			go notifyApprovalNeeded(sessionID, secretName, domain)
+		})
+	}
 
 	// Initialize state cache: load from disk and sync from server
 	// REVISION: state-cache-v3-wired
@@ -285,7 +285,7 @@ func (s *Session) Wоrkspace() *fs.Workspace {
 func (s *Session) StartBrowser() (browser.Status, error) {
 	s.mu.Lock()
 	if s.browser == nil {
-		s.browser = browser.NewController(s.workspace.Root())
+		s.browser = browser.NewControllerWithEgress(s.workspace.Root(), s.egressProxyPort)
 	}
 	browserCtrl := s.browser
 	s.mu.Unlock()
@@ -317,7 +317,7 @@ func (s *Session) BrowserStatus() browser.Status {
 func (s *Session) OpenBrowserURL(target string) error {
 	s.mu.Lock()
 	if s.browser == nil {
-		s.browser = browser.NewController(s.workspace.Root())
+		s.browser = browser.NewControllerWithEgress(s.workspace.Root(), s.egressProxyPort)
 	}
 	browserCtrl := s.browser
 	s.mu.Unlock()
@@ -535,15 +535,20 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
 	}
 
-	// Generate per-PTY MCP auth nonce (proof-of-possession for localhost MCP requests)
-	// REVISION: mcp-secret-v1-nonce
-	mcpSecret, err := id.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate MCP secret: %w", err)
+	// Per-PTY MCP auth nonce: only generated in non-pool mode.
+	// In pool mode, auth is purely UID-based (SO_PEERCRED on the privileged Unix
+	// socket); the server uses a single process-lifetime poolProxyToken instead.
+	var mcpSecret string
+	if pty.GetPool() == nil {
+		var secretErr error
+		mcpSecret, secretErr = id.New()
+		if secretErr != nil {
+			return nil, fmt.Errorf("failed to generate MCP secret: %w", secretErr)
+		}
+		s.mcpSecretsMu.Lock()
+		s.mcpSecrets[ptyID] = mcpSecret
+		s.mcpSecretsMu.Unlock()
 	}
-	s.mcpSecretsMu.Lock()
-	s.mcpSecrets[ptyID] = mcpSecret
-	s.mcpSecretsMu.Unlock()
 
 	// Detect agent type BEFORE modifying command with cd prefix
 	// This ensures hooks are still generated correctly
@@ -587,31 +592,67 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	// "copy this URL" mode. The value doesn't need a real X server — our xdg-open
 	// wrapper intercepts the call and routes it to the browser block.
 	envVars["DISPLAY"] = ":0"
-	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
+	// When pool is active, do NOT set ORCABOT_MCP_SECRET in the PTY environment.
+	// The privileged Unix socket uses kernel SO_PEERCRED for auth — no secret needed.
+	// The secret is still stored in s.mcpSecrets[ptyID] for use by the socket proxy.
+	// REVISION: session-v15-uid-pool-unix-socket
+	if pty.GetPool() == nil {
+		envVars["ORCABOT_MCP_SECRET"] = mcpSecret
+	}
 
-	// REVISION: egress-proxy-v2-pty-env-gated
-	// Only set proxy vars if the egress proxy is globally enabled or this session opted in.
-	s.mu.RLock()
-	egressOn := s.egressEnabled
-	s.mu.RUnlock()
-	applyEgressProxyEnv(envVars, egressOn)
+	applyEgressProxyEnv(envVars)
 
 	// Write MCP config to per-PTY files so mcp-bridge can discover them
 	// even when agents (like Codex) don't forward env vars to subprocesses.
-	// REVISION: mcp-files-v4-wrapper-script
-	orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
-	if err := os.MkdirAll(orcabotPtyDir, 0700); err == nil {
-		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
-		// Compatibility pointer for agents that don't pass PTY ID to subprocesses.
-		os.WriteFile(filepath.Join(s.workspace.Root(), ".orcabot", "pty-id"), []byte(ptyID+"\n"), 0644)
-		// Per-PTY wrapper script: embeds MCP config in the command itself.
-		// This is the most reliable mechanism — the `command` field is universally
-		// supported by all MCP clients, unlike args/env which some clients don't forward.
-		wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s --mcp-secret=%s\n",
-			envVars["ORCABOT_MCP_URL"], ptyID, mcpSecret)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
+	// REVISION: mcp-files-v5-no-secret-in-run-bridge
+	// NOTE: mcp-secret is NOT embedded in run-bridge CLI args (visible in ps).
+	// mcp-bridge picks it up from the inherited ORCABOT_MCP_SECRET env var instead.
+	// REVISION: session-v15-uid-pool-unix-socket
+	// When pool is active, do NOT write mcp-secret file (Unix socket proves identity).
+	// Do NOT write the pty-id compatibility pointer (superseded by pool registry).
+	// Per-PTY config directory: non-pool mode only.
+	// Pool mode skips this entirely: mcp-bridge auto-detects the Unix socket and
+	// needs no on-disk config. Creating even an empty directory in pool mode would:
+	//   (a) reveal PTY IDs to sibling pty-NNN users via ls .orcabot/pty/ (the
+	//       parent is 0750/sandbox-group so all pool users can enumerate it), and
+	//   (b) create filesystem state before pool.Allocate() fires, meaning
+	//       a pool-exhaustion failure leaves a stale directory behind.
+	// REVISION: session-v22-pool-empty-mcp-env
+	if pty.GetPool() == nil {
+		orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
+		if err := os.MkdirAll(orcabotPtyDir, 0750); err == nil {
+			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
+			wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s\n",
+				envVars["ORCABOT_MCP_URL"], ptyID)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
+		}
+	}
+
+	// Allocate pool slot BEFORE writing any workspace config files (.mcp.json,
+	// hooks, settings.local.json). Pool exhaustion is a documented hard-fail;
+	// if it fires after workspace writes, stale per-PTY config pointing at a
+	// slot that never launched corrupts other live PTYs sharing /workspace.
+	// cleanupSecrets is defined here so the early failure path can use it.
+	// REVISION: session-v22-pool-empty-mcp-env
+	cleanupSecrets := func() {
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
+	}
+	var poolSlot *pty.SlotEntry
+	if pool := pty.GetPool(); pool != nil {
+		var allocErr error
+		poolSlot, allocErr = pool.Allocate()
+		if allocErr != nil {
+			cleanupSecrets()
+			return nil, fmt.Errorf("PTY pool exhausted: %w", allocErr)
+		}
+		poolSlot.PTYID = ptyID
 	}
 
 	// Generate MCP settings for the specific agent being launched (if detected).
@@ -620,13 +661,21 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 	// credentials, breaking MCP secret auth for already-running agents.
 	// REVISION: mcp-settings-v1-no-overwrite-all
 	userTools := s.fetchUserMCPTools()
-	mcpEnv := map[string]string{
-		"ORCABOT_SESSION_ID":     s.ID,
-		"ORCABOT_MCP_URL":        envVars["ORCABOT_MCP_URL"],
-		"MCP_LOCAL_PORT":         mcpPort,
-		"ORCABOT_PTY_ID":         ptyID,
-		"ORCABOT_MCP_SECRET":     mcpSecret,
-		"ORCABOT_BRIDGE_COMMAND": filepath.Join(orcabotPtyDir, "run-bridge"),
+	// Pool mode: empty mcpEnv. mcp-bridge auto-detects the Unix socket and derives
+	// session+PTY identity from SO_PEERCRED — no URL, PTY ID, or secret belongs in
+	// the shared workspace config file. buildServerConfigs falls back to bare
+	// "mcp-bridge" with no args/env when mcpEnv is empty.
+	// Non-pool mode: embed URL, IDs, and secret so mcp-bridge can authenticate to
+	// the TCP MCPLocal server even when agents (e.g. Codex) strip inherited env vars.
+	// REVISION: session-v22-pool-empty-mcp-env
+	mcpEnv := map[string]string{}
+	if pty.GetPool() == nil {
+		mcpEnv["ORCABOT_SESSION_ID"] = s.ID
+		mcpEnv["ORCABOT_MCP_URL"] = envVars["ORCABOT_MCP_URL"]
+		mcpEnv["MCP_LOCAL_PORT"] = mcpPort
+		mcpEnv["ORCABOT_PTY_ID"] = ptyID
+		mcpEnv["ORCABOT_MCP_SECRET"] = mcpSecret
+		mcpEnv["ORCABOT_BRIDGE_COMMAND"] = filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID, "run-bridge")
 	}
 	if agentType != mcp.AgentTypeUnknown {
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
@@ -642,25 +691,29 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
-		// For Claude Code: if ANTHROPIC_API_KEY is brokered, generate a dedicated
-		// single-purpose token and write apiKeyHelper to settings.local.json.
-		// The token is separate from ORCABOT_MCP_SECRET and NOT set in the PTY env,
-		// so it can only be discovered by reading settings.local.json. The endpoint
-		// it calls is hardcoded to return ANTHROPIC_API_KEY only — no ?name= param.
+		// For Claude Code: if ANTHROPIC_API_KEY is brokered, set apiKeyHelper.
+		// When the UID pool is active, use the Unix socket (no token distributed).
+		// Otherwise fall back to the token-based TCP endpoint.
 		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
-			apiKeyToken, tokenErr := id.New()
-			if tokenErr == nil {
-				s.apiKeyTokensMu.Lock()
-				s.apiKeyTokens[ptyID] = apiKeyToken
-				s.apiKeyTokensMu.Unlock()
-				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+			if pty.GetPool() != nil {
+				// Unix socket: kernel proves identity via SO_PEERCRED — no token needed.
+				if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
 				}
-				// Remove ANTHROPIC_API_KEY from the PTY env entirely — apiKeyHelper is the
-				// sole auth source. Leaving the dummy brokered value causes Claude Code to
-				// complain about conflicting auth ("Both a token and an API key are set").
-				// ANTHROPIC_BASE_URL remains set so API calls still route through the broker.
 				delete(envVars, "ANTHROPIC_API_KEY")
+			} else {
+				// Fallback: token embedded in settings.local.json, verified at /anthropic-key.
+				apiKeyToken, tokenErr := id.New()
+				if tokenErr == nil {
+					s.apiKeyTokensMu.Lock()
+					s.apiKeyTokens[ptyID] = apiKeyToken
+					s.apiKeyTokensMu.Unlock()
+					if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+					}
+					// Remove ANTHROPIC_API_KEY from the PTY env — apiKeyHelper is sole auth.
+					delete(envVars, "ANTHROPIC_API_KEY")
+				}
 			}
 		}
 
@@ -671,16 +724,25 @@ func (s *Session) CreatePTY(creatorID string, command string, workingDir string)
 		}
 	}
 
-	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
-	if err != nil {
-		// PTY never started; remove per-PTY secrets/tokens created earlier in this flow.
-		s.mcpSecretsMu.Lock()
-		delete(s.mcpSecrets, ptyID)
-		s.mcpSecretsMu.Unlock()
-		s.apiKeyTokensMu.Lock()
-		delete(s.apiKeyTokens, ptyID)
-		s.apiKeyTokensMu.Unlock()
-		return nil, err
+	// Spawn PTY. Pool slot was allocated before workspace config writes above,
+	// so pool exhaustion cannot occur here. ptyID is already bound to poolSlot.PTYID.
+	// REVISION: session-v22-pool-empty-mcp-env
+	var p *pty.PTY
+	if poolSlot != nil {
+		p, err = pty.NewWithCommandEnvIDSlot(poolSlot, s.ID, command, 80, 24, actualWorkDir, envVars)
+		if err != nil {
+			if pool := pty.GetPool(); pool != nil {
+				pool.Release(poolSlot.UID)
+			}
+			cleanupSecrets()
+			return nil, err
+		}
+	} else {
+		p, err = pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
+		if err != nil {
+			cleanupSecrets()
+			return nil, err
+		}
 	}
 
 	hub := pty.NewHub(p, creatorID)
@@ -763,15 +825,18 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		return nil, fmt.Errorf("%w: must match %s", ErrInvalidPTYID, ptyIDPattern.String())
 	}
 
-	// Generate per-PTY MCP auth nonce (proof-of-possession for localhost MCP requests)
-	// REVISION: mcp-secret-v1-nonce
-	mcpSecret, err := id.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate MCP secret: %w", err)
+	// Per-PTY MCP auth nonce: only generated in non-pool mode.
+	var mcpSecret string
+	if pty.GetPool() == nil {
+		var secretErr error
+		mcpSecret, secretErr = id.New()
+		if secretErr != nil {
+			return nil, fmt.Errorf("failed to generate MCP secret: %w", secretErr)
+		}
+		s.mcpSecretsMu.Lock()
+		s.mcpSecrets[ptyID] = mcpSecret
+		s.mcpSecretsMu.Unlock()
 	}
-	s.mcpSecretsMu.Lock()
-	s.mcpSecrets[ptyID] = mcpSecret
-	s.mcpSecretsMu.Unlock()
 
 	// Detect agent type BEFORE modifying command with cd prefix
 	// This ensures MCP settings and hooks are still generated correctly
@@ -819,76 +884,104 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	envVars["CHROME_BIN"] = "/usr/bin/chromium"
 	// Set DISPLAY so CLIs that check for a graphical environment attempt xdg-open
 	envVars["DISPLAY"] = ":0"
-	envVars["ORCABOT_MCP_SECRET"] = mcpSecret
+	// When pool is active, do NOT set ORCABOT_MCP_SECRET in the PTY environment.
+	// The privileged Unix socket uses kernel SO_PEERCRED for auth — no secret needed.
+	// The secret is still stored in s.mcpSecrets[ptyID] for use by the socket proxy.
+	// REVISION: session-v15-uid-pool-unix-socket
+	if pty.GetPool() == nil {
+		envVars["ORCABOT_MCP_SECRET"] = mcpSecret
+	}
 
 	// Inject integration token for policy gateway authentication
 	if integrationToken != "" {
 		envVars["ORCABOT_INTEGRATION_TOKEN"] = integrationToken
 	}
 
-	// REVISION: egress-proxy-v2-pty-env-gated
-	// Only set proxy vars if the egress proxy is globally enabled or this session opted in.
-	s.mu.RLock()
-	egressOn := s.egressEnabled
-	s.mu.RUnlock()
-	applyEgressProxyEnv(envVars, egressOn)
+	applyEgressProxyEnv(envVars)
 
-	// Write MCP config to per-PTY files so mcp-bridge can discover them
-	// even when agents (like Codex) don't forward env vars to subprocesses.
-	// REVISION: mcp-files-v4-wrapper-script
-	orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
-	if err := os.MkdirAll(orcabotPtyDir, 0700); err == nil {
-		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
-		// Compatibility pointer for agents that don't pass PTY ID to subprocesses.
-		os.WriteFile(filepath.Join(s.workspace.Root(), ".orcabot", "pty-id"), []byte(ptyID+"\n"), 0644)
-		// Per-PTY wrapper script: embeds MCP config in the command itself.
-		// This is the most reliable mechanism — the `command` field is universally
-		// supported by all MCP clients, unlike args/env which some clients don't forward.
-		wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s --mcp-secret=%s\n",
-			envVars["ORCABOT_MCP_URL"], ptyID, mcpSecret)
-		os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
+	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
+	// REVISION: session-v22-pool-empty-mcp-env
+	if pty.GetPool() == nil {
+		orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
+		if err := os.MkdirAll(orcabotPtyDir, 0750); err == nil {
+			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
+			wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s\n",
+				envVars["ORCABOT_MCP_URL"], ptyID)
+			os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
+		}
+	}
+
+	// Allocate pool slot BEFORE writing any workspace config files.
+	// Same ordering invariant as CreatePTY — see comment there for rationale.
+	// REVISION: session-v22-pool-empty-mcp-env
+	cleanupSecretsWithToken := func() {
+		s.integrationTokensMu.Lock()
+		delete(s.integrationTokens, ptyID)
+		s.integrationTokensMu.Unlock()
+		s.mcpSecretsMu.Lock()
+		delete(s.mcpSecrets, ptyID)
+		s.mcpSecretsMu.Unlock()
+		s.apiKeyTokensMu.Lock()
+		delete(s.apiKeyTokens, ptyID)
+		s.apiKeyTokensMu.Unlock()
+	}
+	var poolSlot *pty.SlotEntry
+	if pool := pty.GetPool(); pool != nil {
+		var allocErr error
+		poolSlot, allocErr = pool.Allocate()
+		if allocErr != nil {
+			cleanupSecretsWithToken()
+			return nil, fmt.Errorf("PTY pool exhausted: %w", allocErr)
+		}
+		poolSlot.PTYID = ptyID
 	}
 
 	// Generate MCP settings file only for the specific agent being launched
 	// Use pre-computed agentType (detected before cd prefix was added to command)
 	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
-		mcpEnv := map[string]string{
-			"ORCABOT_SESSION_ID":     s.ID,
-			"ORCABOT_MCP_URL":        envVars["ORCABOT_MCP_URL"],
-			"MCP_LOCAL_PORT":         mcpPort,
-			"ORCABOT_PTY_ID":         ptyID,
-			"ORCABOT_MCP_SECRET":     mcpSecret,
-			"ORCABOT_BRIDGE_COMMAND": filepath.Join(orcabotPtyDir, "run-bridge"),
+		// Pool mode: empty mcpEnv — same rationale as CreatePTY.
+		// REVISION: session-v22-pool-empty-mcp-env
+		mcpEnv := map[string]string{}
+		if pty.GetPool() == nil {
+			mcpEnv["ORCABOT_SESSION_ID"] = s.ID
+			mcpEnv["ORCABOT_MCP_URL"] = envVars["ORCABOT_MCP_URL"]
+			mcpEnv["MCP_LOCAL_PORT"] = mcpPort
+			mcpEnv["ORCABOT_PTY_ID"] = ptyID
+			mcpEnv["ORCABOT_MCP_SECRET"] = mcpSecret
+			mcpEnv["ORCABOT_BRIDGE_COMMAND"] = filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID, "run-bridge")
 		}
 		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
 		}
 
 		// Generate agent stop hooks so we can detect when the agent finishes
-		// The hooks will call back to our localhost endpoint to trigger WebSocket events
 		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
-		// For Claude Code: if ANTHROPIC_API_KEY is brokered, generate a dedicated
-		// single-purpose token and write apiKeyHelper to settings.local.json.
+		// For Claude Code: if ANTHROPIC_API_KEY is brokered, set apiKeyHelper.
+		// When the UID pool is active, use the Unix socket (no token distributed).
+		// Otherwise fall back to the token-based TCP endpoint.
 		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
-			apiKeyToken, tokenErr := id.New()
-			if tokenErr == nil {
-				s.apiKeyTokensMu.Lock()
-				s.apiKeyTokens[ptyID] = apiKeyToken
-				s.apiKeyTokensMu.Unlock()
-				if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+			if pty.GetPool() != nil {
+				if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
 				}
-				// Remove ANTHROPIC_API_KEY from the PTY env entirely — apiKeyHelper is the
-				// sole auth source. Leaving the dummy brokered value causes Claude Code to
-				// complain about conflicting auth ("Both a token and an API key are set").
-				// ANTHROPIC_BASE_URL remains set so API calls still route through the broker.
 				delete(envVars, "ANTHROPIC_API_KEY")
+			} else {
+				apiKeyToken, tokenErr := id.New()
+				if tokenErr == nil {
+					s.apiKeyTokensMu.Lock()
+					s.apiKeyTokens[ptyID] = apiKeyToken
+					s.apiKeyTokensMu.Unlock()
+					if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+					}
+					delete(envVars, "ANTHROPIC_API_KEY")
+				}
 			}
 		}
 
@@ -899,19 +992,24 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		}
 	}
 
-	p, err := pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
-	if err != nil {
-		// PTY never started; remove per-PTY secrets/tokens created earlier in this flow.
-		s.integrationTokensMu.Lock()
-		delete(s.integrationTokens, ptyID)
-		s.integrationTokensMu.Unlock()
-		s.mcpSecretsMu.Lock()
-		delete(s.mcpSecrets, ptyID)
-		s.mcpSecretsMu.Unlock()
-		s.apiKeyTokensMu.Lock()
-		delete(s.apiKeyTokens, ptyID)
-		s.apiKeyTokensMu.Unlock()
-		return nil, err
+	// Spawn PTY. Pool slot was allocated before workspace config writes above.
+	// REVISION: session-v22-pool-empty-mcp-env
+	var p *pty.PTY
+	if poolSlot != nil {
+		p, err = pty.NewWithCommandEnvIDSlot(poolSlot, s.ID, command, 80, 24, actualWorkDir, envVars)
+		if err != nil {
+			if pool := pty.GetPool(); pool != nil {
+				pool.Release(poolSlot.UID)
+			}
+			cleanupSecretsWithToken()
+			return nil, err
+		}
+	} else {
+		p, err = pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
+		if err != nil {
+			cleanupSecretsWithToken()
+			return nil, err
+		}
 	}
 
 	hub := pty.NewHub(p, creatorID)

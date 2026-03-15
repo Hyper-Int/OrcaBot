@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-bridge-v19-invalidate-warmup-cache
+// REVISION: mcp-bridge-v23-socket-before-url-check
 // mcp-bridge is a stdio-to-HTTP bridge for MCP.
 // It allows Claude Code (and other MCP clients that use stdio transport)
 // to communicate with the sandbox's HTTP-based MCP server.
@@ -14,6 +14,8 @@
 // - Passes pty_id for integration tool discovery (token stays server-side)
 // - Monitors for tool list changes and sends notifications/tools/list_changed
 //   so the LLM discovers newly attached integrations without restarting
+// - When /run/orcabot/privileged.sock exists, routes all traffic through it
+//   (Unix socket transport; kernel UID proves identity, no secret needed)
 //
 // Environment variables:
 //   - ORCABOT_MCP_URL: Base URL for MCP API (e.g., http://localhost:8081/sessions/{id}/mcp)
@@ -26,10 +28,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,8 +44,8 @@ import (
 	"time"
 )
 
-// REVISION: mcp-bridge-v19-invalidate-warmup-cache
-const bridgeRevision = "mcp-bridge-v19-invalidate-warmup-cache"
+// REVISION: mcp-bridge-v23-socket-before-url-check
+const bridgeRevision = "mcp-bridge-v23-socket-before-url-check"
 
 func init() {
 	log.Printf("[mcp-bridge] REVISION: %s loaded at %s", bridgeRevision, time.Now().Format(time.RFC3339))
@@ -68,12 +72,28 @@ type jsonRPCError struct {
 	Message string `json:"message"`
 }
 
+const privilegedSockPath = "/run/orcabot/privileged.sock"
+
+// newUnixSocketClient returns an http.Client whose transport dials the privileged Unix socket.
+// The host portion of the URL is irrelevant — all connections go to the socket.
+func newUnixSocketClient() *http.Client {
+	return &http.Client{
+		Timeout: 120 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", privilegedSockPath)
+			},
+		},
+	}
+}
+
 // bridgeConfig holds env-derived configuration for the bridge
 type bridgeConfig struct {
-	mcpURL      string
-	ptyID       string
-	mcpSecret   string // per-PTY auth nonce for proof-of-possession
-	dashboardID string // dashboard this bridge belongs to (for log context)
+	mcpURL        string
+	ptyID         string
+	mcpSecret     string // per-PTY auth nonce for proof-of-possession
+	dashboardID   string // dashboard this bridge belongs to (for log context)
+	useUnixSocket bool   // true when privileged.sock is available at startup
 }
 
 var (
@@ -133,9 +153,6 @@ func main() {
 	}
 
 	// Priority 3: Config files (for agents like Codex that strip env vars)
-	if cfg.ptyID == "" {
-		cfg.ptyID = readPtyIDFallback()
-	}
 	if cfg.mcpURL == "" {
 		cfg.mcpURL = readMCPURLFromFile(cfg.ptyID)
 	}
@@ -143,8 +160,19 @@ func main() {
 		cfg.mcpSecret = readConfigFromFile("mcp-secret", cfg.ptyID)
 	}
 
+	// Detect privileged Unix socket BEFORE the mcpURL required-check.
+	// In pool mode, sessions.go intentionally omits per-PTY config files and env vars —
+	// the socket IS the configuration. If we exit first, pool mode can never start.
+	// REVISION: mcp-bridge-v23-socket-before-url-check
+	if _, statErr := os.Stat(privilegedSockPath); statErr == nil {
+		cfg.useUnixSocket = true
+		cfg.mcpURL = "http://x/mcp"
+		httpClient = newUnixSocketClient()
+		log.Printf("[mcp-bridge] privileged socket found: routing via %s (no secret needed)", privilegedSockPath)
+	}
+
 	if cfg.mcpURL == "" {
-		fmt.Fprintf(os.Stderr, "mcp-bridge: ORCABOT_MCP_URL or ORCABOT_SESSION_ID must be set\n")
+		fmt.Fprintf(os.Stderr, "mcp-bridge: ORCABOT_MCP_URL or ORCABOT_SESSION_ID must be set (and no privileged socket at %s)\n", privilegedSockPath)
 		os.Exit(1)
 	}
 
@@ -153,17 +181,20 @@ func main() {
 	if len(ptyPrefix) > 8 {
 		ptyPrefix = ptyPrefix[:8]
 	}
-	log.Printf("[mcp-bridge] final config: dashboardID=%s mcpURL=%s ptyID=%s... secretSet=%v", cfg.dashboardID, cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "")
+	log.Printf("[mcp-bridge] final config: dashboardID=%s mcpURL=%s ptyID=%s... secretSet=%v useUnixSocket=%v", cfg.dashboardID, cfg.mcpURL, ptyPrefix, cfg.mcpSecret != "", cfg.useUnixSocket)
 	fmt.Fprintf(os.Stderr, "mcp-bridge: dashboardID=%s using MCP URL: %s\n", cfg.dashboardID, cfg.mcpURL)
 
 	// Pre-warm integration tools in background. MCP clients (especially Codex CLI)
 	// may call tools/list before integrations are loaded (~40s after PTY creation).
 	// This goroutine polls until integrations appear and caches the full response.
-	if cfg.mcpSecret != "" {
-		go warmupTools(&cfg)
-	} else {
-		close(warmedToolsCh) // no warmup needed
-	}
+	//
+	// Always run warmup regardless of transport mode. In Unix socket mode mcpSecret
+	// is intentionally empty, but fetchToolsRaw still works — setMCPAuthHeader skips
+	// the header and the request routes through the Unix socket client. Skipping
+	// warmup in Unix socket mode regresses Codex CLI: it caches the first (incomplete)
+	// tools/list and does not handle notifications/tools/list_changed to self-correct.
+	// REVISION: mcp-bridge-v21-warmup-always
+	go warmupTools(&cfg)
 
 	// Start background tool list monitor (checks for new/removed tools every 10s)
 	go monitorToolChanges(&cfg)
@@ -254,16 +285,22 @@ func handleInitialize(req *jsonRPCRequest) *jsonRPCResponse {
 
 // setMCPAuthHeader sets the per-PTY auth nonce header on an HTTP request.
 // This proves the caller is the authorized mcp-bridge for this PTY.
+// Skipped when using Unix socket — the kernel proves identity via SO_PEERCRED.
 func setMCPAuthHeader(req *http.Request, cfg *bridgeConfig) {
+	if cfg.useUnixSocket {
+		return
+	}
 	if cfg.mcpSecret != "" {
 		req.Header.Set("X-MCP-Secret", cfg.mcpSecret)
 	}
 }
 
-// buildToolsURL constructs the tools endpoint URL with pty_id query parameter
+// buildToolsURL constructs the tools endpoint URL with pty_id query parameter.
+// When using Unix socket, omits pty_id — the privileged socket injects it from
+// the pool registry based on the caller's kernel UID.
 func buildToolsURL(cfg *bridgeConfig, path string) string {
 	toolsURL := cfg.mcpURL + path
-	if cfg.ptyID != "" {
+	if !cfg.useUnixSocket && cfg.ptyID != "" {
 		toolsURL += "?pty_id=" + url.QueryEscape(cfg.ptyID)
 	}
 	return toolsURL
@@ -574,13 +611,19 @@ func monitorToolChanges(cfg *bridgeConfig) {
 
 // notifyToolsChanged calls the sandbox server's tools-changed endpoint.
 // This broadcasts a WebSocket event so the frontend can show a restart prompt.
-// REVISION: mcp-bridge-v19-invalidate-warmup-cache
+// REVISION: mcp-bridge-v21-warmup-always
 func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
-	// Derive the tools-changed URL from mcpURL.
-	// mcpURL is like http://localhost:8081/sessions/{sessionId}/mcp
-	// We need http://localhost:8081/sessions/{sessionId}/ptys/{ptyId}/tools-changed
-	baseURL := strings.TrimSuffix(cfg.mcpURL, "/mcp")
-	toolsChangedURL := fmt.Sprintf("%s/ptys/%s/tools-changed", baseURL, cfg.ptyID)
+	var toolsChangedURL string
+	if cfg.useUnixSocket {
+		// Unix socket: privileged socket knows ptyID from SO_PEERCRED pool lookup.
+		toolsChangedURL = "http://x/tools-changed"
+	} else {
+		// Derive the tools-changed URL from mcpURL.
+		// mcpURL is like http://localhost:8081/sessions/{sessionId}/mcp
+		// We need http://localhost:8081/sessions/{sessionId}/ptys/{ptyId}/tools-changed
+		baseURL := strings.TrimSuffix(cfg.mcpURL, "/mcp")
+		toolsChangedURL = fmt.Sprintf("%s/ptys/%s/tools-changed", baseURL, cfg.ptyID)
+	}
 
 	body, _ := json.Marshal(map[string]int{
 		"oldCount": oldCount,
@@ -593,7 +636,7 @@ func notifyToolsChanged(cfg *bridgeConfig, oldCount, newCount int) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.mcpSecret != "" {
+	if !cfg.useUnixSocket && cfg.mcpSecret != "" {
 		req.Header.Set("X-MCP-Secret", cfg.mcpSecret)
 	}
 
@@ -636,28 +679,6 @@ func readConfigFromFile(name, ptyID string) string {
 			val := strings.TrimSpace(string(data))
 			if val != "" {
 				log.Printf("[mcp-bridge] read %s from %s", name, p)
-				return val
-			}
-		}
-	}
-	return ""
-}
-
-// readPtyIDFallback reads a best-effort PTY ID pointer for agents that don't pass PTY ID.
-// Checks $HOME/.orcabot/pty-id first, then /workspace/.orcabot/pty-id.
-func readPtyIDFallback() string {
-	paths := []string{}
-	if home := os.Getenv("HOME"); home != "" {
-		paths = append(paths, filepath.Join(home, ".orcabot", "pty-id"))
-	}
-	paths = append(paths, filepath.Join("/workspace/.orcabot", "pty-id"))
-
-	for _, p := range paths {
-		data, err := os.ReadFile(p)
-		if err == nil {
-			val := strings.TrimSpace(string(data))
-			if val != "" {
-				log.Printf("[mcp-bridge] read pty-id from %s", p)
 				return val
 			}
 		}

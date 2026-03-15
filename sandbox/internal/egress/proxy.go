@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v5-localhost-bypass
+// REVISION: egress-proxy-v7-loopback-range
 
 package egress
 
@@ -20,7 +20,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v5-localhost-bypass"
+const proxyRevision = "egress-proxy-v7-loopback-range"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -32,6 +32,9 @@ const (
 
 	// DefaultPort is the default proxy listen port.
 	DefaultPort = 8083
+
+	// TransparentPort is the port for the transparent (iptables-redirected) proxy listener.
+	TransparentPort = 8084
 )
 
 // Decision values for approval responses.
@@ -80,9 +83,10 @@ type Pending struct {
 // EgressProxy is an HTTP/HTTPS forward proxy that checks domains against
 // an allowlist and holds unknown connections until the user approves.
 type EgressProxy struct {
-	port             int
-	listener         net.Listener
-	server           *http.Server
+	port                int
+	listener            net.Listener
+	transparentListeners []net.Listener
+	server              *http.Server
 	allowlist        *Allowlist
 	pendingByID      map[string]*Pending // requestID -> pending approval
 	pendingByDomain  map[string]*Pending // domain -> pending approval
@@ -172,6 +176,9 @@ func (p *EgressProxy) Stop() {
 	}
 	p.pendingMu.Unlock()
 
+	for _, ln := range p.transparentListeners {
+		ln.Close()
+	}
 	if p.server != nil {
 		p.server.Close()
 	}
@@ -243,8 +250,17 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // isLocalhost returns true for loopback addresses that should always bypass the proxy.
+// Uses net.IP.IsLoopback() to cover the full 127.0.0.0/8 IPv4 loopback range and
+// ::1/128 IPv6 loopback — consistent with the iptables ! -d 127.0.0.0/8 exclusion.
+// REVISION: egress-proxy-v7-loopback-range
 func isLocalhost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // handleConnect handles HTTPS CONNECT tunneling.
@@ -322,6 +338,25 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// CheckAndHold evaluates host:port against the egress allowlist, mirroring the
+// CONNECT handler logic. Used to gate browser navigation (Chromium runs as root
+// and is outside the iptables UID-range rule, so this is the only interception
+// point for xdg-open traffic).
+//
+// Returns DecisionDefault or DecisionAllow* if the host is permitted, or
+// DecisionDeny if the user denied or the timeout elapsed.
+// REVISION: egress-proxy-v7-loopback-range
+func (p *EgressProxy) CheckAndHold(host string, port int) string {
+	if isLocalhost(host) {
+		return DecisionDefault
+	}
+	if p.allowlist.IsAllowed(host) {
+		p.emitAudit(host, port, "", DecisionDefault)
+		return DecisionDefault
+	}
+	return p.holdForApproval(host, port)
 }
 
 // holdForApproval blocks the current goroutine until the user approves/denies

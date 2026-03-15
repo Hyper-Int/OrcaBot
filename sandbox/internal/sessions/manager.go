@@ -31,6 +31,11 @@ type Manager struct {
 	// Shared secrets broker for all sessions
 	broker     *broker.SecretsBroker
 	brokerPort int
+
+	// Egress proxy port: forwarded to sessions so Chromium is proxied when >0.
+	// Set via SetEgressProxyPort before any sessions are created.
+	// REVISION: browser-v7-proxy-server
+	egressProxyPort int
 }
 
 // NewManager creates a new session manager with workspaces under the given base path.
@@ -75,6 +80,15 @@ func (m *Manager) BrokerPort() int {
 	return m.brokerPort
 }
 
+// SetEgressProxyPort configures the egress proxy port forwarded to all sessions
+// created after this call. Call once from main() when EGRESS_PROXY_ENABLED=true.
+// REVISION: browser-v7-proxy-server
+func (m *Manager) SetEgressProxyPort(port int) {
+	m.mu.Lock()
+	m.egressProxyPort = port
+	m.mu.Unlock()
+}
+
 // Create creates a new session with a workspace directory.
 // Now that dashboards are 1:1 with sandboxes, the workspace is the base
 // directory itself (/workspace) rather than a per-session subdirectory.
@@ -91,7 +105,7 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort)
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort, m.egressProxyPort)
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v17-anthropic-key-live-pty-check
+// REVISION: main-v30-anthropic-key-pool-guard
 
 package main
 
@@ -33,7 +33,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v17-anthropic-key-live-pty-check"
+const mainRevision = "main-v30-anthropic-key-pool-guard"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -47,6 +47,15 @@ func init() {
 }
 
 func main() {
+	// Set umask 0002 so every child process — interactive shell, bash -c, or direct
+	// exec — creates group-writable files by default. Shell startup files (profile.d,
+	// bashrc) only run for interactive/login shells and are bypassed entirely for
+	// direct exec paths. Setting it here in the parent propagates to all children
+	// regardless of exec path. Combined with /workspace setgid (GID=sandbox),
+	// files created by pty-000 are writable by pty-001 and vice versa.
+	// REVISION: main-v20-umask-0002
+	syscall.Umask(0002)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -72,6 +81,13 @@ func main() {
 	egressProxy.SetAuditCallback(server.forwardEgressAudit)
 	server.egressProxy = egressProxy
 	egressGlobalEnabled := strings.EqualFold(strings.TrimSpace(os.Getenv("EGRESS_PROXY_ENABLED")), "true")
+	server.egressEnabled = egressGlobalEnabled
+	// When egress is enabled, route all Chromium traffic through the proxy so
+	// redirects, XHR, and subresource loads are subject to the same approval flow.
+	// Must be set before any sessions are created. REVISION: browser-v7-proxy-server
+	if egressGlobalEnabled {
+		sessionManager.SetEgressProxyPort(egress.DefaultPort)
+	}
 	if err := egressProxy.Start(); err != nil {
 		_ = os.Unsetenv("ORCABOT_EGRESS_PROXY_URL")
 		log.Printf("[egress-proxy] WARNING: Failed to start egress proxy: %v (PTY processes will not have HTTP_PROXY)", err)
@@ -82,12 +98,79 @@ func main() {
 			log.Printf("[egress-proxy] Started on port %d (globally enabled)", egress.DefaultPort)
 		} else {
 			_ = os.Unsetenv("ORCABOT_EGRESS_PROXY_URL")
-			log.Printf("[egress-proxy] Started on port %d (globally DISABLED — set EGRESS_PROXY_ENABLED=true or use ?egress=1 to opt in)", egress.DefaultPort)
+			log.Printf("[egress-proxy] Started on port %d (globally DISABLED — set EGRESS_PROXY_ENABLED=true to enable)", egress.DefaultPort)
 		}
 		// Best effort startup hydration. For older machines without DASHBOARD_ID env,
 		// handleCreateSession performs lazy hydration when dashboard_id is provided.
 		if err := server.ensureEgressAllowlistLoaded(strings.TrimSpace(os.Getenv("DASHBOARD_ID"))); err != nil {
 			log.Printf("[egress-proxy] Startup allowlist hydration skipped: %v", err)
+		}
+
+		// Kernel-level egress enforcement: iptables UID-range rules + transparent proxy.
+		// Requires CAP_NET_ADMIN (privileged container) and EGRESS_PROXY_ENABLED=true.
+		//
+		// IMPORTANT: InitPool is intentionally deferred until AFTER both iptables and the
+		// transparent listener are confirmed working. If either fails, the pool is never
+		// initialized and PTYs fall back to root-UID execution with HTTP_PROXY enforcement
+		// (bypassable but not broken). Initializing the pool before enforcement is ready
+		// would create pool-UID PTYs whose traffic is not intercepted — false security.
+		// REVISION: main-v27-pool-proxy-token-restore
+		if egressGlobalEnabled && checkNetAdmin() {
+			// Step 1: Install iptables NAT REDIRECT rules.
+			if err := setupEgressIptables(); err != nil {
+				log.Printf("[egress-kernel] ERROR: iptables setup failed — kernel enforcement unavailable. "+
+					"PTYs will run without UID isolation (HTTP_PROXY enforcement only): %v", err)
+			} else if err := egressProxy.StartTransparent(); err != nil {
+				// Step 2: Start transparent proxy listener.
+				// iptables rules are installed but the listener is absent — redirected
+				// connections to port %d would fail closed (connection refused), which
+				// breaks PTY egress. Log the error; PTYs run as root (rules don't match).
+				log.Printf("[egress-kernel] ERROR: transparent proxy failed — kernel enforcement unavailable. "+
+					"PTYs will run without UID isolation (HTTP_PROXY enforcement only): %v", err)
+			} else {
+				// Both enforcement layers confirmed. Check sandbox group before pool activation.
+				sandboxGID := pty.LookupSandboxGID()
+				if sandboxGID == 0 {
+					log.Printf("[egress-kernel] ERROR: 'sandbox' group not found — kernel enforcement unavailable. " +
+						"PTYs will run without UID isolation. Ensure the 'sandbox' group exists in the image.")
+				} else {
+					// Startup order is critical for client fallback correctness.
+					// REVISION: main-v29-socket-init-order
+					//
+					// mcp-bridge and xdg-open detect pool mode by testing whether the socket
+					// file exists (os.Stat / test -S). The invariant they rely on:
+					//
+					//   socket file exists → pool is initialised (GetPool() != nil)
+					//
+					// To guarantee this we must not create the socket file until ALL
+					// preconditions are satisfied. Order:
+					//   1. iptables  — no disk side-effect; safe to try first
+					//   2. socket    — creates the file; only reached if iptables succeeded
+					//   3. InitPool  — only reached if socket is ready
+					//
+					// If iptables fails  → socket never created → clients fall back to TCP ✓
+					// If socket fails    → socket file absent  → clients fall back to TCP ✓
+					// If all succeed     → socket exists AND pool is active             ✓
+					//
+					// The HTTP servers have not started yet at this point, so the brief
+					// window between socket creation (step 2) and InitPool (step 3) is safe:
+					// no PTY-creation requests can arrive until ListenAndServe is called.
+					if err := setupPoolMCPIptables(mcpLocalPort); err != nil {
+						log.Printf("[pool-iptables] ERROR: Failed to block pool UIDs from MCPLocal port — kernel enforcement unavailable: %v", err)
+					} else {
+						privSock := NewPrivilegedSocket(server)
+						if err := privSock.Start(); err != nil {
+							log.Printf("[privileged-socket] ERROR: Failed to start — kernel enforcement unavailable. "+
+								"PTYs will run without UID isolation: %v", err)
+						} else {
+							pty.InitPool(sandboxGID)
+							log.Printf("[egress-kernel] Kernel enforcement active: uid-owner 2000-2099 → transparent proxy port %d, MCPLocal port %s blocked", egress.TransparentPort, mcpLocalPort)
+						}
+					}
+				}
+			}
+		} else if egressGlobalEnabled {
+			log.Printf("[egress-kernel] Skipping kernel enforcement: CAP_NET_ADMIN not available (not a privileged container)")
 		}
 	}
 
@@ -178,6 +261,7 @@ type Server struct {
 	mirrorSyncMu               sync.Mutex
 	mirrorSyncActive           map[string]bool
 	egressProxy                *egress.EgressProxy
+	egressEnabled              bool // true only when EGRESS_PROXY_ENABLED=true; gates browser egress checks
 	egressAllowlistMu          sync.Mutex
 	egressAllowlistDashboardID string
 }
@@ -199,56 +283,95 @@ func NewServer(sm *sessions.Manager) *Server {
 	}
 }
 
-// MCPLocalHandler returns a handler for the localhost-only MCP server.
-// This server runs on 127.0.0.1 only.
-// SECURITY: MCP tool endpoints require pty_id + X-MCP-Secret proof-of-possession.
-// Event endpoints (audio, status, agent-stopped, etc.) validate X-MCP-Secret per-PTY.
+// MCPLocalHandler returns a handler for the localhost-only MCP server (127.0.0.1:8081).
+// In non-pool mode: endpoints require pty_id + X-MCP-Secret proof-of-possession.
+// In pool mode: all pool-protected endpoints return 503 — callers must use the Unix socket.
+//
+//	The Unix socket authenticates via SO_PEERCRED and calls *ForPTY methods directly.
+//	iptables also blocks pool UIDs (2000-2099) from this port as defense-in-depth.
+//
+// REVISION: main-v28-direct-dispatch
 func (s *Server) MCPLocalHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Health check
 	mux.HandleFunc("GET /health", s.handleHеalth)
 
-	// MCP endpoints - require pty_id + X-MCP-Secret on localhost.
-	// The mcp-bridge always sends these. This prevents arbitrary sandbox processes
-	// from using server-held tokens to call MCP tools.
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.requireLocalMCPAuth(s.handleMCPListTооls))
-	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.requireLocalMCPAuth(s.handleMCPCallTооl))
-	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.requireLocalMCPAuth(s.handleMCPListItems))
+	// MCP endpoints — blocked in pool mode (use Unix socket instead).
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/tools", s.poolModeGuard(s.requireLocalMCPAuth(s.handleMCPListTооls)))
+	mux.HandleFunc("POST /sessions/{sessionId}/mcp/tools/call", s.poolModeGuard(s.requireLocalMCPAuth(s.handleMCPCallTооl)))
+	mux.HandleFunc("GET /sessions/{sessionId}/mcp/items", s.poolModeGuard(s.requireLocalMCPAuth(s.handleMCPListItems)))
 
-	// Browser control - used by xdg-open script for opening URLs
-	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.handleBrowserOpen)
+	// Browser control — blocked in pool mode (xdg-open uses Unix socket /browser).
+	// Non-pool mode: requires pty_id + X-MCP-Secret to bind caller to a PTY identity.
+	// REVISION: browser-v4-tcp-pty-auth
+	mux.HandleFunc("POST /sessions/{sessionId}/browser/open", s.poolModeGuard(s.handleBrowserOpenLocal))
 
-	// Helper endpoint: list sessions (so agents can discover their session)
-	mux.HandleFunc("GET /sessions", s.handleListSessions)
-
-	// Audio playback - allows talkito to emit audio events (localhost only, PTY-authed)
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.handleAudioEvent)
-
-	// TTS status - allows talkito to emit TTS config status (localhost only, PTY-authed)
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/status", s.handleTtsStatusEvent)
-
-	// Agent stopped - allows agent stop hooks to notify when agent finishes (localhost only, PTY-authed)
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/agent-stopped", s.handleAgentStopped)
-
-	// Tools changed - allows mcp-bridge to notify when MCP tools change (localhost only, PTY-authed)
+	// PTY-identity event endpoints — blocked in pool mode.
+	// REVISION: main-v21-pty-event-auth
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/audio", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAudioEvent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/status", s.poolModeGuard(s.requireLocalPTYAuth(s.handleTtsStatusEvent)))
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/agent-stopped", s.poolModeGuard(s.requireLocalPTYAuth(s.handleAgentStopped)))
 	// REVISION: tools-changed-v1-restart-prompt
-	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.handleToolsChanged)
+	mux.HandleFunc("POST /sessions/{sessionId}/ptys/{ptyId}/tools-changed", s.poolModeGuard(s.requireLocalPTYAuth(s.handleToolsChanged)))
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.poolModeGuard(s.requireLocalPTYAuth(s.handleScrollback)))
 
-	// PTY scrollback - returns recent terminal output (localhost only, PTY-authed)
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/scrollback", s.handleScrollback)
-
-	// Anthropic key for Claude Code apiKeyHelper - returns ANTHROPIC_API_KEY only,
-	// authenticated by a dedicated single-purpose token (not ORCABOT_MCP_SECRET).
-	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/anthropic-key", s.handleAnthropicKey)
+	// Anthropic key — pool-guarded: in pool mode, hooks.go writes the Unix socket URL
+	// (/anthropic-key on /run/orcabot/privileged.sock) into settings.local.json, so no
+	// pool PTY process ever holds the TCP URL or X-Api-Key-Token. poolModeGuard returns
+	// 503 here for defense-in-depth (iptables also blocks pool UIDs from this port).
+	// Non-pool mode: authenticated by per-PTY X-Api-Key-Token in handleAnthropicKey.
+	// REVISION: main-v30-anthropic-key-pool-guard
+	mux.HandleFunc("GET /sessions/{sessionId}/ptys/{ptyId}/anthropic-key", s.poolModeGuard(s.handleAnthropicKey))
 
 	return mux
 }
 
+// requireLocalPTYAuth wraps a handler to require X-MCP-Secret matching the
+// {ptyId} URL path parameter. Used for PTY-specific event endpoints.
+// Pool mode: poolModeGuard returns 503 before this runs — only non-pool callers reach here.
+// Non-pool mode: the PTY process holds the secret in ORCABOT_MCP_SECRET; legitimate
+// callers (hook scripts, mcp-bridge) include it as X-MCP-Secret.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) requireLocalPTYAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := r.PathValue("sessionId")
+		session := s.getSessiоnOrErrоr(w, sessionID)
+		if session == nil {
+			return
+		}
+
+		ptyID := r.PathValue("ptyId")
+		if ptyID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79850: ptyId path parameter required",
+			})
+			return
+		}
+
+		mcpSecret := r.Header.Get("X-MCP-Secret")
+		storedSecret := session.GetMCPSecret(ptyID)
+		if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79851: Invalid PTY authentication",
+			})
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 // requireLocalMCPAuth wraps a handler to require pty_id + X-MCP-Secret on the
-// localhost MCP server. This prevents arbitrary sandbox processes from using
-// server-held tokens (MCPToken, INTERNAL_API_TOKEN) to call MCP tools.
-// The external server (port 8080) uses s.auth.RequireAuthFunc instead.
+// localhost MCP server. Pool mode: poolModeGuard returns 503 before this runs.
+// Non-pool mode: validates per-PTY secret (proof-of-possession).
+// REVISION: main-v28-direct-dispatch
 func (s *Server) requireLocalMCPAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.PathValue("sessionId")
@@ -280,6 +403,21 @@ func (s *Server) requireLocalMCPAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		next(w, r)
+	}
+}
+
+// poolModeGuard returns 503 for pool-protected MCPLocal endpoints in pool mode.
+// In pool mode callers must use /run/orcabot/privileged.sock (SO_PEERCRED auth).
+// This blocks root processes (e.g. Chromium --no-sandbox) that bypass iptables:
+// they have no per-PTY X-MCP-Secret (withheld in pool mode) and no Unix socket access.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) poolModeGuard(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pty.GetPool() != nil {
+			http.Error(w, "use Unix socket in pool mode", http.StatusServiceUnavailable)
+			return
+		}
 		next(w, r)
 	}
 }
@@ -406,9 +544,8 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 	// Parse optional dashboard_id and mcp_token from request body
 	var req struct {
-		DashboardID   string `json:"dashboard_id"`
-		MCPToken      string `json:"mcp_token"`      // Dashboard-scoped token for MCP proxy
-		EgressEnabled *bool  `json:"egress_enabled"` // Per-session egress proxy opt-in
+		DashboardID string `json:"dashboard_id"`
+		MCPToken    string `json:"mcp_token"` // Dashboard-scoped token for MCP proxy
 	}
 	if r.Body != nil && r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -422,10 +559,6 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := s.sessions.Create(req.DashboardID, req.MCPToken)
-	if err == nil && req.EgressEnabled != nil && *req.EgressEnabled {
-		session.SetEgressEnabled(true)
-		log.Printf("[egress-proxy] Per-session egress opt-in for session %s", session.ID)
-	}
 	if err != nil {
 		http.Error(w, "E79706: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -561,16 +694,9 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
-		EgressEnabled    *bool  `json:"egress_enabled"`    // Per-session egress proxy opt-in
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
-	}
-
-	// Enable egress proxy for this session if requested (late opt-in for existing sessions)
-	if req.EgressEnabled != nil && *req.EgressEnabled {
-		session.SetEgressEnabled(true)
-		log.Printf("[egress-proxy] Per-session egress opt-in via PTY creation for session %s", r.PathValue("sessionId"))
 	}
 
 	// Use CreatePTYWithToken if pty_id or integration_token or working_dir is provided
@@ -986,13 +1112,10 @@ func (s *Server) handleStatFile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(info)
 }
 
-// validateLocalEventAuth validates the MCP secret for localhost event endpoints.
-// This prevents arbitrary sandbox processes from forging PTY events (e.g., agent-stopped
-// which can trigger control-plane completion callbacks).
-// The MCP secret is available as ORCABOT_MCP_SECRET env var in the PTY process.
-//
-// All PTYs have MCP secrets generated at creation time (session.go CreatePTY/CreatePTYWithToken).
-// If storedSecret is empty, the PTY doesn't exist in memory — reject unconditionally.
+// validateLocalEventAuth is an inner defense-in-depth check for event handlers.
+// Called after requireLocalPTYAuth middleware has already validated the secret.
+// Kept as a redundant check; in pool mode poolModeGuard returns 503 first.
+// REVISION: main-v28-direct-dispatch
 func (s *Server) validateLocalEventAuth(w http.ResponseWriter, session *sessions.Session, ptyId string, r *http.Request) bool {
 	mcpSecret := r.Header.Get("X-MCP-Secret")
 	storedSecret := session.GetMCPSecret(ptyId)
@@ -1013,41 +1136,11 @@ func (s *Server) handleAudioEvent(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-
 	ptyId := r.PathValue("ptyId")
 	if !s.validateLocalEventAuth(w, session, ptyId, r) {
 		return
 	}
-
-	hub := session.GetHub(ptyId)
-	if hub == nil {
-		http.Error(w, "E79730: PTY not found", http.StatusNotFound)
-		return
-	}
-
-	var req struct {
-		Action string `json:"action"` // "play" or "stop"
-		Path   string `json:"path"`   // file path in workspace
-		Data   string `json:"data"`   // base64-encoded audio data
-		Format string `json:"format"` // "mp3", "wav", etc.
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "E79731: Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.Action == "" {
-		req.Action = "play"
-	}
-
-	hub.BroadcastAudio(pty.AudioEvent{
-		Action: req.Action,
-		Path:   req.Path,
-		Data:   req.Data,
-		Format: req.Format,
-	})
-
-	w.WriteHeader(http.StatusNoContent)
+	s.handleAudioEventForPTY(w, session, ptyId, r.Body)
 }
 
 // handleTtsStatusEvent broadcasts TTS status or notice events to all WebSocket clients of a PTY
@@ -1056,53 +1149,11 @@ func (s *Server) handleTtsStatusEvent(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-
 	ptyId := r.PathValue("ptyId")
 	if !s.validateLocalEventAuth(w, session, ptyId, r) {
 		return
 	}
-
-	hub := session.GetHub(ptyId)
-	if hub == nil {
-		http.Error(w, "E79732: PTY not found", http.StatusNotFound)
-		return
-	}
-
-	var req struct {
-		Action      string `json:"action"`      // "tts_status" or "notice"
-		Enabled     bool   `json:"enabled"`     // for tts_status
-		Initialized bool   `json:"initialized"` // for tts_status
-		Mode        string `json:"mode"`        // for tts_status
-		Provider    string `json:"provider"`    // for tts_status
-		Voice       string `json:"voice"`       // for tts_status
-		Level       string `json:"level"`       // for notice: "info", "warning", "error"
-		Message     string `json:"message"`     // for notice
-		Category    string `json:"category"`    // for notice
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "E79733: Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	switch req.Action {
-	case "notice":
-		hub.BroadcastTalkitoNotice(pty.TalkitoNoticeEvent{
-			Level:    req.Level,
-			Message:  req.Message,
-			Category: req.Category,
-		})
-	default:
-		// Default to tts_status for backward compatibility
-		hub.BroadcastTtsStatus(pty.TtsStatusEvent{
-			Enabled:     req.Enabled,
-			Initialized: req.Initialized,
-			Mode:        req.Mode,
-			Provider:    req.Provider,
-			Voice:       req.Voice,
-		})
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	s.handleTtsStatusEventForPTY(w, session, ptyId, r.Body)
 }
 
 // handleAgentStopped broadcasts an agent_stopped event to all WebSocket clients of a PTY.
@@ -1114,58 +1165,11 @@ func (s *Server) handleAgentStopped(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-
 	ptyId := r.PathValue("ptyId")
 	if !s.validateLocalEventAuth(w, session, ptyId, r) {
 		return
 	}
-
-	hub := session.GetHub(ptyId)
-	if hub == nil {
-		http.Error(w, "E79734: PTY not found", http.StatusNotFound)
-		return
-	}
-
-	var req struct {
-		Agent       string `json:"agent"`
-		LastMessage string `json:"lastMessage"`
-		Reason      string `json:"reason"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "E79735: Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Validate and default values
-	if req.Agent == "" {
-		req.Agent = "unknown"
-	}
-	if req.Reason == "" {
-		req.Reason = "complete"
-	}
-
-	// Truncate last message to 4KB
-	if len(req.LastMessage) > 4096 {
-		req.LastMessage = req.LastMessage[:4096]
-	}
-
-	hub.BroadcastAgentStopped(pty.AgentStoppedEvent{
-		Agent:       req.Agent,
-		LastMessage: req.LastMessage,
-		Reason:      req.Reason,
-		Timestamp:   time.Now().UTC().Format(time.RFC3339),
-	})
-
-	// If this PTY has a schedule execution context, notify the control plane.
-	// Clear the execution ID after to prevent double-notification from the
-	// Hub.onStop process-exit callback.
-	// REVISION: server-side-cron-v2-agent-stopped-callback
-	if execId := session.GetExecutionID(ptyId); execId != "" {
-		session.SetExecutionID(ptyId, "")
-		go s.notifyExecutionPtyCompleted(execId, ptyId, req.Reason, req.LastMessage)
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	s.handleAgentStoppedForPTY(w, session, ptyId, r.Body)
 }
 
 // handleToolsChanged broadcasts a tools_changed event to all WebSocket clients of a PTY.
@@ -1178,36 +1182,11 @@ func (s *Server) handleToolsChanged(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-
 	ptyId := r.PathValue("ptyId")
 	if !s.validateLocalEventAuth(w, session, ptyId, r) {
 		return
 	}
-
-	hub := session.GetHub(ptyId)
-	if hub == nil {
-		http.Error(w, "E79740: PTY not found", http.StatusNotFound)
-		return
-	}
-
-	var req struct {
-		OldCount int `json:"oldCount"`
-		NewCount int `json:"newCount"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "E79741: Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("[tools-changed] PTY %s: tools %d -> %d", ptyId, req.OldCount, req.NewCount)
-
-	hub.BroadcastToolsChanged(pty.ToolsChangedEvent{
-		OldCount:  req.OldCount,
-		NewCount:  req.NewCount,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	})
-
-	w.WriteHeader(http.StatusNoContent)
+	s.handleToolsChangedForPTY(w, session, ptyId, r.Body)
 }
 
 // notifyExecutionPtyCompleted calls the control plane to report that a schedule-triggered PTY has completed.
@@ -1274,29 +1253,189 @@ func (s *Server) handleScrollback(w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-
 	ptyId := r.PathValue("ptyId")
 	if !s.validateLocalEventAuth(w, session, ptyId, r) {
 		return
 	}
+	s.handleScrollbackForPTY(w, session, ptyId)
+}
 
-	hub := session.GetHub(ptyId)
+// handleAudioEventForPTY is the auth-free core of handleAudioEvent.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) handleAudioEventForPTY(w http.ResponseWriter, session *sessions.Session, ptyID string, body io.Reader) {
+	hub := session.GetHub(ptyID)
+	if hub == nil {
+		http.Error(w, "E79730: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"`
+		Path   string `json:"path"`
+		Data   string `json:"data"`
+		Format string `json:"format"`
+	}
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, "E79731: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Action == "" {
+		req.Action = "play"
+	}
+
+	hub.BroadcastAudio(pty.AudioEvent{
+		Action: req.Action,
+		Path:   req.Path,
+		Data:   req.Data,
+		Format: req.Format,
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleTtsStatusEventForPTY is the auth-free core of handleTtsStatusEvent.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) handleTtsStatusEventForPTY(w http.ResponseWriter, session *sessions.Session, ptyID string, body io.Reader) {
+	hub := session.GetHub(ptyID)
+	if hub == nil {
+		http.Error(w, "E79732: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Action      string `json:"action"`
+		Enabled     bool   `json:"enabled"`
+		Initialized bool   `json:"initialized"`
+		Mode        string `json:"mode"`
+		Provider    string `json:"provider"`
+		Voice       string `json:"voice"`
+		Level       string `json:"level"`
+		Message     string `json:"message"`
+		Category    string `json:"category"`
+	}
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, "E79733: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	switch req.Action {
+	case "notice":
+		hub.BroadcastTalkitoNotice(pty.TalkitoNoticeEvent{
+			Level:    req.Level,
+			Message:  req.Message,
+			Category: req.Category,
+		})
+	default:
+		hub.BroadcastTtsStatus(pty.TtsStatusEvent{
+			Enabled:     req.Enabled,
+			Initialized: req.Initialized,
+			Mode:        req.Mode,
+			Provider:    req.Provider,
+			Voice:       req.Voice,
+		})
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAgentStoppedForPTY is the auth-free core of handleAgentStopped.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) handleAgentStoppedForPTY(w http.ResponseWriter, session *sessions.Session, ptyID string, body io.Reader) {
+	hub := session.GetHub(ptyID)
+	if hub == nil {
+		http.Error(w, "E79734: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		Agent       string `json:"agent"`
+		LastMessage string `json:"lastMessage"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, "E79735: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Agent == "" {
+		req.Agent = "unknown"
+	}
+	if req.Reason == "" {
+		req.Reason = "complete"
+	}
+	if len(req.LastMessage) > 4096 {
+		req.LastMessage = req.LastMessage[:4096]
+	}
+
+	hub.BroadcastAgentStopped(pty.AgentStoppedEvent{
+		Agent:       req.Agent,
+		LastMessage: req.LastMessage,
+		Reason:      req.Reason,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+	})
+
+	if execId := session.GetExecutionID(ptyID); execId != "" {
+		session.SetExecutionID(ptyID, "")
+		go s.notifyExecutionPtyCompleted(execId, ptyID, req.Reason, req.LastMessage)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleToolsChangedForPTY is the auth-free core of handleToolsChanged.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) handleToolsChangedForPTY(w http.ResponseWriter, session *sessions.Session, ptyID string, body io.Reader) {
+	hub := session.GetHub(ptyID)
+	if hub == nil {
+		http.Error(w, "E79740: PTY not found", http.StatusNotFound)
+		return
+	}
+
+	var req struct {
+		OldCount int `json:"oldCount"`
+		NewCount int `json:"newCount"`
+	}
+	if err := json.NewDecoder(body).Decode(&req); err != nil {
+		http.Error(w, "E79741: Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[tools-changed] PTY %s: tools %d -> %d", ptyID, req.OldCount, req.NewCount)
+
+	hub.BroadcastToolsChanged(pty.ToolsChangedEvent{
+		OldCount:  req.OldCount,
+		NewCount:  req.NewCount,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleScrollbackForPTY is the auth-free core of handleScrollback.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: main-v28-direct-dispatch
+func (s *Server) handleScrollbackForPTY(w http.ResponseWriter, session *sessions.Session, ptyID string) {
+	hub := session.GetHub(ptyID)
 	if hub == nil {
 		http.Error(w, "E79736: PTY not found", http.StatusNotFound)
 		return
 	}
 
-	// Return last 16KB of scrollback (ANSI stripped)
 	text := hub.Scrollback(16 * 1024)
-
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(text))
 }
 
 // handleAnthropicKey returns the brokered ANTHROPIC_API_KEY for Claude Code's apiKeyHelper.
-// Authenticated by a dedicated single-purpose token stored in session memory and embedded
-// literally in settings.local.json — not the general ORCABOT_MCP_SECRET. This token
-// can ONLY be used to fetch ANTHROPIC_API_KEY; no other keys are accessible via this endpoint.
+// Authenticated by a dedicated per-PTY X-Api-Key-Token (NOT ORCABOT_MCP_SECRET).
+// This token can only fetch ANTHROPIC_API_KEY; it grants access to no other resource.
+// Present on MCPLocalHandler in both pool and non-pool mode because hooks.go always
+// writes this TCP URL into .claude/settings.local.json.
 func (s *Server) handleAnthropicKey(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -1305,7 +1444,6 @@ func (s *Server) handleAnthropicKey(w http.ResponseWriter, r *http.Request) {
 
 	ptyId := r.PathValue("ptyId")
 
-	// Validate the dedicated api key token (NOT the MCP secret)
 	token := r.Header.Get("X-Api-Key-Token")
 	storedToken := session.GetApiKeyToken(ptyId)
 	if storedToken == "" || token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) != 1 {
@@ -1313,7 +1451,6 @@ func (s *Server) handleAnthropicKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject tokens for PTYs that are no longer active.
 	if session.GetHub(ptyId) == nil {
 		http.Error(w, "E79736: PTY not found", http.StatusNotFound)
 		return

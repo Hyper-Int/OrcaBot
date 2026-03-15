@@ -18,7 +18,7 @@ func TestManagerCreate(t *testing.T) {
 	m, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	session, err := m.Create()
+	session, err := m.Create("", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestManagerDelete(t *testing.T) {
 	m, cleanup := setupTestManager(t)
 	defer cleanup()
 
-	session, _ := m.Create()
+	session, _ := m.Create("", "")
 
 	err := m.Delete(session.ID)
 	if err != nil {
@@ -83,7 +83,7 @@ func TestManagerConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 	for i := 0; i < 100; i++ {
 		go func() {
-			session, err := m.Create()
+			session, err := m.Create("", "")
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 			}

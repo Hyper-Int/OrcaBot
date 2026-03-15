@@ -66,8 +66,8 @@ Custom secrets require explicit domain approval. When an AI agent tries to send 
 
 Orcabot also has a network-level egress proxy that intercepts all outbound requests:
 - Known safe domains (package registries, CDNs, LLM APIs) are allowed automatically.
-- Unknown domains trigger an approval dialog.
-- Enable with \`?egress=1\` in the URL or via dashboard settings.
+- Unknown domains trigger an approval dialog — you can allow once, always allow, or deny.
+- Enabled globally by the instance operator via \`EGRESS_PROXY_ENABLED=true\` on the sandbox VM.
 
 ## Troubleshooting
 

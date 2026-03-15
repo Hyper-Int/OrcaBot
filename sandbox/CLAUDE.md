@@ -267,9 +267,9 @@ Hardcoded in `internal/egress/allowlist.go`:
 Glob matching: `*.example.com` matches subdomains but NOT `example.com` itself.
 
 ### Feature Flag
-- `EGRESS_PROXY_ENABLED=true` env var: Enable globally for all sessions
-- Per-session opt-in: `egress_enabled: true` in session or PTY creation request body
-- Without either, proxy runs but PTYs don't route through it
+- `EGRESS_PROXY_ENABLED=true` env var: single gate — enables globally for all sessions
+- Without this, proxy runs but PTYs don't route through it (iptables rules not installed, UID pool not activated)
+- Per-session opt-in (`egress_enabled`) has been removed; the env var is the only control
 
 ### Localhost Bypass
 Localhost traffic (`localhost`, `127.0.0.1`, `::1`) always bypasses the proxy:

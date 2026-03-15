@@ -71,7 +71,7 @@ func TestDeleteSession(t *testing.T) {
 	server := NewServer(sm)
 
 	// Create a session first
-	session, err := sm.Create()
+	session, err := sm.Create("", "")
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestListPTYs(t *testing.T) {
 	defer cleanup()
 	server := NewServer(sm)
 
-	session, _ := sm.Create()
+	session, _ := sm.Create("", "")
 
 	req := httptest.NewRequest("GET", "/sessions/"+session.ID+"/ptys", nil)
 	setAuthHeader(req)
@@ -144,7 +144,7 @@ func TestCreatePTY(t *testing.T) {
 	defer cleanup()
 	server := NewServer(sm)
 
-	session, _ := sm.Create()
+	session, _ := sm.Create("", "")
 
 	req := httptest.NewRequest("POST", "/sessions/"+session.ID+"/ptys", nil)
 	setAuthHeader(req)
@@ -202,8 +202,8 @@ func TestDeletePTY(t *testing.T) {
 	defer cleanup()
 	server := NewServer(sm)
 
-	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("", "")
+	session, _ := sm.Create("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID+"/ptys/"+pty.ID, nil)
 	setAuthHeader(req)
@@ -257,7 +257,7 @@ func TestDeletePTYNonExistent(t *testing.T) {
 	defer cleanup()
 	server := NewServer(sm)
 
-	session, _ := sm.Create()
+	session, _ := sm.Create("", "")
 
 	req := httptest.NewRequest("DELETE", "/sessions/"+session.ID+"/ptys/nonexistent", nil)
 	setAuthHeader(req)

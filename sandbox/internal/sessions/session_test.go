@@ -11,14 +11,14 @@ func setupTestSession(t *testing.T) (*Session, func()) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	return NewSessiоn("test-id", dir), func() { os.RemoveAll(dir) }
+	return NewSessiоn("test-id", "", "", dir, nil, 0, 0), func() { os.RemoveAll(dir) }
 }
 
 func TestSessionCreatePTY(t *testing.T) {
 	session, cleanup := setupTestSession(t)
 	defer cleanup()
 
-	pty, err := session.CreatePTY("", "")
+	pty, err := session.CreatePTY("", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestSessionListPTYs(t *testing.T) {
 	}
 
 	// Create one
-	session.CreatePTY("", "")
+	session.CreatePTY("", "", "")
 
 	ptys = session.ListPTYs()
 	if len(ptys) != 1 {
@@ -47,7 +47,7 @@ func TestSessionListPTYs(t *testing.T) {
 	}
 
 	// Create another
-	session.CreatePTY("", "")
+	session.CreatePTY("", "", "")
 
 	ptys = session.ListPTYs()
 	if len(ptys) != 2 {
@@ -59,7 +59,7 @@ func TestSessionGetPTY(t *testing.T) {
 	session, cleanup := setupTestSession(t)
 	defer cleanup()
 
-	created, _ := session.CreatePTY("", "")
+	created, _ := session.CreatePTY("", "", "")
 
 	pty, err := session.GetPTY(created.ID)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestSessionDeletePTY(t *testing.T) {
 	session, cleanup := setupTestSession(t)
 	defer cleanup()
 
-	pty, _ := session.CreatePTY("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	err := session.DeletePTY(pty.ID)
 	if err != nil {
@@ -104,8 +104,8 @@ func TestSessionClose(t *testing.T) {
 	defer cleanup()
 
 	// Create some PTYs
-	session.CreatePTY("", "")
-	session.CreatePTY("", "")
+	session.CreatePTY("", "", "")
+	session.CreatePTY("", "", "")
 
 	err := session.Clоse()
 	if err != nil {

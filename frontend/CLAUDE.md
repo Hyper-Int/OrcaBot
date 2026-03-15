@@ -239,8 +239,7 @@ Frontend does NOT:
 - Dashboard page listens for CustomEvents and shows toast + approval dialog
 - Approval dialog: Deny / Allow Once / Always Allow (3 buttons)
 - Allowlist panel: Shield icon in title bar, shows user-approved domains with revoke
-- `?egress=1` URL param persists to `localStorage` (`orcabot_egress_enabled`) via inline script in root layout
-- TerminalBlock checks localStorage when creating sessions to pass `egress_enabled: true`
+- Egress is enabled globally via `EGRESS_PROXY_ENABLED=true` on the sandbox machine; there is no per-user or per-session opt-in
 
 Key files:
 - `src/components/EgressApprovalDialog.tsx` — Approval dialog
