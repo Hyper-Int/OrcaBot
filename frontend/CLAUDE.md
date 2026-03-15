@@ -14,6 +14,10 @@ It is responsible for:
 - environment variables / secrets management UI
 - TTS voice configuration
 - domain approval workflow for custom secrets
+- blog and documentation pages
+- admin metrics dashboard
+- AI chat panel with onboarding
+- integration block UIs (Gmail, GitHub, Drive, Calendar, Twitter, Slack, Discord, WhatsApp, Telegram, Teams, Matrix, Google Chat, Contacts, Forms, Sheets)
 
 It does **not**:
 - run terminals or agents
@@ -269,6 +273,62 @@ The frontend supports voice input via 4 providers with automatic provider select
 - `src/components/blocks/ASRSettingsDialog.tsx` — Provider + key management UI
 - `src/stores/asr-settings-store.ts` — Provider preference persistence
 - `src/lib/api/cloudflare/asr.ts` — Control plane ASR API client
+
+---
+
+## Blog & Documentation
+
+The frontend includes a blog and in-app documentation system.
+
+### Blog
+- Route group: `src/app/(blog)/blog/`
+- Markdown content in `content/blog/` (built at compile time via `scripts/build-blog.mjs`)
+- Blog utilities: `src/lib/blog.ts`
+
+### Documentation
+- Route group: `src/app/(docs)/docs/`
+- Content modules in `src/docs/content/` (one file per topic: terminals, gmail, github, secrets, etc.)
+- Doc index and types: `src/docs/index.ts`, `src/docs/types.ts`
+
+### Key Files
+- `src/app/(blog)/layout.tsx` — Blog layout with shared header
+- `src/app/(docs)/layout.tsx` — Docs layout
+- `src/components/SiteHeader.tsx` — Shared site header with navigation
+
+---
+
+## Admin Metrics
+
+Admin-only dashboard showing platform metrics (DAU/WAU/MAU, signups, agent breakdown, retention).
+
+### Key Files
+- `src/app/(app)/admin/page.tsx` — Admin metrics page
+- `src/lib/api/cloudflare/admin.ts` — Admin API client
+
+---
+
+## AI Chat & Onboarding
+
+Chat panel for AI-assisted onboarding and help, plus provider setup cards.
+
+### Key Files
+- `src/components/chat/ChatPanel.tsx` — AI chat interface
+- `src/components/chat/AiProviderSetupCard.tsx` — API key setup onboarding
+- `src/components/help/HelpDialog.tsx` — Help dialog with documentation
+
+---
+
+## Integration Blocks
+
+Canvas blocks for each integration provider. Users wire edges between terminal blocks and integration blocks to grant MCP tool access.
+
+### Providers
+Gmail, GitHub, Drive, Calendar, Twitter/X, Slack, Discord, WhatsApp, Telegram, Teams, Matrix, Google Chat, Contacts, Forms, Sheets
+
+### Key Files
+- `src/components/blocks/IntegrationsPanel.tsx` — Integration picker panel
+- `src/components/blocks/PolicyEditorDialog.tsx` — Policy configuration per integration
+- `src/components/blocks/{Provider}Block.tsx` — Individual block components
 
 ---
 

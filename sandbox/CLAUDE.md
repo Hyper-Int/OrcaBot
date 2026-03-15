@@ -70,7 +70,7 @@ Cloudflare (control plane)
 ├── Auth
 ├── Dashboard collaboration (Durable Objects)
 ├── Session orchestration
-├── Integration policy gateway (OAuth tokens stay here)
+├── Integration policy gateway (OAuth tokens stay here; Gmail, GitHub, Drive, Calendar, Twitter)
 └── Routing
 ↓
 Fly.io (execution plane)
@@ -415,7 +415,7 @@ The sandbox exposes an HTTP-based MCP server at `/sessions/:id/mcp/*`.
 
 **Tool categories:**
 1. **Browser/UI tools** — Always available (browser_navigate, screenshot, etc.)
-2. **Integration tools** — Only available when an integration is attached to the terminal
+2. **Integration tools** — Only available when an integration is attached to the terminal (Gmail, GitHub, Drive, Calendar, Twitter)
 
 **Integration tool discovery flow:**
 1. MCP client calls `tools/list` with `?pty_id=` query param + `X-MCP-Secret` header
@@ -517,7 +517,7 @@ internal/pty/
 internal/mcp/
   MCP tool definitions and control plane gateway client.
   - settings.go: Generates per-agent MCP config files (.mcp.json, settings.json, config.toml, etc.)
-  - integration_tools.go: Tool definitions for Gmail, GitHub, Drive, Calendar (name, description, inputSchema)
+  - integration_tools.go: Tool definitions for Gmail, GitHub, Drive, Calendar, Twitter (name, description, inputSchema)
   - gateway_client.go: HTTP client for `GET /internal/terminals/:ptyId/integrations` and
     `POST /internal/gateway/:provider/execute` with PTY token auth
 

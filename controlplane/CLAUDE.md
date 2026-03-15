@@ -12,9 +12,14 @@ It is responsible for:
 - schedules, recipes, and agent workflows
 - secrets storage and encryption
 - domain approval workflow for custom secrets
-- integration policy enforcement (Gmail, GitHub, Drive, Calendar)
+- integration policy enforcement (Gmail, GitHub, Drive, Calendar, Twitter)
 - OAuth token management (tokens never leave control plane)
 - PTY token issuance for terminal-level gateway auth
+- blog content serving
+- AI chat with help docs
+- subscription & billing management (Stripe)
+- transactional email (Resend)
+- messaging bridge coordination (WhatsApp via external bridge service)
 
 It does **not** run terminals, PTYs, shells, or agents.
 
@@ -60,7 +65,7 @@ Cloudflare (this repo)
 ├── Orchestrator (workflows, recipes, schedules)
 ├── Session coordinator
 ├── Secrets management (encrypted storage)
-├── Integration policy gateway (Gmail, GitHub, Drive, Calendar)
+├── Integration policy gateway (Gmail, GitHub, Drive, Calendar, Twitter)
 ├── OAuth token management (tokens never leave this layer)
 ├── PTY token issuance (HMAC-SHA256 JWT per terminal)
 └── D1 database (durable state)
@@ -92,7 +97,12 @@ Fly.io (execution plane – separate repo)
 - **OAuth token lifecycle** (connect, refresh, encrypt at rest)
 - **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth — **fail-closed**: empty `INTERNAL_API_TOKEN` rejects all tokens)
 - **Response filtering** (policy-based filtering before LLM sees data)
-- **API execution** (Gmail, GitHub, Drive, Calendar calls — tokens stay here)
+- **API execution** (Gmail, GitHub, Drive, Calendar, Twitter calls — tokens stay here)
+- **Blog** content API
+- **AI chat** with help documentation
+- **Subscriptions** (Stripe billing, paywall enforcement)
+- **Email** (transactional email via Resend)
+- **Bridge coordination** (WhatsApp messaging via external bridge service)
 
 ### This repo does NOT own
 - PTYs
@@ -244,7 +254,7 @@ Sandbox MCP Server
 - `src/integration-policies/gateway.ts` — Gateway execute endpoint, PTY token verification, response formatting
 - `src/integration-policies/handler.ts` — CRUD for terminal integrations + policies, `enforcePolicy()`
 - `src/integration-policies/response-filter.ts` — Policy-based response filtering (sender allowlist, repo filter, etc.)
-- `src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar API wrappers
+- `src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar, Twitter API wrappers
 - `src/auth/pty-token.ts` — HMAC-SHA256 JWT token creation/verification
 
 ### Database Tables
@@ -265,6 +275,7 @@ Sandbox MCP Server
 - **GitHub**: list_repos, search_repos, search_code, get_file, list_issues, create_issue, list_prs
 - **Google Drive**: list, search, get_metadata, download, create, update
 - **Google Calendar**: list_calendars, list_events, get_event, create_event, update_event, delete_event
+- **Twitter/X**: search, get_tweet, get_mentions, get_timeline, get_user, post, reply, like, retweet, follow, delete_tweet
 
 ---
 
@@ -336,6 +347,55 @@ Multi-platform inbound message handling for messaging integrations (Slack, Disco
 
 ### Key Files
 - `src/messaging/webhook-handler.ts` — Signature verification, parsing, policy enforcement, subscription CRUD
+
+---
+
+## Subscriptions & Billing
+
+Stripe-based subscription management with paywall enforcement.
+
+### Key Files
+- `src/subscriptions/handler.ts` — Subscription CRUD endpoints
+- `src/subscriptions/check.ts` — Paywall enforcement checks
+- `src/subscriptions/stripe-client.ts` — Stripe API client
+- `src/subscriptions/webhook.ts` — Stripe webhook handler
+
+---
+
+## Blog
+
+Blog content serving with markdown posts.
+
+### Key Files
+- `src/blog/handler.ts` — Blog post listing and retrieval endpoints
+
+---
+
+## AI Chat & Help
+
+AI-powered chat with built-in help documentation for user onboarding and support.
+
+### Key Files
+- `src/chat/handler.ts` — Chat endpoint with AI responses
+- `src/chat/help-docs.ts` — Help documentation content for AI context
+
+---
+
+## Email
+
+Transactional email via Resend.
+
+### Key Files
+- `src/email/resend.ts` — Email sending via Resend API
+
+---
+
+## Bridge Coordination
+
+Communication with the external messaging bridge service (WhatsApp via Baileys).
+
+### Key Files
+- `src/bridge/client.ts` — HTTP client for bridge service
 
 ---
 
