@@ -19,6 +19,8 @@ import {
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { recipesDoc } from "@/docs/content/recipes";
 import type { DashboardItem } from "@/types/dashboard";
 
 type StepStatus = "pending" | "running" | "completed" | "failed";
@@ -149,6 +151,7 @@ export function RecipeBlock({ id, data, selected }: NodeProps<RecipeNode>) {
             </Badge>
           </div>
           <div className="flex items-center gap-1">
+            <HelpButton doc={recipesDoc} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">

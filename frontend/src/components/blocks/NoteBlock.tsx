@@ -31,6 +31,8 @@ import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { CodeBlockRenderer } from "./CodeBlockRenderer";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { notesDoc } from "@/docs/content/notes";
 import type { DashboardItem } from "@/types/dashboard";
 
 type NoteColor = "yellow" | "blue" | "green" | "pink" | "purple";
@@ -212,6 +214,7 @@ export function NoteBlock({ id, data, selected }: NodeProps<NoteNode>) {
       <div className={cn("flex flex-col flex-1", isAnimatingMinimize && "animate-content-fade-out")}>
         {/* Header controls */}
         <div className="nodrag absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <HelpButton doc={notesDoc} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" className="h-5 w-5" title="Settings">

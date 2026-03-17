@@ -19,6 +19,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { browserDoc } from "@/docs/content/browser";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { ApiError } from "@/lib/api/client";
 import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
@@ -220,6 +222,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
         {status === "running" ? "Browser" : status === "starting" ? "Starting browser..." : "Browser stopped"}
       </div>
       <div className="ml-auto flex items-center gap-1">
+        <HelpButton doc={browserDoc} />
         <Button
           variant="ghost"
           size="icon-sm"

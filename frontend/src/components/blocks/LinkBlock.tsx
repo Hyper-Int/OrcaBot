@@ -18,6 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { linksDoc } from "@/docs/content/links";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface LinkData extends Record<string, unknown> {
@@ -139,6 +141,7 @@ export function LinkBlock({ id, data, selected }: NodeProps<LinkNode>) {
           <span className="text-xs text-[var(--foreground-subtle)] truncate flex-1">
             {hostname}
           </span>
+          <HelpButton doc={linksDoc} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings" onClick={(e) => e.stopPropagation()}>

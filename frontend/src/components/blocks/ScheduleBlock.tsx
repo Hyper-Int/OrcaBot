@@ -23,6 +23,8 @@ import {
 } from "@/components/ui";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { schedulesDoc } from "@/docs/content/schedules";
 import type { DashboardItem } from "@/types/dashboard";
 import {
   getScheduleByItem,
@@ -407,6 +409,7 @@ export function ScheduleBlock({ id, data, selected }: NodeProps<ScheduleNode>) {
             {isSyncing && <Loader2 className="w-3 h-3 animate-spin text-[var(--foreground-muted)]" />}
           </div>
           <div className="flex items-center gap-1">
+            <HelpButton doc={schedulesDoc} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">

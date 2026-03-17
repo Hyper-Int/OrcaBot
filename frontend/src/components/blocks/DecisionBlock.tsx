@@ -23,12 +23,15 @@ import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { useThemeStore } from "@/stores/theme-store";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { decisionsDoc } from "@/docs/content/decisions";
 import type { DashboardItem } from "@/types/dashboard";
 
-type Operator = "contains" | "equals" | "greater_than" | "less_than";
+type Operator = "contains" | "not_contains" | "equals" | "greater_than" | "less_than";
 
 const OPERATOR_LABELS: Record<Operator, string> = {
   contains: "Contains",
+  not_contains: "Not Contains",
   equals: "Equals",
   greater_than: ">",
   less_than: "<",
@@ -38,6 +41,8 @@ function evaluate(text: string, operator: Operator, parameter: string): boolean 
   switch (operator) {
     case "contains":
       return text.toLowerCase().includes(parameter.toLowerCase());
+    case "not_contains":
+      return !text.toLowerCase().includes(parameter.toLowerCase());
     case "equals":
       return text.trim() === parameter.trim();
     case "greater_than": {
@@ -276,6 +281,7 @@ export function DecisionBlock({ id, data, selected }: NodeProps<DecisionNode>) {
           >
             <GitBranch className="w-3 h-3 shrink-0" />
             <span className="truncate">Decision</span>
+            <HelpButton doc={decisionsDoc} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="nodrag h-4 w-4 shrink-0" title="Settings">

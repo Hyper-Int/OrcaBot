@@ -73,6 +73,8 @@ import {
 } from "@/lib/api/cloudflare";
 import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { workspaceDoc } from "@/docs/content/workspace";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
 
@@ -1262,6 +1264,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
           <span className="text-xs font-semibold uppercase tracking-wide text-[var(--foreground-muted)] flex-1" title="Workspace files and integrations">
             Workspace
           </span>
+          <HelpButton doc={workspaceDoc} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
