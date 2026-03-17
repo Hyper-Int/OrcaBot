@@ -28,6 +28,8 @@ import { useASR } from "@/hooks/useASR";
 import { ASRSettingsDialog } from "./ASRSettingsDialog";
 import { CodeBlockRenderer } from "./CodeBlockRenderer";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { promptsDoc } from "@/docs/content/prompts";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface PromptData extends Record<string, unknown> {
@@ -255,6 +257,7 @@ export function PromptBlock({ id, data, selected }: NodeProps<PromptNode>) {
         >
           <span title="Text prompt block — sends content to connected blocks. Use [input] as a placeholder for upstream data.">Prompt</span>
           <div className="flex items-center gap-1">
+            <HelpButton doc={promptsDoc} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5 text-white hover:text-white hover:bg-white/20" title="Prompt settings">

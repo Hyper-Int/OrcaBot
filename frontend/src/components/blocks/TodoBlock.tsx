@@ -31,6 +31,8 @@ import {
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { todosDoc } from "@/docs/content/todos";
 import type { DashboardItem } from "@/types/dashboard";
 
 interface TodoItem {
@@ -250,6 +252,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
             <Badge variant="secondary" size="sm" title={`${completedCount} of ${items.length} items completed`}>
               {completedCount}/{items.length}
             </Badge>
+            <HelpButton doc={todosDoc} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="nodrag h-5 w-5" title="Settings">

@@ -117,6 +117,8 @@ import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { TasksPanel } from "./TasksPanel";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { terminalsDoc } from "@/docs/content/terminals";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
 
@@ -3639,6 +3641,9 @@ export function TerminalBlock({
           >
             <Minimize2 className="w-5 h-5" />
           </Button>
+
+          {/* Help button */}
+          <HelpButton doc={terminalsDoc} />
 
           {/* Settings menu */}
           <DropdownMenu>
