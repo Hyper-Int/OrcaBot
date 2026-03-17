@@ -1742,7 +1742,7 @@ export function TerminalBlock({
     }
   );
 
-  const { connectionState, turnTaking, agentState, ptyClosed, error: wsError, ttsStatus, cwd: terminalCwd } = terminalState;
+  const { connectionState, turnTaking, agentState, ptyClosed, sessionExpired, error: wsError, ttsStatus, cwd: terminalCwd } = terminalState;
 
   // Report cwd changes to parent
   React.useEffect(() => {
@@ -2231,18 +2231,22 @@ export function TerminalBlock({
   // in frontend state. The WebSocket exhausts all retries (→ "failed") and
   // the user is stuck. Now we restart on any terminal failure regardless of
   // the session status the frontend last saw.
+  //
+  // sessionExpired is set when the control plane sends close code 4004,
+  // meaning the sandbox lost the session (e.g., machine restart). This
+  // triggers immediate recovery without waiting for reconnect attempts.
   React.useEffect(() => {
     if (!session || !isOwner) {
       return;
     }
-    if (!isFailed && !isDisconnected && !ptyClosed) {
+    if (!isFailed && !isDisconnected && !ptyClosed && !sessionExpired) {
       return;
     }
     if (isCreatingSession || autoReopenAttemptedRef.current) {
       return;
     }
     autoReopenAttemptedRef.current = true;
-    console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionStatus=${session.status}`);
+    console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionExpired=${sessionExpired} sessionStatus=${session.status}`);
     terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
     void handleReopen();
   }, [
@@ -2251,6 +2255,7 @@ export function TerminalBlock({
     isFailed,
     isDisconnected,
     ptyClosed,
+    sessionExpired,
     isCreatingSession,
     handleReopen,
   ]);

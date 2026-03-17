@@ -2574,6 +2574,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json({ error: 'E79739: PTY not found' }, { status: 404 });
     }
 
+    // If session is already marked as stopped, send session_expired immediately
+    // without hitting the sandbox. This handles the race where the DO notification
+    // updated the session status before the frontend's next WS attempt.
+    if (session.status === 'stopped') {
+      const [client, server] = Object.values(new WebSocketPair());
+      server.accept();
+      server.send(JSON.stringify({
+        type: 'session_expired',
+        reason: 'session_already_stopped',
+      }));
+      server.close(4004, 'Session expired: session already stopped');
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
     const proxyUserId = session.owner_user_id === auth.user!.id
       ? auth.user!.id
       : '';
@@ -2625,7 +2639,25 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         body: JSON.stringify(updatedSession),
       }));
 
-      return Response.json({ error: 'E79740: PTY not found (session expired)' }, { status: 410 });
+      // REVISION: ws-proxy-v1-session-expired-ws-signal
+      // Instead of returning HTTP 410 (which the browser WS API can't
+      // distinguish from a network error — it just fires onclose with
+      // code 1006), upgrade to a WebSocket, send a session_expired
+      // message, and close with code 4004. This gives the frontend
+      // an unambiguous signal to auto-recreate the session immediately
+      // instead of retrying the dead WebSocket for ~2 minutes.
+      const [client, server] = Object.values(new WebSocketPair());
+      server.accept();
+      server.send(JSON.stringify({
+        type: 'session_expired',
+        reason: 'sandbox_session_lost',
+      }));
+      server.close(4004, 'Session expired: sandbox lost PTY state');
+
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+      });
     }
 
     return proxyResponse;

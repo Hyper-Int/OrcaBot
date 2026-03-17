@@ -19,6 +19,7 @@ interface ListFilesResponse {
 }
 
 export async function listSessionFiles(sessionId: string, path: string): Promise<SessionFileEntry[]> {
+  if (!sessionId) return [];
   const params = new URLSearchParams({ path });
   const url = `${API.cloudflare.base}/sessions/${sessionId}/files?${params.toString()}`;
   const response = await apiGet<ListFilesResponse>(url);
@@ -26,6 +27,7 @@ export async function listSessionFiles(sessionId: string, path: string): Promise
 }
 
 export async function deleteSessionFile(sessionId: string, path: string): Promise<void> {
+  if (!sessionId) return;
   const params = new URLSearchParams({ path });
   const url = `${API.cloudflare.base}/sessions/${sessionId}/file?${params.toString()}`;
   await apiDelete<void>(url);

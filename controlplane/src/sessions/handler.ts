@@ -1397,8 +1397,8 @@ export async function createSessiоn(
 
     try {
       await triggerDriveMirrorSync(env, dashboardId, sandboxSessionId, sandboxMachineId);
-    } catch {
-      // Best-effort drive hydration.
+    } catch (driveErr) {
+      console.error(`[createSession] Drive mirror sync failed for dashboard ${dashboardId}:`, driveErr);
     }
 
     try {
@@ -1407,6 +1407,7 @@ export async function createSessiоn(
         WHERE dashboard_id = ?
       `).bind(dashboardId).first<{ repo_owner: string; repo_name: string }>();
       if (githubMirror) {
+        console.log(`[createSession] Triggering GitHub mirror sync for ${githubMirror.repo_owner}/${githubMirror.repo_name} (sandboxSession=${sandboxSessionId})`);
         await triggerMirrorSync(
           env,
           'github',
@@ -1415,9 +1416,11 @@ export async function createSessiоn(
           sandboxMachineId,
           `${githubMirror.repo_owner}/${githubMirror.repo_name}`
         );
+      } else {
+        console.log(`[createSession] No GitHub mirror configured for dashboard ${dashboardId}`);
       }
-    } catch {
-      // Best-effort github hydration.
+    } catch (mirrorErr) {
+      console.error(`[createSession] GitHub mirror sync failed for dashboard ${dashboardId}:`, mirrorErr);
     }
 
     try {
@@ -1435,8 +1438,8 @@ export async function createSessiоn(
           boxMirror.folder_name
         );
       }
-    } catch {
-      // Best-effort box hydration.
+    } catch (boxErr) {
+      console.error(`[createSession] Box mirror sync failed for dashboard ${dashboardId}:`, boxErr);
     }
 
     try {
@@ -1454,8 +1457,8 @@ export async function createSessiоn(
           onedriveMirror.folder_name
         );
       }
-    } catch {
-      // Best-effort onedrive hydration.
+    } catch (onedriveErr) {
+      console.error(`[createSession] OneDrive mirror sync failed for dashboard ${dashboardId}:`, onedriveErr);
     }
 
     // Log terminal.created analytics event via waitUntil so Workers doesn't drop it

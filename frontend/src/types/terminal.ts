@@ -277,6 +277,17 @@ export interface EgressApprovalResolvedEvent {
 }
 
 /**
+ * Session expired event (server -> client)
+ * Sent by the control plane when the sandbox session no longer exists
+ * (e.g., sandbox machine restarted). The frontend should automatically
+ * recreate the session rather than retrying the dead WebSocket.
+ */
+export interface SessionExpiredEvent {
+  type: "session_expired";
+  reason: string;
+}
+
+/**
  * All incoming control events
  */
 export type IncomingControlEvent =
@@ -295,4 +306,5 @@ export type IncomingControlEvent =
   | CwdChangedEvent
   | ToolsChangedEvent
   | EgressApprovalNeededEvent
-  | EgressApprovalResolvedEvent;
+  | EgressApprovalResolvedEvent
+  | SessionExpiredEvent;

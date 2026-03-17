@@ -21,6 +21,8 @@ export interface UseTerminalState {
   turnTaking: TurnTakingState;
   agentState: AgentState;
   ptyClosed: boolean;
+  /** Whether the sandbox session expired (machine restarted, PTY lost) */
+  sessionExpired: boolean;
   error: Error | null;
   /** TTS status from talkito (live updates, no restart needed) */
   ttsStatus: TtsStatusEvent | null;
@@ -88,6 +90,7 @@ export function useTerminal(
     React.useState<TurnTakingState>(DEFAULT_TURN_TAKING);
   const [agentState, setAgentState] = React.useState<AgentState>(null);
   const [ptyClosed, setPtyClosed] = React.useState(false);
+  const [sessionExpired, setSessionExpired] = React.useState(false);
   const [error, setError] = React.useState<Error | null>(null);
   const [ttsStatus, setTtsStatus] = React.useState<TtsStatusEvent | null>(null);
   const [cwd, setCwd] = React.useState<string>("/");
@@ -108,8 +111,9 @@ export function useTerminal(
     }
 
     console.log(`[Terminal] Creating TerminalWSManager for session ${sessionId}, pty ${ptyId}`);
-    // Reset ptyClosed state for new connection
+    // Reset ptyClosed/sessionExpired state for new connection
     setPtyClosed(false);
+    setSessionExpired(false);
     const config: TerminalWSConfig = {
       userId,
       userName,
@@ -151,6 +155,12 @@ export function useTerminal(
       setPtyClosed(true);
     });
 
+    // Subscribe to session expired events (sandbox lost the session)
+    const unsubSessionExpired = manager.onSessionExpired((reason) => {
+      console.log(`[Terminal] Session expired: ${reason}`);
+      setSessionExpired(true);
+    });
+
     // Subscribe to audio events (for TTS playback)
     const unsubAudio = manager.onAudio((event) => {
       callbacksRef.current?.onAudio?.(event);
@@ -189,6 +199,7 @@ export function useTerminal(
         { name: 'agentState', fn: unsubAgentState },
         { name: 'data', fn: unsubData },
         { name: 'ptyClosed', fn: unsubPtyClosed },
+        { name: 'sessionExpired', fn: unsubSessionExpired },
         { name: 'audio', fn: unsubAudio },
         { name: 'ttsStatus', fn: unsubTtsStatus },
         { name: 'agentStopped', fn: unsubAgentStopped },
@@ -259,6 +270,7 @@ export function useTerminal(
     turnTaking,
     agentState,
     ptyClosed,
+    sessionExpired,
     error,
     ttsStatus,
     cwd,

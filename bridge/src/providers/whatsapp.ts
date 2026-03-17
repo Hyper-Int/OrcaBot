@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-provider-v19-fetch-latest-version
-console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v19-fetch-latest-version loaded at ${new Date().toISOString()}`);
+// REVISION: whatsapp-provider-v22-retry-initial-handshake-until-success
+console.log(`[whatsapp-provider] REVISION: whatsapp-provider-v22-retry-initial-handshake-until-success loaded at ${new Date().toISOString()}`);
 
 import makeWASocket, {
   DisconnectReason,
@@ -45,6 +45,8 @@ export class WhatsAppProvider implements BridgeProvider {
   private starting = false;
   private reconnectAttempts = 0;
   private authDir: string;
+  private hasOpenedConnection = false;
+  private initialHandshakeComplete = false;
 
   // Auth state loaded once and reused across reconnects
   private authState: Awaited<ReturnType<typeof useMultiFileAuthState>> | null = null;
@@ -120,19 +122,26 @@ export class WhatsAppProvider implements BridgeProvider {
         if (connection === 'open') {
           this.currentQr = null;
           this.status = 'connected';
+          const isReconnect = this.hasOpenedConnection;
+          this.hasOpenedConnection = true;
           this.reconnectAttempts = 0;
           this.sessionManager.updateSessionStatus(this.sessionId, 'connected');
-          console.log(`[whatsapp] ${this.logCtx} connected`);
+          console.log(`[whatsapp] ${this.logCtx} connected (reconnect: ${isReconnect})`);
 
-          // In hybrid mode, resolve business phone LID and initiate handshake
+          // In hybrid mode, resolve business phone LID and initiate handshake.
+          // Reconnects still retry until the initial handshake reaches the control plane.
           if (this.config?.hybridMode && this.config.businessPhoneJid) {
             // Proactively resolve the LID for the business phone number
             this.resolveBusinessLid().catch(err => {
               console.warn(`[whatsapp] ${this.logCtx} LID resolution failed (will capture from handshake):`, err);
             });
-            this.performHandshake().catch(err => {
-              console.error(`[whatsapp] ${this.logCtx} Handshake failed:`, err);
-            });
+            if (!isReconnect || !this.initialHandshakeComplete) {
+              this.performHandshake().catch(err => {
+                console.error(`[whatsapp] ${this.logCtx} Handshake failed:`, err);
+              });
+            } else {
+              console.log(`[whatsapp] ${this.logCtx} Skipping handshake on reconnect (initial handshake already complete)`);
+            }
           }
         }
 
@@ -379,7 +388,10 @@ export class WhatsAppProvider implements BridgeProvider {
         },
       };
       await this.sessionManager.forwardMessage(this.sessionId, handshakeNotification);
+      this.initialHandshakeComplete = true;
+      console.log(`[whatsapp] ${this.logCtx} Initial handshake completed`);
     } catch (err) {
+      this.initialHandshakeComplete = false;
       console.error(`[whatsapp] ${this.logCtx} Failed to send handshake message:`, err);
     }
   }
