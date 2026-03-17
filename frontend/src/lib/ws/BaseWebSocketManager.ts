@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: ws-reconnect-v2-fix-double-reconnect
+// REVISION: ws-reconnect-v3-session-expired-recovery
 
-const MODULE_REVISION = "ws-reconnect-v2-fix-double-reconnect";
+const MODULE_REVISION = "ws-reconnect-v3-session-expired-recovery";
 console.log(`[ws] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -48,6 +48,13 @@ const DEFAULT_CONFIG: Required<WebSocketConfig> = {
   connectTimeout: 15000,
   reconnectOnCleanClose: true,
 };
+
+/**
+ * WebSocket close code sent by the control plane when the sandbox session
+ * no longer exists (e.g., machine restarted). The frontend should NOT
+ * reconnect — instead it should recreate the session.
+ */
+const WS_CLOSE_SESSION_EXPIRED = 4004;
 
 export type StateChangeHandler = (state: ConnectionState) => void;
 export type ErrorHandler = (error: Error) => void;
@@ -220,6 +227,11 @@ export abstract class BaseWebSocketManager {
 
       if (this.manualClose) {
         this.setState("disconnected");
+      } else if (event.code === WS_CLOSE_SESSION_EXPIRED) {
+        // Session no longer exists on the sandbox — don't reconnect.
+        // Go straight to "failed" so the frontend can auto-recreate.
+        console.log(`[WS] Session expired (code ${WS_CLOSE_SESSION_EXPIRED}), skipping reconnect`);
+        this.setState("failed");
       } else if (!event.wasClean || this.config.reconnectOnCleanClose) {
         this.scheduleReconnect();
       } else {

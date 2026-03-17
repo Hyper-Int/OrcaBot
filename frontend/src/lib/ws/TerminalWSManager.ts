@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: terminal-ws-v2-email-not-in-url
-const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v2-email-not-in-url";
+// REVISION: terminal-ws-v3-session-expired-recovery
+const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v3-session-expired-recovery";
 console.log(`[TerminalWS] REVISION: ${MODULE_REVISION_TERMINAL_WS} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -74,6 +74,7 @@ export class TerminalWSManager extends BaseWebSocketManager {
   private onTtsStatusHandlers: Set<(event: TtsStatusEvent) => void> = new Set();
   private onAgentStoppedHandlers: Set<(event: AgentStoppedEvent) => void> = new Set();
   private onToolsChangedHandlers: Set<(event: ToolsChangedEvent) => void> = new Set();
+  private onSessionExpiredHandlers: Set<(reason: string) => void> = new Set();
   private onCwdChangeHandlers: Set<(cwd: string) => void> = new Set();
 
   constructor(
@@ -294,6 +295,14 @@ export class TerminalWSManager extends BaseWebSocketManager {
   }
 
   /**
+   * Subscribe to session expired events (sandbox lost the session)
+   */
+  onSessionExpired(handler: (reason: string) => void): () => void {
+    this.onSessionExpiredHandlers.add(handler);
+    return () => this.onSessionExpiredHandlers.delete(handler);
+  }
+
+  /**
    * Subscribe to cwd changes (from PTY process directory changes)
    */
   onCwdChange(handler: (cwd: string) => void): () => void {
@@ -418,6 +427,11 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
       case "tools_changed":
         this.notifyToolsChanged(message);
+        break;
+
+      case "session_expired":
+        console.log(`[TerminalWS] Session expired: ${message.reason}`);
+        this.onSessionExpiredHandlers.forEach((handler) => handler(message.reason));
         break;
 
       case "egress_approval_needed":
