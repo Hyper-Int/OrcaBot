@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: gemini-v6-remove-debug-log
+// REVISION: gemini-v7-filter-thought-parts
 
 /**
  * Gemini 3 API Client
@@ -9,7 +9,7 @@
  * Used by the Orcabot chat interface for platform orchestration.
  */
 
-console.log(`[gemini] REVISION: gemini-v6-remove-debug-log loaded at ${new Date().toISOString()}`);
+console.log(`[gemini] REVISION: gemini-v7-filter-thought-parts loaded at ${new Date().toISOString()}`);
 
 // Gemini API types
 export interface GeminiConfig {
@@ -176,6 +176,13 @@ export async function* streamChat(
 
             const parts = candidate.content?.parts || [];
             for (const part of parts) {
+              if (part.thought) {
+                // Skip thinking/reasoning parts — only capture thoughtSignature
+                if (part.thoughtSignature) {
+                  accumulatedThoughtSignature = part.thoughtSignature;
+                }
+                continue;
+              }
               if (part.text) {
                 yield { type: 'text', text: part.text };
               } else if (part.functionCall) {

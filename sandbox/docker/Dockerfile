@@ -93,6 +93,10 @@ RUN npm install -g @anthropic-ai/claude-code \
 COPY docker/claude-wrapper.sh /usr/local/bin/claude
 RUN chmod +x /usr/local/bin/claude
 
+# Suppress Claude Code's "switched from npm to native installer" banner.
+# We use npm intentionally (1.3s pre-warmed vs 19s native installer).
+ENV DISABLE_INSTALLATION_CHECKS=1
+
 # Install Codex CLI (OpenAI)
 RUN npm cache clean --force && npm install -g @openai/codex@latest
 
