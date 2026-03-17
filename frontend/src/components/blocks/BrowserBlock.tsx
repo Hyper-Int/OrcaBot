@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: browser-v5-vnc-perf-params
+// REVISION: browser-v6-close-deletes-block
 
 "use client";
 
 import * as React from "react";
-import { type NodeProps, type Node } from "@xyflow/react";
+import { type NodeProps, type Node, useReactFlow } from "@xyflow/react";
 import { Globe, RefreshCw, X, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
@@ -78,6 +78,7 @@ function releaseBrowser(dashboardId: string) {
 }
 
 export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
+  const { deleteElements } = useReactFlow();
   const [status, setStatus] = React.useState<"idle" | "starting" | "running" | "error">("idle");
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -260,13 +261,9 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
           variant="ghost"
           size="icon-sm"
           onClick={() => {
-            if (!dashboardId) return;
-            stopDashboardBrowser(dashboardId).finally(() => {
-              setStatus("idle");
-            });
+            deleteElements({ nodes: [{ id }] });
           }}
-          disabled={!dashboardId || status === "idle"}
-          title="Stop browser"
+          title="Close browser"
           className="nodrag"
         >
           <X className="w-3.5 h-3.5" />
