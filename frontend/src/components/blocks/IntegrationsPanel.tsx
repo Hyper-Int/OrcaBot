@@ -77,6 +77,10 @@ function getOAuthConnectUrl(provider: IntegrationProvider, dashboardId: string):
       return null; // Browser doesn't need OAuth
     case "twitter":
       return `${base}/integrations/twitter/connect?dashboard_id=${dashboardId}&mode=popup`;
+    case "outlook":
+      return `${base}/integrations/outlook/connect?dashboard_id=${dashboardId}&mode=popup`;
+    case "outlook_calendar":
+      return `${base}/integrations/outlook/calendar/connect?dashboard_id=${dashboardId}&mode=popup`;
     default:
       return null;
   }
@@ -114,6 +118,10 @@ const ProviderIcon: React.FC<{ provider: IntegrationProvider; className?: string
           <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
         </svg>
       );
+    case "outlook":
+      return <Mail className={className} />;
+    case "outlook_calendar":
+      return <Calendar className={className} />;
     default:
       return <Plug className={className} />;
   }

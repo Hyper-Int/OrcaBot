@@ -1,0 +1,499 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: outlook-calendar-block-v1-initial
+
+"use client";
+
+const MODULE_REVISION = "outlook-calendar-block-v1-initial";
+console.log(`[OutlookCalendarBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
+import * as React from "react";
+import { type NodeProps, type Node } from "@xyflow/react";
+import {
+  RefreshCw,
+  CheckCircle,
+  Loader2,
+  Settings,
+  LogOut,
+  Minimize2,
+  Copy,
+} from "lucide-react";
+import { BlockWrapper } from "./BlockWrapper";
+import { ConnectionHandles } from "./ConnectionHandles";
+import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { API } from "@/config/env";
+import { apiFetch, apiGet } from "@/lib/api/client";
+import { OutlookCalendarIcon } from "@/components/icons/MessagingIcons";
+import { BlockSettingsFooter } from "./BlockSettingsFooter";
+import type { DashboardItem } from "@/types/dashboard";
+import { HelpButton } from "@/components/help/HelpDialog";
+import { outlookCalendarDoc } from "@/docs/content/outlook-calendar";
+
+// ============================================
+// Outlook Calendar types
+// ============================================
+
+const OUTLOOK_BLUE = "#0078D4";
+
+interface OutlookCalendarIntegration {
+  connected: boolean;
+  emailAddress: string | null;
+  accountName: string | null;
+}
+
+// ============================================
+// API helpers
+// ============================================
+
+async function getOutlookCalendarIntegration(dashboardId: string): Promise<OutlookCalendarIntegration> {
+  const url = new URL(`${API.cloudflare.base}/integrations/outlook/calendar`);
+  url.searchParams.set("dashboard_id", dashboardId);
+  try {
+    return await apiGet<OutlookCalendarIntegration>(url.toString());
+  } catch (err) {
+    if (err && typeof err === "object" && "status" in err && (err as { status: number }).status === 404) {
+      return { connected: false, emailAddress: null, accountName: null };
+    }
+    throw err;
+  }
+}
+
+async function disconnectOutlookCalendarApi(dashboardId: string): Promise<{ ok: boolean }> {
+  const url = new URL(`${API.cloudflare.base}/integrations/outlook/calendar`);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+// ============================================
+// Component
+// ============================================
+
+interface OutlookCalendarData extends Record<string, unknown> {
+  content: string;
+  size: { width: number; height: number };
+  dashboardId?: string;
+  metadata?: { minimized?: boolean; expandedSize?: { width: number; height: number }; [key: string]: unknown };
+  onContentChange?: (content: string) => void;
+  onItemChange?: (changes: Partial<DashboardItem>) => void;
+  onDuplicate?: () => void;
+  connectorMode?: boolean;
+  onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void;
+}
+
+type OutlookCalendarNode = Node<OutlookCalendarData, "outlook_calendar">;
+
+export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCalendarNode>) {
+  const dashboardId = data.dashboardId;
+  const connectorsVisible = selected || Boolean(data.connectorMode);
+  const isMinimized = data.metadata?.minimized === true;
+  const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
+  const [isAnimatingMinimize, setIsAnimatingMinimize] = React.useState(false);
+  const minimizeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    return () => {
+      if (minimizeTimeoutRef.current) clearTimeout(minimizeTimeoutRef.current);
+    };
+  }, []);
+
+  const handleMinimize = () => {
+    const expandedSize = data.size;
+    setIsAnimatingMinimize(true);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, expandedSize },
+      size: MINIMIZED_SIZE,
+    });
+    minimizeTimeoutRef.current = setTimeout(() => {
+      setIsAnimatingMinimize(false);
+      data.onItemChange?.({
+        metadata: { ...data.metadata, minimized: true, expandedSize },
+      });
+    }, 350);
+  };
+
+  const handleExpand = () => {
+    const savedSize = data.metadata?.expandedSize as { width: number; height: number } | undefined;
+    setExpandAnimation("animate-expand-bounce");
+    setTimeout(() => setExpandAnimation(null), 300);
+    data.onItemChange?.({
+      metadata: { ...data.metadata, minimized: false },
+      size: savedSize || { width: 320, height: 400 },
+    });
+  };
+
+  // Integration state
+  const [integration, setIntegration] = React.useState<OutlookCalendarIntegration | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  // Track if initial load is done (per dashboard to handle Fast Refresh/Strict Mode)
+  const initialLoadDone = React.useRef(false);
+  const loadedDashboardRef = React.useRef<string | null>(null);
+
+  // Load integration status
+  const loadIntegration = React.useCallback(async () => {
+    if (!dashboardId) return;
+    try {
+      if (!initialLoadDone.current) {
+        setLoading(true);
+      }
+      setError(null);
+      const integrationData = await getOutlookCalendarIntegration(dashboardId);
+      setIntegration(integrationData);
+      initialLoadDone.current = true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load Outlook Calendar");
+    } finally {
+      setLoading(false);
+    }
+  }, [dashboardId]);
+
+  // Initial load - skip duplicate loads in Strict Mode/Fast Refresh
+  React.useEffect(() => {
+    if (!dashboardId) return;
+    if (loadedDashboardRef.current === dashboardId) return;
+    loadedDashboardRef.current = dashboardId;
+    loadIntegration();
+  }, [dashboardId, loadIntegration]);
+
+  // Refresh handler
+  const handleRefresh = async () => {
+    if (!dashboardId) return;
+    try {
+      setRefreshing(true);
+      await loadIntegration();
+    } catch (err) {
+      console.error("Refresh failed:", err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Connect Outlook Calendar via OAuth popup
+  const handleConnect = () => {
+    if (!dashboardId) return;
+    const connectUrl = `${API.cloudflare.base}/integrations/outlook/calendar/connect?dashboard_id=${dashboardId}&mode=popup`;
+    const popup = window.open(connectUrl, "outlook-calendar-connect", "width=600,height=700");
+
+    let completed = false;
+
+    const completeSetup = async () => {
+      if (completed) return;
+      completed = true;
+      window.removeEventListener("message", handleMessage);
+      if (pollInterval) clearInterval(pollInterval);
+      popup?.close();
+      await loadIntegration();
+    };
+
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.data?.type === "outlook-calendar-auth-complete") {
+        await completeSetup();
+      }
+    };
+    window.addEventListener("message", handleMessage);
+
+    // Also poll for popup close (backup in case postMessage fails due to origin mismatch)
+    const pollInterval = setInterval(async () => {
+      if (popup?.closed) {
+        clearInterval(pollInterval);
+        // Give a moment for postMessage to arrive, then check integration status
+        setTimeout(async () => {
+          if (!completed) {
+            await completeSetup();
+          }
+        }, 500);
+      }
+    }, 500);
+  };
+
+  // Disconnect Outlook Calendar
+  const handleDisconnect = async () => {
+    if (!dashboardId) return;
+    try {
+      await disconnectOutlookCalendarApi(dashboardId);
+      setIntegration(null);
+    } catch (err) {
+      console.error("Failed to disconnect Outlook Calendar:", err);
+    }
+  };
+
+  // Header
+  const header = (
+    <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
+      <div className="flex items-center gap-1">
+        <OutlookCalendarIcon className="w-4 h-4" />
+      </div>
+      <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
+        {integration?.emailAddress || integration?.accountName || "Outlook Calendar"}
+      </div>
+      <div className="flex items-center gap-1">
+        <HelpButton doc={outlookCalendarDoc} />
+        {integration?.connected && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Refresh"
+            className="nodrag"
+          >
+            <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleMinimize}
+          title="Minimize"
+          className="nodrag"
+        >
+          <Minimize2 className="w-3.5 h-3.5" />
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title="Settings"
+              className="nodrag"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            {integration?.connected && (
+              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+                <LogOut className="w-3.5 h-3.5 mr-2" />
+                Disconnect Outlook Calendar
+              </DropdownMenuItem>
+            )}
+            {!integration?.connected && (
+              <DropdownMenuItem onClick={handleConnect}>
+                <OutlookCalendarIcon className="w-3.5 h-3.5 mr-2" />
+                Connect Outlook Calendar
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
+              <Copy className="w-3 h-3" />
+              Duplicate
+            </DropdownMenuItem>
+            <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+
+  // Settings menu for minimized view
+  const settingsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="Settings"
+          className="nodrag h-5 w-5"
+        >
+          <Settings className="w-3 h-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        {integration?.connected && (
+          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+            <LogOut className="w-3.5 h-3.5 mr-2" />
+            Disconnect Outlook Calendar
+          </DropdownMenuItem>
+        )}
+        {!integration?.connected && (
+          <DropdownMenuItem onClick={handleConnect}>
+            <OutlookCalendarIcon className="w-3.5 h-3.5 mr-2" />
+            Connect Outlook Calendar
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  // Minimized view - only show when fully minimized (not during animation)
+  if (isMinimized && !isAnimatingMinimize) {
+    return (
+      <MinimizedBlockView
+        nodeId={id}
+        selected={selected}
+        icon={
+          <div className="flex items-center gap-1">
+            <OutlookCalendarIcon className="w-12 h-12" />
+          </div>
+        }
+        label={integration?.emailAddress || integration?.accountName || "Outlook Calendar"}
+        onExpand={handleExpand}
+        settingsMenu={settingsMenu}
+        connectorsVisible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+    );
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={expandAnimation || undefined}>
+        <ConnectionHandles
+          nodeId={id}
+          visible={connectorsVisible}
+          onConnectorClick={data.onConnectorClick}
+        />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex items-center justify-center h-full p-4">
+            <Loader2 className="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+        <ConnectionHandles
+          nodeId={id}
+          visible={connectorsVisible}
+          onConnectorClick={data.onConnectorClick}
+        />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <p className="text-xs text-red-500 text-center mb-2">{error}</p>
+            <Button size="sm" onClick={loadIntegration} className="nodrag">
+              Retry
+            </Button>
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Not connected state
+  if (!integration?.connected) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+        <ConnectionHandles
+          nodeId={id}
+          visible={connectorsVisible}
+          onConnectorClick={data.onConnectorClick}
+        />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <div className="flex items-center gap-1 mb-2">
+              <OutlookCalendarIcon className="w-10 h-10" />
+            </div>
+            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
+              Connect your Microsoft account to manage calendar events
+            </p>
+            <Button
+              size="sm"
+              onClick={handleConnect}
+              className="nodrag"
+              style={{ backgroundColor: OUTLOOK_BLUE, color: "#fff" }}
+            >
+              Connect Outlook Calendar
+            </Button>
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Connected state - show account info and status
+  return (
+    <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
+      <ConnectionHandles
+        nodeId={id}
+        visible={connectorsVisible}
+        onConnectorClick={data.onConnectorClick}
+      />
+      <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+        {header}
+
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Account info */}
+          <div className="px-3 py-3 border-b border-[var(--border)]">
+            <div className="flex items-center gap-2">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium shrink-0"
+                style={{ backgroundColor: OUTLOOK_BLUE }}
+              >
+                {(integration.accountName || integration.emailAddress || "O").charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                {integration.accountName && (
+                  <p className="text-xs font-medium text-[var(--text-primary)] truncate">
+                    {integration.accountName}
+                  </p>
+                )}
+                {integration.emailAddress && (
+                  <p className="text-[10px] text-[var(--text-secondary)] truncate">
+                    {integration.emailAddress}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Connection status info */}
+          <div className="flex-1 overflow-y-auto px-3 py-2">
+            <p className="text-[10px] text-[var(--text-muted)] mb-2">
+              Wire this block to a terminal to give the agent access to your Outlook Calendar via MCP tools.
+            </p>
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
+                <OutlookCalendarIcon className="w-3 h-3 shrink-0" />
+                <span>View, create, and manage calendar events</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
+                <OutlookCalendarIcon className="w-3 h-3 shrink-0" />
+                <span>Search events and list calendars</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
+                <OutlookCalendarIcon className="w-3 h-3 shrink-0" />
+                <span>Update and delete events</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Status footer */}
+          <div className="px-2 py-1 border-t border-[var(--border)] bg-[var(--background)]">
+            <div className="flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
+              <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+              <span>Connected</span>
+              {integration.emailAddress && (
+                <>
+                  <span>&middot;</span>
+                  <span className="truncate">{integration.emailAddress}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </BlockWrapper>
+  );
+}
+
+export default OutlookCalendarBlock;

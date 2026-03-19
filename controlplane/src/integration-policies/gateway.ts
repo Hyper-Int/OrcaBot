@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v28-twitter-account-id-server-only
-const MODULE_REVISION = 'gateway-v28-twitter-account-id-server-only';
+// REVISION: gateway-v30-forward-as-send-category
+const MODULE_REVISION = 'gateway-v30-forward-as-send-category';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -35,6 +35,8 @@ import type {
   CalendarPolicy,
   BrowserPolicy,
   MessagingPolicy,
+  OutlookPolicy,
+  OutlookCalendarPolicy,
 } from '../types';
 import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
@@ -52,6 +54,8 @@ import { executeTeamsAction } from './api-clients/teams';
 import { executeMatrixAction } from './api-clients/matrix';
 import { executeGoogleChatAction } from './api-clients/google_chat';
 import { executeTwitterAction } from './api-clients/twitter';
+import { executeOutlookAction } from './api-clients/outlook';
+import { executeOutlookCalendarAction } from './api-clients/outlook-calendar';
 
 // ============================================
 // Types
@@ -162,9 +166,10 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
   if (typeof args.owner === 'string') ctx.repoOwner = args.owner;
   if (typeof args.repo === 'string') ctx.repoName = args.repo;
 
-  // Extract calendar ID for calendar filter enforcement
-  if (typeof args.calendarId === 'string') {
-    ctx.calendarId = args.calendarId;
+  // Extract calendar ID for calendar filter enforcement (accept both camelCase and snake_case)
+  const calendarIdArg = args.calendarId ?? args.calendar_id;
+  if (typeof calendarIdArg === 'string') {
+    ctx.calendarId = calendarIdArg;
   }
 
   // Extract Drive write fields for folder/filetype enforcement
@@ -248,6 +253,7 @@ async function resolveOutboundChannelName(
   provider: IntegrationProvider,
   channelId: string,
   accessToken: string,
+  teamId?: string,
 ): Promise<string | null> {
   try {
     if (provider === 'slack') {
@@ -269,6 +275,18 @@ async function resolveOutboundChannelName(
       // The GET /channels/:id endpoint requires a Bot token or guild-scoped permissions.
       // Discord policies must use channel IDs (snowflakes) which are globally unique.
       return null;
+    }
+
+    if (provider === 'teams') {
+      // Teams MCP tools pass team_id + channel_id. Use Graph API to resolve channel name.
+      if (!teamId) return null;
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}?$select=displayName`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) return null;
+      const data = await res.json() as { displayName?: string };
+      return data.displayName || null;
     }
 
     // Telegram, WhatsApp, etc. — channel names not typically used in policies
@@ -308,7 +326,7 @@ function getActionCategory(action: string): ActionCategory {
   if (action.includes('download') || action.includes('clone')) return 'downloads';
   if (action.includes('upload')) return 'uploads';
   if (action.includes('send') || action.includes('push') || action.includes('create_pr') ||
-      action.includes('reply') || action.includes('draft')) return 'sends';
+      action.includes('reply') || action.includes('draft') || action.includes('forward')) return 'sends';
   if (action.includes('delete') || action.includes('trash') || action.includes('remove')) return 'deletes';
   // edit_message and react are write-like mutations (not reads). Without this,
   // messaging edit/reaction actions fall through to 'reads' and bypass send/write rate limits.
@@ -509,6 +527,10 @@ async function executeProviderAPI(
       return executeGoogleChatAction(action, args, accessToken);
     case 'twitter':
       return executeTwitterAction(action, args, accessToken);
+    case 'outlook':
+      return executeOutlookAction(action, args, accessToken);
+    case 'outlook_calendar':
+      return executeOutlookCalendarAction(action, args, accessToken);
     case 'browser':
       // Browser actions are handled locally in sandbox
       throw new Error('Browser actions should not reach the gateway');
@@ -670,7 +692,43 @@ export async function handleGatewayExecute(
   // 7. Derive enforcement context server-side from args (NEVER trust body.context)
   const derivedContext = deriveEnforcementContext(body.action, body.args);
 
-  // 7b. For messaging providers: resolve channel name if we have an ID but no name.
+  // 7b. For outlook.reply: fetch the original message to derive the reply recipient.
+  // The Graph API sends the reply to the original sender, but we need to know who that
+  // is to enforce sendPolicy allowlists. Without this, replies bypass recipient checks.
+  if (provider === 'outlook' && body.action === 'outlook.reply') {
+    const replyMsgId = (body.args.message_id ?? body.args.messageId) as string | undefined;
+    if (replyMsgId && ti.user_integration_id) {
+      try {
+        const token = await getAccessToken(env, ti.user_integration_id, 'outlook');
+        if (token) {
+          const msgResp = await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(replyMsgId)}?$select=from`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (msgResp.ok) {
+            const msg = await msgResp.json() as { from?: { emailAddress?: { address?: string } } };
+            const senderAddr = msg.from?.emailAddress?.address;
+            if (senderAddr) {
+              derivedContext.recipient = senderAddr.toLowerCase();
+              derivedContext.recipients = [senderAddr.toLowerCase()];
+              const domain = senderAddr.split('@')[1];
+              if (domain) {
+                derivedContext.recipientDomain = domain.toLowerCase();
+                derivedContext.recipientDomains = [domain.toLowerCase()];
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[gateway] Failed to fetch original message for outlook.reply recipient check:', err);
+        // Fail-closed: if we can't determine the recipient, deny the reply
+        derivedContext.recipient = undefined;
+        derivedContext.recipients = undefined;
+      }
+    }
+  }
+
+  // 7c. For messaging providers: resolve channel name if we have an ID but no name.
   // MCP tools pass channel IDs (e.g. "C1234"), but policies may use channel names
   // (e.g. "#general"). Without resolution, channel-name allowlists silently deny all sends.
   const MESSAGING_PROVIDERS = new Set(['slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat']);
@@ -679,7 +737,9 @@ export async function handleGatewayExecute(
     if (ti.user_integration_id) {
       prefetchedAccessToken = await getAccessToken(env, ti.user_integration_id, provider);
       if (prefetchedAccessToken) {
-        const resolvedName = await resolveOutboundChannelName(provider, derivedContext.channelId, prefetchedAccessToken);
+        // Pass team_id for Teams channel name resolution (from MCP tool args)
+        const teamIdArg = typeof body.args.team_id === 'string' ? body.args.team_id : undefined;
+        const resolvedName = await resolveOutboundChannelName(provider, derivedContext.channelId, prefetchedAccessToken, teamIdArg);
         if (resolvedName) {
           derivedContext.channelName = resolvedName;
         }

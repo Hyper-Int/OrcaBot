@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-client-v2-auth-error-detection
-const MODULE_REVISION = 'teams-client-v2-auth-error-detection';
+// REVISION: teams-client-v4-app-only-list-teams
+const MODULE_REVISION = 'teams-client-v4-app-only-list-teams';
 console.log(`[teams-client] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -104,6 +104,8 @@ export async function executeTeamsAction(
       return readMessages(args, accessToken);
     case 'teams.send_message':
       return sendMessage(args, accessToken);
+    case 'teams.send_chat_message':
+      return sendChatMessage(args, accessToken);
     case 'teams.reply_thread':
       return replyThread(args, accessToken);
     case 'teams.get_member':
@@ -167,6 +169,25 @@ async function sendMessage(
 
   const data = await teamsFetch(
     `/teams/${teamId}/channels/${channelId}/messages`,
+    accessToken,
+    { method: 'POST', body: { body: { content: text, contentType: 'text' } } },
+  ) as TeamsMessage;
+
+  return { id: data.id };
+}
+
+async function sendChatMessage(
+  args: Record<string, unknown>,
+  accessToken: string
+): Promise<{ id: string }> {
+  const conversationId = args.conversation_id as string;
+  const text = args.text as string;
+  if (!conversationId) throw new Error('conversation_id is required');
+  if (!text) throw new Error('text is required');
+
+  // Use the /chats/{chatId}/messages endpoint for 1:1 and group chats
+  const data = await teamsFetch(
+    `/chats/${conversationId}/messages`,
     accessToken,
     { method: 'POST', body: { body: { content: text, contentType: 'text' } } },
   ) as TeamsMessage;
@@ -258,10 +279,21 @@ async function deleteMessage(
 async function listTeams(
   accessToken: string
 ): Promise<{ teams: TeamsTeam[] }> {
-  const data = await teamsFetch(
-    `/me/joinedTeams`,
-    accessToken,
-  ) as { value: TeamsTeam[] };
-
-  return { teams: data.value };
+  // Try delegated endpoint first (/me/joinedTeams).
+  // If the token is app-only (client_credentials), this returns 403 —
+  // fall back to the application-level /groups endpoint.
+  try {
+    const data = await teamsFetch(
+      `/me/joinedTeams`,
+      accessToken,
+    ) as { value: TeamsTeam[] };
+    return { teams: data.value };
+  } catch {
+    // Likely app-only token — use /groups with Team filter
+    const data = await teamsFetch(
+      `/groups?$filter=resourceProvisioningOptions/Any(x:x eq 'Team')&$select=id,displayName,description`,
+      accessToken,
+    ) as { value: TeamsTeam[] };
+    return { teams: data.value };
+  }
 }

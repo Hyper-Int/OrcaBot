@@ -62,6 +62,41 @@ export function MatrixIcon({ className, ...props }: IconProps) {
   );
 }
 
+export function OutlookIcon({ className, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <path d="M24 7.387v10.478c0 .23-.08.424-.238.582a.793.793 0 01-.582.238h-8.934v-12.5h8.934c.23 0 .424.08.582.238.159.159.238.353.238.582v.382z" fill="#0078D4" />
+      <path d="M24 7.005v10.478c0 .23-.08.424-.238.582a.793.793 0 01-.582.238h-8.934V5.803h8.934c.23 0 .424.08.582.238.159.159.238.353.238.582v.382z" fill="#0078D4" />
+      <path d="M14.246 18.303H5.312c-.23 0-.424-.08-.582-.238a.793.793 0 01-.238-.582V6.005c0-.23.08-.424.238-.582a.793.793 0 01.582-.238h8.934c.23 0 .424.08.582.238.159.159.238.353.238.582v11.478c0 .23-.08.424-.238.582a.793.793 0 01-.582.238z" fill="#0559C9" />
+      <path d="M9.779 8.803c-2.485 0-4.5 2.015-4.5 4.5s2.015 4.5 4.5 4.5 4.5-2.015 4.5-4.5-2.015-4.5-4.5-4.5zm0 7.125c-1.45 0-2.625-1.175-2.625-2.625s1.175-2.625 2.625-2.625 2.625 1.175 2.625 2.625-1.175 2.625-2.625 2.625z" fill="#fff" />
+      <path d="M19.072 6.185h-4.826v12.118h4.826c.534 0 .967-.433.967-.967V7.152a.967.967 0 00-.967-.967z" fill="#0078D4" opacity=".5" />
+    </svg>
+  );
+}
+
+export function OutlookCalendarIcon({ className, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+      {/* Calendar page body */}
+      <rect x="3" y="5" width="18" height="16" rx="2" fill="#0078D4" />
+      {/* Calendar header bar */}
+      <rect x="3" y="5" width="18" height="5" rx="2" fill="#0559C9" />
+      <rect x="3" y="8" width="18" height="2" fill="#0559C9" />
+      {/* Calendar rings */}
+      <rect x="7.5" y="3" width="1.5" height="4" rx="0.75" fill="#0559C9" />
+      <rect x="15" y="3" width="1.5" height="4" rx="0.75" fill="#0559C9" />
+      {/* Grid lines */}
+      <line x1="3" y1="14" x2="21" y2="14" stroke="#fff" strokeOpacity="0.3" strokeWidth="0.5" />
+      <line x1="3" y1="17.5" x2="21" y2="17.5" stroke="#fff" strokeOpacity="0.3" strokeWidth="0.5" />
+      <line x1="9" y1="10" x2="9" y2="21" stroke="#fff" strokeOpacity="0.3" strokeWidth="0.5" />
+      <line x1="15" y1="10" x2="15" y2="21" stroke="#fff" strokeOpacity="0.3" strokeWidth="0.5" />
+      {/* Day number highlight */}
+      <rect x="10" y="11" width="4" height="2.5" rx="0.5" fill="#fff" fillOpacity="0.9" />
+      <text x="12" y="13" textAnchor="middle" fill="#0078D4" fontSize="2.2" fontWeight="bold" fontFamily="Arial">17</text>
+    </svg>
+  );
+}
+
 export function GoogleChatIcon({ className, ...props }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>

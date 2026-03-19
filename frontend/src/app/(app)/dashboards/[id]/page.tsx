@@ -47,6 +47,8 @@ import {
   TeamsIcon,
   MatrixIcon,
   GoogleChatIcon,
+  OutlookIcon,
+  OutlookCalendarIcon,
 } from "@/components/icons";
 import { toast } from "sonner";
 
@@ -178,13 +180,20 @@ const googleTools: BlockTool[] = [
   { type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
 ];
 
+// Microsoft integrations
+const microsoftTools: BlockTool[] = [
+  { type: "outlook", icon: <OutlookIcon className="w-4 h-4" />, label: "Outlook" },
+  { type: "outlook_calendar", icon: <OutlookCalendarIcon className="w-4 h-4" />, label: "Calendar" },
+  { type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
+];
+
 // Messaging integrations in their own section
 const messagingTools: BlockTool[] = [
   { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
   { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
   { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
   { type: "twitter", icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>, label: "X" },
-  // Telegram, Teams, Matrix, Google Chat hidden until ready
+  // Telegram, Matrix, Google Chat hidden until ready
 ];
 
 const terminalTools: BlockTool[] = [
@@ -258,6 +267,8 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   matrix: { width: 280, height: 280 },
   google_chat: { width: 280, height: 280 },
   twitter: { width: 280, height: 280 },
+  outlook: { width: 280, height: 280 },
+  outlook_calendar: { width: 280, height: 280 },
 };
 
 const PLACEMENT_GAP = 32; // gap between items when finding space
@@ -436,6 +447,7 @@ export default function DashboardPage() {
   const [toolbarAgentsCollapsed, setToolbarAgentsCollapsed] = React.useState(false);
   const [toolbarBlocksCollapsed, setToolbarBlocksCollapsed] = React.useState(false);
   const [toolbarGoogleCollapsed, setToolbarGoogleCollapsed] = React.useState(false);
+  const [toolbarMicrosoftCollapsed, setToolbarMicrosoftCollapsed] = React.useState(false);
   const [toolbarMessagingCollapsed, setToolbarMessagingCollapsed] = React.useState(false);
   const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
 
@@ -3831,6 +3843,33 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarGoogleCollapsed && googleTools.map((tool) => (
+                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => handleAddBlock(tool)}
+                      disabled={createItemMutation.isPending}
+                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                    >
+                      {tool.icon}
+                    </Button>
+                  </Tooltip>
+                ))}
+              </div>
+
+              {/* Microsoft integrations section */}
+              <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
+                <Tooltip content={toolbarMicrosoftCollapsed ? "Expand Microsoft" : "Collapse Microsoft"} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setToolbarMicrosoftCollapsed((prev) => !prev)}
+                    className="mr-1"
+                  >
+                    {toolbarMicrosoftCollapsed ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
+                  </Button>
+                </Tooltip>
+                {!toolbarMicrosoftCollapsed && microsoftTools.map((tool) => (
                   <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"

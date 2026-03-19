@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integration-tools-v7-twitter
+// REVISION: integration-tools-v9-outlook-calendar
 package mcp
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-tools] REVISION: integration-tools-v7-twitter loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-tools] REVISION: integration-tools-v9-outlook-calendar loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // IntegrationTool represents an MCP tool definition for an integration
@@ -51,6 +51,10 @@ func GetToolsForProvider(provider string) []IntegrationTool {
 		return googleChatTools
 	case "twitter":
 		return twitterTools
+	case "outlook":
+		return outlookTools
+	case "outlook_calendar":
+		return outlookCalendarTools
 	default:
 		return nil
 	}
@@ -99,6 +103,8 @@ var allTools = map[string][]IntegrationTool{
 	"matrix":          matrixTools,
 	"google_chat":     googleChatTools,
 	"twitter":         twitterTools,
+	"outlook":          outlookTools,
+	"outlook_calendar": outlookCalendarTools,
 }
 
 // ============================================
@@ -1783,6 +1789,403 @@ var twitterTools = []IntegrationTool{
 				}
 			},
 			"required": ["tweet_id"]
+		}`),
+	},
+}
+
+// ============================================
+// Outlook Tools
+// ============================================
+
+var outlookTools = []IntegrationTool{
+	{
+		Name:        "outlook_search",
+		Description: "Search emails in Microsoft Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.search",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Search query (KQL syntax). Examples: 'from:boss@company.com', 'subject:invoice', 'hasAttachments:true'"
+				},
+				"limit": {
+					"type": "integer",
+					"description": "Maximum number of results (default: 10, max: 50)",
+					"default": 10
+				},
+				"folder": {
+					"type": "string",
+					"description": "Mail folder to search in (optional, e.g. 'inbox', 'sentitems')"
+				}
+			},
+			"required": ["query"]
+		}`),
+	},
+	{
+		Name:        "outlook_get",
+		Description: "Get a specific email by ID with full details",
+		Provider:    "outlook",
+		Action:      "outlook.get",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The Outlook message ID"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_send",
+		Description: "Send a new email via Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.send",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"to": {
+					"type": "string",
+					"description": "Recipient email address"
+				},
+				"subject": {
+					"type": "string",
+					"description": "Email subject"
+				},
+				"body": {
+					"type": "string",
+					"description": "Email body (plain text)"
+				},
+				"cc": {
+					"type": "string",
+					"description": "CC recipient email address (optional)"
+				},
+				"bcc": {
+					"type": "string",
+					"description": "BCC recipient email address (optional)"
+				}
+			},
+			"required": ["to", "subject", "body"]
+		}`),
+	},
+	{
+		Name:        "outlook_reply",
+		Description: "Reply to an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.reply",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to reply to"
+				},
+				"body": {
+					"type": "string",
+					"description": "Reply body text"
+				}
+			},
+			"required": ["message_id", "body"]
+		}`),
+	},
+	{
+		Name:        "outlook_forward",
+		Description: "Forward an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.forward",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to forward"
+				},
+				"to": {
+					"type": "string",
+					"description": "Recipient email address to forward to"
+				},
+				"body": {
+					"type": "string",
+					"description": "Optional comment to include with the forwarded message"
+				}
+			},
+			"required": ["message_id", "to"]
+		}`),
+	},
+	{
+		Name:        "outlook_archive",
+		Description: "Archive an email (move to Archive folder)",
+		Provider:    "outlook",
+		Action:      "outlook.archive",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to archive"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_delete",
+		Description: "Delete an email in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.delete",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to delete"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_mark_read",
+		Description: "Mark an email as read",
+		Provider:    "outlook",
+		Action:      "outlook.mark_read",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to mark as read"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_mark_unread",
+		Description: "Mark an email as unread",
+		Provider:    "outlook",
+		Action:      "outlook.mark_unread",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"message_id": {
+					"type": "string",
+					"description": "The message ID to mark as unread"
+				}
+			},
+			"required": ["message_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_list_folders",
+		Description: "List mail folders in Outlook",
+		Provider:    "outlook",
+		Action:      "outlook.list_folders",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+	},
+}
+
+// ============================================
+// Outlook Calendar Tools
+// ============================================
+
+var outlookCalendarTools = []IntegrationTool{
+	{
+		Name:        "outlook_calendar_list_calendars",
+		Description: "List all calendars in the user's Outlook account",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.list_calendars",
+		InputSchema: json.RawMessage(`{"type": "object", "properties": {}}`),
+	},
+	{
+		Name:        "outlook_calendar_list_events",
+		Description: "List events in a time range from Outlook Calendar",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.list_events",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"start_date": {
+					"type": "string",
+					"description": "Start of time range (ISO 8601, default: now)"
+				},
+				"end_date": {
+					"type": "string",
+					"description": "End of time range (ISO 8601, default: 7 days from start)"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				},
+				"max_results": {
+					"type": "integer",
+					"description": "Maximum number of events to return (default: 25)",
+					"default": 25
+				}
+			}
+		}`),
+	},
+	{
+		Name:        "outlook_calendar_get_event",
+		Description: "Get details of a specific Outlook Calendar event",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.get_event",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"event_id": {
+					"type": "string",
+					"description": "The Outlook Calendar event ID"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				}
+			},
+			"required": ["event_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_calendar_create_event",
+		Description: "Create a new event in Outlook Calendar",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.create_event",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"subject": {
+					"type": "string",
+					"description": "Event subject/title"
+				},
+				"start": {
+					"type": "string",
+					"description": "Start time (ISO 8601)"
+				},
+				"end": {
+					"type": "string",
+					"description": "End time (ISO 8601)"
+				},
+				"location": {
+					"type": "string",
+					"description": "Event location (optional)"
+				},
+				"body": {
+					"type": "string",
+					"description": "Event body/description (optional)"
+				},
+				"attendees": {
+					"type": "string",
+					"description": "Comma-separated list of attendee email addresses (optional)"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				},
+				"is_all_day": {
+					"type": "boolean",
+					"description": "Whether this is an all-day event (optional)"
+				}
+			},
+			"required": ["subject", "start", "end"]
+		}`),
+	},
+	{
+		Name:        "outlook_calendar_update_event",
+		Description: "Update an existing Outlook Calendar event",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.update_event",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"event_id": {
+					"type": "string",
+					"description": "The event ID to update"
+				},
+				"subject": {
+					"type": "string",
+					"description": "Updated event subject/title"
+				},
+				"start": {
+					"type": "string",
+					"description": "Updated start time (ISO 8601)"
+				},
+				"end": {
+					"type": "string",
+					"description": "Updated end time (ISO 8601)"
+				},
+				"location": {
+					"type": "string",
+					"description": "Updated event location"
+				},
+				"body": {
+					"type": "string",
+					"description": "Updated event body/description"
+				},
+				"attendees": {
+					"type": "string",
+					"description": "Updated comma-separated list of attendee email addresses"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				}
+			},
+			"required": ["event_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_calendar_delete_event",
+		Description: "Delete an event from Outlook Calendar",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.delete_event",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"event_id": {
+					"type": "string",
+					"description": "The event ID to delete"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				}
+			},
+			"required": ["event_id"]
+		}`),
+	},
+	{
+		Name:        "outlook_calendar_search_events",
+		Description: "Search Outlook Calendar events by subject keyword and/or date range",
+		Provider:    "outlook_calendar",
+		Action:      "outlook_calendar.search_events",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"description": "Search query to match against event subjects"
+				},
+				"start_date": {
+					"type": "string",
+					"description": "Start of time range (ISO 8601, optional)"
+				},
+				"end_date": {
+					"type": "string",
+					"description": "End of time range (ISO 8601, optional)"
+				},
+				"max_results": {
+					"type": "integer",
+					"description": "Maximum number of results to return (optional)"
+				},
+				"calendar_id": {
+					"type": "string",
+					"description": "Calendar ID (optional, defaults to primary calendar)"
+				}
+			},
+			"required": ["query"]
 		}`),
 	},
 }

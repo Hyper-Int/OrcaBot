@@ -768,7 +768,7 @@ CREATE TABLE IF NOT EXISTS messaging_subscriptions (
   channel_name TEXT,
   chat_id TEXT,
   team_id TEXT,
-  webhook_id TEXT UNIQUE,
+  webhook_id TEXT,
   webhook_secret TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'paused', 'error')),
   last_message_at TEXT,
@@ -1433,10 +1433,16 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     await db.prepare(`UPDATE users SET trial_started_at = datetime('now')`).run();
     await db.prepare(`INSERT INTO schema_migrations (name) VALUES ('reset_trials_2026_03_01')`).run();
   }
+
+  // Drop UNIQUE constraint on messaging_subscriptions.webhook_id.
+  // Teams subscriptions deliberately share a webhook_id per bot (Azure Bot Service
+  // has a single messaging endpoint per bot registration). The UNIQUE constraint
+  // blocks creating a second subscription for the same bot on a different channel.
+  await migrateMessagingSubsDropWebhookUnique(db);
 }
 
 // All valid integration providers - add new providers here
-const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter'] as const;
+const INTEGRATION_PROVIDERS = ['google_drive', 'github', 'gmail', 'google_calendar', 'google_contacts', 'google_sheets', 'google_forms', 'box', 'onedrive', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook'] as const;
 
 // All valid terminal integration providers (includes 'browser' which is not an OAuth provider)
 const TERMINAL_INTEGRATION_PROVIDERS = [...INTEGRATION_PROVIDERS, 'browser'] as const;
@@ -1556,7 +1562,7 @@ async function migrateSchedulesTable(db: D1Database): Promise<void> {
 }
 
 // All valid dashboard item types - add new types here
-const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter'] as const;
+const DASHBOARD_ITEM_TYPES = ['note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule', 'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook'] as const;
 
 async function migrateDashboardItemTypes(db: D1Database): Promise<void> {
   const tableInfo = await db.prepare(`
@@ -1693,4 +1699,72 @@ async function migrateTerminalIntegrationProviders(db: D1Database): Promise<void
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `).run();
+}
+
+async function migrateMessagingSubsDropWebhookUnique(db: D1Database): Promise<void> {
+  const migrationName = 'drop_messaging_subs_webhook_unique_2026_03';
+  const done = await db.prepare(
+    `SELECT name FROM schema_migrations WHERE name = ?`
+  ).bind(migrationName).first();
+  if (done) return;
+
+  // Check current schema — skip if webhook_id already lacks UNIQUE
+  const tableInfo = await db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messaging_subscriptions'`
+  ).first<{ sql: string }>();
+  if (!tableInfo?.sql || !tableInfo.sql.includes('webhook_id TEXT UNIQUE')) {
+    // Already correct — just mark as done
+    await db.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(migrationName).run();
+    return;
+  }
+
+  // Recreate table with identical schema but webhook_id without UNIQUE.
+  // Use PRAGMA table_info to discover all columns present in the live table,
+  // so ALTER TABLE additions (hybrid_mode, user_phone, etc.) are preserved.
+  const cols = await db.prepare(`PRAGMA table_info(messaging_subscriptions)`).all<{ name: string }>();
+  const columnList = (cols.results || []).map(c => c.name).join(', ');
+
+  await db.batch([
+    db.prepare(`PRAGMA foreign_keys=OFF`),
+    db.prepare(`
+      CREATE TABLE messaging_subscriptions_new (
+        id TEXT PRIMARY KEY,
+        dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES dashboard_items(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        channel_id TEXT,
+        channel_name TEXT,
+        chat_id TEXT,
+        team_id TEXT,
+        webhook_id TEXT,
+        webhook_secret TEXT,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'paused', 'error')),
+        last_message_at TEXT,
+        error_message TEXT,
+        hybrid_mode INTEGER NOT NULL DEFAULT 0,
+        hybrid_handshake_at TEXT,
+        user_phone TEXT,
+        user_integration_id TEXT REFERENCES user_integrations(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `),
+    db.prepare(`
+      INSERT INTO messaging_subscriptions_new (${columnList})
+      SELECT ${columnList} FROM messaging_subscriptions
+    `),
+    db.prepare(`DROP TABLE messaging_subscriptions`),
+    db.prepare(`ALTER TABLE messaging_subscriptions_new RENAME TO messaging_subscriptions`),
+    // Recreate all indexes — DROP TABLE removes them from the old table
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_messaging_subs_webhook ON messaging_subscriptions(webhook_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_messaging_subs_dashboard ON messaging_subscriptions(dashboard_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_messaging_subs_item ON messaging_subscriptions(item_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_channel ON messaging_subscriptions(provider, channel_id)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_messaging_subs_provider_team_channel ON messaging_subscriptions(provider, team_id, channel_id)`),
+    // Partial unique index — duplicate-subscription guard (expressions must be in CREATE INDEX, not table UNIQUE)
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messaging_subs_active_channel ON messaging_subscriptions(dashboard_id, item_id, provider, COALESCE(channel_id, ''), COALESCE(chat_id, '')) WHERE status IN ('pending', 'active')`),
+    db.prepare(`PRAGMA foreign_keys=ON`),
+    db.prepare(`INSERT INTO schema_migrations (name) VALUES ('${migrationName}')`),
+  ]);
 }

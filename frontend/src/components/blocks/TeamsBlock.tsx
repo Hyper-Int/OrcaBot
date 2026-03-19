@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v2-help-button
+// REVISION: teams-block-v8-stale-team-reset-popup-cleanup
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v2-help-button";
+const MODULE_REVISION = "teams-block-v7-stable-team-selection";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -56,6 +56,7 @@ interface TeamsIntegration {
   connected: boolean;
   accountName: string | null;
   tenantId: string | null;
+  metadata?: { auth_type?: string; [key: string]: unknown };
 }
 
 interface TeamsStatus {
@@ -70,6 +71,7 @@ interface MessagingSubscription {
   provider: string;
   channel_id: string | null;
   channel_name: string | null;
+  webhook_id?: string | null;
   status: string;
 }
 
@@ -84,7 +86,7 @@ async function getTeamsIntegration(dashboardId: string): Promise<TeamsIntegratio
     return await apiGet<TeamsIntegration>(url.toString());
   } catch (err) {
     if (err && typeof err === "object" && "status" in err && (err as { status: number }).status === 404) {
-      return { connected: false, accountName: null, tenantId: null };
+      return { connected: false, accountName: null, tenantId: null, metadata: undefined };
     }
     throw err;
   }
@@ -106,10 +108,18 @@ async function disconnectTeamsApi(dashboardId: string): Promise<{ ok: boolean }>
   return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
 }
 
-async function listTeamsChannels(): Promise<{ channels: TeamsChannel[] }> {
+interface TeamsTeamInfo { id: string; name: string }
+interface TeamsChannelsResponse {
+  channels: TeamsChannel[];
+  teams?: TeamsTeamInfo[];
+  team_id?: string;
+}
+
+async function listTeamsChannels(teamId?: string): Promise<TeamsChannelsResponse> {
   const url = new URL(`${API.cloudflare.base}/integrations/teams/channels`);
+  if (teamId) url.searchParams.set("team_id", teamId);
   try {
-    return await apiGet<{ channels: TeamsChannel[] }>(url.toString());
+    return await apiGet<TeamsChannelsResponse>(url.toString());
   } catch {
     return { channels: [] };
   }
@@ -143,6 +153,7 @@ async function createSubscription(
   itemId: string,
   channelId: string,
   channelName: string,
+  teamId?: string | null,
 ): Promise<{ id: string; webhookId: string }> {
   const url = new URL(`${API.cloudflare.base}/messaging/subscriptions`);
   return apiFetch<{ id: string; webhookId: string }>(url.toString(), {
@@ -154,6 +165,7 @@ async function createSubscription(
       provider: "teams",
       channelId,
       channelName,
+      teamId: teamId || undefined,
     }),
   });
 }
@@ -182,6 +194,43 @@ interface TeamsData extends Record<string, unknown> {
 }
 
 type TeamsNode = Node<TeamsData, "teams">;
+
+function WebhookUrlDisplay({ webhookId }: { webhookId: string }) {
+  const [copied, setCopied] = React.useState(false);
+  const webhookUrl = `${API.cloudflare.base.replace(/\/+$/, "")}/webhooks/teams/${webhookId}`;
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard API unavailable */ }
+  };
+
+  return (
+    <div className="px-2 py-1 bg-[var(--background)] border-t border-dashed border-[var(--border)]">
+      <p className="text-[8px] text-[var(--text-muted)] mb-0.5">
+        Set this as your Azure Bot messaging endpoint:
+      </p>
+      <div className="flex items-center gap-1">
+        <code className="text-[8px] text-[var(--text-secondary)] truncate flex-1 select-all">
+          {webhookUrl}
+        </code>
+        <button
+          onClick={handleCopy}
+          className="shrink-0 p-0.5 rounded hover:bg-[var(--background)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] nodrag"
+          title="Copy webhook URL"
+        >
+          {copied
+            ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+            : <Copy className="w-2.5 h-2.5" />
+          }
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
   const dashboardId = data.dashboardId;
@@ -231,9 +280,16 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
   const [subscribing, setSubscribing] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [tokenInput, setTokenInput] = React.useState("");
+  const [appIdInput, setAppIdInput] = React.useState("");
   const [connecting, setConnecting] = React.useState(false);
+  const [availableTeams, setAvailableTeams] = React.useState<TeamsTeamInfo[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = React.useState<string | null>(null);
 
   const initialLoadDone = React.useRef(false);
+  // Use a ref for selectedTeamId so loadIntegration always reads the current value
+  // without needing it in the dependency array (which would re-create the callback on every team switch).
+  const selectedTeamIdRef = React.useRef(selectedTeamId);
+  selectedTeamIdRef.current = selectedTeamId;
 
   const loadIntegration = React.useCallback(async () => {
     if (!dashboardId) return;
@@ -247,11 +303,23 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
       setIntegration(integrationData);
       setStatus(statusData);
       if (integrationData.connected) {
+        const currentTeamId = selectedTeamIdRef.current;
         const [channelResult, subs] = await Promise.all([
-          listTeamsChannels(),
+          listTeamsChannels(currentTeamId ?? undefined),
           listSubscriptions(dashboardId),
         ]);
         setAvailableChannels(channelResult.channels);
+        if (channelResult.teams?.length) {
+          setAvailableTeams(channelResult.teams);
+          // Reset stale team selection: if the current team ID doesn't appear in
+          // the server's team list (e.g. after reconnecting a different account),
+          // fall back to the server-provided default so we don't stick on an
+          // invalid team with empty channels.
+          const teamStillValid = currentTeamId && channelResult.teams.some(t => t.id === currentTeamId);
+          if (!teamStillValid && channelResult.team_id) {
+            setSelectedTeamId(channelResult.team_id);
+          }
+        }
         setSubscriptions(subs.filter(s => s.provider === "teams" && s.item_id === id));
       }
       initialLoadDone.current = true;
@@ -261,6 +329,14 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
       setLoading(false);
     }
   }, [dashboardId, id]);
+
+  const handleTeamChange = React.useCallback(async (teamId: string) => {
+    setSelectedTeamId(teamId);
+    try {
+      const result = await listTeamsChannels(teamId);
+      setAvailableChannels(result.channels);
+    } catch { /* keep current channels */ }
+  }, []);
 
   const loadedKeyRef = React.useRef<string | null>(null);
 
@@ -285,13 +361,47 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
     }
   };
 
+  const handleConnectOAuth = () => {
+    if (!dashboardId) return;
+    const base = API.cloudflare.base.replace(/\/$/, "");
+    const url = `${base}/integrations/teams/connect?dashboard_id=${dashboardId}&mode=popup`;
+    const popup = window.open(url, "teams-auth", "width=600,height=700");
+    if (!popup) return;
+    let completed = false;
+    const cleanup = () => {
+      if (completed) return;
+      completed = true;
+      window.removeEventListener("message", onMessage);
+      clearInterval(pollTimer);
+      popup.close();
+      loadIntegration();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "teams-auth-complete") {
+        cleanup();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    const pollTimer = setInterval(() => {
+      if (popup.closed) {
+        cleanup();
+      }
+    }, 500);
+  };
+
+  const [showManualToken, setShowManualToken] = React.useState(false);
+
   const handleConnect = async () => {
     if (!tokenInput.trim() || !dashboardId) return;
     setConnecting(true);
     try {
-      await connectWithToken(dashboardId, tokenInput.trim());
+      const metadata = appIdInput.trim()
+        ? { app_id: appIdInput.trim() }
+        : undefined;
+      await connectWithToken(dashboardId, tokenInput.trim(), metadata);
       await loadIntegration();
       setTokenInput("");
+      setAppIdInput("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to connect");
     } finally {
@@ -310,7 +420,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         await deleteSubscription(existingSub.id);
         setSubscriptions(prev => prev.filter(s => s.id !== existingSub.id));
       } else {
-        const result = await createSubscription(dashboardId, id, channel.id, channel.name);
+        const result = await createSubscription(dashboardId, id, channel.id, channel.name, selectedTeamId);
         setSubscriptions(prev => [
           ...prev,
           {
@@ -320,6 +430,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
             provider: "teams",
             channel_id: channel.id,
             channel_name: channel.name,
+            webhook_id: result.webhookId,
             status: "active",
           },
         ]);
@@ -471,26 +582,50 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
               Connect Microsoft Teams to send and receive messages
             </p>
             <div className="w-full space-y-2 nodrag">
-              <input
-                type="password"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Paste your Teams bot token"
-                className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
-              />
               <Button
                 size="sm"
-                onClick={handleConnect}
-                disabled={!tokenInput.trim() || connecting}
+                onClick={handleConnectOAuth}
                 className="nodrag w-full"
                 style={{ backgroundColor: TEAMS_PURPLE, color: "#fff" }}
               >
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-                Connect Bot
+                Connect with Microsoft
               </Button>
-              <p className="text-[9px] text-[var(--text-muted)] text-center">
-                Get a token from Azure Bot registration
-              </p>
+
+              <button
+                onClick={() => setShowManualToken(!showManualToken)}
+                className="text-[9px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] text-center w-full"
+              >
+                {showManualToken ? "Hide manual token" : "Or use manual token"}
+              </button>
+
+              {showManualToken && (
+                <>
+                  <input
+                    type="text"
+                    value={appIdInput}
+                    onChange={(e) => setAppIdInput(e.target.value)}
+                    placeholder="Bot App ID (from Azure Bot Service)"
+                    className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
+                  />
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="Bot App Secret"
+                    className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleConnect}
+                    disabled={!tokenInput.trim() || !appIdInput.trim() || connecting}
+                    className="nodrag w-full"
+                    variant="ghost"
+                  >
+                    {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                    Connect Bot
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -505,7 +640,35 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         {header}
 
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {availableTeams.length > 1 && (
+            <div className="px-2 py-1.5 border-b border-[var(--border)] nodrag">
+              <select
+                value={selectedTeamId || ""}
+                onChange={(e) => handleTeamChange(e.target.value)}
+                className="w-full text-[10px] px-1.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)]"
+              >
+                {availableTeams.map((team) => (
+                  <option key={team.id} value={team.id}>{team.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* Show webhook URL once for bot_framework integrations (Azure Bot has one endpoint per bot).
+              OAuth-connected users don't have a bot registration, so the webhook URL is not applicable. */}
+          {(() => {
+            if (integration?.metadata?.auth_type !== 'bot_framework') return null;
+            const activeWebhookId = subscriptions.find(s => s.status === "active" && s.webhook_id)?.webhook_id;
+            return activeWebhookId ? <WebhookUrlDisplay webhookId={activeWebhookId} /> : null;
+          })()}
           <div className="flex-1 overflow-y-auto">
+            {/* Inbound subscriptions require Bot Framework credentials */}
+            {integration?.metadata?.auth_type !== 'bot_framework' && availableChannels.length > 0 && (
+              <div className="px-2 py-1.5 bg-amber-500/10 border-b border-[var(--border)]">
+                <p className="text-[9px] text-amber-600 dark:text-amber-400">
+                  Inbound messages require Bot Framework credentials. Reconnect with App ID + Secret to subscribe to channels.
+                </p>
+              </div>
+            )}
             {availableChannels.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-4">
                 <MessageSquare className="w-6 h-6 text-[var(--text-muted)] mb-2" />
@@ -515,24 +678,51 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
                 </p>
               </div>
             ) : (
-              availableChannels.map((channel) => (
-                <div
-                  key={channel.id}
-                  className="w-full px-2 py-1.5 border-b border-[var(--border)] text-left"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <Hash className="w-3 h-3 shrink-0 text-[var(--text-muted)]" />
-                    <span className="text-[10px] truncate flex-1 font-medium text-[var(--text-muted)]">
-                      {channel.name}
-                    </span>
+              availableChannels.map((channel) => {
+                const sub = subscriptions.find(
+                  s => s.channel_id === channel.id && s.status === "active"
+                );
+                const isSubscribed = !!sub;
+                const isToggling = subscribing === channel.id;
+                const isBotFramework = integration?.metadata?.auth_type === 'bot_framework';
+                return (
+                  <div key={channel.id} className="border-b border-[var(--border)]">
+                    <button
+                      onClick={() => isBotFramework && handleToggleChannel(channel)}
+                      disabled={!isBotFramework || isToggling}
+                      className={cn(
+                        "w-full px-2 py-1.5 transition-colors text-left nodrag",
+                        !isBotFramework && "opacity-60 cursor-default",
+                        isSubscribed
+                          ? "bg-[#6264A7]/5 hover:bg-[#6264A7]/10"
+                          : isBotFramework ? "hover:bg-[var(--background)]" : "",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Hash className={cn(
+                          "w-3 h-3 shrink-0",
+                          isSubscribed ? "text-[#6264A7]" : "text-[var(--text-muted)]"
+                        )} />
+                        <span className={cn(
+                          "text-[10px] truncate flex-1 font-medium",
+                          isSubscribed ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]"
+                        )}>
+                          {channel.name}
+                        </span>
+                        {isToggling && <Loader2 className="w-3 h-3 animate-spin text-[var(--text-muted)]" />}
+                        {!isToggling && isSubscribed && (
+                          <CheckCircle className="w-3 h-3 text-[#6264A7]" />
+                        )}
+                      </div>
+                      {channel.topic && (
+                        <p className="text-[9px] text-[var(--text-muted)] mt-0.5 ml-[18px] truncate">
+                          {channel.topic}
+                        </p>
+                      )}
+                    </button>
                   </div>
-                  {channel.topic && (
-                    <p className="text-[9px] text-[var(--text-muted)] mt-0.5 ml-[18px] truncate">
-                      {channel.topic}
-                    </p>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -540,8 +730,12 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
             <div className="flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
               <CheckCircle className="w-2.5 h-2.5 text-green-500" />
               <span>Connected</span>
-              <span>&middot;</span>
-              <span>Inbound webhooks coming soon</span>
+              {subscriptions.filter(s => s.status === "active").length > 0 && (
+                <>
+                  <span>&middot;</span>
+                  <span>{subscriptions.filter(s => s.status === "active").length} subscribed</span>
+                </>
+              )}
             </div>
           </div>
         </div>

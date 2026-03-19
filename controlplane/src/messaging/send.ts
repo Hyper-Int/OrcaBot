@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-send-v4-clean-logging
-const MODULE_REVISION = 'messaging-send-v4-clean-logging';
+// REVISION: messaging-send-v6-teams-require-channel-context
+const MODULE_REVISION = 'messaging-send-v6-teams-require-channel-context';
 console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -20,6 +20,7 @@ import type { Env, MessagingProvider } from '../types';
 import { executeWhatsAppAction } from '../integration-policies/api-clients/whatsapp';
 import { executeSlackAction } from '../integration-policies/api-clients/slack';
 import { executeDiscordAction } from '../integration-policies/api-clients/discord';
+import { executeTeamsAction } from '../integration-policies/api-clients/teams';
 import { getAccessToken } from '../integration-policies/token-refresh';
 import { BridgeClient } from '../bridge/client';
 
@@ -133,6 +134,8 @@ async function sendToSubscription(
       return sendSlack(env, sub, text);
     case 'discord':
       return sendDiscord(env, sub, text);
+    case 'teams':
+      return sendTeams(env, sub, text);
     default:
       throw new Error(`Outbound send not yet supported for provider: ${provider}`);
   }
@@ -283,6 +286,68 @@ async function sendDiscord(
   // Send message to channel
   const result = await executeDiscordAction('discord.send_message', {
     channel: channelId,
+    text,
+  }, token) as { id?: string };
+  return { messageId: result?.id };
+}
+
+// ===== Teams =====
+
+async function sendTeams(
+  env: Env,
+  sub: SubscriptionRow,
+  text: string,
+): Promise<{ messageId?: string }> {
+  // Get the user's Teams token — prefer the exact integration stored on the subscription
+  const integrationId = sub.user_integration_id
+    || (await env.DB.prepare(
+      `SELECT id FROM user_integrations WHERE user_id = ? AND provider = 'teams' LIMIT 1`
+    ).bind(sub.user_id).first<{ id: string }>())?.id;
+
+  if (!integrationId) {
+    throw new Error('No Teams integration found for subscription owner');
+  }
+
+  const token = await getAccessToken(env, integrationId, 'teams');
+  if (!token) {
+    throw new Error('Teams token expired and could not be refreshed');
+  }
+
+  // Find the most recent inbound message for channel/thread context
+  const recent = await getRecentInbound(env, sub.id);
+  let metadata: Record<string, unknown> = {};
+  if (recent?.message_metadata) {
+    try { metadata = JSON.parse(recent.message_metadata); } catch { /* ignore */ }
+  }
+
+  const teamId = metadata.team_id as string | undefined || sub.team_id;
+  const channelId = recent?.channel_id || sub.channel_id;
+  const replyToId = metadata.reply_to_id as string | undefined;
+  // For top-level channel messages, reply_to_id is unset. Use the inbound
+  // message's platform_message_id so we reply in-thread instead of posting
+  // a new root message.
+  const replyTarget = replyToId || recent?.platform_message_id || undefined;
+
+  if (!teamId || !channelId) {
+    throw new Error('No Teams channel context — subscription missing team_id or channel_id');
+  }
+
+  // Reply in the Teams channel
+  if (replyTarget) {
+    // Reply in-thread to the inbound message
+    const result = await executeTeamsAction('teams.reply_thread', {
+      team_id: teamId,
+      channel_id: channelId,
+      message_id: replyTarget,
+      text,
+    }, token) as { id?: string };
+    return { messageId: result?.id };
+  }
+
+  // No inbound context — send as new message to channel
+  const result = await executeTeamsAction('teams.send_message', {
+    team_id: teamId,
+    channel_id: channelId,
     text,
   }, token) as { id?: string };
   return { messageId: result?.id };
