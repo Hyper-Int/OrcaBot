@@ -1,12 +1,16 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: mcp-browser-v3-navigate-egress
+
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
 
 // Browser automation MCP tools - handled locally in the sandbox
@@ -254,6 +258,206 @@ func (s *Server) handleBrowserMCPCall(w http.ResponseWriter, r *http.Request, to
 		url, _ := args["url"].(string)
 		if url == "" {
 			mcpError(fmt.Errorf("url is required"))
+			return
+		}
+		// Egress allowlist applies to all agent-driven browser navigation.
+		// Chromium runs as root and bypasses iptables; this is the interception point.
+		// REVISION: mcp-browser-v3-navigate-egress
+		if status, msg := s.checkBrowserEgress(url); status != 0 {
+			mcpError(fmt.Errorf("%s", msg))
+			return
+		}
+		// Auto-start browser if not running
+		status := session.BrowserStatus()
+		if !status.Running {
+			if _, err := session.StartBrowser(); err != nil {
+				mcpError(fmt.Errorf("failed to start browser: %w", err))
+				return
+			}
+		}
+		if err := session.BrowserNavigate(url); err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Navigated to %s", url))
+
+	case "browser_screenshot":
+		filename, _ := args["filename"].(string)
+		path, err := session.BrowserScreenshot(filename)
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Screenshot saved to: %s", path))
+
+	case "browser_click":
+		selector, _ := args["selector"].(string)
+		if selector == "" {
+			mcpError(fmt.Errorf("selector is required"))
+			return
+		}
+		if err := session.BrowserClick(selector); err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Clicked element: %s", selector))
+
+	case "browser_type":
+		selector, _ := args["selector"].(string)
+		text, _ := args["text"].(string)
+		if selector == "" {
+			mcpError(fmt.Errorf("selector is required"))
+			return
+		}
+		if err := session.BrowserType(selector, text); err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Typed text into: %s", selector))
+
+	case "browser_get_content":
+		content, err := session.BrowserGetContent()
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		// Truncate if too long
+		if len(content) > 50000 {
+			content = content[:50000] + "\n... (truncated)"
+		}
+		mcpResponse(content)
+
+	case "browser_get_html":
+		html, err := session.BrowserGetHTML()
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		// Truncate if too long
+		if len(html) > 100000 {
+			html = html[:100000] + "\n... (truncated)"
+		}
+		mcpResponse(html)
+
+	case "browser_get_url":
+		url, err := session.BrowserGetURL()
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(url)
+
+	case "browser_get_title":
+		title, err := session.BrowserGetTitle()
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(title)
+
+	case "browser_wait":
+		selector, _ := args["selector"].(string)
+		if selector == "" {
+			mcpError(fmt.Errorf("selector is required"))
+			return
+		}
+		timeout := 30
+		if t, ok := args["timeout"].(float64); ok && t > 0 {
+			timeout = int(t)
+		}
+		if err := session.BrowserWaitForSelector(selector, timeout); err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Element found: %s", selector))
+
+	case "browser_evaluate":
+		script, _ := args["script"].(string)
+		if script == "" {
+			mcpError(fmt.Errorf("script is required"))
+			return
+		}
+		result, err := session.BrowserEvaluate(script)
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(result)
+
+	case "browser_scroll":
+		x := 0
+		y := 0
+		if xVal, ok := args["x"].(float64); ok {
+			x = int(xVal)
+		}
+		if yVal, ok := args["y"].(float64); ok {
+			y = int(yVal)
+		}
+		if err := session.BrowserScroll(x, y); err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Scrolled by x=%d, y=%d", x, y))
+
+	default:
+		mcpError(fmt.Errorf("unknown browser tool: %s", toolName))
+	}
+}
+
+// handleBrowserMCPCallForPTY is the auth-free variant of handleBrowserMCPCall.
+// Takes explicit session instead of looking it up from r; no SO_PEERCRED/secret validation.
+// Called from handleMCPCallToolForPTY after auth is established.
+// REVISION: mcp-browser-v2-for-pty
+func (s *Server) handleBrowserMCPCallForPTY(w http.ResponseWriter, session *sessions.Session, toolName string, args map[string]interface{}) {
+	// MCP response helper
+	mcpResponse := func(text string) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": text},
+			},
+		})
+	}
+
+	mcpError := func(err error) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // MCP errors are still 200 with error in content
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
+			},
+			"isError": true,
+		})
+	}
+
+	switch toolName {
+	case "browser_start":
+		status, err := session.StartBrowser()
+		if err != nil {
+			mcpError(err)
+			return
+		}
+		mcpResponse(fmt.Sprintf("Browser started. Running: %v, Ready: %v", status.Running, status.Ready))
+
+	case "browser_stop":
+		session.StopBrowser()
+		mcpResponse("Browser stopped.")
+
+	case "browser_status":
+		status := session.BrowserStatus()
+		mcpResponse(fmt.Sprintf("Running: %v, Ready: %v", status.Running, status.Ready))
+
+	case "browser_navigate":
+		url, _ := args["url"].(string)
+		if url == "" {
+			mcpError(fmt.Errorf("url is required"))
+			return
+		}
+		// Egress allowlist applies to all agent-driven browser navigation.
+		// Chromium runs as root and bypasses iptables; this is the interception point.
+		// REVISION: mcp-browser-v3-navigate-egress
+		if status, msg := s.checkBrowserEgress(url); status != 0 {
+			mcpError(fmt.Errorf("%s", msg))
 			return
 		}
 		// Auto-start browser if not running

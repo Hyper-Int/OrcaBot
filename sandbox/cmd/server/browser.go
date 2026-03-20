@@ -1,11 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v2-pty-id-passthrough
+// REVISION: browser-v6-navigate-egress
 package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +16,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
 
 type browserStatusResponse struct {
@@ -91,15 +95,100 @@ func (s *Server) handleBrowserOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := session.OpenBrowserURL(req.URL); err != nil {
+	s.handleBrowserOpenForPTY(w, r, session, req.PtyID, req.URL)
+}
+
+// handleBrowserOpenLocal is the MCPLocal (port 8081) variant of handleBrowserOpen.
+// Requires pty_id + X-MCP-Secret to bind the caller to a specific PTY identity,
+// preventing arbitrary sandbox processes from opening browser URLs for any session.
+// Pool mode is blocked upstream by poolModeGuard (503), so this only runs in
+// non-pool mode where ORCABOT_MCP_SECRET is present in the PTY environment.
+// The external port-8080 route uses handleBrowserOpen, authenticated by internal token.
+// REVISION: browser-v4-tcp-pty-auth
+func (s *Server) handleBrowserOpenLocal(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("sessionId")
+	session := s.getSessiоnOrErrоr(w, sessionID)
+	if session == nil {
+		return
+	}
+
+	var req browserOpenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79817: invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	if req.PtyID == "" {
+		http.Error(w, "E79819: pty_id required for browser open on localhost MCP server", http.StatusBadRequest)
+		return
+	}
+	mcpSecret := r.Header.Get("X-MCP-Secret")
+	storedSecret := session.GetMCPSecret(req.PtyID)
+	if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
+		http.Error(w, "E79820: invalid PTY authentication for browser open", http.StatusForbidden)
+		return
+	}
+
+	s.handleBrowserOpenForPTY(w, r, session, req.PtyID, req.URL)
+}
+
+// checkBrowserEgress applies the egress allowlist to any agent-driven browser
+// navigation. Chromium runs as root and is outside the UID-range iptables rule,
+// so without this check an agent can exfiltrate data by encoding secrets in a URL.
+// Returns an HTTP status code and error message if navigation should be blocked,
+// or 0/nil if permitted.
+// No-op when EGRESS_PROXY_ENABLED is unset (s.egressEnabled == false).
+// REVISION: browser-v6-navigate-egress
+func (s *Server) checkBrowserEgress(urlStr string) (int, string) {
+	if !s.egressEnabled || s.egressProxy == nil {
+		return 0, ""
+	}
+	parsed, err := url.Parse(urlStr)
+	if err != nil || parsed.Host == "" {
+		return http.StatusBadRequest, "E79821: invalid URL for browser navigation"
+	}
+	host := parsed.Hostname()
+	port := 443
+	if p := parsed.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			port = n
+		}
+	}
+	if strings.EqualFold(parsed.Scheme, "http") {
+		port = 80
+	}
+	decision := s.egressProxy.CheckAndHold(host, port)
+	if decision != egress.DecisionDefault && decision != egress.DecisionAllowOnce && decision != egress.DecisionAllowAlways {
+		log.Printf("[browser] egress denied: host=%s decision=%s url=%s", host, decision, urlStr)
+		return http.StatusForbidden, "E79822: browser navigation denied by egress policy"
+	}
+	return 0, ""
+}
+
+// handleBrowserOpenForPTY is the auth-free core of handleBrowserOpen.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+//
+// INTENTIONAL DESIGN: this handler does NOT require a browser integration edge
+// (canvas wiring) or a control-plane policy decision. That gate (mcp.go handleMCPCallTool)
+// controls the LLM's *programmatic* browser access via MCP tools — screenshot, click,
+// evaluate JS. xdg-open is the shell-level "show this URL to the user" primitive:
+// the equivalent of the user pressing Ctrl+L in a browser themselves. It is visible
+// in the frontend noVNC pane; it is not a covert channel.
+// The security boundary here is the egress allowlist check; see checkBrowserEgress.
+// REVISION: browser-v6-navigate-egress
+func (s *Server) handleBrowserOpenForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string, urlStr string) {
+	if status, msg := s.checkBrowserEgress(urlStr); status != 0 {
+		http.Error(w, msg, status)
+		return
+	}
+
+	if err := session.OpenBrowserURL(urlStr); err != nil {
 		log.Printf("browser open error: %v", err)
 		http.Error(w, "E79311: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Notify control plane to create browser item in frontend (async, best-effort)
-	// Pass pty_id so the control plane can identify which terminal triggered the browser
-	go s.notifyControlPlaneBrowserOpen(sessionID, req.URL, req.PtyID)
+	go s.notifyControlPlaneBrowserOpen(session.ID, urlStr, ptyID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -432,6 +521,13 @@ func (s *Server) handleBrowserNavigate(w http.ResponseWriter, r *http.Request) {
 
 	if req.URL == "" {
 		http.Error(w, "E79839: url required", http.StatusBadRequest)
+		return
+	}
+
+	// Egress allowlist applies even on the internal-token-authenticated route.
+	// Chromium runs as root and bypasses iptables regardless of the caller.
+	if status, msg := s.checkBrowserEgress(req.URL); status != 0 {
+		http.Error(w, msg, status)
 		return
 	}
 

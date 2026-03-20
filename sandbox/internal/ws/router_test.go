@@ -68,8 +68,8 @@ func TestWebSocketConnect(t *testing.T) {
 	server, sm, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("", "")
+	session, _ := sm.Create("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	url := wsURL(server, session.ID, pty.ID)
 	conn := wsDialWithAuth(t, url, server.URL)
@@ -96,7 +96,7 @@ func TestWebSocketConnectNonExistentPTY(t *testing.T) {
 	server, sm, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	session, _ := sm.Create()
+	session, _ := sm.Create("", "")
 
 	url := wsURL(server, session.ID, "nonexistent")
 	headers := http.Header{}
@@ -114,8 +114,8 @@ func TestWebSocketSendReceive(t *testing.T) {
 	server, sm, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("", "")
+	session, _ := sm.Create("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	// Connect with user_id so we can take control
 	url := wsURLWithUser(server, session.ID, pty.ID, "test-user")
@@ -156,8 +156,8 @@ func TestWebSocketResize(t *testing.T) {
 	server, sm, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("", "")
+	session, _ := sm.Create("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	url := wsURL(server, session.ID, pty.ID)
 	conn := wsDialWithAuth(t, url, server.URL)
@@ -182,8 +182,8 @@ func TestWebSocketMultipleClients(t *testing.T) {
 	server, sm, cleanup := setupTestServer(t)
 	defer cleanup()
 
-	session, _ := sm.Create()
-	pty, _ := session.CreatePTY("", "")
+	session, _ := sm.Create("", "")
+	pty, _ := session.CreatePTY("", "", "")
 
 	// Connect two clients with different user IDs
 	url1 := wsURLWithUser(server, session.ID, pty.ID, "user1")

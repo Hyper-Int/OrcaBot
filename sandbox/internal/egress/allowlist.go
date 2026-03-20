@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-v3-chatgpt-localhost-bypass
+// REVISION: egress-allowlist-v5-expanded-defaults
 
 package egress
 
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const allowlistRevision = "egress-allowlist-v3-chatgpt-localhost-bypass"
+const allowlistRevision = "egress-allowlist-v5-expanded-defaults"
 
 func init() {
 	log.Printf("[egress-allowlist] REVISION: %s loaded at %s", allowlistRevision, time.Now().Format(time.RFC3339))
@@ -74,10 +74,14 @@ var defaultDomains = []string{
 
 	// LLM APIs (already brokered, but allow direct too)
 	"api.anthropic.com",
+	"anthropic.com",
+	"*.anthropic.com",
 	"claude.ai",
 	"*.claude.ai",
-	"platform.claude.com",
-	"api.openai.com",
+	"claude.com",
+	"*.claude.com",
+	"openai.com",
+	"*.openai.com",
 	"chatgpt.com",
 	"*.chatgpt.com",
 	"*.googleapis.com",
@@ -107,7 +111,89 @@ var defaultDomains = []string{
 
 	// Cloud metadata & auth
 	"metadata.google.internal",
-	"auth.openai.com",
+	"auth-cdn.oaistatic.com",
+	"*.oaistatic.com",
+	"featureassets.org",     // LaunchDarkly feature flag CDN (used by OpenAI and others)
+	"*.featureassets.org",
+	"prodregistryv2.org",   // OpenAI production registry
+	"*.prodregistryv2.org",
+	"cloudflare-dns.com",   // Cloudflare DNS-over-HTTPS (DoH)
+	"*.cloudflare-dns.com",
+	"statsigapi.net",       // Statsig feature flags / experimentation (used by OpenAI and others)
+	"*.statsigapi.net",
+	"browser-intake-datadoghq.com",  // Datadog browser RUM intake (already have *.datadoghq.com but this is a separate domain)
+	"*.browser-intake-datadoghq.com",
+	"intercom.io",          // Intercom support widget
+	"*.intercom.io",
+	"intercomcdn.com",      // Intercom CDN
+	"*.intercomcdn.com",
+
+	// Google auth / OAuth (distinct from *.googleapis.com)
+	// accounts.google.com is the OAuth sign-in page; *.gstatic.com serves static
+	// assets loaded during the auth flow. Both are needed for browser-based OAuth.
+	"accounts.google.com",
+	"google.com",
+	"*.google.com",
+	"*.gstatic.com",
+
+	// Docker registries
+	"registry-1.docker.io",
+	"auth.docker.io",
+	"*.docker.com",
+	"ghcr.io",
+	"*.ghcr.io",
+	"gcr.io",
+	"*.gcr.io",
+	"pkg.dev",
+	"*.pkg.dev",
+
+	// Rust toolchain
+	"sh.rustup.rs",
+	"static.rust-lang.org",
+
+	// Additional package managers
+	"pnpm.io",
+	"*.pnpm.io",
+	"install.python-poetry.org",
+	"python-poetry.org",
+	"get.deno.land",
+	"dl.deno.land",
+	"bun.sh",
+
+	// HuggingFace (top-level domain missing; only inference API was listed)
+	"huggingface.co",
+	"*.huggingface.co",
+	"*.hf.co",
+
+	// HashiCorp / Terraform
+	"releases.hashicorp.com",
+	"registry.terraform.io",
+	"checkpoint-api.hashicorp.com",
+
+	// Microsoft / Azure OAuth and APIs
+	"login.microsoftonline.com",
+	"*.microsoft.com",
+	"*.azure.com",
+	"*.azureedge.net",
+	"*.windows.net",
+
+	// Supported dashboard integrations with credentialed API access.
+	// These remain a conscious user risk because successful use still requires
+	// provider credentials or an attached integration; the allowlist only removes
+	// the network approval prompt for the provider's first-party domains.
+	"slack.com",
+	"*.slack.com",
+	"discord.com",
+	"*.discord.com",
+	"api.telegram.org",
+	"graph.facebook.com",
+	"api.box.com",
+	"account.box.com",
+	"*.box.com",
+	"api.twitter.com",
+	"x.com",
+	"*.x.com",
+	"developer.x.com",
 }
 
 // NewAllowlist creates an Allowlist with default domains.

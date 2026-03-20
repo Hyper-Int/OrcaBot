@@ -1,15 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-v28-localhost-auth-hardening
+// REVISION: mcp-v31-direct-dispatch
 
 package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,11 +18,12 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-v28-localhost-auth-hardening loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-v31-direct-dispatch loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // batchIntegrationCache holds a dashboard-level cache of all terminal integrations.
@@ -163,10 +162,9 @@ func cleanupDashboardIntegrationCacheLocked(now time.Time) {
 // validateIntegrationAuth validates the per-PTY MCP secret and looks up the stored
 // integration token. The bridge sends X-MCP-Secret (a per-PTY random nonce) as
 // proof-of-possession; the integration token itself never leaves server memory.
-func validateIntegrationAuth(w http.ResponseWriter, r *http.Request, session interface {
-	GetIntegrationToken(string) string
-	GetMCPSecret(string) string
-}) (ptyID, token string, ok bool) {
+// Pool mode: poolModeGuard returns 503 before this runs — only non-pool mode reaches here.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) validateIntegrationAuth(w http.ResponseWriter, r *http.Request, session *sessions.Session) (ptyID, token string, ok bool) {
 	ptyID = r.URL.Query().Get("pty_id")
 	if ptyID == "" {
 		w.Header().Set("Content-Type", "application/json")
@@ -178,7 +176,8 @@ func validateIntegrationAuth(w http.ResponseWriter, r *http.Request, session int
 		return "", "", false
 	}
 
-	// Validate MCP secret (proof-of-possession: prevents cross-PTY impersonation)
+	// Validate per-PTY secret: poolModeGuard returns 503 in pool mode before we reach here,
+	// so the caller is always a non-pool process that must have a valid X-MCP-Secret.
 	mcpSecret := r.Header.Get("X-MCP-Secret")
 	storedSecret := session.GetMCPSecret(ptyID)
 	if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
@@ -205,65 +204,33 @@ func validateIntegrationAuth(w http.ResponseWriter, r *http.Request, session int
 	return ptyID, storedToken, true
 }
 
-// handleMCPListTools returns browser tools (local), UI tools (from control plane),
-// and integration tools (based on attached integrations)
-func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
-	// Validate session exists
-	sessionID := r.PathValue("sessionId")
-	session := s.getSessiоnOrErrоr(w, sessionID)
-	if session == nil {
-		return
-	}
-
-	// Collect all tools - gated by integration attachment (no edge = no tool)
-	// IMPORTANT: Use empty slice (not nil) so JSON encodes as [] not null.
-	// MCP clients (Gemini) validate that "tools" is an array.
+// handleMCPListToolsForPTY is the auth-free core of handleMCPListTools.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// Session and ptyID are provided by the caller; no secret validation is performed.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPListToolsForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string) {
 	allTools := make([]interface{}, 0)
 
-	// Look up integration token by pty_id from server memory (broker pattern).
-	// The bridge only sends pty_id — the token never leaves this process.
-	// Validate MCP secret to prevent cross-PTY impersonation.
-	ptyID := r.URL.Query().Get("pty_id")
 	if ptyID != "" {
-		mcpSecret := r.Header.Get("X-MCP-Secret")
-		storedSecret := session.GetMCPSecret(ptyID)
-		secretValid := storedSecret != "" && subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) == 1
-
 		storedToken := session.GetIntegrationToken(ptyID)
-
-		// Diagnostic logging: identify exactly which auth check fails (silent failures = invisible bugs)
-		ptyPrefix := ptyID
-		if len(ptyPrefix) > 8 {
-			ptyPrefix = ptyPrefix[:8]
-		}
-		if storedSecret == "" {
-			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s has NO stored MCP secret (server memory empty for this PTY)", ptyPrefix)
-		} else if !secretValid {
-			// Log hashes to identify mismatch source without exposing actual secrets
-			headerHash := sha256.Sum256([]byte(mcpSecret))
-			storedHash := sha256.Sum256([]byte(storedSecret))
-			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s MCP secret MISMATCH (header sha256=%s, stored sha256=%s, header len=%d, stored len=%d)",
-				ptyPrefix, hex.EncodeToString(headerHash[:8]), hex.EncodeToString(storedHash[:8]), len(mcpSecret), len(storedSecret))
-		}
 		if storedToken == "" {
-			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s has NO integration token (PTY created without token?)", ptyPrefix)
+			log.Printf("[mcp-tools] ListTools: WARNING ptyID=%s has NO integration token (PTY created without token?)", func() string {
+				if len(ptyID) > 8 {
+					return ptyID[:8]
+				}
+				return ptyID
+			}())
 		}
-
-		if storedToken != "" && secretValid {
-			// Use dashboard-level batch cache to avoid rate-limit storms.
-			// A single batch call fetches integrations for ALL terminals in the dashboard,
-			// replacing N per-PTY calls. This prevents E79601 when multiple bridges poll.
+		if storedToken != "" {
 			integrations := getCachedIntegrations(session.DashboardID, ptyID, storedToken)
 			if integrations == nil {
-				log.Printf("[mcp-tools] ListTools: no integrations available for ptyID=%s (fetch failed or empty)", ptyPrefix)
+				log.Printf("[mcp-tools] ListTools: no integrations available for ptyID=%s (fetch failed or empty)", ptyID)
 			} else {
 				var activeProviders []string
 				for _, integration := range integrations.Integrations {
-					// Only add tools if there's an active policy
 					if integration.ActivePolicyID != "" {
 						activeProviders = append(activeProviders, integration.Provider)
 						if integration.Provider == "browser" {
-							// Browser tools are handled locally but still gated by attachment
 							for _, tool := range s.handleBrowserMCPTools() {
 								allTools = append(allTools, tool)
 							}
@@ -279,9 +246,6 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-
-				// Notify session of current integrations for Drive sync management.
-				// This detects attach/detach of google_drive and triggers sync start/stop.
 				session.NotifyIntegrations(ptyID, activeProviders, storedToken)
 			}
 		}
@@ -303,13 +267,11 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 		targetURL := fmt.Sprintf("%s/internal/mcp/ui/tools", controlplaneURL)
 		req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
 		if err == nil {
-			// Use dashboard-scoped token if available, otherwise fall back to internal token
 			if session.MCPToken != "" {
 				req.Header.Set("X-Dashboard-Token", session.MCPToken)
 			} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
 				req.Header.Set("X-Internal-Token", internalToken)
 			}
-
 			resp, err := http.DefaultClient.Do(req)
 			if err == nil {
 				defer resp.Body.Close()
@@ -325,7 +287,6 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Return combined tools list
 	log.Printf("[mcp-tools] ListTools: returning %d tools (ptyID=%s)", len(allTools), ptyID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -333,15 +294,24 @@ func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMCPCallTool handles tool calls - browser tools locally, UI tools via control plane
-func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("sessionId")
-	session := s.getSessiоnOrErrоr(w, sessionID)
+// handleMCPListTools returns browser tools (local), UI tools (from control plane),
+// and integration tools (based on attached integrations).
+// Pool mode: poolModeGuard + requireLocalMCPAuth handle auth before this runs.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPListTооls(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
 		return
 	}
+	ptyID := r.URL.Query().Get("pty_id")
+	s.handleMCPListToolsForPTY(w, r, session, ptyID)
+}
 
-	// Parse incoming request to check tool name
+// handleMCPCallToolForPTY is the auth-free core of handleMCPCallTool.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// Session and ptyID are provided by the caller; no secret validation is performed.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPCallToolForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "E79815: "+err.Error(), http.StatusBadRequest)
@@ -357,15 +327,18 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this is a browser tool - enforce policy via gateway, then execute locally
 	if isBrowserTool(incomingReq.Name) {
-		// Validate caller's integration token (prevents cross-PTY impersonation)
-		_, integrationToken, tokenOk := validateIntegrationAuth(w, r, session)
-		if !tokenOk {
+		integrationToken := session.GetIntegrationToken(ptyID)
+		if integrationToken == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   true,
+				"message": "E79831: No integration token available for this terminal",
+			})
 			return
 		}
 
-		// Map tool name to gateway action for policy enforcement
 		browserAction, actionOk := browserToolToAction[incomingReq.Name]
 		if !actionOk {
 			w.Header().Set("Content-Type", "application/json")
@@ -377,10 +350,6 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Build args for gateway enforcement. For tools that interact with the current
-		// page (not navigate/start/stop/status), inject the browser's current URL so
-		// the gateway can enforce URL allowlist. Without this, only browser_navigate
-		// would be checked and a redirect or link-click could move to a disallowed domain.
 		gatewayArgs := make(map[string]interface{})
 		for k, v := range incomingReq.Arguments {
 			gatewayArgs[k] = v
@@ -395,15 +364,11 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Call gateway for full policy enforcement (attachment check, capability check,
-		// URL allowlist, rate limits, audit logging). The gateway returns allowed/denied
-		// for browser without trying to execute an API call.
 		gatewayClient := mcp.NewGatewayClient()
 		executeReq := mcp.ExecuteRequest{
 			Action: browserAction,
 			Args:   gatewayArgs,
 		}
-
 		resp, err := gatewayClient.Execute("browser", integrationToken, executeReq)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -414,8 +379,6 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-
-		// Check for gateway errors
 		if resp.Error != "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
@@ -426,8 +389,6 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-
-		// Check policy enforcement result
 		if !resp.Allowed {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -440,61 +401,34 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Policy allows - execute browser tool locally
-		s.handleBrowserMCPCall(w, r, incomingReq.Name, incomingReq.Arguments)
+		s.handleBrowserMCPCallForPTY(w, session, incomingReq.Name, incomingReq.Arguments)
 		return
 	}
 
-	// Check if this is an integration tool - route to gateway
 	if mcp.IsIntegrationTool(incomingReq.Name) {
-		s.handleIntegrationToolCall(w, r, incomingReq.Name, incomingReq.Arguments)
+		s.handleIntegrationToolCallForPTY(w, r, session, ptyID, incomingReq.Name, incomingReq.Arguments)
 		return
 	}
 
-	// Check if this is an agent state tool (tasks/memory) - route to gateway
 	if mcp.IsAgentStateTool(incomingReq.Name) {
-		s.handleAgentStateToolCall(w, r, incomingReq.Name, incomingReq.Arguments)
+		s.handleAgentStateToolCallForPTY(w, r, session, ptyID, incomingReq.Name, incomingReq.Arguments)
 		return
 	}
 
-	// Not a browser or integration tool - proxy to control plane for UI tools.
-	// SECURITY: Validate MCP secret to prevent ambient authority from arbitrary
-	// localhost processes. Without this check, any process in the sandbox could
-	// call UI tools using the server's stored dashboard token.
-	ptyID := r.URL.Query().Get("pty_id")
-	if ptyID != "" {
-		mcpSecret := r.Header.Get("X-MCP-Secret")
-		storedSecret := session.GetMCPSecret(ptyID)
-		if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   true,
-				"message": "E79845: Invalid MCP authentication for UI tool call",
-			})
-			return
-		}
+	// UI tool: proxy to control plane
+	if session.DashboardID == "" {
+		http.Error(w, "E79814: Session has no dashboard_id - cannot proxy MCP calls", http.StatusBadRequest)
+		return
 	}
-
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
-
 	if controlplaneURL == "" {
 		http.Error(w, "E79810: CONTROLPLANE_URL not configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Check if session has dashboard_id
-	if session.DashboardID == "" {
-		http.Error(w, "E79814: Session has no dashboard_id - cannot proxy MCP calls", http.StatusBadRequest)
-		return
-	}
-
-	// Validate or inject dashboard_id (using already-parsed incomingReq)
 	if incomingReq.Arguments == nil {
 		incomingReq.Arguments = make(map[string]interface{})
 	}
-
-	// If caller provided a dashboard_id, validate it matches the session's dashboard
 	if providedDashboardID, ok := incomingReq.Arguments["dashboard_id"].(string); ok && providedDashboardID != "" {
 		if providedDashboardID != session.DashboardID {
 			w.Header().Set("Content-Type", "application/json")
@@ -505,10 +439,8 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Always set to session's dashboard_id (validates or injects)
 	incomingReq.Arguments["dashboard_id"] = session.DashboardID
 
-	// Build request body for control plane
 	outgoingReq := map[string]interface{}{
 		"name":      incomingReq.Name,
 		"arguments": incomingReq.Arguments,
@@ -519,15 +451,12 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward to control plane internal endpoint
 	targetURL := fmt.Sprintf("%s/internal/mcp/ui/tools/call", controlplaneURL)
-
 	req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "E79817: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Use dashboard-scoped token if available, otherwise fall back to internal token
 	if session.MCPToken != "" {
 		req.Header.Set("X-Dashboard-Token", session.MCPToken)
 	} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
@@ -545,42 +474,43 @@ func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
-// handleMCPListItems proxies GET /mcp/items to control plane
-func (s *Server) handleMCPListItems(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("sessionId")
-	session := s.getSessiоnOrErrоr(w, sessionID)
+// handleMCPCallTool handles tool calls - routes to ForPTY variant after extracting session/ptyID.
+// Pool mode: poolModeGuard + requireLocalMCPAuth handle auth before this runs.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPCallTооl(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
 		return
 	}
+	ptyID := r.URL.Query().Get("pty_id")
+	s.handleMCPCallToolForPTY(w, r, session, ptyID)
+}
 
+// handleMCPListItemsForPTY is the auth-free core of handleMCPListItems.
+// Called directly by the privileged Unix socket handler after SO_PEERCRED auth.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPListItemsForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session) {
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
-
 	if controlplaneURL == "" {
 		http.Error(w, "E79810: CONTROLPLANE_URL not configured", http.StatusServiceUnavailable)
 		return
 	}
-
-	// Check if session has dashboard_id
 	if session.DashboardID == "" {
 		http.Error(w, "E79814: Session has no dashboard_id - cannot proxy MCP calls", http.StatusBadRequest)
 		return
 	}
 
-	// Forward to control plane internal endpoint
 	targetURL := fmt.Sprintf("%s/internal/mcp/ui/dashboards/%s/items", controlplaneURL, session.DashboardID)
-
 	req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
 	if err != nil {
 		http.Error(w, "E79819: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Use dashboard-scoped token if available, otherwise fall back to internal token
 	if session.MCPToken != "" {
 		req.Header.Set("X-Dashboard-Token", session.MCPToken)
 	} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
@@ -597,10 +527,20 @@ func (s *Server) handleMCPListItems(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// handleMCPListItems proxies GET /mcp/items to control plane.
+// Pool mode: poolModeGuard + requireLocalMCPAuth handle auth before this runs.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleMCPListItems(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+	s.handleMCPListItemsForPTY(w, r, session)
 }
 
 // handleIntegrationToolCall routes integration tool calls (gmail_*, github_*, etc.) to the gateway
@@ -612,12 +552,29 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Validate caller's integration token (prevents cross-PTY impersonation)
-	_, integrationToken, ok := validateIntegrationAuth(w, r, session)
+	ptyID, _, ok := s.validateIntegrationAuth(w, r, session)
 	if !ok {
 		return
 	}
 
-	// Get provider and action for this tool
+	s.handleIntegrationToolCallForPTY(w, r, session, ptyID, toolName, args)
+}
+
+// handleIntegrationToolCallForPTY is the auth-free variant of handleIntegrationToolCall.
+// Takes explicit session+ptyID instead of re-reading from r; no secret validation.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleIntegrationToolCallForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string, toolName string, args map[string]interface{}) {
+	integrationToken := session.GetIntegrationToken(ptyID)
+	if integrationToken == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   true,
+			"message": "E79831: No integration token available for this terminal",
+		})
+		return
+	}
+
 	provider := mcp.GetProviderForTool(toolName)
 	action := mcp.GetActionForTool(toolName)
 	if provider == "" || action == "" {
@@ -630,7 +587,6 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Call the gateway - context is derived server-side from args for security
 	gatewayClient := mcp.NewGatewayClient()
 	executeReq := mcp.ExecuteRequest{
 		Action: action,
@@ -649,7 +605,6 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check for gateway/API errors (distinct from policy denials)
 	if resp.Error != "" {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -661,7 +616,6 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check if the request was denied by policy
 	if !resp.Allowed {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -673,13 +627,9 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Return the filtered response in MCP content format.
-	// MCP tool call responses must use {"content": [{"type": "text", "text": "..."}]}
-	// so that MCP clients (Claude Code, Gemini, etc.) can parse the result.
 	w.Header().Set("Content-Type", "application/json")
 	var resultText string
 	if resp.FilteredResponse != nil {
-		// Pretty-print the JSON for readability in the LLM context
 		var prettyBuf bytes.Buffer
 		if json.Indent(&prettyBuf, resp.FilteredResponse, "", "  ") == nil {
 			resultText = prettyBuf.String()
@@ -692,17 +642,15 @@ func (s *Server) handleIntegrationToolCall(w http.ResponseWriter, r *http.Reques
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"content": []map[string]interface{}{
-			{
-				"type": "text",
-				"text": resultText,
-			},
+			{"type": "text", "text": resultText},
 		},
 	})
 }
 
-// handleAgentStateToolCall handles task and memory tool calls via the gateway
+// handleAgentStateToolCall handles task and memory tool calls via the gateway.
 // Agent state tools (tasks/memory) are "always available" - they don't require integration
-// attachment or X-Integration-Token. They use the session's MCP token for auth.
+// attachment. Pool mode: poolModeGuard returns 503 before this runs; secret validation
+// is done here for the non-pool (TCP) path, then delegates to ForPTY variant.
 func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request, toolName string, args map[string]interface{}) {
 	sessionID := r.PathValue("sessionId")
 	session := s.getSessiоnOrErrоr(w, sessionID)
@@ -710,19 +658,13 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Agent state tools are always available. Session-scoped operations use the
-	// stored PTY token (broker pattern — token stays in server memory).
-	// SECURITY: Validate MCP secret to prevent cross-PTY impersonation and
-	// ambient authority from arbitrary localhost processes.
-	var authToken string
-	var authType mcp.AuthType = mcp.AuthTypeDashboardToken // Default to dashboard token
+	// Validate per-PTY secret when pty_id is provided.
+	// poolModeGuard returns 503 in pool mode before this runs, so we always validate.
 	ptyID := r.URL.Query().Get("pty_id")
 	if ptyID != "" {
 		mcpSecret := r.Header.Get("X-MCP-Secret")
 		storedSecret := session.GetMCPSecret(ptyID)
-		secretValid := storedSecret != "" && subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) == 1
-
-		if !secretValid {
+		if storedSecret == "" || subtle.ConstantTimeCompare([]byte(mcpSecret), []byte(storedSecret)) != 1 {
 			// SECURITY: If pty_id is provided but secret is invalid, reject rather
 			// than silently falling back to dashboard token. This prevents local
 			// processes from using pty_id without proof-of-possession.
@@ -734,24 +676,33 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 			})
 			return
 		}
+	}
 
+	s.handleAgentStateToolCallForPTY(w, r, session, ptyID, toolName, args)
+}
+
+// handleAgentStateToolCallForPTY is the auth-free variant of handleAgentStateToolCall.
+// Takes explicit session+ptyID; selects auth token without secret validation.
+// REVISION: mcp-v31-direct-dispatch
+func (s *Server) handleAgentStateToolCallForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string, toolName string, args map[string]interface{}) {
+	// Select auth: prefer per-PTY integration token, fall back to dashboard token.
+	var authToken string
+	var authType mcp.AuthType = mcp.AuthTypeDashboardToken
+
+	if ptyID != "" {
 		storedToken := session.GetIntegrationToken(ptyID)
 		if storedToken != "" {
 			authToken = storedToken
 			authType = mcp.AuthTypePtyToken
 		}
-		// If secret is valid but no stored token, fall through to dashboard token
 	}
 
-	// Fall back to session MCP token (dashboard-scoped) — only when no pty_id provided
 	if authToken == "" {
 		if session.MCPToken != "" {
 			authToken = session.MCPToken
 			authType = mcp.AuthTypeDashboardToken
-			// When using dashboard token, session-scoped operations are not possible.
-			// Strip sessionScoped flag to make behavior explicit and prevent silent failures.
 			if sessionScoped, ok := args["sessionScoped"].(bool); ok && sessionScoped {
-				log.Printf("[mcp] WARNING: sessionScoped=true requested but no PTY token proof; creating dashboard-wide instead (provide X-Integration-Token for session scope)")
+				log.Printf("[mcp] WARNING: sessionScoped=true requested but no PTY token proof; creating dashboard-wide instead")
 				delete(args, "sessionScoped")
 			}
 		} else {
@@ -765,7 +716,6 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Get provider and action for this tool
 	provider := mcp.GetAgentStateToolProvider(toolName)
 	action := mcp.GetAgentStateToolAction(toolName)
 	if provider == "" || action == "" {
@@ -778,18 +728,14 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// REVISION: state-cache-v3-wired
-	// Check cache for read operations (cache hit saves a round-trip)
 	cache := session.GetStateCache()
-	const cacheMaxAge = 30 * time.Second // Consider cache fresh for 30s
-
+	const cacheMaxAge = 30 * time.Second
 	if cache != nil && cache.IsFresh(cacheMaxAge) {
 		if cached := s.tryServeCachedResponse(w, action, args, cache); cached {
 			return
 		}
 	}
 
-	// Call the agent state gateway with appropriate auth type
 	gatewayClient := mcp.NewGatewayClient()
 	executeReq := mcp.ExecuteRequest{
 		Action: action,
@@ -808,16 +754,12 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Update cache with successful response
 	if cache != nil {
 		s.updateCache(cache, action, args, resp)
 	}
 
-	// Format the response as JSON text for MCP
 	w.Header().Set("Content-Type", "application/json")
 	var resultText string
-
-	// Marshal the response to JSON
 	respJSON, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
 		resultText = fmt.Sprintf("Error formatting response: %v", err)
@@ -827,10 +769,7 @@ func (s *Server) handleAgentStateToolCall(w http.ResponseWriter, r *http.Request
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"content": []map[string]interface{}{
-			{
-				"type": "text",
-				"text": resultText,
-			},
+			{"type": "text", "text": resultText},
 		},
 	})
 }

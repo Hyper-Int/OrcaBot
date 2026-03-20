@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: pty-v2-release-after-wait
+
 package pty
 
 import (
@@ -34,6 +36,10 @@ type PTY struct {
 
 	mu     sync.Mutex
 	closed bool
+
+	// slotUID is non-zero when this PTY was assigned a pool slot.
+	// Close() calls pool.Release(slotUID) to return the slot after teardown.
+	slotUID int
 
 	// Done channel caching to prevent goroutine leaks
 	doneOnce sync.Once
@@ -106,6 +112,9 @@ func NewWithCommandEnv(command string, cols, rows uint16, dir string, extraEnv m
 // If command is empty, DefaultShell() is used.
 // Commands containing shell syntax (quotes, &&, pipes, $VAR) are run via "bash -c".
 // SECURITY: Sensitive tokens (INTERNAL_API_TOKEN, etc.) are filtered out.
+//
+// When the global UID pool is active (InitPool has been called and a slot was allocated),
+// use NewWithCommandEnvIDSlot instead to assign a dedicated UID to this PTY.
 func NewWithCommandEnvID(ptyID string, command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
 	command = strings.TrimSpace(command)
 	var cmd *exec.Cmd
@@ -128,6 +137,32 @@ func NewWithCommandEnvID(ptyID string, command string, cols, rows uint16, dir st
 		cmd.Dir = dir
 	}
 	return newWithCmdID(ptyID, cmd, cols, rows)
+}
+
+// NewWithCommandEnvIDSlot is like NewWithCommandEnvID but runs the PTY process as the
+// given pool slot's UID. The slot must have been obtained from Pool.Allocate() before
+// calling this. On success the slot is registered and released automatically when the
+// PTY closes; on failure the caller must release the slot.
+func NewWithCommandEnvIDSlot(slot *SlotEntry, sessionID string, command string, cols, rows uint16, dir string, extraEnv map[string]string) (*PTY, error) {
+	command = strings.TrimSpace(command)
+	var cmd *exec.Cmd
+	if command == "" {
+		cmd = exec.Command(DefaultShell())
+	} else if needsShell(command) {
+		cmd = exec.Command(DefaultShell(), "-c", command)
+	} else {
+		parts := strings.Fields(command)
+		cmd = exec.Command(parts[0], parts[1:]...)
+	}
+	env := append(filterSensitiveEnv(os.Environ()), "TERM=xterm-256color")
+	for key, value := range extraEnv {
+		env = append(env, key+"="+value)
+	}
+	cmd.Env = env
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	return newWithCmdIDSlot(slot, sessionID, cmd, cols, rows)
 }
 
 func newWithCmd(cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
@@ -155,6 +190,55 @@ func newWithCmdID(ptyID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) 
 		ID:   ptyID,
 		file: ptmx,
 		cmd:  cmd,
+	}, nil
+}
+
+func newWithCmdIDSlot(slot *SlotEntry, sessionID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
+	ptyID := slot.PTYID
+	if ptyID == "" {
+		var err error
+		ptyID, err = id.New()
+		if err != nil {
+			return nil, err
+		}
+		slot.PTYID = ptyID
+	}
+
+	pool := GetPool()
+	if pool != nil {
+		applySlotCredential(cmd, slot, pool.sandboxGID)
+		// Claim before launch: write ptyID+sessionID to the auth registry so the Unix
+		// socket accepts connections from this UID the instant the child process starts.
+		// Without this, a fast-starting child (e.g. an autostart script that immediately
+		// calls mcp-bridge or apiKeyHelper) could race Lookup and be rejected.
+		// On launch failure, Unclaim removes the entry so the slot stays clean.
+		// REVISION: pty-pool-v2-two-phase-register
+		pool.Claim(slot, ptyID, sessionID)
+	}
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
+		Cols: cols,
+		Rows: rows,
+	})
+	if err != nil {
+		if pool != nil {
+			pool.Unclaim(slot.UID)
+		}
+		return nil, err
+	}
+
+	// Record the shell PID and process group so Release() can kill the right processes.
+	pid := cmd.Process.Pid
+	pgid := readLeaderPGID(pid)
+	if pool != nil {
+		pool.SetLeader(slot.UID, pid, pgid)
+	}
+
+	return &PTY{
+		ID:      ptyID,
+		file:    ptmx,
+		cmd:     cmd,
+		slotUID: slot.UID,
 	}, nil
 }
 
@@ -244,7 +328,8 @@ func (p *PTY) Signal(sig Signal) error {
 	return p.cmd.Process.Signal(syscall.Signal(sig))
 }
 
-// Close terminates the PTY
+// Close terminates the PTY and, if the PTY was assigned a pool slot,
+// begins asynchronous slot teardown (process group kill + /proc verification).
 func (p *PTY) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -257,6 +342,22 @@ func (p *PTY) Close() error {
 	// Kill the process if still running
 	if p.cmd.Process != nil {
 		p.cmd.Process.Kill()
+	}
+
+	// Return the pool slot only after cmd.Wait() has reaped the zombie.
+	// pool.Release() uses hasProcessesForUID(/proc scan) to decide whether the slot
+	// is clean; a zombie remains in /proc until waited on, so calling Release()
+	// before Wait() permanently contaminates the slot.
+	// Done() starts cmd.Wait() via doneOnce (idempotent); we wait for it here.
+	if p.slotUID != 0 {
+		if pool := GetPool(); pool != nil {
+			uid := p.slotUID
+			doneCh := p.Done() // starts cmd.Wait() goroutine — idempotent
+			go func() {
+				<-doneCh        // zombie reaped; /proc entry gone
+				pool.Release(uid)
+			}()
+		}
 	}
 
 	// Close the PTY file

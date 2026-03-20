@@ -660,6 +660,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
           INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN || '',
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
+          ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),
         },
       });
 
@@ -2205,13 +2206,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'items' && segments[4] === 'session' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    // Parse optional egress_enabled from request body
-    let egressEnabled: boolean | undefined;
-    try {
-      const body = await request.json() as Record<string, unknown>;
-      if (body.egress_enabled === true) egressEnabled = true;
-    } catch { /* no body or invalid JSON — fine */ }
-    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, egressEnabled, ctx);
+    return sessions.createSessiоn(env, segments[1], segments[3], auth.user!.id, auth.user!.name, preferredRegion, ctx);
   }
 
   // POST /dashboards/:id/browser/start - Start dashboard browser

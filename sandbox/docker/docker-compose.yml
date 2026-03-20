@@ -14,6 +14,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     stdin_open: true
     tty: true
+    # Required for iptables NAT rules used by kernel-level egress enforcement
+    # (EGRESS_PROXY_ENABLED=true). Fly microVMs have this capability by default.
+    cap_add:
+      - NET_ADMIN
     # Resource limits for safety
     deploy:
       resources:

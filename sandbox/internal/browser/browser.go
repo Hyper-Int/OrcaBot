@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v6-liveness-check
+// REVISION: browser-v7-proxy-server
 package browser
 
 import (
@@ -32,19 +32,20 @@ type Status struct {
 }
 
 type Controller struct {
-	mu        sync.Mutex
-	workspace string
-	display   int
-	wsPort    int
-	vncPort   int
-	debugPort int
-	running   bool
-	ready     bool
-	processes []*exec.Cmd
+	mu              sync.Mutex
+	workspace       string
+	egressProxyPort int // when >0, Chromium is started with --proxy-server pointing here
+	display         int
+	wsPort          int
+	vncPort         int
+	debugPort       int
+	running         bool
+	ready           bool
+	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v6-liveness-check
-const browserRevision = "browser-v6-liveness-check"
+// REVISION: browser-v7-proxy-server
+const browserRevision = "browser-v7-proxy-server"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -53,9 +54,17 @@ func init() {
 var displayCounter uint32 = 90
 
 func NewController(workspace string) *Controller {
-	return &Controller{
-		workspace: workspace,
-	}
+	return &Controller{workspace: workspace}
+}
+
+// NewControllerWithEgress creates a Controller that routes all Chromium network
+// traffic through the egress proxy at 127.0.0.1:egressProxyPort. This ensures
+// that redirects, XHR, and subresource loads are subject to the same
+// CheckAndHold approval flow as the initial navigation URL.
+// Loopback addresses bypass the proxy so the CDP debug connection is unaffected.
+// REVISION: browser-v7-proxy-server
+func NewControllerWithEgress(workspace string, egressProxyPort int) *Controller {
+	return &Controller{workspace: workspace, egressProxyPort: egressProxyPort}
 }
 
 func (c *Controller) Start() (Status, error) {
@@ -147,8 +156,7 @@ func (c *Controller) Start() (Status, error) {
 	websockifyCmd := exec.Command("websockify", webArgs...)
 	websockifyCmd.Env = env
 
-	chromiumCmd := exec.Command(
-		"chromium",
+	chromiumArgs := []string{
 		"--no-sandbox",
 		"--disable-dev-shm-usage",
 		"--no-first-run",
@@ -164,11 +172,23 @@ func (c *Controller) Start() (Status, error) {
 		"--hide-crash-restore-bubble",
 		"--disable-infobars",
 		"--remote-debugging-address=127.0.0.1",
-		"--remote-debugging-port="+strconv.Itoa(debugPort),
-		"--user-data-dir="+userDataDir,
+		"--remote-debugging-port=" + strconv.Itoa(debugPort),
+		"--user-data-dir=" + userDataDir,
 		"--window-size=1280,720",
-		"about:blank",
-	)
+	}
+	// Route all Chromium traffic through the egress proxy when enabled.
+	// Chromium runs as root and is outside the iptables UID range, so without
+	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
+	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
+	// REVISION: browser-v7-proxy-server
+	if c.egressProxyPort > 0 {
+		chromiumArgs = append(chromiumArgs,
+			"--proxy-server=http://127.0.0.1:"+strconv.Itoa(c.egressProxyPort),
+			"--proxy-bypass-list=localhost;127.0.0.1;[::1]",
+		)
+	}
+	chromiumArgs = append(chromiumArgs, "about:blank")
+	chromiumCmd := exec.Command("chromium", chromiumArgs...)
 	chromiumCmd.Env = env
 
 	processes := []*exec.Cmd{xvfbCmd, vncCmd, websockifyCmd, chromiumCmd}

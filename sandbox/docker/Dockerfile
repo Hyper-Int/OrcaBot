@@ -62,6 +62,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Networking tools
     openssh-client \
     socat \
+    iptables \
     # Browser stack
     chromium \
     xvfb \
@@ -163,13 +164,43 @@ RUN chmod +x /usr/local/bin/xdg-open /usr/local/bin/gio /usr/local/bin/chromium-
     && if [ -x /usr/bin/chromium ]; then mv /usr/bin/chromium /usr/bin/chromium.real; fi \
     && ln -sf /usr/local/bin/chromium-wrapper /usr/bin/chromium
 
-# Create workspace directory with restrictive permissions
-# NOTE: 755 instead of 777 to prevent cross-session data leakage
-RUN mkdir -p /workspace && chmod 755 /workspace
-
 # Create non-root user for sandbox operations
-RUN useradd -m -s /bin/bash sandbox \
-    && chown -R sandbox:sandbox /workspace
+RUN useradd -m -s /bin/bash sandbox
+
+# Create workspace with group-write + setgid so all pty-NNN users (GID=sandbox)
+# can read/write the shared workspace. setgid ensures new files inherit sandbox
+# group, keeping the directory self-consistent across multiple PTY UIDs.
+# Mode 2775: owner=rwx, group=rwx, others=r-x, setgid bit set.
+# (777 is intentionally avoided; the sandbox group is the write boundary.)
+RUN mkdir -p /workspace \
+    && chown sandbox:sandbox /workspace \
+    && chmod 2775 /workspace
+
+# Create PTY UID pool: 100 unprivileged users (pty-000…pty-099, UIDs 2000–2099).
+# All are members of the "sandbox" group so they can access group-writable workspace files.
+# These are created at build time so there is zero runtime cost for PTY user allocation.
+# The iptables range rule targets UIDs 2000–2099; any change here must match main.go.
+RUN for i in $(seq 0 99); do \
+        useradd --system --no-create-home --no-user-group \
+                --uid $((2000 + $i)) \
+                --gid sandbox \
+                $(printf 'pty-%03d' $i); \
+    done
+
+# Set umask 0002 for all PTY shell sessions.
+# Without this, files created by pty-000 land at 0644/0755 (umask 0022) so
+# pty-001 can read them but not modify them — breaking the shared-workspace model.
+# umask 0002 → new files 0664, new dirs 0775; combined with the setgid /workspace
+# (GID=sandbox propagated to all new entries) every pty-NNN can read and write
+# files created by any other pty-NNN in the same sandbox VM.
+#
+# /etc/profile.d/ is sourced by login shells (bash, sh, dash).
+# /etc/bash.bashrc covers interactive non-login bash.
+# /etc/zsh/zshrc covers interactive zsh sessions.
+RUN echo 'umask 0002' > /etc/profile.d/orcabot-umask.sh \
+    && chmod 644 /etc/profile.d/orcabot-umask.sh \
+    && echo 'umask 0002' >> /etc/bash.bashrc \
+    && mkdir -p /etc/zsh && echo 'umask 0002' >> /etc/zsh/zshrc
 
 # Set up environment
 ENV HOME=/home/sandbox

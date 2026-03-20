@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hooks-v4-claude-api-key-helper
+// REVISION: hooks-v5-unix-socket-api-key
 
 package agenthooks
 
@@ -16,8 +16,8 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 )
 
-// REVISION: hooks-v4-claude-api-key-helper
-const agentHooksRevision = "hooks-v4-claude-api-key-helper"
+// REVISION: hooks-v5-unix-socket-api-key
+const agentHooksRevision = "hooks-v5-unix-socket-api-key"
 
 var agentHooksRevisionLogOnce sync.Once
 
@@ -66,6 +66,8 @@ func generateClaudeHooks(workspaceRoot, hooksDir string) error {
 	script := `#!/bin/bash
 # Claude Code stop hook - reads JSON from stdin, posts to sandbox
 # Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
+# REVISION: hooks-v5-unix-socket-api-key
+SOCK="/run/orcabot/privileged.sock"
 PORT="${MCP_LOCAL_PORT:-8081}"
 SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/claude-hook-debug.log"
@@ -179,7 +181,11 @@ fi
 # Fallback: if transcript didn't have the text, use PTY scrollback
 if [ -z "$LAST_MSG" ]; then
     echo "Transcript fallback: fetching PTY scrollback..." >> "$LOGFILE"
-    SCROLLBACK=$(curl -s -H "X-MCP-Secret: $SECRET" "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/scrollback" 2>/dev/null)
+    if [ -S "$SOCK" ]; then
+        SCROLLBACK=$(curl -s --unix-socket "$SOCK" http://x/scrollback 2>/dev/null)
+    else
+        SCROLLBACK=$(curl -s -H "X-MCP-Secret: $SECRET" "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/scrollback" 2>/dev/null)
+    fi
     if [ -n "$SCROLLBACK" ]; then
         echo "Raw scrollback (last 500 chars): ...${SCROLLBACK: -500}" >> "$LOGFILE"
         # Claude Code marks assistant responses with ● (bullet)
@@ -221,10 +227,17 @@ fi
 
 [ -z "$LAST_MSG" ] && LAST_MSG="Agent completed"
 
-curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
-  -H "Content-Type: application/json" \
-  -H "X-MCP-Secret: $SECRET" \
-  -d "{\"agent\":\"claude-code\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+BODY="{\"agent\":\"claude-code\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+if [ -S "$SOCK" ]; then
+    curl -sX POST --unix-socket "$SOCK" http://x/agent-stopped \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+else
+    curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
+      -H "Content-Type: application/json" \
+      -H "X-MCP-Secret: $SECRET" \
+      -d "$BODY"
+fi
 `
 
 	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
@@ -374,12 +387,54 @@ func SetClaudeApiKeyHelper(workspaceRoot, sessionID, ptyID, token string) error 
 	return nil
 }
 
+// SetClaudeApiKeyHelperUnixSocket writes an apiKeyHelper to ~/.claude/settings.local.json
+// that fetches the Anthropic key from the privileged Unix socket instead of a TCP endpoint.
+//
+// Security properties:
+//   - No bearer token is distributed — identity proven by SO_PEERCRED (kernel UID)
+//   - curl --unix-socket establishes the connection as the calling process's UID
+//   - The socket only accepts UIDs in the pool range (2000-2099)
+func SetClaudeApiKeyHelperUnixSocket(workspaceRoot string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .claude dir: %w", err)
+	}
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &settings); jsonErr != nil {
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	// curl connects to the Unix socket; the kernel provides our UID via SO_PEERCRED.
+	// The server looks up the UID in the pool registry to find our session.
+	// Output format: {"apiKey":"sk-ant-..."} — Claude Code reads the "apiKey" field.
+	settings["apiKeyHelper"] = `curl -sf --unix-socket /run/orcabot/privileged.sock http://x/anthropic-key | jq -r .apiKey`
+
+	data, err = json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write settings: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[agenthooks] Set Claude apiKeyHelper (unix-socket) in %s\n", settingsPath)
+	return nil
+}
+
 // generateGeminiHooks creates AfterAgent hook for Gemini CLI
 func generateGeminiHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "gemini-stop.sh")
 	script := `#!/bin/bash
 # Gemini CLI AfterAgent hook
 # Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
+# REVISION: hooks-v5-unix-socket-api-key
+SOCK="/run/orcabot/privileged.sock"
 PORT="${MCP_LOCAL_PORT:-8081}"
 SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/gemini-hook-debug.log"
@@ -404,10 +459,17 @@ fi
 
 [ -z "$LAST_MSG" ] && LAST_MSG="Agent completed"
 
-curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
-  -H "Content-Type: application/json" \
-  -H "X-MCP-Secret: $SECRET" \
-  -d "{\"agent\":\"gemini\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+BODY="{\"agent\":\"gemini\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+if [ -S "$SOCK" ]; then
+    curl -sX POST --unix-socket "$SOCK" http://x/agent-stopped \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+else
+    curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
+      -H "Content-Type: application/json" \
+      -H "X-MCP-Secret: $SECRET" \
+      -d "$BODY"
+fi
 echo '{}'  # Gemini requires JSON output
 `
 
@@ -610,31 +672,62 @@ func generateMoltbotHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "openclaw-stop.ts")
 	script := `// OpenClaw command:stop hook
 // Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
+// REVISION: hooks-v5-unix-socket-api-key
+import * as http from 'http';
+import * as fs from 'fs';
 import type { HookHandler } from '@openclaw/types';
 
+const SOCK = '/run/orcabot/privileged.sock';
+const useSocket = fs.existsSync(SOCK);
+
+function postAgentStopped(body: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const opts: http.RequestOptions = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      path: '/agent-stopped',
+    };
+    if (useSocket) {
+      opts.socketPath = SOCK;
+      opts.hostname = 'x';
+    } else {
+      const port = process.env.MCP_LOCAL_PORT || '8081';
+      const sessionId = process.env.ORCABOT_SESSION_ID || '';
+      const ptyId = process.env.ORCABOT_PTY_ID || '';
+      const mcpSecret = process.env.ORCABOT_MCP_SECRET || '';
+      opts.hostname = 'localhost';
+      opts.port = port;
+      opts.path = '/sessions/' + sessionId + '/ptys/' + ptyId + '/agent-stopped';
+      if (mcpSecret) {
+        (opts.headers as Record<string, string>)['X-MCP-Secret'] = mcpSecret;
+      }
+    }
+    const req = http.request(opts, (res) => {
+      res.resume();
+      res.on('end', resolve);
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 const handler: HookHandler = async (event) => {
-  const sessionId = process.env.ORCABOT_SESSION_ID;
-  const ptyId = process.env.ORCABOT_PTY_ID;
-  const port = process.env.MCP_LOCAL_PORT || '8081';
-  const mcpSecret = process.env.ORCABOT_MCP_SECRET || '';
-  if (!sessionId || !ptyId) {
-    console.error('Missing ORCABOT_SESSION_ID or ORCABOT_PTY_ID');
-    return;
+  if (!useSocket) {
+    const sessionId = process.env.ORCABOT_SESSION_ID;
+    const ptyId = process.env.ORCABOT_PTY_ID;
+    if (!sessionId || !ptyId) {
+      console.error('Missing ORCABOT_SESSION_ID or ORCABOT_PTY_ID');
+      return;
+    }
   }
   const lastMsg = event.messages?.slice(-1)[0] || 'Agent completed';
   try {
-    await fetch(
-      "http://localhost:" + port + "/sessions/" + sessionId + "/ptys/" + ptyId + "/agent-stopped",
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-MCP-Secret': mcpSecret },
-        body: JSON.stringify({
-          agent: 'openclaw',
-          lastMessage: typeof lastMsg === 'string' ? lastMsg.slice(0, 4096) : 'Agent completed',
-          reason: 'complete'
-        })
-      }
-    );
+    await postAgentStopped(JSON.stringify({
+      agent: 'openclaw',
+      lastMessage: typeof lastMsg === 'string' ? lastMsg.slice(0, 4096) : 'Agent completed',
+      reason: 'complete'
+    }));
   } catch (e) {
     console.error('Failed to notify agent stopped:', e);
   }
@@ -717,14 +810,23 @@ func generateDroidHooks(workspaceRoot, hooksDir string) error {
 	script := `#!/bin/bash
 # Droid (Factory.ai) Stop hook
 # Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
+# REVISION: hooks-v5-unix-socket-api-key
+SOCK="/run/orcabot/privileged.sock"
 PORT="${MCP_LOCAL_PORT:-8081}"
 SECRET="${ORCABOT_MCP_SECRET:-}"
 INPUT=$(cat)
 LAST_MSG=$(echo "$INPUT" | jq -r '.tool_input // "Agent completed"' 2>/dev/null | head -c 4096)
-curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
-  -H "Content-Type: application/json" \
-  -H "X-MCP-Secret: $SECRET" \
-  -d "{\"agent\":\"droid\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+BODY="{\"agent\":\"droid\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+if [ -S "$SOCK" ]; then
+    curl -sX POST --unix-socket "$SOCK" http://x/agent-stopped \
+      -H "Content-Type: application/json" \
+      -d "$BODY"
+else
+    curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
+      -H "Content-Type: application/json" \
+      -H "X-MCP-Secret: $SECRET" \
+      -d "$BODY"
+fi
 `
 
 	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
@@ -812,6 +914,8 @@ func generateCodexHooks(workspaceRoot, hooksDir string) error {
 	script := `#!/bin/bash
 # Codex CLI notify hook - receives JSON as first argument
 # Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, ORCABOT_MCP_SECRET, and MCP_LOCAL_PORT env vars set by the PTY process
+# REVISION: hooks-v5-unix-socket-api-key
+SOCK="/run/orcabot/privileged.sock"
 PORT="${MCP_LOCAL_PORT:-8081}"
 SECRET="${ORCABOT_MCP_SECRET:-}"
 LOGFILE="/tmp/codex-hook-debug.log"
@@ -825,10 +929,17 @@ echo "Event type: $EVENT_TYPE" >> "$LOGFILE"
 if [ "$EVENT_TYPE" = "agent-turn-complete" ]; then
     LAST_MSG=$(echo "$PAYLOAD" | jq -r '.["last-assistant-message"] // "Agent completed"' | head -c 4096)
     echo "Extracted message: $LAST_MSG" >> "$LOGFILE"
-    curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
-      -H "Content-Type: application/json" \
-      -H "X-MCP-Secret: $SECRET" \
-      -d "{\"agent\":\"codex\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+    BODY="{\"agent\":\"codex\",\"lastMessage\":$(echo "$LAST_MSG" | jq -Rs .),\"reason\":\"complete\"}"
+    if [ -S "$SOCK" ]; then
+        curl -sX POST --unix-socket "$SOCK" http://x/agent-stopped \
+          -H "Content-Type: application/json" \
+          -d "$BODY"
+    else
+        curl -sX POST "http://localhost:$PORT/sessions/$ORCABOT_SESSION_ID/ptys/$ORCABOT_PTY_ID/agent-stopped" \
+          -H "Content-Type: application/json" \
+          -H "X-MCP-Secret: $SECRET" \
+          -d "$BODY"
+    fi
 else
     echo "Ignoring non-completion event" >> "$LOGFILE"
 fi

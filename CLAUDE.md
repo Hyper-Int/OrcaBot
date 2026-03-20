@@ -124,10 +124,9 @@ Key files:
 - `frontend/src/components/EgressAllowlistPanel.tsx` — Allowlist management UI
 
 ### Network Egress Proxy Feature Flag
-The egress proxy is gated behind a feature flag for safe rollout:
+The egress proxy is gated behind a single env var:
 - **Global**: Set `EGRESS_PROXY_ENABLED=true` on the Fly machine to enable for all sessions
-- **Per-user opt-in**: Add `?egress=1` to any OrcaBot URL (persists to localStorage)
-- Without either trigger, the proxy runs but no PTY processes route through it
+- Without this flag, the proxy runs but no PTY processes route through it (iptables rules not installed, UID pool not activated)
 
 ## OAuth Integrations (Gmail/Drive/GitHub/Calendar/Twitter)
 - Control plane provides connect + callback endpoints:
