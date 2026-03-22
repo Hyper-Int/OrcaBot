@@ -3714,9 +3714,12 @@ export default function DashboardPage() {
                     Export as Template
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem disabled>
+                  <DropdownMenuItem onClick={() => {
+                    navigator.clipboard.writeText(window.location.href);
+                    toast.success("Link copied");
+                  }}>
                     <Link className="w-4 h-4 mr-2" />
-                    Copy Link (coming soon)
+                    Copy Link
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
