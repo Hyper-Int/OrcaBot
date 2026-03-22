@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v14-gemini-key-only
-console.log(`[controlplane] REVISION: controlplane-v14-gemini-key-only loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v15-linked-dashboards
+console.log(`[controlplane] REVISION: controlplane-v15-linked-dashboards loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -33,6 +33,7 @@ import * as attachments from './attachments/handler';
 import * as integrations from './integrations/handler';
 import * as integrationPolicies from './integration-policies/handler';
 import * as templates from './templates/handler';
+import * as links from './links/handler';
 import * as members from './members/handler';
 import * as mcpUi from './mcp-ui/handler';
 import * as bugReports from './bug-reports/handler';
@@ -1790,6 +1791,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const admin = isAdminEmail(env, auth.user!.email);
     return templates.deleteTemplate(env, auth.user!.id, segments[1], admin);
+  }
+
+  // ============================================
+  // Dashboard Link routes
+  // ============================================
+
+  // POST /dashboards/:id/link - Create a linked copy of a dashboard
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'link' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return links.createLink(env, segments[1], auth.user!.id);
+  }
+
+  // GET /dashboards/:id/links - List links for a dashboard
+  if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'links' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return links.getLinks(env, segments[1], auth.user!.id);
+  }
+
+  // DELETE /dashboards/:id/link/:linkId - Remove a link
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'link' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return links.deleteLink(env, segments[3], segments[1], auth.user!.id);
   }
 
   // ============================================

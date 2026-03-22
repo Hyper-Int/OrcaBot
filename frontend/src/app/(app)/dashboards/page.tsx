@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-header-v4-poll-all-paid-statuses
-const MODULE_REVISION = "desktop-header-v4-poll-all-paid-statuses";
+// REVISION: desktop-header-v5-linked-badge
+const MODULE_REVISION = "desktop-header-v5-linked-badge";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -28,6 +28,7 @@ import {
   XCircle,
   Clock,
   BarChart3,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -986,12 +987,21 @@ interface DashboardCardProps {
 }
 
 function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
+  const isLinked = (dashboard.linkedCount ?? 0) > 0;
+
   return (
     <Card className="group cursor-pointer hover:border-[var(--border-strong)] transition-colors">
       <div onClick={onClick}>
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between">
-            <CardTitle className="truncate pr-2">{dashboard.name}</CardTitle>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <CardTitle className="truncate">{dashboard.name}</CardTitle>
+              {isLinked && (
+                <span title={`${dashboard.linkedCount} linked dashboard${dashboard.linkedCount !== 1 ? 's' : ''}`}>
+                  <Link2 className="w-3.5 h-3.5 flex-shrink-0 text-[var(--foreground-muted)]" />
+                </span>
+              )}
+            </div>
             <button
               onClick={(e) => {
                 e.stopPropagation();
