@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v30-anthropic-key-pool-guard
+// REVISION: main-v31-canonical-egress-defaults
 
 package main
 
@@ -33,7 +33,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v30-anthropic-key-pool-guard"
+const mainRevision = "main-v31-canonical-egress-defaults"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -510,6 +510,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /egress/revoke", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressRevoke)))
 	mux.HandleFunc("GET /egress/pending", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressPending)))
 	mux.HandleFunc("GET /egress/allowlist", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressAllowlist)))
+	mux.HandleFunc("POST /egress/block-default", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressBlockDefault)))
+	mux.HandleFunc("DELETE /egress/block-default/{pattern}", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressUnblockDefault)))
 
 	return mux
 }
@@ -615,7 +617,8 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	}
 
 	var payload struct {
-		Domains []string `json:"domains"`
+		Domains         []string `json:"domains"`
+		BlockedPatterns []string `json:"blocked_patterns"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
@@ -629,11 +632,14 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 		}
 		allowlist.AddUserDomain(domain, "persisted-"+dashboardID)
 	}
+	for _, pattern := range payload.BlockedPatterns {
+		allowlist.BlockDefault(pattern)
+	}
 
 	s.egressAllowlistMu.Lock()
 	s.egressAllowlistDashboardID = dashboardID
 	s.egressAllowlistMu.Unlock()
-	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains for dashboard %s", len(payload.Domains), dashboardID)
+	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains and %d blocked defaults for dashboard %s", len(payload.Domains), len(payload.BlockedPatterns), dashboardID)
 	return nil
 }
 
@@ -1642,7 +1648,8 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 	if s.egressProxy == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"defaults": []string{},
+			"defaults": egress.DefaultPatterns(),
+			"blocked":  []string{},
 			"user":     map[string]string{},
 		})
 		return
@@ -1652,6 +1659,41 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"defaults": al.DefaultPatterns(),
+		"blocked":  al.BlockedDefaults(),
 		"user":     al.UserDomains(),
 	})
+}
+
+func (s *Server) handleEgressBlockDefault(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pattern string `json:"pattern"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79890: Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Pattern) == "" {
+		http.Error(w, "E79891: pattern required", http.StatusBadRequest)
+		return
+	}
+	if s.egressProxy == nil {
+		http.Error(w, "E79892: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+	s.egressProxy.Allowlist().BlockDefault(req.Pattern)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleEgressUnblockDefault(w http.ResponseWriter, r *http.Request) {
+	pattern := strings.TrimSpace(r.PathValue("pattern"))
+	if pattern == "" {
+		http.Error(w, "E79893: pattern required", http.StatusBadRequest)
+		return
+	}
+	if s.egressProxy == nil {
+		http.Error(w, "E79894: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+	s.egressProxy.Allowlist().UnblockDefault(pattern)
+	w.WriteHeader(http.StatusNoContent)
 }

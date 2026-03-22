@@ -1,18 +1,20 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-v5-expanded-defaults
+// REVISION: egress-allowlist-v7-canonical-default-catalog
 
 package egress
 
 import (
+	_ "embed"
+	"encoding/json"
 	"log"
 	"strings"
 	"sync"
 	"time"
 )
 
-const allowlistRevision = "egress-allowlist-v5-expanded-defaults"
+const allowlistRevision = "egress-allowlist-v7-canonical-default-catalog"
 
 func init() {
 	log.Printf("[egress-allowlist] REVISION: %s loaded at %s", allowlistRevision, time.Now().Format(time.RFC3339))
@@ -24,182 +26,74 @@ func init() {
 type Allowlist struct {
 	mu       sync.RWMutex
 	defaults []string          // glob patterns (e.g., "*.github.com")
+	blocked  map[string]bool   // blocked default patterns -> true
 	user     map[string]string // domain -> entryID (for revocation tracking)
 }
 
-// defaultDomains are always allowed without user approval.
-var defaultDomains = []string{
-	// Package registries
-	"registry.npmjs.org",
-	"pypi.org",
-	"files.pythonhosted.org",
-	"rubygems.org",
-	"proxy.golang.org",
-	"sum.golang.org",
-	"crates.io",
-	"static.crates.io",
-	"index.crates.io",
-	"registry.yarnpkg.com",
-	"repo.maven.apache.org",
-	"repo1.maven.org",
-	"plugins.gradle.org",
-	"services.gradle.org",
-	"*.gradle.org",
-	"central.sonatype.com",
+type DefaultCatalog struct {
+	Revision string                `json:"revision"`
+	Defaults []DefaultCatalogEntry `json:"defaults"`
+}
 
-	// Git hosting
-	"github.com",
-	"*.github.com",
-	"*.githubusercontent.com",
-	"gitlab.com",
-	"*.gitlab.com",
-	"bitbucket.org",
-	"*.bitbucket.org",
+type DefaultCatalogEntry struct {
+	Pattern   string `json:"pattern"`
+	Category  string `json:"category"`
+	Label     string `json:"label"`
+	Rationale string `json:"rationale"`
+}
 
-	// System packages
-	"deb.debian.org",
-	"*.debian.org",
-	"security.debian.org",
-	"archive.ubuntu.com",
-	"*.ubuntu.com",
-	"dl-cdn.alpinelinux.org",
+//go:embed defaults.json
+var defaultCatalogJSON []byte
 
-	// CDNs
-	"*.cloudflare.com",
-	"*.cloudfront.net",
-	"*.fastly.net",
-	"*.jsdelivr.net",
-	"*.unpkg.com",
-	"cdnjs.cloudflare.com",
+var defaultCatalog = mustLoadDefaultCatalog()
 
-	// LLM APIs (already brokered, but allow direct too)
-	"api.anthropic.com",
-	"anthropic.com",
-	"*.anthropic.com",
-	"claude.ai",
-	"*.claude.ai",
-	"claude.com",
-	"*.claude.com",
-	"openai.com",
-	"*.openai.com",
-	"chatgpt.com",
-	"*.chatgpt.com",
-	"*.googleapis.com",
-	"generativelanguage.googleapis.com",
-	"api.groq.com",
-	"api.together.xyz",
-	"api.fireworks.ai",
-	"api.mistral.ai",
-	"api.cohere.com",
-	"api-inference.huggingface.co",
+func mustLoadDefaultCatalog() DefaultCatalog {
+	var catalog DefaultCatalog
+	if err := json.Unmarshal(defaultCatalogJSON, &catalog); err != nil {
+		panic("egress defaults catalog invalid: " + err.Error())
+	}
 
-	// TTS providers
-	"api.elevenlabs.io",
-	"api.deepgram.com",
+	seen := make(map[string]bool, len(catalog.Defaults))
+	filtered := make([]DefaultCatalogEntry, 0, len(catalog.Defaults))
+	for _, entry := range catalog.Defaults {
+		pattern := strings.TrimSpace(strings.ToLower(entry.Pattern))
+		if pattern == "" {
+			panic("egress defaults catalog contains empty pattern")
+		}
+		if seen[pattern] {
+			panic("egress defaults catalog contains duplicate pattern: " + pattern)
+		}
+		seen[pattern] = true
+		entry.Pattern = pattern
+		filtered = append(filtered, entry)
+	}
+	catalog.Defaults = filtered
+	return catalog
+}
 
-	// Telemetry / monitoring (used by agents like Claude Code)
-	"*.datadoghq.com",
-	"*.datadoghq.eu",
-	"*.sentry.io",
+func DefaultCatalogRevision() string {
+	return defaultCatalog.Revision
+}
 
-	// Common dev tools
-	"nodejs.org",
-	"*.nodejs.org",
-	"dl.google.com",
-	"storage.googleapis.com",
-	"objects.githubusercontent.com",
+func DefaultCatalogEntries() []DefaultCatalogEntry {
+	result := make([]DefaultCatalogEntry, len(defaultCatalog.Defaults))
+	copy(result, defaultCatalog.Defaults)
+	return result
+}
 
-	// Cloud metadata & auth
-	"metadata.google.internal",
-	"auth-cdn.oaistatic.com",
-	"*.oaistatic.com",
-	"featureassets.org",     // LaunchDarkly feature flag CDN (used by OpenAI and others)
-	"*.featureassets.org",
-	"prodregistryv2.org",   // OpenAI production registry
-	"*.prodregistryv2.org",
-	"cloudflare-dns.com",   // Cloudflare DNS-over-HTTPS (DoH)
-	"*.cloudflare-dns.com",
-	"statsigapi.net",       // Statsig feature flags / experimentation (used by OpenAI and others)
-	"*.statsigapi.net",
-	"browser-intake-datadoghq.com",  // Datadog browser RUM intake (already have *.datadoghq.com but this is a separate domain)
-	"*.browser-intake-datadoghq.com",
-	"intercom.io",          // Intercom support widget
-	"*.intercom.io",
-	"intercomcdn.com",      // Intercom CDN
-	"*.intercomcdn.com",
-
-	// Google auth / OAuth (distinct from *.googleapis.com)
-	// accounts.google.com is the OAuth sign-in page; *.gstatic.com serves static
-	// assets loaded during the auth flow. Both are needed for browser-based OAuth.
-	"accounts.google.com",
-	"google.com",
-	"*.google.com",
-	"*.gstatic.com",
-
-	// Docker registries
-	"registry-1.docker.io",
-	"auth.docker.io",
-	"*.docker.com",
-	"ghcr.io",
-	"*.ghcr.io",
-	"gcr.io",
-	"*.gcr.io",
-	"pkg.dev",
-	"*.pkg.dev",
-
-	// Rust toolchain
-	"sh.rustup.rs",
-	"static.rust-lang.org",
-
-	// Additional package managers
-	"pnpm.io",
-	"*.pnpm.io",
-	"install.python-poetry.org",
-	"python-poetry.org",
-	"get.deno.land",
-	"dl.deno.land",
-	"bun.sh",
-
-	// HuggingFace (top-level domain missing; only inference API was listed)
-	"huggingface.co",
-	"*.huggingface.co",
-	"*.hf.co",
-
-	// HashiCorp / Terraform
-	"releases.hashicorp.com",
-	"registry.terraform.io",
-	"checkpoint-api.hashicorp.com",
-
-	// Microsoft / Azure OAuth and APIs
-	"login.microsoftonline.com",
-	"*.microsoft.com",
-	"*.azure.com",
-	"*.azureedge.net",
-	"*.windows.net",
-
-	// Supported dashboard integrations with credentialed API access.
-	// These remain a conscious user risk because successful use still requires
-	// provider credentials or an attached integration; the allowlist only removes
-	// the network approval prompt for the provider's first-party domains.
-	"slack.com",
-	"*.slack.com",
-	"discord.com",
-	"*.discord.com",
-	"api.telegram.org",
-	"graph.facebook.com",
-	"api.box.com",
-	"account.box.com",
-	"*.box.com",
-	"api.twitter.com",
-	"x.com",
-	"*.x.com",
-	"developer.x.com",
+func DefaultPatterns() []string {
+	result := make([]string, 0, len(defaultCatalog.Defaults))
+	for _, entry := range defaultCatalog.Defaults {
+		result = append(result, entry.Pattern)
+	}
+	return result
 }
 
 // NewAllowlist creates an Allowlist with default domains.
 func NewAllowlist() *Allowlist {
 	return &Allowlist{
-		defaults: append([]string{}, defaultDomains...),
+		defaults: DefaultPatterns(),
+		blocked:  make(map[string]bool),
 		user:     make(map[string]string),
 	}
 }
@@ -211,8 +105,11 @@ func (a *Allowlist) IsAllowed(domain string) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	// Check defaults (glob patterns)
+	// Check defaults (glob patterns), skipping any blocked patterns.
 	for _, pattern := range a.defaults {
+		if a.blocked[pattern] {
+			continue
+		}
 		if matchGlob(pattern, domain) {
 			return true
 		}
@@ -265,6 +162,42 @@ func (a *Allowlist) DefaultPatterns() []string {
 
 	result := make([]string, len(a.defaults))
 	copy(result, a.defaults)
+	return result
+}
+
+// BlockDefault marks a built-in pattern as requiring approval again.
+func (a *Allowlist) BlockDefault(pattern string) {
+	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	if pattern == "" {
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.blocked[pattern] = true
+}
+
+// UnblockDefault restores a built-in pattern to auto-allow behaviour.
+func (a *Allowlist) UnblockDefault(pattern string) {
+	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	if pattern == "" {
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.blocked, pattern)
+}
+
+// BlockedDefaults returns a copy of the blocked built-in patterns.
+func (a *Allowlist) BlockedDefaults() []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	result := make([]string, 0, len(a.blocked))
+	for pattern := range a.blocked {
+		result = append(result, pattern)
+	}
 	return result
 }
 
