@@ -1,0 +1,767 @@
+{
+  "revision": "egress-defaults-v1",
+  "defaults": [
+    {
+      "pattern": "registry.npmjs.org",
+      "category": "package_registry",
+      "label": "npm registry",
+      "rationale": "Common package installation"
+    },
+    {
+      "pattern": "pypi.org",
+      "category": "package_registry",
+      "label": "PyPI",
+      "rationale": "Common package installation"
+    },
+    {
+      "pattern": "files.pythonhosted.org",
+      "category": "package_registry",
+      "label": "Python package files",
+      "rationale": "PyPI package downloads"
+    },
+    {
+      "pattern": "rubygems.org",
+      "category": "package_registry",
+      "label": "RubyGems",
+      "rationale": "Common package installation"
+    },
+    {
+      "pattern": "proxy.golang.org",
+      "category": "package_registry",
+      "label": "Go proxy",
+      "rationale": "Go module downloads"
+    },
+    {
+      "pattern": "sum.golang.org",
+      "category": "package_registry",
+      "label": "Go checksum database",
+      "rationale": "Go module verification"
+    },
+    {
+      "pattern": "crates.io",
+      "category": "package_registry",
+      "label": "crates.io",
+      "rationale": "Rust crate installation"
+    },
+    {
+      "pattern": "static.crates.io",
+      "category": "package_registry",
+      "label": "crates.io static assets",
+      "rationale": "Rust crate downloads"
+    },
+    {
+      "pattern": "index.crates.io",
+      "category": "package_registry",
+      "label": "crates.io index",
+      "rationale": "Rust dependency resolution"
+    },
+    {
+      "pattern": "registry.yarnpkg.com",
+      "category": "package_registry",
+      "label": "Yarn registry",
+      "rationale": "Common package installation"
+    },
+    {
+      "pattern": "repo.maven.apache.org",
+      "category": "package_registry",
+      "label": "Maven Central",
+      "rationale": "Java dependency installation"
+    },
+    {
+      "pattern": "repo1.maven.org",
+      "category": "package_registry",
+      "label": "Maven Central mirror",
+      "rationale": "Java dependency installation"
+    },
+    {
+      "pattern": "plugins.gradle.org",
+      "category": "package_registry",
+      "label": "Gradle plugins",
+      "rationale": "Gradle plugin installation"
+    },
+    {
+      "pattern": "services.gradle.org",
+      "category": "package_registry",
+      "label": "Gradle services",
+      "rationale": "Gradle distribution downloads"
+    },
+    {
+      "pattern": "*.gradle.org",
+      "category": "package_registry",
+      "label": "Gradle subdomains",
+      "rationale": "Gradle package and distribution access"
+    },
+    {
+      "pattern": "central.sonatype.com",
+      "category": "package_registry",
+      "label": "Sonatype Central",
+      "rationale": "Java dependency resolution"
+    },
+    {
+      "pattern": "github.com",
+      "category": "git_hosting",
+      "label": "GitHub",
+      "rationale": "Common source hosting"
+    },
+    {
+      "pattern": "*.github.com",
+      "category": "git_hosting",
+      "label": "GitHub subdomains",
+      "rationale": "Git operations and release assets"
+    },
+    {
+      "pattern": "*.githubusercontent.com",
+      "category": "git_hosting",
+      "label": "GitHub user content",
+      "rationale": "Raw files and repository assets"
+    },
+    {
+      "pattern": "gitlab.com",
+      "category": "git_hosting",
+      "label": "GitLab",
+      "rationale": "Common source hosting"
+    },
+    {
+      "pattern": "*.gitlab.com",
+      "category": "git_hosting",
+      "label": "GitLab subdomains",
+      "rationale": "Git operations and release assets"
+    },
+    {
+      "pattern": "bitbucket.org",
+      "category": "git_hosting",
+      "label": "Bitbucket",
+      "rationale": "Common source hosting"
+    },
+    {
+      "pattern": "*.bitbucket.org",
+      "category": "git_hosting",
+      "label": "Bitbucket subdomains",
+      "rationale": "Git operations and release assets"
+    },
+    {
+      "pattern": "deb.debian.org",
+      "category": "system_packages",
+      "label": "Debian packages",
+      "rationale": "OS package installation"
+    },
+    {
+      "pattern": "*.debian.org",
+      "category": "system_packages",
+      "label": "Debian subdomains",
+      "rationale": "OS package installation"
+    },
+    {
+      "pattern": "security.debian.org",
+      "category": "system_packages",
+      "label": "Debian security",
+      "rationale": "Security updates"
+    },
+    {
+      "pattern": "archive.ubuntu.com",
+      "category": "system_packages",
+      "label": "Ubuntu archive",
+      "rationale": "OS package installation"
+    },
+    {
+      "pattern": "*.ubuntu.com",
+      "category": "system_packages",
+      "label": "Ubuntu subdomains",
+      "rationale": "OS package installation"
+    },
+    {
+      "pattern": "dl-cdn.alpinelinux.org",
+      "category": "system_packages",
+      "label": "Alpine packages",
+      "rationale": "OS package installation"
+    },
+    {
+      "pattern": "*.cloudflare.com",
+      "category": "cdn",
+      "label": "Cloudflare CDN",
+      "rationale": "Common web assets"
+    },
+    {
+      "pattern": "*.cloudfront.net",
+      "category": "cdn",
+      "label": "CloudFront",
+      "rationale": "Common web assets"
+    },
+    {
+      "pattern": "*.fastly.net",
+      "category": "cdn",
+      "label": "Fastly",
+      "rationale": "Common web assets"
+    },
+    {
+      "pattern": "*.jsdelivr.net",
+      "category": "cdn",
+      "label": "jsDelivr",
+      "rationale": "Common package and static asset delivery"
+    },
+    {
+      "pattern": "*.unpkg.com",
+      "category": "cdn",
+      "label": "unpkg",
+      "rationale": "Common package and static asset delivery"
+    },
+    {
+      "pattern": "cdnjs.cloudflare.com",
+      "category": "cdn",
+      "label": "cdnjs",
+      "rationale": "Common static asset delivery"
+    },
+    {
+      "pattern": "api.anthropic.com",
+      "category": "llm_api",
+      "label": "Anthropic API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "anthropic.com",
+      "category": "llm_api",
+      "label": "Anthropic",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.anthropic.com",
+      "category": "llm_api",
+      "label": "Anthropic subdomains",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "claude.ai",
+      "category": "llm_api",
+      "label": "Claude",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.claude.ai",
+      "category": "llm_api",
+      "label": "Claude subdomains",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "claude.com",
+      "category": "llm_api",
+      "label": "Claude domain",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.claude.com",
+      "category": "llm_api",
+      "label": "Claude domain subdomains",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "openai.com",
+      "category": "llm_api",
+      "label": "OpenAI",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.openai.com",
+      "category": "llm_api",
+      "label": "OpenAI subdomains",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "chatgpt.com",
+      "category": "llm_api",
+      "label": "ChatGPT",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.chatgpt.com",
+      "category": "llm_api",
+      "label": "ChatGPT subdomains",
+      "rationale": "Provider-owned web and auth flows"
+    },
+    {
+      "pattern": "*.googleapis.com",
+      "category": "llm_api",
+      "label": "Google APIs",
+      "rationale": "Gemini and related Google APIs"
+    },
+    {
+      "pattern": "generativelanguage.googleapis.com",
+      "category": "llm_api",
+      "label": "Google Generative Language API",
+      "rationale": "Gemini API access"
+    },
+    {
+      "pattern": "api.groq.com",
+      "category": "llm_api",
+      "label": "Groq API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api.together.xyz",
+      "category": "llm_api",
+      "label": "Together API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api.fireworks.ai",
+      "category": "llm_api",
+      "label": "Fireworks API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api.mistral.ai",
+      "category": "llm_api",
+      "label": "Mistral API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api.cohere.com",
+      "category": "llm_api",
+      "label": "Cohere API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api-inference.huggingface.co",
+      "category": "llm_api",
+      "label": "Hugging Face inference API",
+      "rationale": "Direct model access"
+    },
+    {
+      "pattern": "api.elevenlabs.io",
+      "category": "tts",
+      "label": "ElevenLabs API",
+      "rationale": "Text to speech"
+    },
+    {
+      "pattern": "api.deepgram.com",
+      "category": "tts",
+      "label": "Deepgram API",
+      "rationale": "Speech and audio APIs"
+    },
+    {
+      "pattern": "*.datadoghq.com",
+      "category": "telemetry",
+      "label": "Datadog",
+      "rationale": "Common telemetry for agent tooling"
+    },
+    {
+      "pattern": "*.datadoghq.eu",
+      "category": "telemetry",
+      "label": "Datadog EU",
+      "rationale": "Common telemetry for agent tooling"
+    },
+    {
+      "pattern": "*.sentry.io",
+      "category": "telemetry",
+      "label": "Sentry",
+      "rationale": "Common telemetry for agent tooling"
+    },
+    {
+      "pattern": "nodejs.org",
+      "category": "dev_tools",
+      "label": "Node.js",
+      "rationale": "Runtime and installer downloads"
+    },
+    {
+      "pattern": "*.nodejs.org",
+      "category": "dev_tools",
+      "label": "Node.js subdomains",
+      "rationale": "Runtime and installer downloads"
+    },
+    {
+      "pattern": "dl.google.com",
+      "category": "dev_tools",
+      "label": "Google downloads",
+      "rationale": "Common tooling downloads"
+    },
+    {
+      "pattern": "storage.googleapis.com",
+      "category": "dev_tools",
+      "label": "Google Cloud Storage",
+      "rationale": "Common tooling downloads"
+    },
+    {
+      "pattern": "objects.githubusercontent.com",
+      "category": "dev_tools",
+      "label": "GitHub objects",
+      "rationale": "Release and asset downloads"
+    },
+    {
+      "pattern": "metadata.google.internal",
+      "category": "provider_infra",
+      "label": "Google metadata",
+      "rationale": "Cloud runtime metadata access"
+    },
+    {
+      "pattern": "auth-cdn.oaistatic.com",
+      "category": "provider_infra",
+      "label": "OpenAI auth CDN",
+      "rationale": "Provider-owned auth assets"
+    },
+    {
+      "pattern": "*.oaistatic.com",
+      "category": "provider_infra",
+      "label": "OpenAI static assets",
+      "rationale": "Provider-owned auth and app assets"
+    },
+    {
+      "pattern": "featureassets.org",
+      "category": "provider_infra",
+      "label": "Feature assets",
+      "rationale": "Feature flag assets used by providers"
+    },
+    {
+      "pattern": "*.featureassets.org",
+      "category": "provider_infra",
+      "label": "Feature assets subdomains",
+      "rationale": "Feature flag assets used by providers"
+    },
+    {
+      "pattern": "prodregistryv2.org",
+      "category": "provider_infra",
+      "label": "Provider registry",
+      "rationale": "Provider-owned registry access"
+    },
+    {
+      "pattern": "*.prodregistryv2.org",
+      "category": "provider_infra",
+      "label": "Provider registry subdomains",
+      "rationale": "Provider-owned registry access"
+    },
+    {
+      "pattern": "cloudflare-dns.com",
+      "category": "provider_infra",
+      "label": "Cloudflare DNS",
+      "rationale": "DNS over HTTPS"
+    },
+    {
+      "pattern": "*.cloudflare-dns.com",
+      "category": "provider_infra",
+      "label": "Cloudflare DNS subdomains",
+      "rationale": "DNS over HTTPS"
+    },
+    {
+      "pattern": "statsigapi.net",
+      "category": "provider_infra",
+      "label": "Statsig",
+      "rationale": "Feature flags and experimentation"
+    },
+    {
+      "pattern": "*.statsigapi.net",
+      "category": "provider_infra",
+      "label": "Statsig subdomains",
+      "rationale": "Feature flags and experimentation"
+    },
+    {
+      "pattern": "browser-intake-datadoghq.com",
+      "category": "provider_infra",
+      "label": "Datadog browser intake",
+      "rationale": "Browser telemetry"
+    },
+    {
+      "pattern": "*.browser-intake-datadoghq.com",
+      "category": "provider_infra",
+      "label": "Datadog browser intake subdomains",
+      "rationale": "Browser telemetry"
+    },
+    {
+      "pattern": "intercom.io",
+      "category": "provider_infra",
+      "label": "Intercom",
+      "rationale": "Support widgets"
+    },
+    {
+      "pattern": "*.intercom.io",
+      "category": "provider_infra",
+      "label": "Intercom subdomains",
+      "rationale": "Support widgets"
+    },
+    {
+      "pattern": "intercomcdn.com",
+      "category": "provider_infra",
+      "label": "Intercom CDN",
+      "rationale": "Support widgets"
+    },
+    {
+      "pattern": "*.intercomcdn.com",
+      "category": "provider_infra",
+      "label": "Intercom CDN subdomains",
+      "rationale": "Support widgets"
+    },
+    {
+      "pattern": "accounts.google.com",
+      "category": "oauth",
+      "label": "Google Accounts",
+      "rationale": "OAuth sign-in"
+    },
+    {
+      "pattern": "google.com",
+      "category": "oauth",
+      "label": "Google",
+      "rationale": "Provider-owned auth flows"
+    },
+    {
+      "pattern": "*.google.com",
+      "category": "oauth",
+      "label": "Google subdomains",
+      "rationale": "Provider-owned auth flows"
+    },
+    {
+      "pattern": "*.gstatic.com",
+      "category": "oauth",
+      "label": "Google static assets",
+      "rationale": "OAuth static assets"
+    },
+    {
+      "pattern": "registry-1.docker.io",
+      "category": "container_registry",
+      "label": "Docker Hub registry",
+      "rationale": "Container image pulls"
+    },
+    {
+      "pattern": "auth.docker.io",
+      "category": "container_registry",
+      "label": "Docker Hub auth",
+      "rationale": "Container registry auth"
+    },
+    {
+      "pattern": "*.docker.com",
+      "category": "container_registry",
+      "label": "Docker subdomains",
+      "rationale": "Container registry assets and auth"
+    },
+    {
+      "pattern": "ghcr.io",
+      "category": "container_registry",
+      "label": "GitHub Container Registry",
+      "rationale": "Container image pulls"
+    },
+    {
+      "pattern": "*.ghcr.io",
+      "category": "container_registry",
+      "label": "GitHub Container Registry subdomains",
+      "rationale": "Container image pulls"
+    },
+    {
+      "pattern": "gcr.io",
+      "category": "container_registry",
+      "label": "Google Container Registry",
+      "rationale": "Container image pulls"
+    },
+    {
+      "pattern": "*.gcr.io",
+      "category": "container_registry",
+      "label": "Google Container Registry subdomains",
+      "rationale": "Container image pulls"
+    },
+    {
+      "pattern": "pkg.dev",
+      "category": "container_registry",
+      "label": "Google Artifact Registry",
+      "rationale": "Package and image pulls"
+    },
+    {
+      "pattern": "*.pkg.dev",
+      "category": "container_registry",
+      "label": "Google Artifact Registry subdomains",
+      "rationale": "Package and image pulls"
+    },
+    {
+      "pattern": "sh.rustup.rs",
+      "category": "language_toolchain",
+      "label": "rustup installer",
+      "rationale": "Rust toolchain installation"
+    },
+    {
+      "pattern": "static.rust-lang.org",
+      "category": "language_toolchain",
+      "label": "Rust static assets",
+      "rationale": "Rust toolchain downloads"
+    },
+    {
+      "pattern": "pnpm.io",
+      "category": "package_registry",
+      "label": "pnpm",
+      "rationale": "Package manager installation"
+    },
+    {
+      "pattern": "*.pnpm.io",
+      "category": "package_registry",
+      "label": "pnpm subdomains",
+      "rationale": "Package manager installation"
+    },
+    {
+      "pattern": "install.python-poetry.org",
+      "category": "package_registry",
+      "label": "Poetry installer",
+      "rationale": "Package manager installation"
+    },
+    {
+      "pattern": "python-poetry.org",
+      "category": "package_registry",
+      "label": "Poetry",
+      "rationale": "Package manager installation"
+    },
+    {
+      "pattern": "get.deno.land",
+      "category": "language_toolchain",
+      "label": "Deno installer",
+      "rationale": "Language runtime installation"
+    },
+    {
+      "pattern": "dl.deno.land",
+      "category": "language_toolchain",
+      "label": "Deno downloads",
+      "rationale": "Language runtime installation"
+    },
+    {
+      "pattern": "bun.sh",
+      "category": "language_toolchain",
+      "label": "Bun",
+      "rationale": "Language runtime installation"
+    },
+    {
+      "pattern": "huggingface.co",
+      "category": "llm_api",
+      "label": "Hugging Face",
+      "rationale": "Model hosting and downloads"
+    },
+    {
+      "pattern": "*.huggingface.co",
+      "category": "llm_api",
+      "label": "Hugging Face subdomains",
+      "rationale": "Model hosting and downloads"
+    },
+    {
+      "pattern": "*.hf.co",
+      "category": "llm_api",
+      "label": "Hugging Face short domains",
+      "rationale": "Model hosting and downloads"
+    },
+    {
+      "pattern": "releases.hashicorp.com",
+      "category": "dev_tools",
+      "label": "HashiCorp releases",
+      "rationale": "Tool downloads"
+    },
+    {
+      "pattern": "registry.terraform.io",
+      "category": "dev_tools",
+      "label": "Terraform registry",
+      "rationale": "Provider and module downloads"
+    },
+    {
+      "pattern": "checkpoint-api.hashicorp.com",
+      "category": "dev_tools",
+      "label": "HashiCorp checkpoint API",
+      "rationale": "Tool metadata and update checks"
+    },
+    {
+      "pattern": "login.microsoftonline.com",
+      "category": "oauth",
+      "label": "Microsoft login",
+      "rationale": "OAuth sign-in"
+    },
+    {
+      "pattern": "*.microsoft.com",
+      "category": "oauth",
+      "label": "Microsoft subdomains",
+      "rationale": "Provider-owned auth and API flows"
+    },
+    {
+      "pattern": "*.azure.com",
+      "category": "oauth",
+      "label": "Azure subdomains",
+      "rationale": "Provider-owned auth and API flows"
+    },
+    {
+      "pattern": "*.azureedge.net",
+      "category": "oauth",
+      "label": "Azure CDN",
+      "rationale": "Provider-owned auth and API assets"
+    },
+    {
+      "pattern": "*.windows.net",
+      "category": "oauth",
+      "label": "Microsoft cloud subdomains",
+      "rationale": "Provider-owned auth and API flows"
+    },
+    {
+      "pattern": "slack.com",
+      "category": "integration",
+      "label": "Slack",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "*.slack.com",
+      "category": "integration",
+      "label": "Slack subdomains",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "discord.com",
+      "category": "integration",
+      "label": "Discord",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "*.discord.com",
+      "category": "integration",
+      "label": "Discord subdomains",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "api.telegram.org",
+      "category": "integration",
+      "label": "Telegram API",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "graph.facebook.com",
+      "category": "integration",
+      "label": "Meta Graph API",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "api.box.com",
+      "category": "integration",
+      "label": "Box API",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "account.box.com",
+      "category": "integration",
+      "label": "Box account",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "*.box.com",
+      "category": "integration",
+      "label": "Box subdomains",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "api.twitter.com",
+      "category": "integration",
+      "label": "Twitter API",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "x.com",
+      "category": "integration",
+      "label": "X",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "*.x.com",
+      "category": "integration",
+      "label": "X subdomains",
+      "rationale": "First-party integration domains"
+    },
+    {
+      "pattern": "developer.x.com",
+      "category": "integration",
+      "label": "X developer",
+      "rationale": "First-party integration domains"
+    }
+  ]
+}

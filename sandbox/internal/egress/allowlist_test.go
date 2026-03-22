@@ -130,3 +130,36 @@ func TestAllowlist_DefaultPatterns(t *testing.T) {
 		t.Error("DefaultPatterns should return a copy")
 	}
 }
+
+func TestDefaultCatalog_HasUniquePatterns(t *testing.T) {
+	patterns := DefaultPatterns()
+	if len(patterns) == 0 {
+		t.Fatal("expected built-in defaults to be non-empty")
+	}
+
+	seen := map[string]bool{}
+	for _, pattern := range patterns {
+		if seen[pattern] {
+			t.Fatalf("duplicate pattern in default catalog: %s", pattern)
+		}
+		seen[pattern] = true
+	}
+}
+
+func TestAllowlist_BlockedDefaults(t *testing.T) {
+	al := NewAllowlist()
+
+	if !al.IsAllowed("api.openai.com") {
+		t.Fatal("expected api.openai.com to be allowed by default")
+	}
+
+	al.BlockDefault("*.openai.com")
+	if al.IsAllowed("api.openai.com") {
+		t.Fatal("expected api.openai.com to require approval after blocking *.openai.com")
+	}
+
+	al.UnblockDefault("*.openai.com")
+	if !al.IsAllowed("api.openai.com") {
+		t.Fatal("expected api.openai.com to be allowed again after unblocking *.openai.com")
+	}
+}

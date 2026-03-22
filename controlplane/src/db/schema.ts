@@ -936,6 +936,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_allowlist_dashboard_domain_active
   ON egress_allowlist(dashboard_id, domain)
   WHERE revoked_at IS NULL;
 
+-- Egress blocked defaults (user-overridden built-in patterns per dashboard)
+CREATE TABLE IF NOT EXISTS egress_blocked_defaults (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  pattern TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT,
+  UNIQUE(dashboard_id, pattern)
+);
+CREATE INDEX IF NOT EXISTS idx_egress_blocked_defaults_dashboard
+  ON egress_blocked_defaults(dashboard_id);
+
 -- Egress audit log (all proxy decisions)
 CREATE TABLE IF NOT EXISTS egress_audit_log (
   id TEXT PRIMARY KEY,
@@ -1053,6 +1066,14 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE egress_blocked_defaults ADD COLUMN revoked_at TEXT
     `).run();
   } catch {
     // Column already exists.

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-handler-v5-pending-recovery-and-safe-revoke-rollback
-console.log(`[egress] REVISION: egress-handler-v5-pending-recovery-and-safe-revoke-rollback loaded at ${new Date().toISOString()}`);
+// REVISION: egress-handler-v8-canonical-defaults
+console.log(`[egress] REVISION: egress-handler-v8-canonical-defaults loaded at ${new Date().toISOString()}`);
 
 /**
  * Egress Proxy Management
@@ -18,6 +18,19 @@ console.log(`[egress] REVISION: egress-handler-v5-pending-recovery-and-safe-revo
 
 import type { Env } from '../types';
 import { sandboxHeaders, sandboxUrl } from '../sandbox/fetch';
+import egressDefaultsCatalog from '../../../sandbox/internal/egress/defaults.json';
+
+type EgressDefaultEntry = {
+  pattern: string;
+  category: string;
+  label: string;
+  rationale: string;
+};
+
+const CANONICAL_DEFAULTS = (egressDefaultsCatalog.defaults as EgressDefaultEntry[]).map((entry) => ({
+  ...entry,
+  pattern: entry.pattern.trim().toLowerCase(),
+}));
 
 function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '');
@@ -131,7 +144,7 @@ export async function handleApproveEgress(
 
 /**
  * GET /api/dashboards/:id/egress/allowlist
- * List default + user-approved domains for a dashboard.
+ * List canonical defaults, blocked overrides, and user-approved domains for a dashboard.
  */
 export async function handleListEgressAllowlist(
   request: Request,
@@ -145,8 +158,18 @@ export async function handleListEgressAllowlist(
     ORDER BY created_at ASC
   `).bind(dashboardId).all();
 
+  const blockedRows = await env.DB.prepare(`
+    SELECT pattern FROM egress_blocked_defaults
+    WHERE dashboard_id = ?
+      AND revoked_at IS NULL
+    ORDER BY created_at ASC
+  `).bind(dashboardId).all<{ pattern: string }>();
+
   return Response.json({
     entries: entries.results || [],
+    defaults: CANONICAL_DEFAULTS,
+    blocked: (blockedRows.results || []).map((row) => row.pattern),
+    revision: egressDefaultsCatalog.revision,
   });
 }
 
@@ -281,6 +304,162 @@ export async function handleRevokeEgressDomain(
 }
 
 /**
+ * POST /api/dashboards/:id/egress/blocked-defaults
+ * Override a built-in default pattern so it requires approval again.
+ */
+export async function handleBlockDefault(
+  request: Request,
+  env: Env,
+  dashboardId: string,
+  userId: string,
+): Promise<Response> {
+  const body = await request.json() as { pattern?: string };
+  const normalizedPattern = body.pattern?.trim().toLowerCase();
+  if (!normalizedPattern) {
+    return Response.json({ error: 'E79895: pattern required' }, { status: 400 });
+  }
+  if (!CANONICAL_DEFAULTS.some((entry) => entry.pattern === normalizedPattern)) {
+    return Response.json({ error: 'E79896: unknown built-in pattern' }, { status: 400 });
+  }
+
+  const entryId = generateId();
+  const existing = await env.DB.prepare(`
+    SELECT id, revoked_at FROM egress_blocked_defaults
+    WHERE dashboard_id = ? AND pattern = ?
+  `).bind(dashboardId, normalizedPattern).first<{ id: string; revoked_at: string | null }>();
+
+  let rollbackMode: 'none' | 'revoke' | 'restore-revoked-at' = 'none';
+  let rollbackId = '';
+  let rollbackRevokedAt: string | null = null;
+
+  if (!existing) {
+    const insertResult = await env.DB.prepare(`
+      INSERT INTO egress_blocked_defaults (id, dashboard_id, pattern, created_by, created_at, revoked_at)
+      VALUES (?, ?, ?, ?, datetime('now'), NULL)
+    `).bind(entryId, dashboardId, normalizedPattern, userId).run();
+    if (insertResult.meta.changes > 0) {
+      rollbackMode = 'revoke';
+      rollbackId = entryId;
+    }
+  } else if (existing.revoked_at !== null) {
+    const updateResult = await env.DB.prepare(`
+      UPDATE egress_blocked_defaults
+      SET revoked_at = NULL
+      WHERE id = ? AND revoked_at = ?
+    `).bind(existing.id, existing.revoked_at).run();
+    if (updateResult.meta.changes > 0) {
+      rollbackMode = 'restore-revoked-at';
+      rollbackId = existing.id;
+      rollbackRevokedAt = existing.revoked_at;
+    }
+  }
+
+  const sandbox = await env.DB.prepare(
+    `SELECT sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?`
+  ).bind(dashboardId).first<{ sandbox_machine_id: string }>();
+
+  if (sandbox) {
+    try {
+      const blockUrl = sandboxUrl(env, '/egress/block-default');
+      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      headers.set('Content-Type', 'application/json');
+      const resp = await fetch(blockUrl.toString(), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ pattern: normalizedPattern }),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        console.log(`[egress] Sandbox block-default returned ${resp.status} pattern=${normalizedPattern} dashboardId=${dashboardId}: ${errText}`);
+        await rollbackBlockedDefaultChange(env, rollbackMode, rollbackId, rollbackRevokedAt, normalizedPattern, dashboardId);
+        return Response.json(
+          { error: `E79897: sandbox rejected block-default (${resp.status})`, detail: errText },
+          { status: 502 },
+        );
+      }
+    } catch (err) {
+      console.log(`[egress] Failed to forward block-default to sandbox dashboardId=${dashboardId}: ${err}`);
+      await rollbackBlockedDefaultChange(env, rollbackMode, rollbackId, rollbackRevokedAt, normalizedPattern, dashboardId);
+      return Response.json(
+        { error: 'E79898: failed to reach sandbox', detail: String(err) },
+        { status: 502 },
+      );
+    }
+  }
+
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * DELETE /api/dashboards/:id/egress/blocked-defaults/:pattern
+ * Restore a built-in default pattern.
+ */
+export async function handleUnblockDefault(
+  request: Request,
+  env: Env,
+  dashboardId: string,
+  pattern: string,
+): Promise<Response> {
+  const normalizedPattern = pattern.trim().toLowerCase();
+  const existing = await env.DB.prepare(`
+    SELECT id FROM egress_blocked_defaults
+    WHERE dashboard_id = ? AND pattern = ?
+      AND revoked_at IS NULL
+  `).bind(dashboardId, normalizedPattern).first<{ id: string }>();
+
+  if (!existing) {
+    return new Response(null, { status: 204 });
+  }
+
+  const revokedAt = new Date().toISOString();
+
+  await env.DB.prepare(`
+    UPDATE egress_blocked_defaults
+    SET revoked_at = ?
+    WHERE id = ? AND revoked_at IS NULL
+  `).bind(revokedAt, existing.id).run();
+
+  const sandbox = await env.DB.prepare(
+    `SELECT sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?`
+  ).bind(dashboardId).first<{ sandbox_machine_id: string }>();
+
+  if (sandbox) {
+    try {
+      const unblockUrl = sandboxUrl(env, `/egress/block-default/${encodeURIComponent(normalizedPattern)}`);
+      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      const resp = await fetch(unblockUrl.toString(), {
+        method: 'DELETE',
+        headers,
+      });
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        await env.DB.prepare(`
+          UPDATE egress_blocked_defaults
+          SET revoked_at = NULL
+          WHERE id = ? AND revoked_at = ?
+        `).bind(existing.id, revokedAt).run();
+        return Response.json(
+          { error: `E79899: sandbox rejected unblock-default (${resp.status})`, detail: errText },
+          { status: 502 },
+        );
+      }
+    } catch (err) {
+      await env.DB.prepare(`
+        UPDATE egress_blocked_defaults
+        SET revoked_at = NULL
+        WHERE id = ? AND revoked_at = ?
+      `).bind(existing.id, revokedAt).run();
+      return Response.json(
+        { error: 'E79900: failed to reach sandbox', detail: String(err) },
+        { status: 502 },
+      );
+    }
+  }
+
+  return new Response(null, { status: 204 });
+}
+
+/**
  * GET /api/dashboards/:id/egress/audit
  * List recent egress audit log entries.
  */
@@ -311,7 +490,7 @@ export async function handleListEgressAudit(
 
 /**
  * GET /internal/dashboards/:id/egress/allowlist
- * Sandbox loads persisted allowlist on startup.
+ * Sandbox loads persisted allowlist state on startup.
  */
 export async function handleInternalGetAllowlist(
   request: Request,
@@ -323,9 +502,44 @@ export async function handleInternalGetAllowlist(
     WHERE dashboard_id = ? AND revoked_at IS NULL
   `).bind(dashboardId).all<{ domain: string }>();
 
+  const blockedRows = await env.DB.prepare(`
+    SELECT pattern FROM egress_blocked_defaults
+    WHERE dashboard_id = ?
+      AND revoked_at IS NULL
+  `).bind(dashboardId).all<{ pattern: string }>();
+
   return Response.json({
     domains: (entries.results || []).map(e => e.domain),
+    blocked_patterns: (blockedRows.results || []).map((row) => row.pattern),
   });
+}
+
+async function rollbackBlockedDefaultChange(
+  env: Env,
+  rollbackMode: 'none' | 'revoke' | 'restore-revoked-at',
+  rollbackId: string,
+  rollbackRevokedAt: string | null,
+  normalizedPattern: string,
+  dashboardId: string,
+): Promise<void> {
+  if (rollbackMode === 'revoke' && rollbackId) {
+    await env.DB.prepare(`
+      UPDATE egress_blocked_defaults
+      SET revoked_at = datetime('now')
+      WHERE id = ? AND revoked_at IS NULL
+    `).bind(rollbackId).run();
+    console.log(`[egress] Rolled back block-default by revoking inserted row pattern=${normalizedPattern} dashboardId=${dashboardId}`);
+    return;
+  }
+
+  if (rollbackMode === 'restore-revoked-at' && rollbackId && rollbackRevokedAt !== null) {
+    await env.DB.prepare(`
+      UPDATE egress_blocked_defaults
+      SET revoked_at = ?
+      WHERE id = ? AND revoked_at IS NULL
+    `).bind(rollbackRevokedAt, rollbackId).run();
+    console.log(`[egress] Rolled back block-default by restoring prior revoked_at pattern=${normalizedPattern} dashboardId=${dashboardId}`);
+  }
 }
 
 /**

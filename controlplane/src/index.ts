@@ -1509,7 +1509,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return egress.handleApproveEgress(request, env, segments[1], auth.user!.id);
   }
 
-  // GET /dashboards/:id/egress/allowlist - List user-approved domains
+  // GET /dashboards/:id/egress/allowlist - List canonical defaults and user-approved domains
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'allowlist' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
@@ -1540,6 +1540,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     ).bind(segments[1], auth.user!.id).first();
     if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
     return egress.handleRevokeEgressDomain(request, env, segments[1], segments[4]);
+  }
+
+  // POST /dashboards/:id/egress/blocked-defaults - Override a built-in default pattern
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'blocked-defaults' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleBlockDefault(request, env, segments[1], auth.user!.id);
+  }
+
+  // DELETE /dashboards/:id/egress/blocked-defaults/:pattern - Restore a built-in default pattern
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'egress' && segments[3] === 'blocked-defaults' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleUnblockDefault(request, env, segments[1], decodeURIComponent(segments[4]));
   }
 
   // GET /dashboards/:id/egress/audit - List recent egress decisions
