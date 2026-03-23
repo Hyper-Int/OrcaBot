@@ -38,7 +38,7 @@ import {
   getSpreadsheet,
   readSheetValues,
   setupSheetsMirror,
-  unlinkSheetsMirror,
+  disconnectSheets,
   setLinkedSpreadsheet,
   type SheetsIntegration,
   type Spreadsheet,
@@ -262,7 +262,7 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkSheetsMirror(dashboardId);
+      await disconnectSheets();
       setIntegration(null);
       setSpreadsheets([]);
       setCurrentSpreadsheet(null);

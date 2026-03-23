@@ -42,7 +42,7 @@ import {
   getContacts,
   syncContacts,
   setupContactsMirror,
-  unlinkContactsMirror,
+  disconnectContacts,
   type ContactsIntegration,
   type ContactsStatus,
   type Contact,
@@ -261,7 +261,7 @@ export function ContactsBlock({ id, data, selected }: NodeProps<ContactsNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkContactsMirror(dashboardId);
+      await disconnectContacts();
       setIntegration(null);
       setStatus(null);
       setContacts([]);

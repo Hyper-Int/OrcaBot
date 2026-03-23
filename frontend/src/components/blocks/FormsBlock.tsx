@@ -39,7 +39,7 @@ import {
   getForm,
   getFormResponses,
   setupFormsMirror,
-  unlinkFormsMirror,
+  disconnectForms,
   setLinkedForm,
   type FormsIntegration,
   type Form,
@@ -243,7 +243,7 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkFormsMirror(dashboardId);
+      await disconnectForms();
       setIntegration(null);
       setForms([]);
       setCurrentForm(null);

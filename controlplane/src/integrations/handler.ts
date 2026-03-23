@@ -1183,7 +1183,7 @@ export async function cоnnectGооgleDrive(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', GOOGLE_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -3493,6 +3493,16 @@ export async function disconnectGoogleDrive(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Revoke Google token so next connect gets a fresh refresh token
+  try {
+    const row = await env.DB.prepare(
+      `SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'google_drive'`
+    ).bind(auth.user!.id).first<{ access_token: string }>();
+    if (row?.access_token) {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${row.access_token}`, { method: 'POST' });
+    }
+  } catch { /* best-effort */ }
+
   await cleanupIntegration(env, 'google_drive', auth.user!.id);
 
   return Response.json({ ok: true });
@@ -4817,6 +4827,7 @@ export async function cоnnectОnedrive(
   authUrl.searchParams.set('response_mode', 'query');
   authUrl.searchParams.set('scope', ONEDRIVE_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'select_account');
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -5229,7 +5240,7 @@ export async function connectGmail(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', GMAIL_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -6180,12 +6191,13 @@ export async function disconnectGmail(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
-  // Stop all watches
+  // Stop watches and revoke token so next connect gets a fresh refresh token
   try {
     const accessToken = await getGmailAccessToken(env, auth.user!.id);
     await stopGmailWatch(accessToken);
+    await fetch(`https://oauth2.googleapis.com/revoke?token=${accessToken}`, { method: 'POST' });
   } catch {
-    // Ignore errors stopping watch
+    // Ignore errors — best-effort cleanup
   }
 
   // Delete all user's Gmail mirrors and messages
@@ -6441,7 +6453,7 @@ export async function connectCalendar(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', CALENDAR_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -7115,6 +7127,16 @@ export async function disconnectCalendar(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Revoke Google token so next connect gets a fresh refresh token
+  try {
+    const row = await env.DB.prepare(
+      `SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'google_calendar'`
+    ).bind(auth.user!.id).first<{ access_token: string }>();
+    if (row?.access_token) {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${row.access_token}`, { method: 'POST' });
+    }
+  } catch { /* best-effort */ }
+
   // Delete all user's calendar mirrors and events
   const mirrors = await env.DB.prepare(`
     SELECT dashboard_id FROM calendar_mirrors WHERE user_id = ?
@@ -7374,7 +7396,7 @@ export async function connectContacts(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', CONTACTS_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -8048,6 +8070,16 @@ export async function disconnectContacts(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Revoke Google token so next connect gets a fresh refresh token
+  try {
+    const row = await env.DB.prepare(
+      `SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'google_contacts'`
+    ).bind(auth.user!.id).first<{ access_token: string }>();
+    if (row?.access_token) {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${row.access_token}`, { method: 'POST' });
+    }
+  } catch { /* best-effort */ }
+
   // Delete all user's contacts mirrors and contacts
   const mirrors = await env.DB.prepare(`
     SELECT dashboard_id FROM contacts_mirrors WHERE user_id = ?
@@ -8327,7 +8359,7 @@ export async function connectSheets(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', SHEETS_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -8907,6 +8939,16 @@ export async function disconnectSheets(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
+  // Revoke Google token so next connect gets a fresh refresh token
+  try {
+    const row = await env.DB.prepare(
+      `SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'google_sheets'`
+    ).bind(auth.user!.id).first<{ access_token: string }>();
+    if (row?.access_token) {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${row.access_token}`, { method: 'POST' });
+    }
+  } catch { /* best-effort */ }
+
   await env.DB.prepare(`DELETE FROM sheets_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
   await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'google_sheets'`).bind(auth.user!.id).run();
 
@@ -9019,7 +9061,7 @@ export async function connectForms(
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('scope', FORMS_SCOPE.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
-  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
 
@@ -9492,6 +9534,16 @@ export async function disconnectForms(
 ): Promise<Response> {
   const authError = requireAuth(auth);
   if (authError) return authError;
+
+  // Revoke Google token so next connect gets a fresh refresh token
+  try {
+    const row = await env.DB.prepare(
+      `SELECT access_token FROM user_integrations WHERE user_id = ? AND provider = 'google_forms'`
+    ).bind(auth.user!.id).first<{ access_token: string }>();
+    if (row?.access_token) {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${row.access_token}`, { method: 'POST' });
+    }
+  } catch { /* best-effort */ }
 
   await env.DB.prepare(`DELETE FROM form_responses WHERE user_id = ?`).bind(auth.user!.id).run();
   await env.DB.prepare(`DELETE FROM forms_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
@@ -11322,6 +11374,7 @@ export async function connectTeams(
   authUrl.searchParams.set('response_mode', 'query');
   authUrl.searchParams.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'select_account');
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11506,6 +11559,7 @@ export async function connectOutlook(
   authUrl.searchParams.set('response_mode', 'query');
   authUrl.searchParams.set('scope', OUTLOOK_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'select_account');
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11707,6 +11761,7 @@ export async function connectOutlookCalendar(
   authUrl.searchParams.set('response_mode', 'query');
   authUrl.searchParams.set('scope', OUTLOOK_CALENDAR_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('prompt', 'select_account');
 
   return Response.redirect(authUrl.toString(), 302);
 }
