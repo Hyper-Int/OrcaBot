@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: outlook-block-v1-initial
+// REVISION: outlook-mirror-v1-email-sync
 
 "use client";
 
-const MODULE_REVISION = "outlook-block-v1-initial";
+const MODULE_REVISION = "outlook-mirror-v1-email-sync";
 console.log(`[OutlookBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -13,8 +13,14 @@ import { type NodeProps, type Node } from "@xyflow/react";
 import {
   Mail,
   RefreshCw,
+  Archive,
+  Trash2,
+  Eye,
+  EyeOff,
+  Clock,
   CheckCircle,
   Loader2,
+  ChevronLeft,
   Settings,
   LogOut,
   Minimize2,
@@ -32,8 +38,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import {
+  setupOutlookMirror,
+  getOutlookMirrorStatus,
+  syncOutlook,
+  getOutlookMessages,
+  performOutlookAction,
+  disconnectOutlook,
+  type OutlookMirrorStatus,
+  type OutlookMessage,
+  type OutlookActionType,
+} from "@/lib/api/cloudflare";
 import { API } from "@/config/env";
-import { apiFetch, apiGet } from "@/lib/api/client";
+import { apiGet } from "@/lib/api/client";
 import { OutlookIcon } from "@/components/icons/MessagingIcons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import type { DashboardItem } from "@/types/dashboard";
@@ -48,15 +65,9 @@ const OUTLOOK_BLUE = "#0078D4";
 
 interface OutlookIntegration {
   connected: boolean;
+  linked?: boolean;
   emailAddress: string | null;
   accountName: string | null;
-}
-
-interface OutlookMailFolder {
-  id: string;
-  displayName: string;
-  totalItemCount: number;
-  unreadItemCount: number;
 }
 
 // ============================================
@@ -76,10 +87,28 @@ async function getOutlookIntegration(dashboardId: string): Promise<OutlookIntegr
   }
 }
 
-async function disconnectOutlookApi(dashboardId: string): Promise<{ ok: boolean }> {
-  const url = new URL(`${API.cloudflare.base}/integrations/outlook`);
-  url.searchParams.set("dashboard_id", dashboardId);
-  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+// ============================================
+// Helpers
+// ============================================
+
+function formatDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "now";
+  if (diffMins < 60) return `${diffMins}m`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function extractSender(message: OutlookMessage): string {
+  if (message.fromName) return message.fromName;
+  if (message.fromAddress) return message.fromAddress;
+  return "Unknown";
 }
 
 // ============================================
@@ -141,9 +170,21 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
 
   // Integration state
   const [integration, setIntegration] = React.useState<OutlookIntegration | null>(null);
+  const [status, setStatus] = React.useState<OutlookMirrorStatus | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [refreshing, setRefreshing] = React.useState(false);
+  const [tokenRevoked, setTokenRevoked] = React.useState(false);
+  const [enabling, setEnabling] = React.useState(false);
+
+  // Messages state
+  const [messages, setMessages] = React.useState<OutlookMessage[]>([]);
+  const [messagesTotal, setMessagesTotal] = React.useState(0);
+  const [messagesLoading, setMessagesLoading] = React.useState(false);
+  const [syncing, setSyncing] = React.useState(false);
+
+  // Selected message state
+  const [selectedMessage, setSelectedMessage] = React.useState<OutlookMessage | null>(null);
+  const [actionLoading, setActionLoading] = React.useState<string | null>(null);
 
   // Track if initial load is done (per dashboard to handle Fast Refresh/Strict Mode)
   const initialLoadDone = React.useRef(false);
@@ -157,13 +198,32 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
         setLoading(true);
       }
       setError(null);
-      const integrationData = await getOutlookIntegration(dashboardId);
+      const [integrationData, statusData] = await Promise.all([
+        getOutlookIntegration(dashboardId),
+        getOutlookMirrorStatus(dashboardId).catch(() => null),
+      ]);
       setIntegration(integrationData);
+      setStatus(statusData);
       initialLoadDone.current = true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load Outlook");
     } finally {
       setLoading(false);
+    }
+  }, [dashboardId]);
+
+  // Load messages
+  const loadMessages = React.useCallback(async () => {
+    if (!dashboardId) return;
+    try {
+      setMessagesLoading(true);
+      const response = await getOutlookMessages(dashboardId, 20, 0);
+      setMessages(response.messages);
+      setMessagesTotal(response.total);
+    } catch {
+      // Silently fail - user can retry via sync button
+    } finally {
+      setMessagesLoading(false);
     }
   }, [dashboardId]);
 
@@ -175,16 +235,26 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
     loadIntegration();
   }, [dashboardId, loadIntegration]);
 
-  // Refresh handler
-  const handleRefresh = async () => {
+  // Load messages when mirror is ready
+  const outlookReady = Boolean(integration?.connected && status?.connected);
+  React.useEffect(() => {
+    if (outlookReady) {
+      loadMessages();
+    }
+  }, [outlookReady, loadMessages]);
+
+  // Sync handler
+  const handleSync = async () => {
     if (!dashboardId) return;
     try {
-      setRefreshing(true);
+      setSyncing(true);
+      await syncOutlook(dashboardId);
+      await loadMessages();
       await loadIntegration();
     } catch (err) {
-      console.error("Refresh failed:", err);
+      console.error("Sync failed:", err);
     } finally {
-      setRefreshing(false);
+      setSyncing(false);
     }
   };
 
@@ -202,7 +272,14 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
       window.removeEventListener("message", handleMessage);
       if (pollInterval) clearInterval(pollInterval);
       popup?.close();
-      await loadIntegration();
+      try {
+        await setupOutlookMirror(dashboardId);
+        await loadIntegration();
+        await loadMessages();
+      } catch (err) {
+        console.error("Failed to set up Outlook mirror:", err);
+        await loadIntegration();
+      }
     };
 
     const handleMessage = async (event: MessageEvent) => {
@@ -216,7 +293,6 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
     const pollInterval = setInterval(async () => {
       if (popup?.closed) {
         clearInterval(pollInterval);
-        // Give a moment for postMessage to arrive, then check integration status
         setTimeout(async () => {
           if (!completed) {
             await completeSetup();
@@ -230,10 +306,45 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await disconnectOutlookApi(dashboardId);
+      await disconnectOutlook();
       setIntegration(null);
+      setStatus(null);
+      setMessages([]);
+      setSelectedMessage(null);
     } catch (err) {
       console.error("Failed to disconnect Outlook:", err);
+    }
+  };
+
+  // Perform action on message
+  const handleAction = async (action: OutlookActionType) => {
+    if (!selectedMessage || !dashboardId) return;
+    try {
+      setActionLoading(action);
+      await performOutlookAction(dashboardId, selectedMessage.messageId, action);
+      // Update local state
+      if (action === "mark_read") {
+        setMessages(prev =>
+          prev.map(m =>
+            m.messageId === selectedMessage.messageId ? { ...m, isRead: true } : m
+          )
+        );
+        setSelectedMessage(prev => prev ? { ...prev, isRead: true } : null);
+      } else if (action === "mark_unread") {
+        setMessages(prev =>
+          prev.map(m =>
+            m.messageId === selectedMessage.messageId ? { ...m, isRead: false } : m
+          )
+        );
+        setSelectedMessage(prev => prev ? { ...prev, isRead: false } : null);
+      } else if (action === "archive" || action === "delete") {
+        setSelectedMessage(null);
+        await loadMessages();
+      }
+    } catch (err) {
+      console.error("Action failed:", err);
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -242,20 +353,20 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <OutlookIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || integration?.accountName || "Outlook"}
+        {integration?.emailAddress || status?.emailAddress || integration?.accountName || "Outlook"}
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={outlookDoc} />
-        {integration?.connected && (
+        {integration?.connected && status?.connected && (
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Refresh"
+            onClick={handleSync}
+            disabled={syncing}
+            title="Sync"
             className="nodrag"
           >
-            <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+            <RefreshCw className={cn("w-3.5 h-3.5", syncing && "animate-spin")} />
           </Button>
         )}
         <Button
@@ -420,7 +531,67 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
     );
   }
 
-  // Connected state - show account info and status
+  // Connected but not linked (mirror not set up)
+  if (!status?.connected) {
+    return (
+      <BlockWrapper selected={selected} minWidth={280} minHeight={200}>
+        <ConnectionHandles
+          nodeId={id}
+          visible={connectorsVisible}
+          onConnectorClick={data.onConnectorClick}
+        />
+        <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
+          {header}
+          <div className="flex flex-col items-center justify-center h-full p-4">
+            <Mail className="w-8 h-8 text-[var(--text-muted)] mb-2" />
+            <p className="text-xs text-[var(--text-muted)] text-center mb-3">
+              Enable Outlook sync for this dashboard
+            </p>
+            <Button
+              size="sm"
+              disabled={enabling}
+              onClick={async () => {
+                if (!dashboardId || enabling) return;
+                try {
+                  setEnabling(true);
+                  setTokenRevoked(false);
+                  await setupOutlookMirror(dashboardId);
+                  await loadIntegration();
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.includes("TOKEN_REVOKED") || msg.includes("revoked")) {
+                    setTokenRevoked(true);
+                  } else {
+                    console.error("Failed to setup Outlook:", err);
+                  }
+                } finally {
+                  setEnabling(false);
+                }
+              }}
+              className="nodrag"
+              style={{ backgroundColor: OUTLOOK_BLUE, color: "#fff" }}
+            >
+              {enabling ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                "Enable Outlook Sync"
+              )}
+            </Button>
+            {tokenRevoked && (
+              <p className="text-[10px] text-red-500 text-center mt-2">
+                Access was revoked. Please disconnect and reconnect Outlook.
+              </p>
+            )}
+          </div>
+        </div>
+      </BlockWrapper>
+    );
+  }
+
+  // Main view with messages
   return (
     <BlockWrapper selected={selected} minWidth={280} minHeight={200} className={cn(expandAnimation)}>
       <ConnectionHandles
@@ -431,65 +602,147 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
       <div className={cn("flex flex-col h-full relative z-10", isAnimatingMinimize && "animate-content-fade-out")}>
         {header}
 
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Account info */}
-          <div className="px-3 py-3 border-b border-[var(--border)]">
-            <div className="flex items-center gap-2">
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium shrink-0"
-                style={{ backgroundColor: OUTLOOK_BLUE }}
-              >
-                {(integration.accountName || integration.emailAddress || "O").charAt(0).toUpperCase()}
-              </div>
-              <div className="min-w-0 flex-1">
-                {integration.accountName && (
-                  <p className="text-xs font-medium text-[var(--text-primary)] truncate">
-                    {integration.accountName}
-                  </p>
-                )}
-                {integration.emailAddress && (
-                  <p className="text-[10px] text-[var(--text-secondary)] truncate">
-                    {integration.emailAddress}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Connection status info */}
-          <div className="flex-1 overflow-y-auto px-3 py-2">
-            <p className="text-[10px] text-[var(--text-muted)] mb-2">
-              Wire this block to a terminal to give the agent access to your Outlook email via MCP tools.
-            </p>
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
-                <Mail className="w-3 h-3 shrink-0" />
-                <span>Read, search, and send emails</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
-                <Mail className="w-3 h-3 shrink-0" />
-                <span>Reply, forward, archive, and delete</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-secondary)]">
-                <Mail className="w-3 h-3 shrink-0" />
-                <span>List and manage mail folders</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Status footer */}
-          <div className="px-2 py-1 border-t border-[var(--border)] bg-[var(--background)]">
-            <div className="flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
-              <CheckCircle className="w-2.5 h-2.5 text-green-500" />
-              <span>Connected</span>
-              {integration.emailAddress && (
-                <>
-                  <span>&middot;</span>
-                  <span className="truncate">{integration.emailAddress}</span>
-                </>
+        {/* Two pane layout */}
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* Message list */}
+          <div className={cn(
+            "flex flex-col overflow-hidden border-r border-[var(--border)]",
+            selectedMessage ? "w-1/2" : "w-full"
+          )}>
+            <div className="flex-1 overflow-y-auto">
+              {messagesLoading ? (
+                <div className="flex items-center justify-center p-4">
+                  <Loader2 className="w-4 h-4 animate-spin text-[var(--text-muted)]" />
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-4">
+                  <p className="text-xs text-[var(--text-muted)]">No messages</p>
+                </div>
+              ) : (
+                messages.map(message => (
+                  <button
+                    key={message.messageId}
+                    onClick={() => setSelectedMessage(message)}
+                    className={cn(
+                      "nodrag w-full px-2 py-1.5 text-left border-b border-[var(--border)] hover:bg-[var(--background)] transition-colors",
+                      selectedMessage?.messageId === message.messageId && "bg-[var(--background)]",
+                      !message.isRead && "bg-blue-50/5"
+                    )}
+                  >
+                    <div className="flex items-center gap-1">
+                      <span className={cn(
+                        "text-[10px] truncate flex-1",
+                        !message.isRead ? "font-semibold" : "text-[var(--text-secondary)]"
+                      )}>
+                        {extractSender(message)}
+                      </span>
+                      <span className="text-[9px] text-[var(--text-muted)]">
+                        {formatDate(message.receivedDate)}
+                      </span>
+                    </div>
+                    <p className={cn(
+                      "text-[10px] truncate",
+                      !message.isRead ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                    )}>
+                      {message.subject || "(no subject)"}
+                    </p>
+                  </button>
+                ))
               )}
             </div>
+
+            {/* Status footer */}
+            <div className="px-2 py-1 border-t border-[var(--border)] bg-[var(--background)]">
+              <div className="flex items-center gap-1 text-[9px] text-[var(--text-muted)]">
+                <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                <span>{messagesTotal} messages</span>
+                {status?.lastSyncedAt && (
+                  <>
+                    <span>&middot;</span>
+                    <Clock className="w-2.5 h-2.5" />
+                    <span>{new Date(status.lastSyncedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Message preview */}
+          {selectedMessage && (
+            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+              {/* Preview header with actions */}
+              <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setSelectedMessage(null)}
+                  className="nodrag"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </Button>
+                <div className="flex-1" />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => handleAction("archive")}
+                  disabled={!!actionLoading}
+                  title="Archive"
+                  className="nodrag"
+                >
+                  {actionLoading === "archive" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Archive className="w-3 h-3" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => handleAction("delete")}
+                  disabled={!!actionLoading}
+                  title="Delete"
+                  className="nodrag"
+                >
+                  {actionLoading === "delete" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => handleAction(selectedMessage.isRead ? "mark_unread" : "mark_read")}
+                  disabled={!!actionLoading}
+                  title={selectedMessage.isRead ? "Mark unread" : "Mark read"}
+                  className="nodrag"
+                >
+                  {actionLoading?.startsWith("mark") ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : selectedMessage.isRead ? (
+                    <EyeOff className="w-3 h-3" />
+                  ) : (
+                    <Eye className="w-3 h-3" />
+                  )}
+                </Button>
+              </div>
+
+              {/* Message content */}
+              <div className="flex-1 overflow-y-auto p-2">
+                <h3 className="text-xs font-medium text-[var(--text-primary)] mb-1">
+                  {selectedMessage.subject || "(no subject)"}
+                </h3>
+                <p className="text-[10px] text-[var(--text-secondary)] mb-2">
+                  {selectedMessage.fromName
+                    ? `${selectedMessage.fromName} <${selectedMessage.fromAddress || ""}>`
+                    : selectedMessage.fromAddress || "Unknown"}
+                </p>
+                <p className="text-[10px] text-[var(--text-secondary)] whitespace-pre-wrap">
+                  {selectedMessage.bodyPreview}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </BlockWrapper>

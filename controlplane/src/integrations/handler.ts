@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v35-teams-validate-team-id
-const integrationsRevision = "integrations-v35-teams-validate-team-id";
+// REVISION: integrations-v36-outlook-mirror-v1-email-sync
+const integrationsRevision = "integrations-v36-outlook-mirror-v1-email-sync";
 
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
@@ -11701,6 +11701,538 @@ export async function getOutlookIntegration(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Outlook Email Mirror (Microsoft Graph Mail API)
+// REVISION: outlook-mirror-v1-email-sync
+// ---------------------------------------------------------------------------
+
+async function refreshOutlookAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
+  const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error('Microsoft OAuth is not configured.');
+  }
+
+  const record = await env.DB.prepare(`
+    SELECT access_token, refresh_token, expires_at FROM user_integrations
+    WHERE user_id = ? AND provider = 'outlook'
+  `).bind(userId).first<{ access_token: string; refresh_token: string | null; expires_at: string | null }>();
+
+  if (!record) {
+    throw new Error('Outlook not connected.');
+  }
+
+  // Return current token if not expired (with 5 min buffer)
+  if (record.expires_at) {
+    const expiresAt = new Date(record.expires_at).getTime();
+    if (expiresAt > Date.now() + 5 * 60 * 1000) {
+      return record.access_token;
+    }
+  }
+
+  if (!record.refresh_token) {
+    throw new Error('TOKEN_REVOKED');
+  }
+
+  const body = new URLSearchParams();
+  body.set('client_id', clientId);
+  body.set('client_secret', clientSecret);
+  body.set('grant_type', 'refresh_token');
+  body.set('refresh_token', record.refresh_token);
+  body.set('scope', OUTLOOK_SCOPE.join(' '));
+
+  const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  if (!tokenResponse.ok) {
+    const errBody = await tokenResponse.text().catch(() => '');
+    console.error('Outlook token refresh failed:', tokenResponse.status, errBody);
+
+    let isInvalidGrant = errBody.includes('invalid_grant');
+    if (!isInvalidGrant) {
+      try {
+        const errJson = JSON.parse(errBody) as { error?: string };
+        isInvalidGrant = errJson.error === 'invalid_grant';
+      } catch {}
+    }
+
+    if (isInvalidGrant) {
+      console.log('Auto-disconnecting Outlook due to invalid_grant for user:', userId);
+      await env.DB.prepare(`DELETE FROM user_integrations WHERE user_id = ? AND provider = 'outlook'`).bind(userId).run();
+      throw new Error('TOKEN_REVOKED');
+    }
+
+    throw new Error('Failed to refresh Outlook access token.');
+  }
+
+  const tokenData = await tokenResponse.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+
+  const now = new Date();
+  const expiresAt = tokenData.expires_in
+    ? new Date(now.getTime() + tokenData.expires_in * 1000).toISOString()
+    : null;
+
+  await env.DB.prepare(`
+    UPDATE user_integrations
+    SET access_token = ?,
+        refresh_token = COALESCE(?, refresh_token),
+        expires_at = ?,
+        updated_at = datetime('now')
+    WHERE user_id = ? AND provider = 'outlook'
+  `).bind(
+    tokenData.access_token,
+    tokenData.refresh_token || null,
+    expiresAt,
+    userId
+  ).run();
+
+  return tokenData.access_token;
+}
+
+async function getOutlookAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
+  return refreshOutlookAccessToken(env, userId);
+}
+
+async function runOutlookSync(
+  env: EnvWithDriveCache,
+  userId: string,
+  dashboardId: string,
+  accessToken?: string
+): Promise<void> {
+  if (!accessToken) {
+    accessToken = await getOutlookAccessToken(env, userId);
+  }
+
+  await env.DB.prepare(`
+    UPDATE outlook_mirrors SET status = 'syncing', sync_error = null, updated_at = datetime('now')
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+
+  try {
+    // Fetch recent inbox messages via Microsoft Graph
+    const params = new URLSearchParams({
+      '$top': '20',
+      '$orderby': 'receivedDateTime desc',
+      '$select': 'id,subject,bodyPreview,from,toRecipients,receivedDateTime,isRead,hasAttachments,conversationId',
+    });
+
+    const response = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?${params}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Graph API error: ${response.status} - ${errText}`);
+    }
+
+    const result = await response.json() as {
+      value?: Array<{
+        id: string;
+        subject?: string;
+        bodyPreview?: string;
+        from?: { emailAddress: { name?: string; address: string } };
+        toRecipients?: Array<{ emailAddress: { name?: string; address: string } }>;
+        receivedDateTime?: string;
+        isRead?: boolean;
+        hasAttachments?: boolean;
+        conversationId?: string;
+      }>;
+    };
+
+    const messages = result.value || [];
+
+    for (const msg of messages) {
+      const fromAddress = msg.from?.emailAddress?.address || null;
+      const fromName = msg.from?.emailAddress?.name || null;
+      const toAddresses = msg.toRecipients
+        ? JSON.stringify(msg.toRecipients.map(r => r.emailAddress?.address || ''))
+        : null;
+
+      await env.DB.prepare(`
+        INSERT INTO outlook_messages (
+          id, user_id, dashboard_id, message_id, conversation_id, received_date,
+          from_address, from_name, to_addresses, subject, body_preview,
+          is_read, has_attachments, updated_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(dashboard_id, message_id) DO UPDATE SET
+          conversation_id = excluded.conversation_id,
+          from_address = excluded.from_address,
+          from_name = excluded.from_name,
+          to_addresses = excluded.to_addresses,
+          subject = excluded.subject,
+          body_preview = excluded.body_preview,
+          is_read = excluded.is_read,
+          has_attachments = excluded.has_attachments,
+          updated_at = datetime('now')
+      `).bind(
+        crypto.randomUUID(),
+        userId,
+        dashboardId,
+        msg.id,
+        msg.conversationId || null,
+        msg.receivedDateTime || new Date().toISOString(),
+        fromAddress,
+        fromName,
+        toAddresses,
+        msg.subject || null,
+        msg.bodyPreview || null,
+        msg.isRead ? 1 : 0,
+        msg.hasAttachments ? 1 : 0
+      ).run();
+    }
+
+    await env.DB.prepare(`
+      UPDATE outlook_mirrors
+      SET status = 'ready', last_synced_at = datetime('now'), updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(dashboardId).run();
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown sync error';
+    await env.DB.prepare(`
+      UPDATE outlook_mirrors SET status = 'error', sync_error = ?, updated_at = datetime('now')
+      WHERE dashboard_id = ?
+    `).bind(errorMessage, dashboardId).run();
+    throw error;
+  }
+}
+
+export async function setupOutlookMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79940: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79941: Not found or no access' }, { status: 404 });
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getOutlookAccessToken(env, auth.user!.id);
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOKEN_REVOKED') {
+      return Response.json({ error: 'E79942: Outlook access was revoked. Please reconnect.', code: 'TOKEN_REVOKED' }, { status: 401 });
+    }
+    return Response.json({ error: 'E79943: Outlook not connected' }, { status: 404 });
+  }
+
+  // Fetch profile (email address)
+  let emailAddress = '';
+  try {
+    const profileResp = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (profileResp.ok) {
+      const profile = await profileResp.json() as { mail?: string; userPrincipalName?: string };
+      emailAddress = profile.mail || profile.userPrincipalName || '';
+    }
+  } catch {}
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO outlook_mirrors (
+      dashboard_id, user_id, email_address, folder_id, status, updated_at, created_at
+    ) VALUES (?, ?, ?, 'inbox', 'idle', ?, ?)
+    ON CONFLICT(dashboard_id) DO UPDATE SET
+      user_id = excluded.user_id,
+      email_address = excluded.email_address,
+      status = 'idle',
+      last_synced_at = null,
+      sync_error = null,
+      updated_at = excluded.updated_at
+  `).bind(data.dashboardId, auth.user!.id, emailAddress, now, now).run();
+
+  // Initial sync (best-effort)
+  try {
+    await runOutlookSync(env, auth.user!.id, data.dashboardId, accessToken);
+  } catch {}
+
+  return Response.json({ ok: true, emailAddress });
+}
+
+export async function unlinkOutlookMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'E79944: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79945: Not found or no access' }, { status: 404 });
+  }
+
+  await env.DB.prepare(`DELETE FROM outlook_messages WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM outlook_actions WHERE dashboard_id = ?`).bind(dashboardId).run();
+  await env.DB.prepare(`DELETE FROM outlook_mirrors WHERE dashboard_id = ?`).bind(dashboardId).run();
+
+  return Response.json({ ok: true });
+}
+
+export async function getOutlookStatus(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  if (!dashboardId) {
+    return Response.json({ error: 'E79946: dashboard_id is required' }, { status: 400 });
+  }
+
+  const mirror = await env.DB.prepare(`
+    SELECT email_address, folder_id, status, last_synced_at, sync_error
+    FROM outlook_mirrors
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{
+    email_address: string;
+    folder_id: string;
+    status: string;
+    last_synced_at: string | null;
+    sync_error: string | null;
+  }>();
+
+  if (!mirror) {
+    return Response.json({ connected: false });
+  }
+
+  const messageCount = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM outlook_messages WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  return Response.json({
+    connected: true,
+    emailAddress: mirror.email_address,
+    folderId: mirror.folder_id,
+    status: mirror.status,
+    lastSyncedAt: mirror.last_synced_at,
+    syncError: mirror.sync_error,
+    messageCount: messageCount?.count || 0,
+  });
+}
+
+export async function syncOutlookMirror(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as { dashboardId?: string };
+  if (!data.dashboardId) {
+    return Response.json({ error: 'E79947: dashboardId is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79948: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    await runOutlookSync(env, auth.user!.id, data.dashboardId);
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Sync failed';
+    return Response.json({ error: 'E79949: ' + errorMessage }, { status: 500 });
+  }
+}
+
+export async function getOutlookMessages(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const url = new URL(request.url);
+  const dashboardId = url.searchParams.get('dashboard_id');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+  const offset = parseInt(url.searchParams.get('offset') || '0');
+
+  if (!dashboardId) {
+    return Response.json({ error: 'E79950: dashboard_id is required' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ?
+  `).bind(dashboardId, auth.user!.id).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79951: Not found or no access' }, { status: 404 });
+  }
+
+  const messages = await env.DB.prepare(`
+    SELECT message_id, conversation_id, received_date, from_address, from_name,
+           to_addresses, subject, body_preview, is_read, has_attachments
+    FROM outlook_messages
+    WHERE dashboard_id = ?
+    ORDER BY received_date DESC
+    LIMIT ? OFFSET ?
+  `).bind(dashboardId, limit, offset).all<{
+    message_id: string;
+    conversation_id: string | null;
+    received_date: string;
+    from_address: string | null;
+    from_name: string | null;
+    to_addresses: string | null;
+    subject: string | null;
+    body_preview: string | null;
+    is_read: number;
+    has_attachments: number;
+  }>();
+
+  const totalCount = await env.DB.prepare(`
+    SELECT COUNT(*) as count FROM outlook_messages WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ count: number }>();
+
+  return Response.json({
+    messages: (messages.results || []).map(m => ({
+      messageId: m.message_id,
+      conversationId: m.conversation_id,
+      receivedDate: m.received_date,
+      fromAddress: m.from_address,
+      fromName: m.from_name,
+      toAddresses: m.to_addresses ? JSON.parse(m.to_addresses) : [],
+      subject: m.subject,
+      bodyPreview: m.body_preview,
+      isRead: m.is_read === 1,
+      hasAttachments: m.has_attachments === 1,
+    })),
+    total: totalCount?.count || 0,
+    limit,
+    offset,
+  });
+}
+
+export async function performOutlookAction(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+
+  const data = await request.json() as {
+    dashboardId?: string;
+    messageId?: string;
+    action?: string;
+  };
+
+  if (!data.dashboardId || !data.messageId || !data.action) {
+    return Response.json({ error: 'E79952: dashboardId, messageId, and action are required' }, { status: 400 });
+  }
+
+  const validActions = ['archive', 'delete', 'mark_read', 'mark_unread'];
+  if (!validActions.includes(data.action)) {
+    return Response.json({ error: 'E79953: Invalid action' }, { status: 400 });
+  }
+
+  const access = await env.DB.prepare(`
+    SELECT role FROM dashboard_members
+    WHERE dashboard_id = ? AND user_id = ? AND role IN ('owner', 'editor')
+  `).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79954: Not found or no access' }, { status: 404 });
+  }
+
+  try {
+    const accessToken = await getOutlookAccessToken(env, auth.user!.id);
+    const graphBase = 'https://graph.microsoft.com/v1.0';
+    const encodedId = encodeURIComponent(data.messageId);
+
+    switch (data.action) {
+      case 'archive': {
+        await fetch(`${graphBase}/me/messages/${encodedId}/move`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destinationId: 'archive' }),
+        });
+        // Remove from local cache (archived = out of inbox)
+        await env.DB.prepare(`DELETE FROM outlook_messages WHERE dashboard_id = ? AND message_id = ?`)
+          .bind(data.dashboardId, data.messageId).run();
+        break;
+      }
+      case 'delete': {
+        await fetch(`${graphBase}/me/messages/${encodedId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        await env.DB.prepare(`DELETE FROM outlook_messages WHERE dashboard_id = ? AND message_id = ?`)
+          .bind(data.dashboardId, data.messageId).run();
+        break;
+      }
+      case 'mark_read': {
+        await fetch(`${graphBase}/me/messages/${encodedId}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isRead: true }),
+        });
+        await env.DB.prepare(`UPDATE outlook_messages SET is_read = 1, updated_at = datetime('now') WHERE dashboard_id = ? AND message_id = ?`)
+          .bind(data.dashboardId, data.messageId).run();
+        break;
+      }
+      case 'mark_unread': {
+        await fetch(`${graphBase}/me/messages/${encodedId}`, {
+          method: 'PATCH',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isRead: false }),
+        });
+        await env.DB.prepare(`UPDATE outlook_messages SET is_read = 0, updated_at = datetime('now') WHERE dashboard_id = ? AND message_id = ?`)
+          .bind(data.dashboardId, data.messageId).run();
+        break;
+      }
+    }
+
+    // Log the action
+    await env.DB.prepare(`
+      INSERT INTO outlook_actions (id, user_id, dashboard_id, message_id, action, details, created_at)
+      VALUES (?, ?, ?, ?, ?, '{}', datetime('now'))
+    `).bind(crypto.randomUUID(), auth.user!.id, data.dashboardId, data.messageId, data.action).run();
+
+    return Response.json({ ok: true });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Action failed';
+    return Response.json({ error: 'E79955: ' + errorMessage }, { status: 500 });
+  }
+}
+
 export async function disconnectOutlook(
   request: Request,
   env: EnvWithDriveCache,
@@ -11708,6 +12240,17 @@ export async function disconnectOutlook(
 ): Promise<Response> {
   const authError = requireAuth(auth);
   if (authError) return authError;
+
+  // Delete all user's Outlook mirrors and messages
+  const mirrors = await env.DB.prepare(`
+    SELECT dashboard_id FROM outlook_mirrors WHERE user_id = ?
+  `).bind(auth.user!.id).all<{ dashboard_id: string }>();
+
+  for (const mirror of mirrors.results || []) {
+    await env.DB.prepare(`DELETE FROM outlook_messages WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+    await env.DB.prepare(`DELETE FROM outlook_actions WHERE dashboard_id = ?`).bind(mirror.dashboard_id).run();
+  }
+  await env.DB.prepare(`DELETE FROM outlook_mirrors WHERE user_id = ?`).bind(auth.user!.id).run();
 
   await deleteTerminalIntegrationBindingsForProvider(env, auth.user!.id, 'outlook');
   await env.DB.prepare(
