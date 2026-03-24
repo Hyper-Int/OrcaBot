@@ -2034,6 +2034,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET outlook/callback': integrations.callbackOutlook,
       'GET outlook': integrations.getOutlookIntegration,
       'DELETE outlook': integrations.disconnectOutlook,
+      'POST outlook/setup': integrations.setupOutlookMirror,
+      'DELETE outlook/mirror': integrations.unlinkOutlookMirror,
+      'GET outlook/status': integrations.getOutlookStatus,
+      'POST outlook/sync': integrations.syncOutlookMirror,
+      'GET outlook/messages': integrations.getOutlookMessages,
+      'POST outlook/action': integrations.performOutlookAction,
       // Outlook Calendar (OAuth — Microsoft Graph Calendar API)
       'GET outlook/calendar/connect': integrations.connectOutlookCalendar,
       'GET outlook/calendar/callback': integrations.callbackOutlookCalendar,

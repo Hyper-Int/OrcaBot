@@ -393,6 +393,60 @@ CREATE TABLE IF NOT EXISTS gmail_actions (
 CREATE INDEX IF NOT EXISTS idx_gmail_actions_user ON gmail_actions(user_id);
 CREATE INDEX IF NOT EXISTS idx_gmail_actions_dashboard ON gmail_actions(dashboard_id);
 
+-- Outlook email mirrors
+CREATE TABLE IF NOT EXISTS outlook_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  folder_id TEXT NOT NULL DEFAULT 'inbox',
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing', 'ready', 'error')),
+  last_synced_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_mirrors_user ON outlook_mirrors(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_mirrors_email ON outlook_mirrors(email_address);
+
+-- Outlook messages (metadata cache)
+CREATE TABLE IF NOT EXISTS outlook_messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  conversation_id TEXT,
+  received_date TEXT NOT NULL,
+  from_address TEXT,
+  from_name TEXT,
+  to_addresses TEXT,
+  subject TEXT,
+  body_preview TEXT,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  has_attachments INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_user ON outlook_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_dashboard ON outlook_messages(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_conversation ON outlook_messages(conversation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outlook_messages_message ON outlook_messages(dashboard_id, message_id);
+
+-- Outlook action audit log
+CREATE TABLE IF NOT EXISTS outlook_actions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('archive', 'delete', 'mark_read', 'mark_unread')),
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_actions_user ON outlook_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_actions_dashboard ON outlook_actions(dashboard_id);
+
 -- Calendar mirrors (per dashboard)
 CREATE TABLE IF NOT EXISTS calendar_mirrors (
   dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,

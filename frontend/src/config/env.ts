@@ -189,6 +189,13 @@ export const API = {
     gmailWatch: `${CLOUDFLARE_API_URL}/integrations/google/gmail/watch`,
     gmailStop: `${CLOUDFLARE_API_URL}/integrations/google/gmail/stop`,
     gmailDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/gmail/disconnect`,
+    // Outlook Mirror
+    outlookSetup: `${CLOUDFLARE_API_URL}/integrations/outlook/setup`,
+    outlookMirror: `${CLOUDFLARE_API_URL}/integrations/outlook/mirror`,
+    outlookStatus: `${CLOUDFLARE_API_URL}/integrations/outlook/status`,
+    outlookSync: `${CLOUDFLARE_API_URL}/integrations/outlook/sync`,
+    outlookMessages: `${CLOUDFLARE_API_URL}/integrations/outlook/messages`,
+    outlookAction: `${CLOUDFLARE_API_URL}/integrations/outlook/action`,
     // Google Calendar
     calendarIntegration: `${CLOUDFLARE_API_URL}/integrations/google/calendar`,
     calendarSetup: `${CLOUDFLARE_API_URL}/integrations/google/calendar/setup`,
