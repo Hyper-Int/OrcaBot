@@ -42,7 +42,7 @@ import {
   getCalendarEvents,
   syncCalendar,
   setupCalendarMirror,
-  unlinkCalendarMirror,
+  disconnectCalendar,
   type CalendarIntegration,
   type CalendarStatus,
   type CalendarEvent,
@@ -253,7 +253,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkCalendarMirror(dashboardId);
+      await disconnectCalendar();
       setIntegration(null);
       setStatus(null);
       setEvents([]);

@@ -46,7 +46,7 @@ import {
   syncGmail,
   performGmailAction,
   setupGmailMirror,
-  unlinkGmailMirror,
+  disconnectGmail,
   type GmailIntegration,
   type GmailStatus,
   type GmailMessage,
@@ -252,7 +252,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkGmailMirror(dashboardId);
+      await disconnectGmail();
       setIntegration(null);
       setStatus(null);
       setMessages([]);
