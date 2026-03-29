@@ -79,7 +79,7 @@ import { Canvas } from "@/components/canvas";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
-import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
+import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance, useIsMobile } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive, listPendingEgressApprovals } from "@/lib/api/cloudflare";
 import { apiGet } from "@/lib/api/client";
@@ -417,6 +417,7 @@ export default function DashboardPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const { user, isAuthenticated, isAuthResolved } = useAuthStore();
+  const isMobile = useIsMobile();
 
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
@@ -451,8 +452,8 @@ export default function DashboardPage() {
   const [toolbarMessagingCollapsed, setToolbarMessagingCollapsed] = React.useState(false);
   const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
 
-  // Workspace sidebar state
-  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  // Workspace sidebar state — start minimized on mobile
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(isMobile);
   const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
   const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
 

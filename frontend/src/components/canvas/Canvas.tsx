@@ -60,6 +60,7 @@ import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
 import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
+import { useIsMobile } from "@/hooks";
 
 // Register custom node types
 const nodeTypes: NodeTypes = {
@@ -281,6 +282,7 @@ export function Canvas({
   onTerminalCwdChange,
   reactFlowRef,
 }: CanvasProps) {
+  const isMobile = useIsMobile();
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
   const [viewport, setViewport] = React.useState({ x: 0, y: 0, zoom: 1 });
@@ -670,8 +672,8 @@ export function Canvas({
           nodesConnectable={false}
           elementsSelectable={!readOnly}
           panOnScroll
-          selectionOnDrag
-          panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
+          selectionOnDrag={!isMobile}
+          panOnDrag={isMobile ? [0, 1, 2] : [1, 2]}
           selectNodesOnDrag={false}
           autoPanOnNodeDrag={false}
           deleteKeyCode={["Backspace", "Delete"]}
