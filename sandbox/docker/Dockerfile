@@ -84,7 +84,9 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g npm@latest
+    && curl -fsSL https://registry.npmjs.org/npm/-/npm-10.9.2.tgz | tar -xz -C /tmp \
+    && node /tmp/package/bin/npm-cli.js install -g npm@latest \
+    && rm -rf /tmp/package
 
 # Pre-warm npm cache with Claude Code dependencies (for fast user-initiated install)
 # We install then uninstall so the package is NOT distributed, but deps remain cached.

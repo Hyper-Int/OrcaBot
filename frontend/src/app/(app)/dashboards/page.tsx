@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: desktop-header-v5-linked-badge
-const MODULE_REVISION = "desktop-header-v5-linked-badge";
+// REVISION: layout-v6-restore-desktop-order
+const MODULE_REVISION = "layout-v6-restore-desktop-order";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -406,60 +406,6 @@ export default function DashboardsPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
-        {/* Your Dashboards Section */}
-        <section className="mb-8">
-          <h2 className="text-h2 text-[var(--foreground)] mb-4">
-            Your Dashboards
-          </h2>
-
-          {isLoading ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-24" />
-              ))}
-            </div>
-          ) : error ? (
-            <div className="text-center py-12">
-              <p className="text-body text-[var(--status-error)]">
-                Failed to load dashboards. Please try again.
-              </p>
-              <Button
-                variant="secondary"
-                className="mt-4"
-                onClick={() =>
-                  queryClient.invalidateQueries({ queryKey: ["dashboards"] })
-                }
-              >
-                Retry
-              </Button>
-            </div>
-          ) : dashboards && dashboards.length > 0 ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {dashboards.map((dashboard) => (
-                <DashboardCard
-                  key={dashboard.id}
-                  dashboard={dashboard}
-                  onClick={() => router.push(`/dashboards/${dashboard.id}`)}
-                  onDelete={() => setDeleteTarget(dashboard)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
-              <p className="text-body text-[var(--foreground-muted)] mb-4">
-                No dashboards yet. Create your first one!
-              </p>
-              <Button
-                variant="primary"
-                onClick={() => setIsCreateOpen(true)}
-                leftIcon={<Plus className="w-4 h-4" />}
-              >
-                New Dashboard
-              </Button>
-            </div>
-          )}
-        </section>
-
         {/* New Dashboard Section (Templates) */}
         <section className="mb-8">
           <h2 className="text-h2 text-[var(--foreground)] mb-4">
@@ -540,8 +486,63 @@ export default function DashboardsPage() {
           </div>
         </section>
 
-        {/* Secrets & Environment Variables Section */}
-        <div className="max-w-xl">
+        {/* Two-column layout: Dashboards (left) + Environment Variables (right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Your Dashboards Section */}
+          <section>
+            <h2 className="text-h2 text-[var(--foreground)] mb-4">
+              Your Dashboards
+            </h2>
+
+            {isLoading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-24" />
+                ))}
+              </div>
+            ) : error ? (
+              <div className="text-center py-12">
+                <p className="text-body text-[var(--status-error)]">
+                  Failed to load dashboards. Please try again.
+                </p>
+                <Button
+                  variant="secondary"
+                  className="mt-4"
+                  onClick={() =>
+                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+                  }
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : dashboards && dashboards.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {dashboards.map((dashboard) => (
+                  <DashboardCard
+                    key={dashboard.id}
+                    dashboard={dashboard}
+                    onClick={() => router.push(`/dashboards/${dashboard.id}`)}
+                    onDelete={() => setDeleteTarget(dashboard)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
+                <p className="text-body text-[var(--foreground-muted)] mb-4">
+                  No dashboards yet. Create your first one!
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() => setIsCreateOpen(true)}
+                  leftIcon={<Plus className="w-4 h-4" />}
+                >
+                  New Dashboard
+                </Button>
+              </div>
+            )}
+          </section>
+
+          {/* Secrets & Environment Variables Section */}
           <section>
             <h2 className="text-h2 text-[var(--foreground)] mb-4">
               Secrets & Environment Variables
