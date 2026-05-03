@@ -215,7 +215,7 @@ export function TodoBlock({ id, data, selected }: NodeProps<TodoNode>) {
       cleanupLeft();
       cleanupTop();
     };
-  }, [id, connectionFlow, items, persistItems]);
+  }, [id, connectionFlow, items, title, persistItems]);
 
   // Minimized view - only show when fully minimized (not during animation)
   if (isMinimized && !isAnimatingMinimize) {
