@@ -1342,19 +1342,148 @@ export async function createSessiоn(
 
     // Migrate terminal integrations from previous session(s) to the new PTY ID.
     // Integrations are keyed by terminal_id (PTY ID) which changes each session,
-    // but item_id (dashboard item ID) is stable. This ensures integrations + policies
-    // persist across session boundaries for the same terminal block.
+    // but item_id (dashboard item ID) is stable. This ensures integrations +
+    // policies persist across session boundaries for the same terminal block.
+    //
+    // Two collision sources to handle:
+    //
+    // 1. Multi-stale old-PTY rows for the same provider. Migration is best-effort
+    //    (catch block tolerates failure), so a previous failed migration can
+    //    leave more than one active old-PTY row for the same item+provider.
+    //    A blind `UPDATE ... SET terminal_id = newPty` would point both rows at
+    //    the same (newPty, provider) and violate the partial unique index.
+    //
+    // 2. Frontend concurrent POST /terminals/:newPtyId/integrations (e.g.
+    //    handleStorageLinked auto-attach) inserting a new-PTY row before this
+    //    migration runs. The migration UPDATE then collides on the same index.
+    //
+    // SECURITY: on collision an OLD row wins. Old rows carry the user's actual
+    // policy, audit history, and high-risk confirmations. The frontend's
+    // auto-attach calls attachIntegration without a policy, falling back to
+    // createDefaultFullAccessPolicy() — keeping it would silently widen
+    // permissions and discard restrictive policies set by the user.
+    //
+    // Strategy:
+    //   a) Read all old-PTY rows for this item once, ordered to put the most
+    //      authoritative row per provider first. Authority is proxied by
+    //      evidence of user interaction, NOT recency — a fresh row created
+    //      seconds ago by attachIntegration() with a default full-access
+    //      policy must NOT outrank an older row with restrictive policy edits.
+    //      Ranking signals (in order):
+    //        1. audit_count DESC      — row has been used by the LLM
+    //        2. hrc_count DESC        — user explicitly approved capabilities
+    //        3. policy_version DESC   — user has edited the policy past v1
+    //        4. created_at ASC        — oldest row = original attachment
+    //                                   (later rows in the same item are most
+    //                                   likely race-attached defaults)
+    //        5. id ASC                — deterministic tiebreaker
+    //   b) Per provider keep the first row as the winner; the rest are losers.
+    //   c) In a single atomic D1 batch:
+    //        - Soft-delete losers (preserves audit history of older rows).
+    //        - Hard-delete new-PTY race-attached rows + their dependents
+    //          (no audit value — created seconds ago in the race window;
+    //          D1 has no FK cascade so dependents need explicit deletion).
+    //        - UPDATE the surviving winners to the new PTY ID.
+    //
+    // Concurrent attach landing between (a) and (c) is handled by the colliders
+    // subquery inside the batch, which re-evaluates new-PTY rows at exec time.
     try {
-      const migrated = await env.DB.prepare(`
-        UPDATE terminal_integrations
-        SET terminal_id = ?, updated_at = datetime('now')
-        WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
-          AND terminal_id != ?
-      `).bind(pty.id, itemId, dashboardId, pty.id).run();
+      const oldRows = await env.DB.prepare(`
+        SELECT
+          ti.id,
+          ti.provider,
+          (SELECT COUNT(*) FROM integration_audit_log
+             WHERE terminal_integration_id = ti.id) AS audit_count,
+          (SELECT COUNT(*) FROM high_risk_confirmations
+             WHERE terminal_integration_id = ti.id) AS hrc_count,
+          COALESCE((SELECT MAX(version) FROM integration_policies
+             WHERE terminal_integration_id = ti.id), 1) AS policy_version
+        FROM terminal_integrations ti
+        WHERE ti.item_id = ? AND ti.dashboard_id = ? AND ti.deleted_at IS NULL
+          AND ti.terminal_id != ?
+        ORDER BY
+          ti.provider ASC,
+          audit_count DESC,
+          hrc_count DESC,
+          policy_version DESC,
+          ti.created_at ASC,
+          ti.id ASC
+      `).bind(itemId, dashboardId, pty.id).all<{ id: string; provider: string }>();
 
-      // migrated.meta.changes integration(s) updated
+      const seen = new Set<string>();
+      const losers: string[] = [];
+      for (const row of oldRows.results ?? []) {
+        if (seen.has(row.provider)) {
+          losers.push(row.id);
+        } else {
+          seen.add(row.provider);
+        }
+      }
+
+      const collidersSubquery = `
+        SELECT id FROM terminal_integrations
+        WHERE terminal_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+          AND provider IN (
+            SELECT provider FROM terminal_integrations
+            WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+              AND terminal_id != ?
+          )
+      `;
+      const collidersBind = [pty.id, dashboardId, itemId, dashboardId, pty.id];
+
+      const stmts: D1PreparedStatement[] = [];
+
+      // Soft-delete losers first so the colliders subquery (run by subsequent
+      // statements within this same atomic batch) sees only the per-provider
+      // winners as old-PTY rows. This also ensures the final UPDATE migrates
+      // exactly one row per provider, never violating the unique index.
+      if (losers.length > 0) {
+        const placeholders = losers.map(() => '?').join(',');
+        stmts.push(
+          env.DB.prepare(`
+            UPDATE terminal_integrations
+            SET deleted_at = datetime('now')
+            WHERE id IN (${placeholders})
+          `).bind(...losers),
+        );
+      }
+
+      stmts.push(
+        env.DB.prepare(`
+          DELETE FROM integration_audit_log
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM high_risk_confirmations
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM integration_policies
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM terminal_integrations
+          WHERE terminal_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+            AND provider IN (
+              SELECT provider FROM terminal_integrations
+              WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+                AND terminal_id != ?
+            )
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          UPDATE terminal_integrations
+          SET terminal_id = ?, updated_at = datetime('now')
+          WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+            AND terminal_id != ?
+        `).bind(pty.id, itemId, dashboardId, pty.id),
+      );
+
+      await env.DB.batch(stmts);
     } catch (err) {
-      // Non-fatal: if migration fails, integrations will need to be re-attached manually.
+      // Non-fatal: if migration fails old rows stay under their previous PTY
+      // IDs (unreachable from the new session) and the user can re-attach
+      // manually. No privilege widening — we never delete the old-PTY row
+      // except via the migration UPDATE above.
       console.error('[createSession] Failed to migrate integrations:', err);
     }
 

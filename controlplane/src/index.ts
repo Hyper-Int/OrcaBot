@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v15-linked-dashboards
-console.log(`[controlplane] REVISION: controlplane-v15-linked-dashboards loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v17-pty-ws-edge-debug
+console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -352,6 +352,8 @@ async function prоxySandbоxWebSоcket(
 ): Promise<Response> {
   const sandboxUrlValue = sandboxUrl(env, `/sessions/${sandboxSessionId}/ptys/${ptyId}/ws`);
   sandboxUrlValue.searchParams.set('user_id', userId);
+  const requestUrl = new URL(request.url);
+  const origin = request.headers.get('Origin') || '';
 
   const headers = sandboxHeaders(env, request.headers, machineId);
   headers.delete('Host');
@@ -366,7 +368,17 @@ async function prоxySandbоxWebSоcket(
     redirect: 'manual',
   });
 
-  return fetch(proxyRequest);
+  const response = await fetch(proxyRequest);
+  if (response.status !== 101) {
+    console.warn(
+      `[ws-proxy] upstream PTY WS failed status=${response.status} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+    );
+  } else {
+    console.log(
+      `[ws-proxy] upstream PTY WS upgraded sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+    );
+  }
+  return response;
 }
 
 async function prоxySandbоxControlWebSоcket(
@@ -431,6 +443,15 @@ async function prоxySandbоxWebSоcketPath(
   });
 
   return fetch(proxyRequest);
+}
+
+async function resolveDashboardSandboxForBrowser(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+  preferredRegion?: string
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | Response> {
+  return sessions.ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
 }
 
 type EnvWithBindings = EnvWithDb & EnvWithDriveCache;
@@ -2305,16 +2326,15 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
     }
 
-    const sandbox = await env.DB.prepare(`
-      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
-    if (!sandbox?.sandbox_session_id) {
-      return Response.json({ error: 'E79816: Browser session not found' }, { status: 404 });
+    const sandboxInfo = await resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion);
+    if (sandboxInfo instanceof Response) {
+      return sandboxInfo;
     }
+    const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
 
     const suffix = segments.slice(3).join('/');
-    const path = `/sessions/${sandbox.sandbox_session_id}/browser/${suffix}`;
-    return prоxySandbоxRequest(request, env, path, sandbox.sandbox_machine_id);
+    const path = `/sessions/${sandboxSessionId}/browser/${suffix}`;
+    return prоxySandbоxRequest(request, env, path, sandboxMachineId);
   }
 
   // GET /dashboards/:id/browser/* - Proxy browser UI
@@ -2348,17 +2368,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       }
     }
 
-    const sandbox = await env.DB.prepare(`
-      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
-    if (!sandbox?.sandbox_session_id) {
-      return Response.json({ error: 'E79816: Browser session not found' }, { status: 404 });
+    if (allowDevBypass) {
+      return Response.json({ error: 'E79818: Browser dev bypass requires authenticated user' }, { status: 401 });
     }
+
+    const sandboxInfo = await resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion);
+    if (sandboxInfo instanceof Response) {
+      return sandboxInfo;
+    }
+    const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
 
     const suffix = segments.slice(3).join('/');
     const path = suffix
-      ? `/sessions/${sandbox.sandbox_session_id}/browser/${suffix}`
-      : `/sessions/${sandbox.sandbox_session_id}/browser`;
+      ? `/sessions/${sandboxSessionId}/browser/${suffix}`
+      : `/sessions/${sandboxSessionId}/browser`;
 
     const upgradeHeader = request.headers.get('Upgrade');
     if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
@@ -2366,7 +2389,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         request,
         env,
         path,
-        sandbox.sandbox_machine_id
+        sandboxMachineId
       );
     }
 
@@ -2374,7 +2397,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       request,
       env,
       path,
-      sandbox.sandbox_machine_id
+      sandboxMachineId
     );
 
     if (proxyResponse.status === 101) {
@@ -2617,22 +2640,45 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
   if (segments[0] === 'sessions' && segments.length === 5 && segments[2] === 'ptys' && segments[4] === 'ws' && method === 'GET') {
+    const wsOrigin = request.headers.get('Origin') || '';
+    const cookieHeader = request.headers.get('Cookie') || '';
+    const hasSessionCookie = cookieHeader.includes('orcabot_session=');
+    const hasCfAccessCookie = cookieHeader.includes('CF_Authorization=');
+    const hasCfAccessJwtHeader = Boolean(request.headers.get('Cf-Access-Jwt-Assertion'));
+    const upgradeHeader = request.headers.get('Upgrade') || '';
+    const connectionHeader = request.headers.get('Connection') || '';
+    const requestedSessionId = segments[1];
+    const requestedPtyId = segments[3];
     const authError = requireAuth(auth);
-    if (authError) return authError;
+    if (authError) {
+      console.warn(
+        `[pty-ws] auth rejected sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} upgrade=${upgradeHeader} connection=${connectionHeader} isAuthenticated=${auth.isAuthenticated} userId=${auth.user?.id || ''}`
+      );
+      return authError;
+    }
     // Subscription gate — PTY WS is GET so the centralized POST gate doesn't cover it
     const ptySkipBilling = env.DEV_AUTH_ENABLED === 'true'
       || (env.AUTH_LOGIN_RESTRICTED === 'true' && isExemptEmail(env, auth.user!.email));
     if (!ptySkipBilling && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+      console.warn(
+        `[pty-ws] subscription rejected sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
 
     const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
+      console.warn(
+        `[pty-ws] session lookup failed sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
     }
 
     if (session.pty_id !== segments[3]) {
+      console.warn(
+        `[pty-ws] pty mismatch sessionId=${requestedSessionId} requestedPtyId=${requestedPtyId} actualPtyId=${session.pty_id as string} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'E79739: PTY not found' }, { status: 404 });
     }
 
@@ -2653,6 +2699,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const proxyUserId = session.owner_user_id === auth.user!.id
       ? auth.user!.id
       : '';
+
+    console.log(
+      `[pty-ws] proxy start sessionId=${requestedSessionId} ptyId=${requestedPtyId} sandboxSessionId=${session.sandbox_session_id as string} machineId=${session.sandbox_machine_id as string} ownerUserId=${session.owner_user_id as string} authUserId=${auth.user!.id} proxyUserId=${proxyUserId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} upgrade=${upgradeHeader} connection=${connectionHeader}`
+    );
 
     const proxyResponse = await prоxySandbоxWebSоcket(
       request,
@@ -2720,6 +2770,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         status: 101,
         webSocket: client,
       });
+    }
+
+    if (proxyResponse.status !== 101) {
+      console.warn(
+        `[pty-ws] proxy response status=${proxyResponse.status} sessionId=${requestedSessionId} ptyId=${requestedPtyId} sandboxSessionId=${session.sandbox_session_id as string} origin=${wsOrigin}`
+      );
     }
 
     return proxyResponse;
