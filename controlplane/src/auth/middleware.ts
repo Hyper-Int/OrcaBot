@@ -208,7 +208,7 @@ export function requireInternalAuth(
     );
   }
 
-  if (!token || token !== env.INTERNAL_API_TOKEN) {
+  if (!token || !constantTimeEqual(token, env.INTERNAL_API_TOKEN)) {
     const url = new URL(request.url);
     const got = tokenFingerprint(token);
     const want = tokenFingerprint(env.INTERNAL_API_TOKEN);
@@ -220,6 +220,15 @@ export function requireInternalAuth(
   }
 
   return null;
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 function tokenFingerprint(token: string | null): string {
@@ -262,7 +271,7 @@ export async function validateMcpAuth(
         ),
       };
     }
-    if (internalToken === env.INTERNAL_API_TOKEN) {
+    if (constantTimeEqual(internalToken, env.INTERNAL_API_TOKEN)) {
       return { isValid: true, isFullAccess: true };
     }
   }
