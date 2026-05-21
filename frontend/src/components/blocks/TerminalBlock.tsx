@@ -3324,12 +3324,14 @@ export function TerminalBlock({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
                             <div className="text-xs text-[var(--foreground)] truncate">{m.label}</div>
-                            <div className="text-[10px] text-[var(--foreground-muted)] shrink-0">
-                              ${m.pricing.input.toFixed(2)}/${m.pricing.output.toFixed(2)} per 1M
-                            </div>
+                            {m.pricing && (
+                              <div className="text-[10px] text-[var(--foreground-muted)] shrink-0">
+                                ${m.pricing.input.toFixed(2)}/${m.pricing.output.toFixed(2)} per 1M
+                              </div>
+                            )}
                           </div>
                           <div className="text-[10px] text-[var(--foreground-muted)] truncate">
-                            {m.provider} · {(m.contextLength / 1000).toFixed(0)}k context · <code className="font-mono">{m.id}</code>
+                            {m.provider} · {m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k context · ` : ""}<code className="font-mono">{m.id}</code>
                           </div>
                         </div>
                       </label>

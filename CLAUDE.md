@@ -222,6 +222,14 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Saved subagents persist per user in control plane
 - Catalog lives in `frontend/src/data/claude-subagents.json`
 
+### Model Selection (OpenRouter)
+- Per-terminal model picker in the terminal settings dropdown (Claude/Codex/OpenCode/Droid)
+- Default = harness's native API; OpenRouter routes through the local secrets broker via a sibling provider (`openrouter` for OpenAI-compatible harnesses, `openrouter-anthropic` for Claude Code)
+- Selection lives in `terminalContent.modelSelection` and triggers the existing "restart to apply" banner
+- Catalog: `frontend/src/data/openrouter-models.json` (curated, per-model pricing + context + compatibleHarnesses)
+- Drift check: `npm run check-catalogs` (also runs weekly via `.github/workflows/check-catalogs.yml`)
+- Key files: `sandbox/internal/sessions/model_selection.go`, `frontend/src/components/blocks/TerminalBlock.tsx` (Model panel)
+
 ### Workspace Sidebar
 - File tree is populated via control plane proxy of sandbox filesystem APIs
 

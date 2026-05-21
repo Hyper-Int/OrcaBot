@@ -1,22 +1,23 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: model-selection-v1-openrouter
+// REVISION: model-selection-v2-openrouter
 
 package sessions
 
 import (
 	"fmt"
 	"log"
-	"os"
+	"time"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 )
 
-const modelSelectionRevision = "model-selection-v1-openrouter"
+const modelSelectionRevision = "model-selection-v2-openrouter"
 
 func init() {
-	log.Printf("[model-selection] REVISION: %s loaded at %s", modelSelectionRevision, "init")
+	log.Printf("[model-selection] REVISION: %s loaded at %s", modelSelectionRevision, time.Now().Format(time.RFC3339))
 }
 
 // ModelSelection describes a per-PTY override for the model/provider the harness should use.
@@ -45,15 +46,12 @@ func (m *ModelSelection) IsOpenRouter() bool {
 //     .claude/settings.local.json by SetClaudeModelForOpenRouter in session.go.
 //   - Gemini CLI / Moltbot: not supported.
 //
-// brokerHost is typically "localhost:8082". sessionID scopes the broker config.
-func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel *ModelSelection, sessionID, brokerHost string) {
+// brokerPort comes from Session.BrokerPort(). sessionID scopes the broker config.
+func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel *ModelSelection, sessionID string, brokerPort int) {
 	if !sel.IsOpenRouter() {
 		return
 	}
-	if brokerHost == "" {
-		brokerHost = "localhost:8082"
-	}
-	brokerURL := fmt.Sprintf("http://%s/broker/%s/openrouter", brokerHost, sessionID)
+	brokerURL := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter", brokerPort, sessionID)
 
 	switch agentType {
 	case mcp.AgentTypeCodex, mcp.AgentTypeOpenCode, mcp.AgentTypeDroid:
@@ -61,32 +59,15 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 		// strips /broker/{sid}/openrouter and forwards to OpenRouter's /api/v1.
 		envVars["OPENAI_BASE_URL"] = brokerURL
 		envVars["OPENAI_MODEL"] = sel.Model
-		// Some clients respect a per-provider override variable:
-		envVars["OPENROUTER_BASE_URL"] = brokerURL
-		envVars["OPENROUTER_MODEL"] = sel.Model
 		log.Printf("[model-selection] agent=%s routing via OpenRouter model=%s broker=%s", agentType, sel.Model, brokerURL)
 	case mcp.AgentTypeClaude:
-		// Anthropic SDK appends /v1/messages to ANTHROPIC_BASE_URL, so route to
-		// the sibling broker entry (openrouter-anthropic) whose target is
-		// https://openrouter.ai/api (no /v1) — final URL becomes
-		// https://openrouter.ai/api/v1/messages. The broker injects the OpenRouter
-		// Bearer token; Claude Code's own apiKeyHelper is cleared by
-		// SetClaudeModelForOpenRouter (called from session.go).
-		anthropicBroker := fmt.Sprintf("http://%s/broker/%s/openrouter-anthropic", brokerHost, sessionID)
+		anthropicBroker := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter-anthropic", brokerPort, sessionID)
 		envVars["ANTHROPIC_BASE_URL"] = anthropicBroker
-		// Placeholder for ANTHROPIC_API_KEY so Claude Code starts; the broker
-		// strips this header and substitutes the real OpenRouter Bearer token.
-		envVars["ANTHROPIC_API_KEY"] = "[BROKERED] OpenRouter Bearer injected by broker"
+		// Placeholder so Claude Code starts; the broker strips x-api-key on the
+		// outbound request and substitutes the real OpenRouter Bearer token.
+		envVars["ANTHROPIC_API_KEY"] = broker.GetDummyValue("anthropic")
 		log.Printf("[model-selection] agent=claude routing via OpenRouter model=%s broker=%s", sel.Model, anthropicBroker)
 	default:
 		log.Printf("[model-selection] agent=%s OpenRouter routing not supported", agentType)
 	}
-}
-
-// brokerHostFromEnv resolves the broker host:port, falling back to localhost:8082.
-func brokerHostFromEnv() string {
-	if h := os.Getenv("ORCABOT_BROKER_HOST"); h != "" {
-		return h
-	}
-	return "localhost:8082"
 }

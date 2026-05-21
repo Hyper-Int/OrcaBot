@@ -217,6 +217,11 @@ Built-in providers (hardcoded allowlist):
 - Anthropic, OpenAI, Google, Gemini
 - ElevenLabs, Deepgram
 - Groq, Together, Fireworks, Mistral, Cohere, Replicate, Hugging Face
+- OpenRouter — two sibling entries share `OPENROUTER_API_KEY`:
+  - `openrouter` → `https://openrouter.ai/api/v1` (OpenAI-compatible, used by Codex/OpenCode/Droid via `OPENAI_BASE_URL`)
+  - `openrouter-anthropic` → `https://openrouter.ai/api` (Anthropic-compatible, used by Claude Code via `ANTHROPIC_BASE_URL`; the SDK appends `/v1/messages`)
+
+  Adding the key installs both broker configs in one go via `broker.GetAllProvidersByEnvKey`. Per-PTY model selection is set by the frontend Model panel and forwarded as `model_selection` to `CreatePTYWithOptions`.
 
 Custom secrets use dynamic domain approval:
 - Route: `/broker/{sessionID}/custom/{secretName}?target=https://...`
@@ -260,7 +265,7 @@ Hardcoded in `internal/egress/allowlist.go`:
 - Git hosting (GitHub, GitLab, Bitbucket + subdomains)
 - System packages (Debian, Ubuntu, Alpine)
 - CDNs (Cloudflare, CloudFront, Fastly, jsDelivr, unpkg)
-- LLM APIs (Anthropic, OpenAI, ChatGPT, Google, Groq, Together, etc.)
+- LLM APIs (Anthropic, OpenAI, ChatGPT, Google, Groq, Together, OpenRouter, etc.)
 - Telemetry (Datadog, Sentry)
 - Common dev tools (Node.js, Google storage)
 

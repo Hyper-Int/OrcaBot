@@ -809,23 +809,7 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 	return actualWorkDir, nil
 }
 
-// CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
-// REVISION: model-selection-v1-openrouter
-// If ptyID is provided, it will be used instead of generating a new one.
-// If integrationToken is provided, it will be stored and injected into the PTY environment.
-// If modelSelection requests OpenRouter, per-harness env vars route requests through the broker.
-func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken, workingDir string) (*PTYInfo, error) {
-	return s.CreatePTYWithOptions(CreatePTYOptions{
-		CreatorID:        creatorID,
-		Command:          command,
-		PtyID:            ptyID,
-		IntegrationToken: integrationToken,
-		WorkingDir:       workingDir,
-	})
-}
-
-// CreatePTYOptions bundles optional parameters for PTY creation. New fields go here
-// instead of growing the CreatePTYWithToken parameter list further.
+// CreatePTYOptions bundles optional parameters for PTY creation.
 type CreatePTYOptions struct {
 	CreatorID        string
 	Command          string
@@ -835,8 +819,8 @@ type CreatePTYOptions struct {
 	ModelSelection   *ModelSelection
 }
 
-// CreatePTYWithOptions is the canonical PTY creation entry point. CreatePTY and
-// CreatePTYWithToken are thin wrappers preserved for backward compatibility.
+// CreatePTYWithOptions is the canonical PTY creation entry point. CreatePTY is
+// a thin wrapper for the no-options path used by tests.
 // REVISION: model-selection-v1-openrouter
 func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) {
 	creatorID := opts.CreatorID
@@ -933,7 +917,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	// Apply per-harness OpenRouter env vars when requested. Must come after agentType is
 	// known (above) and before the PTY spawns. No-op when modelSelection is nil or default.
 	// REVISION: model-selection-v1-openrouter
-	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, brokerHostFromEnv())
+	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort())
 
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
 	// REVISION: session-v22-pool-empty-mcp-env

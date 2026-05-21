@@ -228,6 +228,14 @@ The frontend provides UI for managing secrets and environment variables.
 - Voice selection dropdown per provider
 - Live status display from WebSocket events
 
+### Model Selection (OpenRouter)
+- Per-terminal Model panel in the terminal settings dropdown (Claude/Codex/OpenCode/Droid)
+- One flat list: Default section at top, OpenRouter section below with per-model pricing + context window
+- Changing selection sets `pendingConfigRestart=true` → existing "restart to apply" banner fires (same flow as TTS/MCP/subagents)
+- Selection persisted in `terminalContent.modelSelection` and round-tripped to the sandbox via `model_selection` on PTY create
+- Catalog: `src/data/openrouter-models.json` (curated; `compatibleHarnesses` filters which models appear per harness)
+- Freshness: `npm run check-catalogs` diffs local vs upstream OpenRouter API
+
 Frontend does NOT:
 - Store secrets locally (all in control plane, encrypted)
 - Make decisions about which domains are safe

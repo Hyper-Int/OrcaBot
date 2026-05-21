@@ -67,12 +67,15 @@ var Providers = map[string]ProviderSpec{
 	// so the broker target ends one path segment earlier (no /v1) — final URL
 	// becomes https://openrouter.ai/api/v1/messages. Shares OPENROUTER_API_KEY
 	// with the "openrouter" entry; env.go installs both broker configs together.
+	// BrokerEnvKey is empty because the sibling spec's BrokerEnvKey is never
+	// surfaced to the harness — applyOpenRouterEnv writes ANTHROPIC_BASE_URL
+	// directly using the broker URL template.
 	"openrouter-anthropic": {
 		EnvKey:        "OPENROUTER_API_KEY",
 		TargetBaseURL: "https://openrouter.ai/api",
 		HeaderName:    "Authorization",
 		HeaderFormat:  "Bearer %s",
-		BrokerEnvKey:  "OPENROUTER_ANTHROPIC_BASE_URL",
+		BrokerEnvKey:  "",
 		Category:      "agent",
 	},
 
