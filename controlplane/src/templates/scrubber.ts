@@ -87,6 +87,8 @@ export function scrubItemContent(
             name: parsed.name || 'Terminal',
             agentic: parsed.agentic ?? false,
             bootCommand: parsed.bootCommand || '',
+            // Preserve model selection — it's a config choice, not user-specific state
+            modelSelection: parsed.modelSelection,
             // Clear user-specific attachments - will be empty on import
             subagentIds: [],
             skillIds: [],

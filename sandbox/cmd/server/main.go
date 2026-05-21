@@ -700,16 +700,34 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
+		ModelSelection   *struct {
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+		} `json:"model_selection"` // Per-PTY OpenRouter override
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
 	}
 
-	// Use CreatePTYWithToken if pty_id or integration_token or working_dir is provided
+	// Use CreatePTYWithOptions when any optional field is present
 	var ptyInfo *sessions.PTYInfo
 	var err error
-	if req.PtyID != "" || req.IntegrationToken != "" || req.WorkingDir != "" {
-		ptyInfo, err = session.CreatePTYWithToken(req.CreatorID, req.Command, req.PtyID, req.IntegrationToken, req.WorkingDir)
+	hasOpts := req.PtyID != "" || req.IntegrationToken != "" || req.WorkingDir != "" || req.ModelSelection != nil
+	if hasOpts {
+		opts := sessions.CreatePTYOptions{
+			CreatorID:        req.CreatorID,
+			Command:          req.Command,
+			PtyID:            req.PtyID,
+			IntegrationToken: req.IntegrationToken,
+			WorkingDir:       req.WorkingDir,
+		}
+		if req.ModelSelection != nil {
+			opts.ModelSelection = &sessions.ModelSelection{
+				Provider: req.ModelSelection.Provider,
+				Model:    req.ModelSelection.Model,
+			}
+		}
+		ptyInfo, err = session.CreatePTYWithOptions(opts)
 	} else {
 		ptyInfo, err = session.CreatePTY(req.CreatorID, req.Command, "")
 	}

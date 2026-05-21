@@ -42,6 +42,7 @@ import {
   Palette,
   Type,
   ListTodo,
+  Cpu,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -113,6 +114,7 @@ import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
 import agentSkillsCatalog from "@/data/claude-agent-skills.json";
 import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
+import openrouterModelsCatalog from "@/data/openrouter-models.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { TasksPanel } from "./TasksPanel";
@@ -204,7 +206,23 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | "working-dir" | "tasks" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "model" | "integrations" | "working-dir" | "tasks" | null;
+
+type ModelSelection = {
+  provider: "default" | "openrouter";
+  model?: string; // OpenRouter model id, only set when provider === "openrouter"
+};
+
+type OpenRouterModel = {
+  id: string;
+  label: string;
+  provider: string;
+  contextLength: number;
+  pricing: { input: number; output: number };
+  compatibleHarnesses: string[];
+};
+
+const OPENROUTER_MODELS: OpenRouterModel[] = (openrouterModelsCatalog.models ?? []) as OpenRouterModel[];
 
 type TerminalContentState = {
   name: string;
@@ -219,6 +237,7 @@ type TerminalContentState = {
   ttsProvider?: string;
   ttsVoice?: string;
   skipApprovals?: boolean;
+  modelSelection?: ModelSelection;
 };
 
 // Font size presets - "auto" means dynamic resizing based on terminal width
@@ -450,6 +469,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         ttsProvider: parsed.ttsProvider,
         ttsVoice: parsed.ttsVoice,
         skipApprovals: parsed.skipApprovals,
+        modelSelection: parsed.modelSelection,
       };
     } catch {
       return { name: content, subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
@@ -1047,6 +1067,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1126,6 +1147,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (subagentName) {
@@ -1196,6 +1218,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
@@ -1218,6 +1241,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
@@ -1277,10 +1301,44 @@ export function TerminalBlock({
           ttsProvider: newProvider,
           ttsVoice: newVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
     [data, terminalMeta]
+  );
+
+  const handleModelChange = React.useCallback(
+    (next: ModelSelection) => {
+      if (!data.onItemChange) return;
+      const current = terminalMeta.modelSelection ?? { provider: "default" as const };
+      const providerChanged = current.provider !== next.provider;
+      const modelChanged = current.model !== next.model;
+      if (!providerChanged && !modelChanged) return;
+
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: next,
+        }),
+      });
+
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
+    },
+    [data, terminalMeta, session?.id]
   );
 
   const attachedNames = React.useMemo(() => {
@@ -1407,6 +1465,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1436,6 +1495,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (skillName) {
@@ -1525,6 +1585,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1553,6 +1614,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       syncSessionAttachments({
@@ -3193,7 +3255,118 @@ export function TerminalBlock({
             />
           )}
 
-          {/* TTS Voice Panel */}
+          {/* Model Selection Panel */}
+          {activePanel === "model" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Cpu className="w-3 h-3" />
+                  <span>Model</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="p-3 space-y-3 max-h-[420px] overflow-y-auto">
+                {/* Default section */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Default
+                  </div>
+                  <label className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer">
+                    <input
+                      type="radio"
+                      name={`model-${id}`}
+                      checked={(terminalMeta.modelSelection?.provider ?? "default") === "default"}
+                      onChange={() => handleModelChange({ provider: "default" })}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-[var(--foreground)]">
+                        {terminalType === "claude" && "Claude Code (Anthropic native)"}
+                        {terminalType === "codex" && "Codex (OpenAI native)"}
+                        {terminalType === "opencode" && "OpenCode (default provider)"}
+                        {terminalType === "droid" && "Droid (Factory.ai default)"}
+                      </div>
+                      <div className="text-[10px] text-[var(--foreground-muted)]">
+                        Uses the harness&apos;s built-in API key.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* OpenRouter section */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    OpenRouter
+                  </div>
+                  {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).map((m) => {
+                    const selected =
+                      terminalMeta.modelSelection?.provider === "openrouter" &&
+                      terminalMeta.modelSelection?.model === m.id;
+                    return (
+                      <label
+                        key={m.id}
+                        className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer"
+                      >
+                        <input
+                          type="radio"
+                          name={`model-${id}`}
+                          checked={selected}
+                          onChange={() => handleModelChange({ provider: "openrouter", model: m.id })}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-[var(--foreground)] truncate">{m.label}</div>
+                            <div className="text-[10px] text-[var(--foreground-muted)] shrink-0">
+                              ${m.pricing.input.toFixed(2)}/${m.pricing.output.toFixed(2)} per 1M
+                            </div>
+                          </div>
+                          <div className="text-[10px] text-[var(--foreground-muted)] truncate">
+                            {m.provider} · {(m.contextLength / 1000).toFixed(0)}k context · <code className="font-mono">{m.id}</code>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).length === 0 && (
+                    <div className="text-[10px] text-[var(--foreground-muted)] italic">
+                      No OpenRouter models are compatible with this harness yet.
+                    </div>
+                  )}
+                </div>
+
+                {/* API key hint */}
+                {terminalMeta.modelSelection?.provider === "openrouter" && (
+                  <div className="pt-2 border-t border-[var(--border)]">
+                    <div className="text-[10px] text-[var(--foreground-muted)]">
+                      Requires <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> in Environment Variables
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setNewSecretName("OPENROUTER_API_KEY");
+                        setActivePanel("secrets");
+                        setTimeout(() => secretValueInputRef.current?.focus(), 50);
+                      }}
+                      className="mt-1.5 h-6 text-[10px] text-[var(--accent-primary)]"
+                    >
+                      <Key className="w-3 h-3 mr-1" />
+                      Open Environment Variables
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {activePanel === "tts-voice" && (
             <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-72">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
@@ -3744,6 +3917,16 @@ export function TerminalBlock({
                 <ListTodo className="w-3 h-3" />
                 <span>Tasks</span>
               </DropdownMenuItem>
+              {/* Model - for agentic terminals that support OpenRouter (Claude, Codex, OpenCode, Droid) */}
+              {(terminalType === "claude" || terminalType === "codex" || terminalType === "opencode" || terminalType === "droid") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setActivePanel(activePanel === "model" ? null : "model")} className="gap-2">
+                    <Cpu className="w-3 h-3" />
+                    <span>Model</span>
+                  </DropdownMenuItem>
+                </>
+              )}
               {/* TTS Voice - for Claude Code, Codex, and Gemini */}
               {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
                 <>

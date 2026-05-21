@@ -427,6 +427,75 @@ func SetClaudeApiKeyHelperUnixSocket(workspaceRoot string) error {
 	return nil
 }
 
+// ClearClaudeOpenRouterModel removes the OpenRouter-specific model id from
+// .claude/settings.local.json. Called when switching a Claude Code terminal
+// back to its default Anthropic provider — leaving the OpenRouter-format id
+// would cause native Anthropic to 400 on every request.
+// REVISION: model-selection-v1-openrouter
+func ClearClaudeOpenRouterModel(workspaceRoot string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil // nothing to clear
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
+	model, _ := settings["model"].(string)
+	// Only clear OpenRouter-shaped ids (contain "/"); leave any user-set native
+	// Anthropic model alone.
+	if !strings.Contains(model, "/") {
+		return nil
+	}
+	delete(settings, "model")
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, out, 0644)
+}
+
+// SetClaudeModelForOpenRouter writes the OpenRouter model id into
+// .claude/settings.local.json's "model" field and removes any pre-existing
+// apiKeyHelper. With ANTHROPIC_BASE_URL pointed at the broker, the broker
+// injects the OpenRouter Bearer token — Claude Code's own apiKeyHelper would
+// override that with the wrong (Anthropic-format) credential.
+// REVISION: model-selection-v1-openrouter
+func SetClaudeModelForOpenRouter(workspaceRoot, model string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .claude dir: %w", err)
+	}
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &settings); jsonErr != nil {
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	if model != "" {
+		settings["model"] = model
+	}
+	// Strip any apiKeyHelper — broker injects auth at the URL boundary.
+	delete(settings, "apiKeyHelper")
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		return fmt.Errorf("failed to write settings: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[agenthooks] Claude OpenRouter model=%q applied at %s\n", model, settingsPath)
+	return nil
+}
+
 // generateGeminiHooks creates AfterAgent hook for Gemini CLI
 func generateGeminiHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "gemini-stop.sh")

@@ -810,10 +810,41 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 }
 
 // CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
-// REVISION: working-dir-v2-fix-agent-detection
+// REVISION: model-selection-v1-openrouter
 // If ptyID is provided, it will be used instead of generating a new one.
 // If integrationToken is provided, it will be stored and injected into the PTY environment.
+// If modelSelection requests OpenRouter, per-harness env vars route requests through the broker.
 func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken, workingDir string) (*PTYInfo, error) {
+	return s.CreatePTYWithOptions(CreatePTYOptions{
+		CreatorID:        creatorID,
+		Command:          command,
+		PtyID:            ptyID,
+		IntegrationToken: integrationToken,
+		WorkingDir:       workingDir,
+	})
+}
+
+// CreatePTYOptions bundles optional parameters for PTY creation. New fields go here
+// instead of growing the CreatePTYWithToken parameter list further.
+type CreatePTYOptions struct {
+	CreatorID        string
+	Command          string
+	PtyID            string
+	IntegrationToken string
+	WorkingDir       string
+	ModelSelection   *ModelSelection
+}
+
+// CreatePTYWithOptions is the canonical PTY creation entry point. CreatePTY and
+// CreatePTYWithToken are thin wrappers preserved for backward compatibility.
+// REVISION: model-selection-v1-openrouter
+func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) {
+	creatorID := opts.CreatorID
+	command := opts.Command
+	ptyID := opts.PtyID
+	integrationToken := opts.IntegrationToken
+	workingDir := opts.WorkingDir
+	modelSelection := opts.ModelSelection
 	// Use provided ID or generate new one
 	var err error
 	if ptyID == "" {
@@ -899,6 +930,11 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 
 	applyEgressProxyEnv(envVars)
 
+	// Apply per-harness OpenRouter env vars when requested. Must come after agentType is
+	// known (above) and before the PTY spawns. No-op when modelSelection is nil or default.
+	// REVISION: model-selection-v1-openrouter
+	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, brokerHostFromEnv())
+
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
 	// REVISION: session-v22-pool-empty-mcp-env
 	if pty.GetPool() == nil {
@@ -962,25 +998,43 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
-		// For Claude Code: if ANTHROPIC_API_KEY is brokered, set apiKeyHelper.
-		// When the UID pool is active, use the Unix socket (no token distributed).
-		// Otherwise fall back to the token-based TCP endpoint.
-		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
-			if pty.GetPool() != nil {
-				if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
+		// For Claude Code: pick the right Anthropic credential path.
+		// REVISION: model-selection-v1-openrouter
+		//
+		//   OpenRouter selected → broker (openrouter-anthropic) injects Bearer at
+		//     URL boundary; ANTHROPIC_BASE_URL was set above. Write the model id
+		//     into settings.local.json and strip any leftover apiKeyHelper.
+		//   Default + ANTHROPIC_API_KEY brokered → standard apiKeyHelper flow.
+		//   Default + no brokered Anthropic key → nothing to do.
+		if agentType == mcp.AgentTypeClaude {
+			if modelSelection.IsOpenRouter() {
+				if err := agenthooks.SetClaudeModelForOpenRouter(s.workspace.Root(), modelSelection.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude OpenRouter model: %v\n", err)
 				}
-				delete(envVars, "ANTHROPIC_API_KEY")
 			} else {
-				apiKeyToken, tokenErr := id.New()
-				if tokenErr == nil {
-					s.apiKeyTokensMu.Lock()
-					s.apiKeyTokens[ptyID] = apiKeyToken
-					s.apiKeyTokensMu.Unlock()
-					if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+				// Default provider — wipe any leftover OpenRouter model id so the
+				// native Anthropic endpoint doesn't see provider-prefixed ids.
+				if err := agenthooks.ClearClaudeOpenRouterModel(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clear OpenRouter model: %v\n", err)
+				}
+			}
+			if !modelSelection.IsOpenRouter() && s.broker.GetAnthropicKey(s.ID) != "" {
+				if pty.GetPool() != nil {
+					if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
 					}
 					delete(envVars, "ANTHROPIC_API_KEY")
+				} else {
+					apiKeyToken, tokenErr := id.New()
+					if tokenErr == nil {
+						s.apiKeyTokensMu.Lock()
+						s.apiKeyTokens[ptyID] = apiKeyToken
+						s.apiKeyTokensMu.Unlock()
+						if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+						}
+						delete(envVars, "ANTHROPIC_API_KEY")
+					}
 				}
 			}
 		}
