@@ -1,0 +1,54 @@
+{
+  "_doc": "Env vars / bindings that the controlplane code references but desktop intentionally does not provide. Keep entries short; the reason explains why and what (if anything) replaces it on desktop.",
+
+  "cloudOnly": {
+    "FLY_API_TOKEN": "Cloud-only — Fly.io per-dashboard VM provisioning. Desktop runs a single local VM, no provisioning.",
+    "FLY_APP_NAME": "Cloud-only — Fly.io. See FLY_API_TOKEN.",
+    "FLY_REGION": "Cloud-only — Fly.io. See FLY_API_TOKEN.",
+    "FLY_MACHINE_IMAGE": "Cloud-only — Fly.io. See FLY_API_TOKEN.",
+    "FLY_PROVISIONING_ENABLED": "Cloud-only — Fly.io. See FLY_API_TOKEN.",
+    "FLY_SANDBOX_CONTROLPLANE_URL": "Cloud-only — sandbox→controlplane URL on Fly. Desktop sandbox uses CONTROLPLANE_URL from the VM env.",
+    "FLY_WARM_POOL_REGIONS": "Cloud-only — Fly.io warm pool. Desktop has no warm pool.",
+
+    "STRIPE_SECRET_KEY": "Cloud-only — billing. Desktop is self-hosted, paywall bypassed.",
+    "STRIPE_WEBHOOK_SECRET": "Cloud-only — billing webhook verification. Desktop receives no Stripe webhooks.",
+    "STRIPE_PRICE_ID": "Cloud-only — billing. See STRIPE_SECRET_KEY.",
+
+    "CF_ACCESS_AUD": "Cloud-only — Cloudflare Access auth. Desktop uses DEV_AUTH_ENABLED.",
+    "CF_ACCESS_TEAM_DOMAIN": "Cloud-only — Cloudflare Access. See CF_ACCESS_AUD.",
+    "TURNSTILE_SECRET_KEY": "Cloud-only — Cloudflare Turnstile. Desktop has no public signup form.",
+
+    "RATE_LIMITER": "Cloud-only — Cloudflare Workers Rate Limiting binding. Code paths gracefully skip when undefined.",
+    "RATE_LIMITER_AUTH": "Cloud-only — Cloudflare Workers Rate Limiting binding. See RATE_LIMITER.",
+
+    "GMAIL_PUBSUB_TOPIC": "Cloud-only — Google Pub/Sub push notifications need a public URL. Desktop uses polling instead.",
+    "BRIDGE_URL": "External service — WhatsApp/Baileys bridge runs separately on Fly. Desktop does not bundle it yet.",
+    "BRIDGE_INTERNAL_TOKEN": "External service — see BRIDGE_URL.",
+    "WHATSAPP_ACCESS_TOKEN": "External service — Meta WhatsApp Business API requires a public webhook URL.",
+    "WHATSAPP_APP_SECRET": "External service — see WHATSAPP_ACCESS_TOKEN.",
+    "WHATSAPP_BUSINESS_PHONE": "External service — see WHATSAPP_ACCESS_TOKEN.",
+    "WHATSAPP_PHONE_NUMBER_ID": "External service — see WHATSAPP_ACCESS_TOKEN.",
+    "WHATSAPP_VERIFY_TOKEN": "External service — see WHATSAPP_ACCESS_TOKEN.",
+    "DISCORD_BOT_TOKEN": "External service — Discord interaction webhook needs a public URL.",
+    "DISCORD_PUBLIC_KEY": "External service — see DISCORD_BOT_TOKEN.",
+    "SLACK_SIGNING_SECRET": "External service — Slack events API needs a public URL.",
+
+    "ADMIN_EMAILS": "Multi-tenant only — single-user desktop has no admin/regular user split.",
+    "AUTH_ALLOWED_EMAILS": "Multi-tenant only — desktop runs single-user.",
+    "AUTH_LOGIN_RESTRICTED": "Multi-tenant only — see AUTH_ALLOWED_EMAILS.",
+    "ACCESS_CODE": "Multi-tenant only — invite gating. Desktop has no signups.",
+
+    "BROWSER_AUTH_DEBUG": "Debug flag — only useful when CF Access is on.",
+    "GEMINI_ORCABOT_KEY": "Internal — Gemini wrangler env override only, not a desktop concern.",
+    "GMAIL_MIGRATE_RESET": "Migration flag — not desktop-relevant.",
+    "DRIVE_CACHE": "R2 bucket unavailable on desktop — controlplane/src/storage/drive-cache.ts substitutes a stub via ensureDriveCache()."
+  },
+
+  "alwaysProvidedByPlatform": [
+    "DB",
+    "DASHBOARD",
+    "_doc"
+  ],
+
+  "_alwaysProvidedDoc": "These are bindings whose presence the drift script can't infer from main.rs — they're declared in workerd.desktop.capnp (Durable Object namespaces / D1 / R2) and the workerd runtime injects them. Entries here are recognised as 'provided' by the drift script regardless of whether they appear in main.rs env plumbing."
+}

@@ -158,6 +158,63 @@ VZ_CONSOLE_DIRECT=1 ./target/release/orcabot-desktop
 - `BUILD_VM=force|0` — Force or skip VM image rebuild
 - `VM_ONLY=1` — Skip workerd/frontend builds
 
+### Optional integrations (set before launch)
+Each is unset by default; setting a key turns the feature on. Same names as the
+production wrangler.production.toml — refer to that for descriptions.
+
+- OAuth client IDs + secrets: `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`, `ONEDRIVE_CLIENT_ID/SECRET`, `BOX_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `DISCORD_CLIENT_ID/SECRET`, `SLACK_CLIENT_ID/SECRET`
+- `GOOGLE_API_KEY` — server-side Google APIs (Drive metadata etc.)
+- `RESEND_API_KEY` — transactional email
+- `EGRESS_PROXY_ENABLED=true` — turn on the network egress proxy inside the sandbox VM (off by default; requires iptables setup)
+- `OAUTH_REDIRECT_BASE` — overrides the localhost OAuth callback base
+- `EMAIL_FROM` — overrides the default "OrcaBot Desktop <noreply@localhost>"
+
+### Auto-managed
+- `SECRETS_ENCRYPTION_KEY` — 32-byte AES-GCM key for stored user_secrets. Generated on first launch and persisted as `~/Library/Application Support/orcabot-desktop/secrets-encryption-key` (or platform equivalent). Losing the file makes existing stored secrets unreadable (by design).
+
+---
+
+## Drift detection
+
+The desktop orchestration layer (`workerd.desktop.capnp` + `main.rs` env plumbing
++ `dev.sh` exports) must stay in sync with the env vars `controlplane/src/**/*.ts`
+references. Run:
+
+```bash
+node desktop/scripts/check-drift.mjs
+```
+
+The script reports:
+- ✓ **OK** — var/binding used by code and provided by desktop
+- ⚠ **Cloud-only** — listed in `desktop/scripts/drift-allowlist.json` with a reason
+- ✗ **MISSING** — code uses it but desktop doesn't provide it (exit 1)
+
+CI runs this on every PR that touches the relevant files (see `.github/workflows/check-desktop-drift.yml`).
+
+When adding a new optional integration to the controlplane:
+1. Add the binding to `desktop/workerd/config/workerd.desktop.capnp`
+2. Add a `passthrough_env(...)` line in `desktop/app/src-tauri/src/main.rs`
+3. Add the var to `desktop/scripts/dev.sh`
+
+When adding a cloud-only feature, instead add it to `desktop/scripts/drift-allowlist.json` under `cloudOnly` with a short reason.
+
+---
+
+## Cloud-only features (not supported on desktop)
+
+These features require infrastructure that desktop doesn't provide. Code paths
+that depend on them either degrade gracefully or are gated off entirely.
+
+- **Stripe billing** — paywall bypassed on desktop
+- **Cloudflare Access / Turnstile** — desktop uses `DEV_AUTH_ENABLED`
+- **Fly.io provisioning** — desktop runs a single local VM
+- **Cloudflare Workers Rate Limiting** — bindings unavailable in OSS workerd
+- **Inbound messaging webhooks** (Slack events, Discord interactions, WhatsApp, Telegram, Teams, Matrix, Google Chat) — require a public URL
+- **Gmail Pub/Sub push** — uses polling on desktop instead
+- **R2 drive cache** — substituted with a stub via `ensureDriveCache()`
+
+Full list with reasons: `desktop/scripts/drift-allowlist.json`.
+
 ---
 
 ## Responsibility Boundaries (non-negotiable)

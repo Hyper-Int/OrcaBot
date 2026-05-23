@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v2-pid-file-cleanup
-const MODULE_REVISION: &str = "main-v2-pid-file-cleanup";
+// REVISION: main-v3-desktop-catchup
+const MODULE_REVISION: &str = "main-v3-desktop-catchup";
 
 mod commands;
 mod vm;
 
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -23,6 +24,100 @@ use vm::{create_platform_vm, VMConfig, VirtualMachine};
 /// and kills any orphaned processes before starting new ones.
 fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
+}
+
+/// Path to the persisted SECRETS_ENCRYPTION_KEY. Generated on first launch.
+/// Losing this file makes all stored user secrets unreadable.
+fn secrets_key_path(data_dir: &Path) -> PathBuf {
+  data_dir.join("secrets-encryption-key")
+}
+
+/// Encode bytes as base64 (RFC 4648, no padding stripped). Inlined to avoid a
+/// dep just for one call site.
+fn base64_encode(bytes: &[u8]) -> String {
+  const ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+  for chunk in bytes.chunks(3) {
+    let b0 = chunk[0];
+    let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+    let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+    out.push(ALPHABET[(b0 >> 2) as usize] as char);
+    out.push(ALPHABET[((b0 & 0x03) << 4 | (b1 >> 4)) as usize] as char);
+    if chunk.len() > 1 {
+      out.push(ALPHABET[((b1 & 0x0F) << 2 | (b2 >> 6)) as usize] as char);
+    } else {
+      out.push('=');
+    }
+    if chunk.len() > 2 {
+      out.push(ALPHABET[(b2 & 0x3F) as usize] as char);
+    } else {
+      out.push('=');
+    }
+  }
+  out
+}
+
+/// Load the persisted SECRETS_ENCRYPTION_KEY, or generate + persist a new
+/// 32-byte random key on first launch. Returns the base64-encoded key string
+/// (the format the controlplane Worker expects in env.SECRETS_ENCRYPTION_KEY).
+fn ensure_secrets_encryption_key(data_dir: &Path) -> std::io::Result<String> {
+  let key_path = secrets_key_path(data_dir);
+  if let Ok(existing) = fs::read_to_string(&key_path) {
+    let trimmed = existing.trim();
+    if !trimmed.is_empty() {
+      return Ok(trimmed.to_string());
+    }
+  }
+
+  // Generate 32 random bytes — /dev/urandom on Unix, fail loudly on Windows
+  // (windows.rs is a stub anyway; revisit when Windows support lands).
+  let mut bytes = [0u8; 32];
+  #[cfg(unix)]
+  {
+    let mut f = fs::File::open("/dev/urandom")?;
+    f.read_exact(&mut bytes)?;
+  }
+  #[cfg(not(unix))]
+  {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::Other,
+      "secrets key generation not supported on this platform yet",
+    ));
+  }
+
+  let encoded = base64_encode(&bytes);
+  fs::create_dir_all(data_dir)?;
+  // 0600 on Unix so other users on the machine can't read the key.
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new()
+      .write(true)
+      .create(true)
+      .truncate(true)
+      .mode(0o600)
+      .open(&key_path)?;
+    f.write_all(encoded.as_bytes())?;
+  }
+  #[cfg(not(unix))]
+  {
+    fs::write(&key_path, encoded.as_bytes())?;
+  }
+  eprintln!("[secrets] Generated new SECRETS_ENCRYPTION_KEY at {}", key_path.display());
+  Ok(encoded)
+}
+
+/// Push an optional env var from the host into the workerd env list. No-op if
+/// the host env doesn't set it — the controlplane code paths that need it
+/// degrade gracefully (e.g. OAuth flow returns "not configured" instead of
+/// authenticating).
+fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static str) {
+  if let Ok(value) = std::env::var(key) {
+    if !value.is_empty() {
+      workerd_env.push((key, value));
+    }
+  }
 }
 
 /// Kill any processes listed in a stale PID file from a previous run.
@@ -248,12 +343,29 @@ impl DesktopServices {
     let dev_auth_enabled =
       std::env::var("DEV_AUTH_ENABLED").unwrap_or_else(|_| "true".to_string());
 
+    // Encryption key for stored user_secrets. Generated on first launch and
+    // persisted in data_dir; losing the file makes existing stored secrets
+    // unreadable, which is by design (same property as cloud deployments).
+    let secrets_key = match ensure_secrets_encryption_key(&data_dir) {
+      Ok(k) => k,
+      Err(err) => {
+        eprintln!("[secrets] FATAL: could not load/generate encryption key: {err}");
+        // Continue with empty key — secrets routes will return 500, but app loads.
+        String::new()
+      }
+    };
+
     let mut workerd_env = vec![
       ("D1_HTTP_URL", "http://d1-shim".to_string()),
       ("SANDBOX_URL", sandbox_url),
       ("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token),
       ("INTERNAL_API_TOKEN", internal_api_token),
       ("DEV_AUTH_ENABLED", dev_auth_enabled),
+      ("SECRETS_ENCRYPTION_KEY", secrets_key),
+      ("OAUTH_REDIRECT_BASE", std::env::var("OAUTH_REDIRECT_BASE")
+        .unwrap_or_else(|_| format!("http://localhost:{}", controlplane_port))),
+      ("EMAIL_FROM", std::env::var("EMAIL_FROM")
+        .unwrap_or_else(|_| "OrcaBot Desktop <noreply@localhost>".to_string())),
     ];
 
     if let Ok(value) = std::env::var("ALLOWED_ORIGINS") {
@@ -270,6 +382,35 @@ impl DesktopServices {
     }
     if let Some(value) = d1_shim_debug {
       workerd_env.push(("D1_SHIM_DEBUG", value));
+    }
+
+    // Optional pass-through for OAuth client IDs/secrets, Resend, etc. Users
+    // who want these features set the env vars before launching the app;
+    // unset = feature degrades gracefully. Adding a new optional var here
+    // should be paired with a binding in workerd.desktop.capnp.
+    // Drift check: `node desktop/scripts/check-drift.mjs`.
+    for key in &[
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_API_KEY",
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "MICROSOFT_CLIENT_ID",
+      "MICROSOFT_CLIENT_SECRET",
+      "ONEDRIVE_CLIENT_ID",
+      "ONEDRIVE_CLIENT_SECRET",
+      "BOX_CLIENT_ID",
+      "BOX_CLIENT_SECRET",
+      "TWITTER_CLIENT_ID",
+      "TWITTER_CLIENT_SECRET",
+      "DISCORD_CLIENT_ID",
+      "DISCORD_CLIENT_SECRET",
+      "SLACK_CLIENT_ID",
+      "SLACK_CLIENT_SECRET",
+      "RESEND_API_KEY",
+      "EGRESS_PROXY_ENABLED",
+    ] {
+      passthrough_env(&mut workerd_env, *key);
     }
 
     self.spawn_binary(
@@ -340,6 +481,17 @@ impl DesktopServices {
     let allowed_origins =
       std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| "http://localhost:8788".to_string());
 
+    let controlplane_url = std::env::var("CONTROLPLANE_URL")
+      .unwrap_or_else(|_| {
+        let port = std::env::var("CONTROLPLANE_PORT").unwrap_or_else(|_| "8787".to_string());
+        // 10.0.2.2 is the QEMU user-net host gateway; macOS Virtualization.framework
+        // bridges to the host on the same address. The sandbox calls back here for
+        // integration policy gateway requests.
+        format!("http://10.0.2.2:{}", port)
+      });
+    let internal_api_token =
+      std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());
+
     let mut config = VMConfig::new(staged_paths.image.clone(), workspace_dir)
       .with_cpus(2)
       .with_memory(2 * 1024 * 1024 * 1024) // 2GB
@@ -347,7 +499,18 @@ impl DesktopServices {
       .with_env("PORT", sandbox_port.to_string())
       .with_env("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token)
       .with_env("ALLOWED_ORIGINS", allowed_origins)
-      .with_env("WORKSPACE_BASE", "/workspace");
+      .with_env("WORKSPACE_BASE", "/workspace")
+      .with_env("CONTROLPLANE_URL", controlplane_url)
+      .with_env("INTERNAL_API_TOKEN", internal_api_token);
+
+    // Opt-in: enable the network egress proxy inside the VM. Off by default
+    // because it requires iptables setup at boot; users who want it set the
+    // env var before launching.
+    if let Ok(value) = std::env::var("EGRESS_PROXY_ENABLED") {
+      if !value.is_empty() {
+        config = config.with_env("EGRESS_PROXY_ENABLED", value);
+      }
+    }
 
     // Add kernel/initrd/vz-helper for macOS direct boot
     if let Some(kernel) = staged_paths.kernel {
