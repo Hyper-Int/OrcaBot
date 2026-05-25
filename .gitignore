@@ -13,6 +13,7 @@ Thumbs.db
 secrets.json
 credentials.json
 .watermark-lint.sh
+desktop/.dev-secrets-encryption-key
 
 # Rust/Tauri
 desktop/app/src-tauri/target/
