@@ -3,6 +3,15 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+# Cross-platform in-place sed (BSD/macOS needs `-i ''`; GNU/Linux uses `-i`).
+sed_inplace() {
+  if [ "$(uname)" = "Darwin" ]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
 TAURI_RESOURCES_DIR="$ROOT_DIR/app/src-tauri/resources"
 WORKERD_RES_DIR="$TAURI_RESOURCES_DIR/workerd"
 WORKERD_CONFIG_DIR="$WORKERD_RES_DIR/config"
@@ -164,10 +173,10 @@ if [ -d "$FRONTEND_DIR" ]; then
       # Patch the worker.js to work with raw workerd
       # The OpenNext worker tries to modify read-only Node.js timer modules
       # which fails on workerd. We wrap those assignments in try-catch.
-      sed -i '' 's/globalThis.setImmediate = nodeTimers.setImmediate = patchedSetImmediate, globalThis.clearImmediate = nodeTimers.clearImmediate = patchedClearImmediate/try { globalThis.setImmediate = patchedSetImmediate; globalThis.clearImmediate = patchedClearImmediate; } catch(e) {}/g' "$FRONTEND_RES_DIR/worker.js"
-      sed -i '' 's/nodeTimersPromises.setImmediate = patchedSetImmediatePromise, process.nextTick = patchedNextTick/try { process.nextTick = patchedNextTick; } catch(e) {}/g' "$FRONTEND_RES_DIR/worker.js"
+      sed_inplace 's/globalThis.setImmediate = nodeTimers.setImmediate = patchedSetImmediate, globalThis.clearImmediate = nodeTimers.clearImmediate = patchedClearImmediate/try { globalThis.setImmediate = patchedSetImmediate; globalThis.clearImmediate = patchedClearImmediate; } catch(e) {}/g' "$FRONTEND_RES_DIR/worker.js"
+      sed_inplace 's/nodeTimersPromises.setImmediate = patchedSetImmediatePromise, process.nextTick = patchedNextTick/try { process.nextTick = patchedNextTick; } catch(e) {}/g' "$FRONTEND_RES_DIR/worker.js"
       # Ensure static assets are served via the ASSETS service in workerd.
-      sed -i '' 's|__ASSETS_RUN_WORKER_FIRST__: false|__ASSETS_RUN_WORKER_FIRST__: ["\\/_next\\/static\\/*","\\/favicon.ico","\\/favicon*.png","\\/favicon.svg","\\/apple-touch-icon.png","\\/site.webmanifest","\\/orca.png","\\/icons\\/*","\\/web-app-manifest-*.png","\\/*.png","\\/*.svg","\\/*.ico"]|g' "$FRONTEND_RES_DIR/worker.js"
+      sed_inplace 's|__ASSETS_RUN_WORKER_FIRST__: false|__ASSETS_RUN_WORKER_FIRST__: ["\\/_next\\/static\\/*","\\/favicon.ico","\\/favicon*.png","\\/favicon.svg","\\/apple-touch-icon.png","\\/site.webmanifest","\\/orca.png","\\/icons\\/*","\\/web-app-manifest-*.png","\\/*.png","\\/*.svg","\\/*.ico"]|g' "$FRONTEND_RES_DIR/worker.js"
       printf '%s\n' "  Patched: worker.js for workerd compatibility"
     else
       printf '%s\n' "Warning: Could not find bundled frontend worker"

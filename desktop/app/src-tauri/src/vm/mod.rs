@@ -63,6 +63,25 @@ pub fn create_platform_vm() -> Box<dyn VirtualMachine> {
     }
 }
 
+/// URL the guest VM uses to reach a service bound to the host's loopback
+/// interface (e.g. the controlplane workerd on `127.0.0.1`).
+///
+/// `10.0.2.2` is QEMU user-mode networking's (SLIRP) alias for the host; it
+/// transparently reaches host loopback services. This is correct for the Linux
+/// QEMU backend and the macOS QEMU fallback.
+///
+/// NOTE: the macOS *native* Virtualization.framework backend does NOT route the
+/// guest to host loopback at this address. It uses Apple NAT for guest egress
+/// and a host→guest vsock forwarder for inbound; there is no guest→host path to
+/// a `127.0.0.1` service. Sandbox→controlplane callbacks (integration gateway,
+/// domain approvals, execution callbacks) therefore won't reach the host on the
+/// native backend unless the controlplane is bound to a guest-reachable
+/// interface and `CONTROLPLANE_URL` is set accordingly. See
+/// `macos::MacOSVM::start_native`.
+pub fn host_loopback_url(port: &str) -> String {
+    format!("http://10.0.2.2:{}", port)
+}
+
 /// Get the name of the current VM backend.
 pub fn vm_backend_name() -> &'static str {
     #[cfg(target_os = "macos")]
