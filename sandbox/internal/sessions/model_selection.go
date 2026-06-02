@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: model-selection-v2-openrouter
+// REVISION: model-selection-v3-openai-key
 
 package sessions
 
@@ -14,7 +14,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/mcp"
 )
 
-const modelSelectionRevision = "model-selection-v2-openrouter"
+const modelSelectionRevision = "model-selection-v3-openai-key"
 
 func init() {
 	log.Printf("[model-selection] REVISION: %s loaded at %s", modelSelectionRevision, time.Now().Format(time.RFC3339))
@@ -59,6 +59,12 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 		// strips /broker/{sid}/openrouter and forwards to OpenRouter's /api/v1.
 		envVars["OPENAI_BASE_URL"] = brokerURL
 		envVars["OPENAI_MODEL"] = sel.Model
+		// OpenAI-compatible clients refuse to construct/send a request without a
+		// non-empty API key, so the request would never reach the broker. Set a
+		// placeholder; the broker strips it and injects the real OpenRouter
+		// Bearer token (mirrors the ANTHROPIC_API_KEY placeholder below, and the
+		// dummy OPENAI_API_KEY the default Codex flow sets in env.go).
+		envVars["OPENAI_API_KEY"] = broker.GetDummyValue("openai")
 		log.Printf("[model-selection] agent=%s routing via OpenRouter model=%s broker=%s", agentType, sel.Model, brokerURL)
 	case mcp.AgentTypeClaude:
 		anthropicBroker := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter-anthropic", brokerPort, sessionID)
