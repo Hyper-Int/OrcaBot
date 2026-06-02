@@ -1,7 +1,7 @@
 {
   "version": "openrouter-v1",
   "source": "https://openrouter.ai/api/v1/models",
-  "lastUpdated": "2026-05-20",
+  "lastUpdated": "2026-06-02",
   "models": [
     {
       "id": "anthropic/claude-sonnet-4.6",
@@ -52,11 +52,11 @@
       "compatibleHarnesses": ["codex", "opencode", "droid"]
     },
     {
-      "id": "google/gemini-2.0-flash-001",
-      "label": "Gemini 2.0 Flash",
+      "id": "google/gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
       "provider": "Google",
       "contextLength": 1000000,
-      "pricing": { "input": 0.1, "output": 0.4 },
+      "pricing": { "input": 0.3, "output": 2.5 },
       "compatibleHarnesses": ["codex", "opencode", "droid"]
     },
     {
@@ -72,7 +72,7 @@
       "label": "DeepSeek V3",
       "provider": "DeepSeek",
       "contextLength": 163840,
-      "pricing": { "input": 0.32, "output": 0.89 },
+      "pricing": { "input": 0.2, "output": 0.8 },
       "compatibleHarnesses": ["codex", "opencode", "droid"]
     },
     {
