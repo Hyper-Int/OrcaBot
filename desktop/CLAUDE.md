@@ -170,7 +170,7 @@ production wrangler.production.toml — refer to that for descriptions.
 - `EMAIL_FROM` — overrides the default "OrcaBot Desktop <noreply@localhost>"
 
 ### Auto-managed
-- `SECRETS_ENCRYPTION_KEY` — 32-byte AES-GCM key for stored user_secrets. Generated on first launch and persisted as `~/Library/Application Support/orcabot-desktop/secrets-encryption-key` (or platform equivalent). Losing the file makes existing stored secrets unreadable (by design).
+- `SECRETS_ENCRYPTION_KEY` — 32-byte AES-GCM key for stored user_secrets. Generated on first launch and persisted in the app-data dir under the `com.orcabot.desktop` bundle id (macOS: `~/Library/Application Support/com.orcabot.desktop/secrets-encryption-key`; Linux: `~/.local/share/com.orcabot.desktop/secrets-encryption-key`). Losing the file makes existing stored secrets unreadable (by design).
 
 ---
 

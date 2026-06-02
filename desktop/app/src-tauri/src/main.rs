@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v3-desktop-catchup
-const MODULE_REVISION: &str = "main-v3-desktop-catchup";
+// REVISION: main-v4-vm-host-loopback-url
+const MODULE_REVISION: &str = "main-v4-vm-host-loopback-url";
 
 mod commands;
 mod vm;
@@ -484,10 +484,13 @@ impl DesktopServices {
     let controlplane_url = std::env::var("CONTROLPLANE_URL")
       .unwrap_or_else(|_| {
         let port = std::env::var("CONTROLPLANE_PORT").unwrap_or_else(|_| "8787".to_string());
-        // 10.0.2.2 is the QEMU user-net host gateway; macOS Virtualization.framework
-        // bridges to the host on the same address. The sandbox calls back here for
-        // integration policy gateway requests.
-        format!("http://10.0.2.2:{}", port)
+        // The sandbox calls back to the controlplane for integration-policy
+        // gateway requests, domain approvals, and execution callbacks.
+        // host_loopback_url returns the QEMU/SLIRP host alias (correct for the
+        // Linux QEMU backend and the macOS QEMU fallback). See its doc comment
+        // for the macOS native Virtualization.framework caveat; set
+        // CONTROLPLANE_URL explicitly when the controlplane lives elsewhere.
+        vm::host_loopback_url(&port)
       });
     let internal_api_token =
       std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());

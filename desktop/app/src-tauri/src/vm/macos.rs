@@ -156,6 +156,20 @@ impl MacOSVM {
         self.using_native_vz = true;
         self.sandbox_url = format!("http://127.0.0.1:{}", config.sandbox_port);
 
+        // The native backend uses Apple NAT for guest egress plus a host→guest
+        // vsock forwarder for inbound; it has no guest→host route to services on
+        // the host loopback. Sandbox→controlplane callbacks (integration
+        // gateway, domain approvals, execution callbacks) won't reach the
+        // controlplane unless it's bound to a guest-reachable interface and
+        // CONTROLPLANE_URL is set to match. See vm::host_loopback_url.
+        eprintln!(
+            "[vm] WARNING: native Virtualization.framework backend has no guest→host \
+             route to the controlplane on 127.0.0.1; sandbox→controlplane callbacks \
+             (integrations, approvals, execution callbacks) will not reach the host. \
+             Use the QEMU fallback, or bind the controlplane to a guest-reachable \
+             interface and set CONTROLPLANE_URL accordingly."
+        );
+
         Ok(())
     }
 

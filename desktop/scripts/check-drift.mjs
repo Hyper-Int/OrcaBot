@@ -62,14 +62,20 @@ function readUsedEnvVars() {
 
 function readWorkerdBindings() {
   const src = readFileSync(WORKERD_CAPNP, "utf8");
-  const bindings = new Set();
-  // Match: (name = "FOO", ...
-  const re = /\(name\s*=\s*"([A-Z][A-Z0-9_]+)"/g;
+  // A binding either reads its value from the host env (fromEnvironment) or is
+  // provided by the workerd runtime/config (service fetchers, Durable Object
+  // namespaces, D1, KV, ...). Only fromEnvironment bindings depend on main.rs /
+  // dev.sh actually exporting the value; runtime bindings stand on their own.
+  const fromEnv = new Set();
+  const runtime = new Set();
+  // Match: (name = "FOO", <kind> = ...
+  const re = /\(name\s*=\s*"([A-Z][A-Z0-9_]+)"\s*,\s*([A-Za-z]+)\s*=/g;
   let m;
   while ((m = re.exec(src)) !== null) {
-    bindings.add(m[1]);
+    if (m[2] === "fromEnvironment") fromEnv.add(m[1]);
+    else runtime.add(m[1]);
   }
-  return bindings;
+  return { fromEnv, runtime, all: new Set([...fromEnv, ...runtime]) };
 }
 
 function readMainRsEnv() {
@@ -116,7 +122,13 @@ const allowlist = readAllowlist();
 const PLATFORM_PROVIDED = new Set(allowlist.alwaysProvidedByPlatform || []);
 const cloudOnly = new Map(Object.entries(allowlist.cloudOnly || {}));
 
-const provided = new Set([...workerd, ...mainRs, ...devSh, ...PLATFORM_PROVIDED]);
+// A var is genuinely provided only if its value is plumbed into the workerd
+// process — main.rs for the shipped Tauri binary, dev.sh for the dev script —
+// or the binding is runtime-provided (service fetcher / Durable Object). A
+// capnp `fromEnvironment` binding alone is NOT enough: without main.rs/dev.sh
+// exporting the value, the binding resolves to undefined at runtime. So we
+// deliberately exclude workerd.fromEnv here.
+const provided = new Set([...mainRs, ...devSh, ...workerd.runtime, ...PLATFORM_PROVIDED]);
 
 const missing = [];
 const skipped = [];
@@ -135,7 +147,7 @@ for (const [name, refs] of [...used.entries()].sort()) {
 // Also flag bindings declared in workerd capnp but not actually used by code.
 // Less critical but signals stale config.
 const declaredButUnused = [];
-for (const name of workerd) {
+for (const name of workerd.all) {
   if (!used.has(name) && !PLATFORM_PROVIDED.has(name)) {
     declaredButUnused.push(name);
   }
@@ -143,7 +155,7 @@ for (const name of workerd) {
 
 console.log(`Desktop drift report\n`);
 console.log(`  controlplane code references: ${used.size} env vars`);
-console.log(`  workerd.desktop.capnp:        ${workerd.size} bindings`);
+console.log(`  workerd.desktop.capnp:        ${workerd.all.size} bindings`);
 console.log(`  main.rs plumbs:               ${mainRs.size} env vars`);
 console.log(`  dev.sh exports:               ${devSh.size} env vars`);
 console.log(`  cloud-only allowlist:         ${cloudOnly.size} entries\n`);
@@ -173,6 +185,9 @@ if (missing.length) {
     const more = refs.size > 2 ? ` (+${refs.size - 2} more)` : "";
     console.log(`  ✗ ${name}`);
     console.log(`      used in: ${sample}${more}`);
+    if (workerd.fromEnv.has(name)) {
+      console.log(`      note: declared in workerd.desktop.capnp but not plumbed via main.rs/dev.sh (binding resolves to undefined at runtime)`);
+    }
   }
   console.log();
   console.error(`Drift detected: ${missing.length} env var(s) used by controlplane but not provided by desktop.`);
