@@ -4028,15 +4028,6 @@ export function TerminalBlock({
                   <DropdownMenuItem onClick={() => setActivePanel(activePanel === "model" ? null : "model")} className="gap-2">
                     <Cpu className="w-3 h-3" />
                     <span>Model</span>
-                    {openRouterKeyMissing && (
-                      <span
-                        className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--status-warning)]"
-                        title="OpenRouter model selected but no OPENROUTER_API_KEY is set"
-                      >
-                        <AlertCircle className="w-3 h-3" />
-                        Key needed
-                      </span>
-                    )}
                   </DropdownMenuItem>
                 </>
               )}
