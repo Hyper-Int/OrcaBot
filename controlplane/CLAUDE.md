@@ -44,7 +44,7 @@ Claude should **not** introduce execution logic, PTYs, Docker, or Fly Machine in
 - **Sandboxes are workers** (ephemeral, disposable; one per dashboard)
 - **Sessions are per-terminal** (one session per terminal item; each session maps to a PTY inside the dashboard sandbox)
 - **Execution is external** (Fly Machines)
-- **Orchestration is durable** (Postgres-backed)
+- **Orchestration is durable** (D1-backed)
 - **Humans and agents collaborate** through explicit state, not hidden processes
 
 ---
@@ -128,8 +128,8 @@ They are **not** a database.
 
 Rules:
 - DOs hold small, hot state
-- Postgres is the source of truth
-- DO state can be rebuilt from Postgres at any time
+- D1 is the source of truth
+- DO state can be rebuilt from D1 at any time
 
 ---
 
@@ -480,7 +480,7 @@ Those belong to the sandbox repo.
 - Do not run agents here
 - Do not talk directly to sandboxes except via defined APIs
 - Do not persist execution state
-- Do not bypass Postgres with Durable Object state
+- Do not bypass D1 with Durable Object state
 - Do not introduce long-running computation in Workers
 
 If a feature requires execution, delegate it.

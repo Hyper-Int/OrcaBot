@@ -18,12 +18,14 @@ import (
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
@@ -72,6 +74,10 @@ func main() {
 
 	sessionManager := sessions.NewManager()
 	server := NewServer(sessionManager)
+
+	// Surface upstream model-provider errors (OpenRouter rate limits, out-of-credits,
+	// bad key) to the dashboard as a toast instead of failing silently in the harness.
+	sessionManager.Broker().SetOnProviderError(server.broadcastModelProviderError)
 
 	// Start egress proxy (HTTP forward proxy for network access control)
 	egressAllowlist := egress.NewAllowlist()
@@ -264,6 +270,10 @@ type Server struct {
 	egressEnabled              bool // true only when EGRESS_PROXY_ENABLED=true; gates browser egress checks
 	egressAllowlistMu          sync.Mutex
 	egressAllowlistDashboardID string
+
+	// Debounce for model-provider error toasts, keyed by sessionID:status.
+	providerErrMu   sync.Mutex
+	providerErrLast map[string]time.Time
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -280,6 +290,7 @@ func NewServer(sm *sessions.Manager) *Server {
 		driveMirror:      drive.NewMirrorFromEnv(),
 		driveSyncActive:  make(map[string]bool),
 		mirrorSyncActive: make(map[string]bool),
+		providerErrLast:  make(map[string]time.Time),
 	}
 }
 
@@ -701,8 +712,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
 		ModelSelection   *struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
+			Provider        string `json:"provider"`
+			Model           string `json:"model"`
+			ContextWindow   int    `json:"contextWindow"`
+			MaxOutputTokens int    `json:"maxOutputTokens"`
 		} `json:"model_selection"` // Per-PTY OpenRouter override
 	}
 	if r.Body != nil {
@@ -723,8 +736,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.ModelSelection != nil {
 			opts.ModelSelection = &sessions.ModelSelection{
-				Provider: req.ModelSelection.Provider,
-				Model:    req.ModelSelection.Model,
+				Provider:        req.ModelSelection.Provider,
+				Model:           req.ModelSelection.Model,
+				ContextWindow:   req.ModelSelection.ContextWindow,
+				MaxOutputTokens: req.ModelSelection.MaxOutputTokens,
 			}
 		}
 		ptyInfo, err = session.CreatePTYWithOptions(opts)
@@ -1545,6 +1560,15 @@ func (s *Server) forwardEgressAudit(event egress.AuditEvent) {
 	}
 }
 
+// broadcastToSessionHubs fans a raw JSON event out to all of a session's PTY hubs.
+func broadcastToSessionHubs(session *sessions.Session, event []byte) {
+	for _, ptyInfo := range session.ListPTYs() {
+		if hub := session.GetHub(ptyInfo.ID); hub != nil {
+			hub.BroadcastRawJSON(event)
+		}
+	}
+}
+
 // broadcastEgressApproval broadcasts an egress approval request to all connected WebSocket clients.
 // Called by the egress proxy when a connection to an unknown domain is held.
 // REVISION: egress-proxy-v1-broadcast
@@ -1555,15 +1579,38 @@ func (s *Server) broadcastEgressApproval(req egress.ApprovalRequest) {
 		"port":       req.Port,
 		"request_id": req.RequestID,
 	})
-
-	// Broadcast to ALL hubs across all sessions so all dashboard viewers see it
 	for _, session := range s.sessions.List() {
-		for _, ptyInfo := range session.ListPTYs() {
-			hub := session.GetHub(ptyInfo.ID)
-			if hub != nil {
-				hub.BroadcastRawJSON(event)
-			}
-		}
+		broadcastToSessionHubs(session, event)
+	}
+}
+
+// broadcastModelProviderError surfaces an upstream model-provider error (e.g. an
+// OpenRouter 429/402) to the dashboard as a toast. Scoped to the originating
+// session and debounced per session+status so a harness retry storm shows once.
+// REVISION: provider-error-toast-v1
+func (s *Server) broadcastModelProviderError(e broker.ProviderError) {
+	// Debounce: at most one toast per (session, status) every 20s.
+	key := e.SessionID + ":" + strconv.Itoa(e.Status)
+	s.providerErrMu.Lock()
+	if last, ok := s.providerErrLast[key]; ok && time.Since(last) < 20*time.Second {
+		s.providerErrMu.Unlock()
+		return
+	}
+	s.providerErrLast[key] = time.Now()
+	s.providerErrMu.Unlock()
+
+	log.Printf("[provider-error] session=%s provider=%s status=%d title=%q", e.SessionID, e.Provider, e.Status, e.Title)
+
+	event, _ := json.Marshal(map[string]interface{}{
+		"type":     "model_provider_error",
+		"provider": e.Provider,
+		"status":   e.Status,
+		"title":    e.Title,
+		"message":  e.Message,
+		"hint":     e.Hint,
+	})
+	if sess, err := s.sessions.Get(e.SessionID); err == nil {
+		broadcastToSessionHubs(sess, event)
 	}
 }
 
@@ -1577,14 +1624,8 @@ func (s *Server) broadcastEgressResolution(res egress.ApprovalResolution) {
 		"request_id": res.RequestID,
 		"decision":   res.Decision,
 	})
-
 	for _, session := range s.sessions.List() {
-		for _, ptyInfo := range session.ListPTYs() {
-			hub := session.GetHub(ptyInfo.ID)
-			if hub != nil {
-				hub.BroadcastRawJSON(event)
-			}
-		}
+		broadcastToSessionHubs(session, event)
 	}
 }
 

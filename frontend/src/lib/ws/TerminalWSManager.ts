@@ -436,9 +436,10 @@ export class TerminalWSManager extends BaseWebSocketManager {
 
       case "egress_approval_needed":
       case "egress_approval_resolved":
-        // Egress events are dashboard-global (broadcast to all hubs).
-        // Dispatch as CustomEvent so the dashboard page can handle them
-        // without threading callbacks through Canvas/TerminalBlock.
+      case "model_provider_error":
+        // Dashboard-global events (broadcast to all hubs). Dispatch as a
+        // CustomEvent so the dashboard page can handle them without threading
+        // callbacks through Canvas/TerminalBlock.
         window.dispatchEvent(new CustomEvent(message.type, { detail: message }));
         break;
     }

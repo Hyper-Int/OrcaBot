@@ -223,12 +223,17 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Catalog lives in `frontend/src/data/claude-subagents.json`
 
 ### Model Selection (OpenRouter)
-- Per-terminal model picker in the terminal settings dropdown (Claude/Codex/OpenCode/Droid)
-- Default = harness's native API; OpenRouter routes through the local secrets broker via a sibling provider (`openrouter` for OpenAI-compatible harnesses, `openrouter-anthropic` for Claude Code)
-- Selection lives in `terminalContent.modelSelection` and triggers the existing "restart to apply" banner
-- Catalog: `frontend/src/data/openrouter-models.json` (curated, per-model pricing + context + compatibleHarnesses)
-- Drift check: `npm run check-catalogs` (also runs weekly via `.github/workflows/check-catalogs.yml`)
-- Key files: `sandbox/internal/sessions/model_selection.go`, `frontend/src/components/blocks/TerminalBlock.tsx` (Model panel)
+- Per-terminal model picker in the terminal settings dropdown (Claude/Codex/OpenCode/Droid/Gemini)
+- Default = harness's native API; OpenRouter routes through the local secrets broker. Three paths, by harness:
+  - **OpenCode/Droid**: OpenAI-compatible `openrouter` provider via `OPENAI_BASE_URL`
+  - **Codex**: per-invocation `-c` CLI flags injected by `buildCodexOpenRouterCommand` (`model_provider`/`base_url`=broker/`wire_api="responses"`) — the Rust Codex CLI ignores `OPENAI_BASE_URL`/`OPENAI_MODEL`
+  - **Claude Code**: Anthropic-compatible `openrouter-anthropic` provider via `ANTHROPIC_BASE_URL`
+  - **Gemini**: official CLI GATEWAY auth → local translation shim (`sandbox/internal/geminishim/`, port 8086) that converts the Gemini wire format to OpenAI Chat Completions → broker → OpenRouter
+- Selection lives in `terminalContent.modelSelection` (provider/model + catalog-resolved `contextWindow`/`maxOutputTokens`) and triggers the existing "restart to apply" banner. Limits flow frontend→controlplane→sandbox to set Codex's `-c model_context_window`/`model_max_output_tokens`.
+- Catalog: `frontend/src/data/openrouter-models.json` (curated, per-model pricing + context + `maxOutputTokens` + compatibleHarnesses)
+- Drift check: `npm run check-catalogs` validates pricing, context length, and max output tokens vs upstream (also runs weekly via `.github/workflows/check-catalogs.yml`)
+- Upstream provider errors (OpenRouter 429/402/401/5xx) are detected in the broker and surfaced as a dashboard toast via a `model_provider_error` WS event (see `classifyProviderError` in `sandbox/internal/broker/secrets_broker.go`)
+- Key files: `sandbox/internal/sessions/model_selection.go`, `sandbox/internal/geminishim/`, `sandbox/internal/broker/providers.go`, `frontend/src/components/blocks/TerminalBlock.tsx` (Model panel)
 
 ### Workspace Sidebar
 - File tree is populated via control plane proxy of sandbox filesystem APIs

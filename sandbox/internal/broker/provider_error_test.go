@@ -1,0 +1,56 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+package broker
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestClassifyProviderError(t *testing.T) {
+	body429 := []byte(`{"error":{"message":"deepseek/deepseek-chat is temporarily rate-limited upstream","code":429}}`)
+	title, msg, hint := classifyProviderError(429, body429)
+	if !strings.Contains(strings.ToLower(title), "rate-limited") {
+		t.Errorf("429 title = %q", title)
+	}
+	if !strings.Contains(msg, "deepseek") {
+		t.Errorf("429 message should carry upstream text verbatim: %q", msg)
+	}
+	// 429 is NOT a credit problem — the fix is provider routing, not adding credits.
+	if !strings.Contains(strings.ToLower(hint), "throughput") {
+		t.Errorf("429 hint should point at provider routing/throughput: %q", hint)
+	}
+	if strings.Contains(strings.ToLower(hint), "add credits") {
+		t.Errorf("429 hint must not suggest adding credits (misleading): %q", hint)
+	}
+
+	// Missing message → falls back to a sensible default, never empty.
+	title, msg, hint = classifyProviderError(402, []byte(`{}`))
+	if title == "" || msg == "" || hint == "" {
+		t.Errorf("402 fields must be non-empty: title=%q msg=%q hint=%q", title, msg, hint)
+	}
+
+	title, _, _ = classifyProviderError(401, []byte(`{}`))
+	if !strings.Contains(strings.ToLower(title), "key") {
+		t.Errorf("401 title should mention key, got %q", title)
+	}
+
+	title, _, _ = classifyProviderError(503, []byte(`{}`))
+	if !strings.Contains(strings.ToLower(title), "provider") {
+		t.Errorf("503 title should mention provider, got %q", title)
+	}
+}
+
+func TestIsModelRoutingProvider(t *testing.T) {
+	for _, p := range []string{"openrouter", "openrouter-anthropic"} {
+		if !isModelRoutingProvider(p) {
+			t.Errorf("%q should be a model-routing provider", p)
+		}
+	}
+	for _, p := range []string{"openai", "elevenlabs", "deepgram", "anthropic", ""} {
+		if isModelRoutingProvider(p) {
+			t.Errorf("%q should NOT trigger model-error toasts", p)
+		}
+	}
+}

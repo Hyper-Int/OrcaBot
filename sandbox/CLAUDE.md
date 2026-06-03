@@ -218,10 +218,21 @@ Built-in providers (hardcoded allowlist):
 - ElevenLabs, Deepgram
 - Groq, Together, Fireworks, Mistral, Cohere, Replicate, Hugging Face
 - OpenRouter — two sibling entries share `OPENROUTER_API_KEY`:
-  - `openrouter` → `https://openrouter.ai/api/v1` (OpenAI-compatible, used by Codex/OpenCode/Droid via `OPENAI_BASE_URL`)
+  - `openrouter` → `https://openrouter.ai/api/v1` (OpenAI-compatible)
+    - **OpenCode/Droid** route here via `OPENAI_BASE_URL`.
+    - **Codex** routes here too, but the Rust Codex CLI **ignores** `OPENAI_BASE_URL`/`OPENAI_MODEL`; `buildCodexOpenRouterCommand` (in `internal/sessions/model_selection.go`) injects per-invocation `-c` flags instead: `model_provider="openrouter"`, `base_url=<broker>`, `env_key="OPENAI_API_KEY"`, `wire_api="responses"` (Codex POSTs `{base_url}/responses`), plus `-c model_context_window`/`model_max_output_tokens` from the catalog.
+    - **Gemini** routes here via the local translation shim (see Gemini→OpenRouter shim below).
   - `openrouter-anthropic` → `https://openrouter.ai/api` (Anthropic-compatible, used by Claude Code via `ANTHROPIC_BASE_URL`; the SDK appends `/v1/messages`)
 
-  Adding the key installs both broker configs in one go via `broker.GetAllProvidersByEnvKey`. Per-PTY model selection is set by the frontend Model panel and forwarded as `model_selection` to `CreatePTYWithOptions`.
+  Adding the key installs both broker configs in one go via `broker.GetAllProvidersByEnvKey`. Per-PTY model selection is set by the frontend Model panel and forwarded as `model_selection` (provider/model + `contextWindow`/`maxOutputTokens`) to `CreatePTYWithOptions`.
+
+  **Provider error surfacing**: when an OpenRouter request returns 429/402/401/5xx, the broker (`classifyProviderError` + `SetOnProviderError` in `secrets_broker.go`) buffers the error, forwards it unchanged to the harness, and fires a callback that broadcasts a `model_provider_error` WS event so the dashboard shows a toast with a fix (e.g. rate-limited → adjust provider routing).
+
+### Gemini → OpenRouter translation shim
+
+The official Gemini CLI speaks the Gemini `:generateContent` wire format (via `@google/genai`), which OpenRouter doesn't serve. `internal/geminishim/` is a localhost server (one per VM, port 8086, started in `manager.go`) that:
+- Accepts Gemini `generateContent`/`streamGenerateContent`/`countTokens`, translates to OpenAI Chat Completions, forwards through the broker's `openrouter` provider, and translates the response back (incl. SSE streaming + tool calls).
+- `applyOpenRouterEnv`'s `AgentTypeGemini` case sets `GOOGLE_GEMINI_BASE_URL` to the shim URL (with the model id encoded in the path) and a dummy `GEMINI_API_KEY`. `agenthooks.SetGeminiOpenRouterAuth` writes `security.auth.selectedType="gateway"` + `useExternal=true` so the CLI's GATEWAY auth engages without a blocking dialog.
 
 Custom secrets use dynamic domain approval:
 - Route: `/broker/{sessionID}/custom/{secretName}?target=https://...`
@@ -260,7 +271,7 @@ An HTTP/HTTPS forward proxy on `localhost:8083` that acts as "Little Snitch for 
 - **Coalescing**: Multiple connections to the same unknown domain share one approval prompt
 
 ### Default Allowlist
-Hardcoded in `internal/egress/allowlist.go`:
+Defined in `internal/egress/defaults.json` (embedded into `allowlist.go` via `//go:embed`; includes `openrouter.ai`):
 - Package registries (npm, PyPI, crates.io, Maven, Gradle, etc.)
 - Git hosting (GitHub, GitLab, Bitbucket + subdomains)
 - System packages (Debian, Ubuntu, Alpine)
@@ -441,7 +452,7 @@ The sandbox exposes an HTTP-based MCP server at `/sessions/:id/mcp/*`.
 via JSON-RPC over stdin/stdout; the bridge translates to HTTP calls.
 
 - Advertises `listChanged: true` capability
-- Background goroutine polls for tool list changes every 5s
+- Background goroutine polls for tool list changes every 10s (raised from 5s to avoid control-plane rate-limit spam)
 - Sends `notifications/tools/list_changed` when integrations are attached/detached
 - This allows LLMs to discover new tools without restarting
 
@@ -463,21 +474,28 @@ sandbox/
 ├── internal/
 │   ├── sessions/
 │   │   ├── manager.go
-│   │   ├── session.go       // PTY creation, env var injection, token storage
-│   │   └── lifecycle.go
+│   │   ├── session.go            // PTY creation, env var injection, token storage
+│   │   └── model_selection.go    // OpenRouter per-PTY routing (env + Codex CLI flags)
+│   ├── geminishim/               // Gemini wire-format → OpenAI Chat Completions proxy
+│   │   ├── shim.go
+│   │   └── translate.go
 │   ├── pty/
 │   │   ├── pty.go
 │   │   ├── hub.go           // fan-out, broadcast, output redaction, agent state
 │   │   └── turn.go
 │   ├── mcp/
 │   │   ├── settings.go          // MCP settings generation per agent type
-│   │   ├── integration_tools.go // Tool definitions (Gmail, GitHub, Drive, Calendar)
+│   │   ├── integration_tools.go // Tool definitions (Gmail, GitHub, Drive, Calendar, Twitter)
 │   │   └── gateway_client.go    // HTTP client for control plane gateway
 │   ├── agenthooks/
 │   │   └── hooks.go         // Stop hook generation for all agent types
 │   ├── broker/
-│   │   ├── secrets_broker.go
+│   │   ├── secrets_broker.go     // proxy + provider-error detection
 │   │   └── providers.go
+│   ├── egress/
+│   │   ├── proxy.go
+│   │   ├── allowlist.go
+│   │   └── defaults.json    // embedded default allowlist (//go:embed)
 │   ├── ws/
 │   │   ├── handler.go
 │   │   └── client.go
@@ -487,8 +505,6 @@ sandbox/
 │   │   └── controller.go
 │   └── auth/
 │       └── auth.go
-├── api/
-│   └── openapi.yaml
 └── go.mod
 
 ## Package-by-package
@@ -502,7 +518,7 @@ cmd/mcp-bridge/
   stdio-to-HTTP bridge for MCP. Claude Code and Gemini use stdio transport;
   this translates JSON-RPC over stdin/stdout to HTTP calls to the sandbox MCP server.
   - Passes PTY token for integration tool discovery
-  - Monitors for tool list changes (polls every 5s) and sends `notifications/tools/list_changed`
+  - Monitors for tool list changes (polls every 10s) and sends `notifications/tools/list_changed`
     so LLMs discover newly attached integrations without restarting
   - Uses `GEMINI_CLI_SYSTEM_SETTINGS_PATH` for durable Gemini config
 

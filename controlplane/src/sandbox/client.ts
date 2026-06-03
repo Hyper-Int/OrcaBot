@@ -225,7 +225,12 @@ export class SandboxClient {
       // Schedule execution ID — set at creation time so callback is in place before process starts
       executionId?: string;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
-      modelSelection?: { provider: 'default' | 'openrouter'; model?: string };
+      modelSelection?: {
+        provider: 'default' | 'openrouter';
+        model?: string;
+        contextWindow?: number;
+        maxOutputTokens?: number;
+      };
     }
   ): Promise<SandboxPty> {
     const shouldSendBody = Boolean(

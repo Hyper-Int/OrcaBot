@@ -96,6 +96,9 @@ export function nearestFlyRegion(cfContinent: string | undefined, warmPoolRegion
 interface ModelSelection {
   provider: 'default' | 'openrouter';
   model?: string;
+  // Catalog-resolved limits, forwarded to the sandbox for Codex context flags.
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 interface TerminalContent {
@@ -203,6 +206,10 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
         ? {
             provider: parsed.modelSelection.provider,
             model: typeof parsed.modelSelection.model === 'string' ? parsed.modelSelection.model : undefined,
+            contextWindow:
+              typeof parsed.modelSelection.contextWindow === 'number' ? parsed.modelSelection.contextWindow : undefined,
+            maxOutputTokens:
+              typeof parsed.modelSelection.maxOutputTokens === 'number' ? parsed.modelSelection.maxOutputTokens : undefined,
           }
         : undefined;
 

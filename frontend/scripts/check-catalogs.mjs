@@ -48,25 +48,50 @@ async function checkOpenRouter() {
   const remoteIds = new Set(remote.map((m) => m.id));
   const removed = [...localIds].filter((id) => !remoteIds.has(id));
   const stalePrices = [];
+  const staleLimits = [];
 
   for (const localModel of local.models) {
     const remoteModel = remote.find((m) => m.id === localModel.id);
-    if (!remoteModel || !remoteModel.pricing) continue;
-    const remoteInput = Number(remoteModel.pricing.prompt) * 1_000_000;
-    const remoteOutput = Number(remoteModel.pricing.completion) * 1_000_000;
-    if (!Number.isFinite(remoteInput) || !Number.isFinite(remoteOutput)) continue;
-    const driftInput = Math.abs(remoteInput - localModel.pricing.input);
-    const driftOutput = Math.abs(remoteOutput - localModel.pricing.output);
-    if (driftInput > 0.01 || driftOutput > 0.01) {
-      stalePrices.push({
-        id: localModel.id,
-        local: localModel.pricing,
-        remote: { input: remoteInput, output: remoteOutput },
-      });
+    if (!remoteModel) continue;
+
+    if (remoteModel.pricing) {
+      const remoteInput = Number(remoteModel.pricing.prompt) * 1_000_000;
+      const remoteOutput = Number(remoteModel.pricing.completion) * 1_000_000;
+      if (Number.isFinite(remoteInput) && Number.isFinite(remoteOutput)) {
+        const driftInput = Math.abs(remoteInput - localModel.pricing.input);
+        const driftOutput = Math.abs(remoteOutput - localModel.pricing.output);
+        if (driftInput > 0.01 || driftOutput > 0.01) {
+          stalePrices.push({
+            id: localModel.id,
+            local: localModel.pricing,
+            remote: { input: remoteInput, output: remoteOutput },
+          });
+        }
+      }
+    }
+
+    // Context window + max output tokens feed Codex's -c model_context_window /
+    // model_max_output_tokens flags, so keep them aligned with upstream.
+    const remoteCtx = Number(remoteModel.context_length);
+    if (Number.isFinite(remoteCtx) && remoteCtx !== localModel.contextLength) {
+      staleLimits.push(`  - ${localModel.id}: contextLength local ${localModel.contextLength} vs remote ${remoteCtx}`);
+    }
+    // Note: Number(null) === 0 (and 0 is "finite"), so guard on null/undefined
+    // first — upstream uses null when a provider publishes no output cap.
+    const rawMaxOut = remoteModel.top_provider?.max_completion_tokens;
+    const remoteMaxOut = rawMaxOut == null ? undefined : Number(rawMaxOut);
+    const localMaxOut = localModel.maxOutputTokens;
+    if (remoteMaxOut !== undefined && Number.isFinite(remoteMaxOut) && remoteMaxOut > 0) {
+      if (localMaxOut === undefined || localMaxOut !== remoteMaxOut) {
+        staleLimits.push(`  - ${localModel.id}: maxOutputTokens local ${localMaxOut ?? "(unset)"} vs remote ${remoteMaxOut}`);
+      }
+    } else if (localMaxOut !== undefined) {
+      // Upstream publishes no cap — local should drop the field.
+      staleLimits.push(`  - ${localModel.id}: maxOutputTokens local ${localMaxOut} vs remote (unset)`);
     }
   }
 
-  if (removed.length === 0 && stalePrices.length === 0) {
+  if (removed.length === 0 && stalePrices.length === 0 && staleLimits.length === 0) {
     RESULTS.upToDate.push(`openrouter-models (${local.models.length} curated)`);
     return;
   }
@@ -84,6 +109,9 @@ async function checkOpenRouter() {
       )
       .join("\n");
     RESULTS.drift.push(`openrouter-models: ${stalePrices.length} price drift(s):\n${lines}`);
+  }
+  if (staleLimits.length) {
+    RESULTS.drift.push(`openrouter-models: ${staleLimits.length} limit drift(s):\n${staleLimits.join("\n")}`);
   }
 }
 

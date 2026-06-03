@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v7-analytics
-const TERMINAL_BLOCK_REVISION = "terminal-block-v8-input-dark-mode";
+// REVISION: terminal-block-v9-openrouter-key-warning
+const TERMINAL_BLOCK_REVISION = "terminal-block-v9-openrouter-key-warning";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -43,6 +43,7 @@ import {
   Type,
   ListTodo,
   Cpu,
+  Check,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -60,7 +61,6 @@ import {
   DialogHeader,
   DialogTitle,
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -123,6 +123,11 @@ import { HelpButton } from "@/components/help/HelpDialog";
 import { terminalsDoc } from "@/docs/content/terminals";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
+
+/** Auto-restart loop guard: restarts closer together than the window count as a
+ *  fast-fail loop; pause after this many consecutive ones. */
+const RAPID_REOPEN_WINDOW_MS = 6000;
+const MAX_RAPID_REOPENS = 3;
 
 /** Default API key name to pre-populate for each agentic coder */
 const AGENT_DEFAULT_API_KEY: Partial<Record<AgentType, string>> = {
@@ -211,6 +216,10 @@ type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts
 type ModelSelection = {
   provider: "default" | "openrouter";
   model?: string; // OpenRouter model id, only set when provider === "openrouter"
+  // Resolved from the catalog at selection time; forwarded to the sandbox so Codex
+  // gets correct -c model_context_window / model_max_output_tokens flags.
+  contextWindow?: number;
+  maxOutputTokens?: number;
 };
 
 type OpenRouterModel = {
@@ -218,6 +227,7 @@ type OpenRouterModel = {
   label: string;
   provider: string;
   contextLength: number;
+  maxOutputTokens?: number;
   pricing: { input: number; output: number };
   compatibleHarnesses: string[];
 };
@@ -807,7 +817,12 @@ export function TerminalBlock({
   const secretsQuery = useQuery({
     queryKey: ["secrets", "_global"],
     queryFn: () => listSecrets("_global"),
-    enabled: activePanel === "secrets",
+    // Also fetch when the Model panel is open, or when an OpenRouter model is already
+    // selected, so we can flag a missing OPENROUTER_API_KEY (in-panel and on the menu item).
+    enabled:
+      activePanel === "secrets" ||
+      activePanel === "model" ||
+      terminalMeta.modelSelection?.provider === "openrouter",
     staleTime: 60000,
   });
 
@@ -1011,6 +1026,11 @@ export function TerminalBlock({
   // Split into secrets (brokered) and env vars (non-brokered)
   const savedSecrets = allSecrets.filter(s => s.type === 'secret' || !s.type); // Default to secret for backwards compat
   const savedEnvVars = allSecrets.filter(s => s.type === 'env_var');
+  // Whether an OpenRouter key has been configured (used to flag invalid model selections).
+  // Only trust this once the query has resolved, otherwise we'd false-flag before secrets load.
+  const hasOpenRouterKey = allSecrets.some(s => s.name === "OPENROUTER_API_KEY");
+  const openRouterKeyResolved = secretsQuery.isSuccess;
+  const openRouterKeyMissing = openRouterKeyResolved && !hasOpenRouterKey;
 
   // Pre-populate secret name field on first secrets panel open for agentic coders
   React.useEffect(() => {
@@ -1316,6 +1336,19 @@ export function TerminalBlock({
       const modelChanged = current.model !== next.model;
       if (!providerChanged && !modelChanged) return;
 
+      // Resolve context/output limits from the catalog at selection time so the
+      // sandbox can pass Codex correct -c model_context_window / max_output_tokens.
+      let resolved: ModelSelection = next;
+      if (next.provider === "openrouter" && next.model) {
+        const cat = OPENROUTER_MODELS.find((m) => m.id === next.model);
+        resolved = {
+          provider: "openrouter",
+          model: next.model,
+          contextWindow: cat?.contextLength,
+          maxOutputTokens: cat?.maxOutputTokens,
+        };
+      }
+
       data.onItemChange({
         content: JSON.stringify({
           name: terminalMeta.name,
@@ -1330,7 +1363,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
-          modelSelection: next,
+          modelSelection: resolved,
         }),
       });
 
@@ -2285,6 +2318,13 @@ export function TerminalBlock({
     }
   }, [isConnected, session?.id]);
 
+  // Fast-fail loop guard: if a freshly-restarted session dies again within a few
+  // seconds (e.g. a boot command that exits immediately — bad flag, missing
+  // binary, Claude refusing --dangerously-skip-permissions as root), don't keep
+  // recreating it forever. Count consecutive rapid restarts and pause after a few.
+  const lastAutoReopenAtRef = React.useRef(0);
+  const rapidReopenCountRef = React.useRef(0);
+
   // Auto-restart when the connection fails or the session ends.
   // Previously this was gated on session.status === "stopped", but after
   // deployments the sandbox is replaced while the session is still "active"
@@ -2306,6 +2346,24 @@ export function TerminalBlock({
       return;
     }
     autoReopenAttemptedRef.current = true;
+
+    // Detect a rapid restart loop: restarts spaced closely together mean the
+    // session keeps dying on startup. After MAX_RAPID_REOPENS, stop and surface
+    // an error instead of hammering the backend. A spaced-out restart resets it.
+    const now = Date.now();
+    rapidReopenCountRef.current =
+      now - lastAutoReopenAtRef.current < RAPID_REOPEN_WINDOW_MS
+        ? rapidReopenCountRef.current + 1
+        : 0;
+    lastAutoReopenAtRef.current = now;
+    if (rapidReopenCountRef.current >= MAX_RAPID_REOPENS) {
+      console.warn(`[TerminalBlock] Auto-restart paused after ${rapidReopenCountRef.current} rapid restarts`);
+      terminalRef.current?.write(
+        "\x1b[31mAgent keeps exiting on startup — auto-restart paused. Check the command/settings (e.g. Skip Permissions), then reopen manually.\x1b[0m\r\n"
+      );
+      return;
+    }
+
     console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionExpired=${sessionExpired} sessionStatus=${session.status}`);
     terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
     void handleReopen();
@@ -3292,6 +3350,7 @@ export function TerminalBlock({
                         {terminalType === "codex" && "Codex (OpenAI native)"}
                         {terminalType === "opencode" && "OpenCode (default provider)"}
                         {terminalType === "droid" && "Droid (Factory.ai default)"}
+                        {terminalType === "gemini" && "Gemini (Google native)"}
                       </div>
                       <div className="text-[10px] text-[var(--foreground-muted)]">
                         Uses the harness&apos;s built-in API key.
@@ -3302,9 +3361,24 @@ export function TerminalBlock({
 
                 {/* OpenRouter section */}
                 <div className="space-y-1.5">
-                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
-                    OpenRouter
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                      OpenRouter
+                    </div>
+                    {openRouterKeyMissing && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[var(--status-warning)]">
+                        <AlertCircle className="w-3 h-3" />
+                        API key required
+                      </span>
+                    )}
                   </div>
+                  {openRouterKeyMissing && (
+                    <div className="text-[10px] text-[var(--foreground-muted)] leading-snug">
+                      Selecting a model below won&apos;t work until you add an
+                      {" "}
+                      <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code>.
+                    </div>
+                  )}
                   {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).map((m) => {
                     const selected =
                       terminalMeta.modelSelection?.provider === "openrouter" &&
@@ -3312,7 +3386,9 @@ export function TerminalBlock({
                     return (
                       <label
                         key={m.id}
-                        className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer"
+                        className={`flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer ${
+                          selected && openRouterKeyMissing ? "ring-1 ring-[var(--status-warning)]" : ""
+                        }`}
                       >
                         <input
                           type="radio"
@@ -3323,7 +3399,12 @@ export function TerminalBlock({
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="text-xs text-[var(--foreground)] truncate">{m.label}</div>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <div className="text-xs text-[var(--foreground)] truncate">{m.label}</div>
+                              {selected && openRouterKeyMissing && (
+                                <AlertCircle className="w-3 h-3 text-[var(--status-warning)] shrink-0" />
+                              )}
+                            </div>
                             {m.pricing && (
                               <div className="text-[10px] text-[var(--foreground-muted)] shrink-0">
                                 ${m.pricing.input.toFixed(2)}/${m.pricing.output.toFixed(2)} per 1M
@@ -3333,6 +3414,11 @@ export function TerminalBlock({
                           <div className="text-[10px] text-[var(--foreground-muted)] truncate">
                             {m.provider} · {m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k context · ` : ""}<code className="font-mono">{m.id}</code>
                           </div>
+                          {selected && openRouterKeyMissing && (
+                            <div className="text-[10px] text-[var(--status-warning)] mt-0.5">
+                              No OPENROUTER_API_KEY set — add one to use this model.
+                            </div>
+                          )}
                         </div>
                       </label>
                     );
@@ -3347,9 +3433,23 @@ export function TerminalBlock({
                 {/* API key hint */}
                 {terminalMeta.modelSelection?.provider === "openrouter" && (
                   <div className="pt-2 border-t border-[var(--border)]">
-                    <div className="text-[10px] text-[var(--foreground-muted)]">
-                      Requires <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> in Environment Variables
-                    </div>
+                    {openRouterKeyMissing ? (
+                      <div className="flex items-start gap-1.5 text-[10px] text-[var(--status-warning)]">
+                        <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+                        <span>
+                          Add an <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> in Environment Variables, or this terminal will fail to start the model.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-1.5 text-[10px] text-[var(--foreground-muted)]">
+                        {openRouterKeyResolved && (
+                          <Check className="w-3 h-3 shrink-0 mt-0.5 text-[var(--status-success)]" />
+                        )}
+                        <span>
+                          Uses <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> from Environment Variables{openRouterKeyResolved ? " (set)" : ""}.
+                        </span>
+                      </div>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -3358,10 +3458,12 @@ export function TerminalBlock({
                         setActivePanel("secrets");
                         setTimeout(() => secretValueInputRef.current?.focus(), 50);
                       }}
-                      className="mt-1.5 h-6 text-[10px] text-[var(--accent-primary)]"
+                      className={`mt-1.5 h-6 text-[10px] ${
+                        openRouterKeyMissing ? "text-[var(--status-warning)]" : "text-[var(--accent-primary)]"
+                      }`}
                     >
                       <Key className="w-3 h-3 mr-1" />
-                      Open Environment Variables
+                      {openRouterKeyMissing ? "Add OPENROUTER_API_KEY" : "Open Environment Variables"}
                     </Button>
                   </div>
                 )}
@@ -3919,13 +4021,22 @@ export function TerminalBlock({
                 <ListTodo className="w-3 h-3" />
                 <span>Tasks</span>
               </DropdownMenuItem>
-              {/* Model - for agentic terminals that support OpenRouter (Claude, Codex, OpenCode, Droid) */}
-              {(terminalType === "claude" || terminalType === "codex" || terminalType === "opencode" || terminalType === "droid") && (
+              {/* Model - for agentic terminals that support OpenRouter (Claude, Codex, OpenCode, Droid, Gemini) */}
+              {(terminalType === "claude" || terminalType === "codex" || terminalType === "opencode" || terminalType === "droid" || terminalType === "gemini") && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setActivePanel(activePanel === "model" ? null : "model")} className="gap-2">
                     <Cpu className="w-3 h-3" />
                     <span>Model</span>
+                    {openRouterKeyMissing && (
+                      <span
+                        className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--status-warning)]"
+                        title="OpenRouter model selected but no OPENROUTER_API_KEY is set"
+                      >
+                        <AlertCircle className="w-3 h-3" />
+                        Key needed
+                      </span>
+                    )}
                   </DropdownMenuItem>
                 </>
               )}
@@ -3939,16 +4050,24 @@ export function TerminalBlock({
                   </DropdownMenuItem>
                 </>
               )}
-              {/* Skip Approvals - for Claude Code, Codex, and Gemini */}
+              {/* Skip Permissions - for Claude Code, Codex, and Gemini */}
               {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={terminalMeta.skipApprovals ?? false}
-                    onCheckedChange={handleSkipApprovalsChange}
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleSkipApprovalsChange(!(terminalMeta.skipApprovals ?? false));
+                    }}
+                    className="gap-2"
                   >
-                    Skip Approvals
-                  </DropdownMenuCheckboxItem>
+                    {terminalMeta.skipApprovals ? (
+                      <Check className="w-3 h-3 text-[var(--foreground)]" />
+                    ) : (
+                      <X className="w-3 h-3 text-[var(--foreground-muted)] opacity-40" />
+                    )}
+                    <span>Skip Permissions</span>
+                  </DropdownMenuItem>
                 </>
               )}
               <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />

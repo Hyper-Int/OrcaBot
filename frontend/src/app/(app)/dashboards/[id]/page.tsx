@@ -515,11 +515,28 @@ export default function DashboardPage() {
       const { request_id } = (e as CustomEvent).detail;
       setEgressPending(prev => prev.filter(p => p.request_id !== request_id));
     };
+    // Upstream model-provider errors (OpenRouter rate limit / out-of-credits / bad
+    // key) — surface a toast with the fix so the user doesn't think it's broken.
+    const handleModelError = (e: Event) => {
+      const { title, message, hint, status } = (e as CustomEvent).detail as {
+        title: string;
+        message: string;
+        hint: string;
+        status: number;
+      };
+      const show = status === 429 || status >= 500 ? toast.warning : toast.error;
+      show(title || "Model provider error", {
+        description: [message, hint].filter(Boolean).join(" — "),
+        duration: 12000,
+      });
+    };
     window.addEventListener("egress_approval_needed", handleNeeded);
     window.addEventListener("egress_approval_resolved", handleResolved);
+    window.addEventListener("model_provider_error", handleModelError);
     return () => {
       window.removeEventListener("egress_approval_needed", handleNeeded);
       window.removeEventListener("egress_approval_resolved", handleResolved);
+      window.removeEventListener("model_provider_error", handleModelError);
     };
   }, []);
 

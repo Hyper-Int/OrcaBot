@@ -63,7 +63,11 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   const [inputValue, setInputValue] = React.useState("");
   const inputBarRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
   const initialPromptConsumedRef = React.useRef(false);
+  // Auto-minimize the chat the first time the user interacts with the page
+  // *outside* the chat — fires once per mount.
+  const autoMinimizedRef = React.useRef(false);
   // Holds a splash-bar prompt that was deferred because needsAiSetup=true.
   // Sent after the user completes (or skips) AI provider setup.
   const deferredPromptRef = React.useRef<string | null>(null);
@@ -191,6 +195,25 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
       setIsExpanded(true);
     }
   }, [needsAiSetup, dashboardId]);
+
+  // First time the user interacts with the page *outside* the chat while it's
+  // expanded, auto-minimize it so it's out of the way. Fires once per mount, and
+  // never interrupts the required AI-setup flow. Uses capture so it still sees the
+  // event if a child stops propagation.
+  React.useEffect(() => {
+    if (autoMinimizedRef.current) return;
+    if (!isExpanded) return;
+    if (needsAiSetup || showSetupCard) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (target && panelRef.current?.contains(target)) return; // inside the chat
+      autoMinimizedRef.current = true;
+      setIsAtSplashPosition(false); // mirror the manual collapse (drop splash layout)
+      setIsExpanded(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [isExpanded, needsAiSetup, showSetupCard]);
 
   // Called when the setup card is dismissed or completed.
   // savedKeys is provided when keys were saved, omitted when user skipped.
@@ -321,6 +344,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
 
   return (
     <div
+      ref={panelRef}
       className={cn("fixed left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-4", isAtSplashPosition && "flex flex-col", className)}
       style={containerStyle}
     >

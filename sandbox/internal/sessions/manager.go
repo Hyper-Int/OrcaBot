@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminishim"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
@@ -22,6 +23,10 @@ var (
 // Each sandbox VM runs one broker shared by all sessions.
 const DefaultBrokerPort = 8082
 
+// DefaultGeminiShimPort is the port for the Gemini→OpenRouter translation shim.
+// Each sandbox VM runs one shim shared by all sessions (see internal/geminishim).
+const DefaultGeminiShimPort = 8086
+
 // Manager handles session lifecycle
 type Manager struct {
 	mu            sync.RWMutex
@@ -31,6 +36,9 @@ type Manager struct {
 	// Shared secrets broker for all sessions
 	broker     *broker.SecretsBroker
 	brokerPort int
+
+	// Shared Gemini→OpenRouter translation shim (one per VM).
+	geminiShimPort int
 
 	// Egress proxy port: forwarded to sessions so Chromium is proxied when >0.
 	// Set via SetEgressProxyPort before any sessions are created.
@@ -54,16 +62,27 @@ func NewManagerWithWоrkspace(workspaceBase string) *Manager {
 	b := broker.NewSecretsBroker(brokerPort)
 
 	m := &Manager{
-		sessions:      make(map[string]*Session),
-		workspaceBase: workspaceBase,
-		broker:        b,
-		brokerPort:    brokerPort,
+		sessions:       make(map[string]*Session),
+		workspaceBase:  workspaceBase,
+		broker:         b,
+		brokerPort:     brokerPort,
+		geminiShimPort: DefaultGeminiShimPort,
 	}
 
 	// Start the broker in the background (singleton for all sessions)
 	go func() {
 		if err := b.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
+		}
+	}()
+
+	// Start the Gemini→OpenRouter translation shim (singleton for all sessions).
+	// It forwards translated requests through the broker so the OpenRouter key
+	// is injected server-side and never reaches the Gemini CLI.
+	shim := geminishim.New(DefaultGeminiShimPort, brokerPort)
+	go func() {
+		if err := shim.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start gemini shim: %v\n", err)
 		}
 	}()
 
@@ -106,6 +125,7 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 	}
 
 	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort, m.egressProxyPort)
+	session.geminiShimPort = m.geminiShimPort
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session

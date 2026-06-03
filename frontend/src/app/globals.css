@@ -747,3 +747,12 @@ input.chat-input-splash:focus-visible {
 }
 
 /* Chat entry animation removed — chat bar appears instantly on dashboard */
+
+/* ===== Canvas iframe pan-guard =====
+   While the canvas is being panned or a block is being dragged, disable pointer
+   events on embedded iframes (e.g. the BrowserBlock noVNC view). Otherwise an
+   iframe under the cursor swallows the mouseup that ends the gesture, leaving the
+   canvas stuck panning. Restored the instant the gesture ends. */
+.canvas-interacting iframe {
+  pointer-events: none !important;
+}

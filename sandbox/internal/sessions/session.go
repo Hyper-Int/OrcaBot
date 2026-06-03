@@ -124,6 +124,10 @@ type Session struct {
 	broker     *broker.SecretsBroker
 	brokerPort int
 
+	// Gemini→OpenRouter translation shim port (one shim per VM). Set by the
+	// manager in Create; 0 means the shim is unavailable (Gemini OpenRouter off).
+	geminiShimPort int
+
 	// Egress proxy port: when >0, browser controller routes Chromium through the proxy.
 	// REVISION: browser-v7-proxy-server
 	egressProxyPort int
@@ -275,6 +279,11 @@ func (s *Session) Broker() *broker.SecretsBroker {
 // BrokerPort returns the port the secrets broker is listening on.
 func (s *Session) BrokerPort() int {
 	return s.brokerPort
+}
+
+// GeminiShimPort returns the port of the Gemini→OpenRouter translation shim, or 0.
+func (s *Session) GeminiShimPort() int {
+	return s.geminiShimPort
 }
 
 // Workspace returns the session's filesystem workspace
@@ -617,6 +626,13 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	// This ensures MCP settings and hooks are still generated correctly
 	agentType := mcp.DetectAgentType(command)
 
+	// Codex ignores OPENAI_BASE_URL/OPENAI_MODEL; route OpenRouter via CLI flags.
+	// Must run before the cd prefix so the flags attach to the codex invocation.
+	// REVISION: model-selection-v4-codex-cli-flags
+	if agentType == mcp.AgentTypeCodex {
+		command = buildCodexOpenRouterCommand(command, modelSelection, s.ID, s.BrokerPort())
+	}
+
 	// Compute and validate working directory
 	actualWorkDir := s.workspace.Root()
 	if workingDir != "" {
@@ -645,6 +661,14 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	envVars["ORCABOT_SESSION_ID"] = s.ID
 	envVars["ORCABOT_PTY_ID"] = ptyID
 	envVars["DASHBOARD_ID"] = s.DashboardID
+	// Claude Code refuses --dangerously-skip-permissions (the "Skip Permissions"
+	// toggle) when running as root unless IS_SANDBOX=1. Orcabot PTYs run as root
+	// inside an isolated single-tenant VM, so declaring the sandbox is correct —
+	// without it, enabling Skip Permissions makes Claude exit instantly, which the
+	// reconnect logic turns into a PTY restart loop.
+	if agentType == mcp.AgentTypeClaude {
+		envVars["IS_SANDBOX"] = "1"
+	}
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
 	// Point agents to the localhost-only MCP server (no auth required)
@@ -677,7 +701,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	// Apply per-harness OpenRouter env vars when requested. Must come after agentType is
 	// known (above) and before the PTY spawns. No-op when modelSelection is nil or default.
 	// REVISION: model-selection-v1-openrouter
-	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort())
+	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort(), s.GeminiShimPort())
 
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
 	// REVISION: session-v22-pool-empty-mcp-env
@@ -787,6 +811,20 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 		// and UI settings. Point it to a system override file (highest precedence).
 		if agentType == mcp.AgentTypeGemini {
 			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
+
+			// OpenRouter routing relies on the CLI's GATEWAY auth honoring the
+			// shim URL in GOOGLE_GEMINI_BASE_URL. Set the gateway auth fields when
+			// OpenRouter is selected; clear them otherwise so native auth returns.
+			// REVISION: gemini-shim-v1-openrouter-bridge
+			if modelSelection.IsOpenRouter() {
+				if err := agenthooks.SetGeminiOpenRouterAuth(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Gemini OpenRouter auth: %v\n", err)
+				}
+			} else {
+				if err := agenthooks.ClearGeminiOpenRouterAuth(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clear Gemini OpenRouter auth: %v\n", err)
+				}
+			}
 		}
 	}
 
