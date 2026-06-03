@@ -354,6 +354,29 @@ export function Canvas({
   const isResizingRef = React.useRef(false);
   const pendingNodeRebuildRef = React.useRef(false);
 
+  // Wrapper around <ReactFlow>. While a pan or node-drag is in progress we add
+  // `canvas-interacting`, which disables pointer events on embedded iframes
+  // (e.g. the BrowserBlock noVNC view). Otherwise an iframe under the cursor
+  // swallows the mouseup that ends the gesture, leaving the canvas stuck panning.
+  const flowWrapperRef = React.useRef<HTMLDivElement>(null);
+  const setCanvasInteracting = React.useCallback((active: boolean) => {
+    flowWrapperRef.current?.classList.toggle("canvas-interacting", active);
+  }, []);
+  // Safety net: any button release or focus loss ends a gesture, so always clear
+  // the guard then. Guarantees the canvas can never get permanently stuck even if
+  // a React Flow move/drag end callback is missed.
+  React.useEffect(() => {
+    const clear = () => setCanvasInteracting(false);
+    window.addEventListener("pointerup", clear);
+    window.addEventListener("mouseup", clear);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("pointerup", clear);
+      window.removeEventListener("mouseup", clear);
+      window.removeEventListener("blur", clear);
+    };
+  }, [setCanvasInteracting]);
+
   // Track drag start position for undo
   const dragStartPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   // Track resize start state for undo
@@ -517,18 +540,20 @@ export function Canvas({
   const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = true;
+      setCanvasInteracting(true);
       onDragStateChange?.(true);
       bringToFront(node.id);
       // Capture position before drag for undo
       dragStartPositionRef.current = node.position ? { ...node.position } : null;
     },
-    [bringToFront, onDragStateChange]
+    [bringToFront, onDragStateChange, setCanvasInteracting]
   );
 
   // Handle node drag END - sync to server only when drag stops
   const handleNodeDragStop: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = false;
+      setCanvasInteracting(false);
       onDragStateChange?.(false);
 
       if (onItemChange && node.position) {
@@ -562,7 +587,7 @@ export function Canvas({
         terminalRefs.current.get(node.id)?.fit();
       }
     },
-    [onItemChange, onDragComplete, rebuildNodes, onDragStateChange]
+    [onItemChange, onDragComplete, rebuildNodes, onDragStateChange, setCanvasInteracting]
   );
 
   // Handle node deletion
@@ -638,6 +663,7 @@ export function Canvas({
       <EdgeLabelClickContext.Provider value={onEdgeLabelClick ?? null}>
       <EdgeReverseContext.Provider value={onEdgeReverse ?? null}>
       <div
+        ref={flowWrapperRef}
         className="w-full h-full bg-[var(--background)] relative"
         onMouseMoveCapture={handlePaneMouseMove}
       >
@@ -658,10 +684,12 @@ export function Canvas({
             if (target?.closest("[data-connector=\"true\"]")) return;
             onCanvasClick?.();
           }}
+          onMoveStart={() => setCanvasInteracting(true)}
           onMove={(_event, nextViewport) => {
             setViewport(nextViewport);
             onViewportChange?.(nextViewport);
           }}
+          onMoveEnd={() => setCanvasInteracting(false)}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView={fitViewEnabled}

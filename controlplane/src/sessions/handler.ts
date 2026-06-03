@@ -93,17 +93,27 @@ export function nearestFlyRegion(cfContinent: string | undefined, warmPoolRegion
   return warmPoolRegions[0];
 }
 
+interface ModelSelection {
+  provider: 'default' | 'openrouter';
+  model?: string;
+  // Catalog-resolved limits, forwarded to the sandbox for Codex context flags.
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
 interface TerminalContent {
   bootCommand?: string;
   ttsProvider?: string;
   ttsVoice?: string;
   workingDir?: string;
   skipApprovals?: boolean;
+  modelSelection?: ModelSelection;
 }
 
 interface ParsedTerminalConfig {
   bootCommand: string;
   workingDir?: string;
+  modelSelection?: ModelSelection;
 }
 
 // ElevenLabs voice name to ID mapping
@@ -190,7 +200,20 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
       bootCommand = talkitoArgs.join(' ');
     }
 
-    return { bootCommand, workingDir };
+    const modelSelection: ModelSelection | undefined =
+      parsed.modelSelection &&
+      (parsed.modelSelection.provider === 'default' || parsed.modelSelection.provider === 'openrouter')
+        ? {
+            provider: parsed.modelSelection.provider,
+            model: typeof parsed.modelSelection.model === 'string' ? parsed.modelSelection.model : undefined,
+            contextWindow:
+              typeof parsed.modelSelection.contextWindow === 'number' ? parsed.modelSelection.contextWindow : undefined,
+            maxOutputTokens:
+              typeof parsed.modelSelection.maxOutputTokens === 'number' ? parsed.modelSelection.maxOutputTokens : undefined,
+          }
+        : undefined;
+
+    return { bootCommand, workingDir, modelSelection };
   } catch {
     return { bootCommand: '' };
   }
@@ -1206,7 +1229,7 @@ export async function createSessiоn(
 
   try {
     const terminalConfig = parseTerminalConfig(item.content);
-    const { bootCommand, workingDir } = terminalConfig;
+    const { bootCommand, workingDir, modelSelection } = terminalConfig;
     let appliedSecretNames: string[] = [];
 
     const applyDashboardSecretsBeforePtyStart = async (
@@ -1274,6 +1297,7 @@ export async function createSessiоn(
           ptyId,
           integrationToken,
           workingDir,
+          modelSelection,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1281,6 +1305,7 @@ export async function createSessiоn(
           pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
             ptyId,
             integrationToken,
+            modelSelection,
           });
         } else {
           throw wdErr;
@@ -1332,6 +1357,7 @@ export async function createSessiоn(
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken: freshIntegrationToken,
+        modelSelection,
       });
     }
 

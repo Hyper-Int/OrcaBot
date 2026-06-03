@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// REVISION: broker-v5-get-anthropic-key
-const brokerRevision = "broker-v5-get-anthropic-key"
+// REVISION: broker-v6-provider-error-toast
+const brokerRevision = "broker-v6-provider-error-toast"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
@@ -59,6 +59,24 @@ type SecretsBroker struct {
 	// Callback for notifying owner of pending domain approvals
 	// Takes (sessionID, secretName, domain) so we know which session to notify
 	onApprovalNeeded func(sessionID, secretName, domain string)
+
+	// Callback for surfacing notable upstream model-provider errors (OpenRouter
+	// 429/402/401/5xx) to the user as a dashboard toast. Fire-and-forget.
+	onProviderError func(ProviderError)
+
+	// Dedup for the once-per-(session,provider) routing log line.
+	loggedRoutes sync.Map
+}
+
+// ProviderError describes an upstream model-provider failure worth surfacing to
+// the user (vs. silently failing inside the harness).
+type ProviderError struct {
+	SessionID string
+	Provider  string
+	Status    int
+	Title     string
+	Message   string
+	Hint      string
 }
 
 // NewSecretsBroker creates a new broker listening on the given port.
@@ -144,6 +162,75 @@ func (b *SecretsBroker) SetOnApprovalNeeded(fn func(sessionID, secretName, domai
 	b.onApprovalNeeded = fn
 }
 
+// SetOnProviderError sets the callback used to surface upstream model-provider
+// errors (e.g. OpenRouter rate limits) to the user.
+func (b *SecretsBroker) SetOnProviderError(fn func(ProviderError)) {
+	b.onProviderError = fn
+}
+
+// isModelRoutingProvider reports whether the provider routes LLM model traffic
+// (OpenRouter, OpenAI-compat or Anthropic-compat). Only these surface toasts —
+// we don't want to alert on every TTS/ASR key error.
+func isModelRoutingProvider(provider string) bool {
+	return provider == "openrouter" || provider == "openrouter-anthropic"
+}
+
+// classifyProviderError turns an upstream error response into a user-facing
+// title/message/hint. The message is extracted from the OpenRouter/OpenAI error
+// envelope when present.
+func classifyProviderError(status int, body []byte) (title, message, hint string) {
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	message = parsed.Error.Message
+
+	switch {
+	case status == 429:
+		// NOT a credit problem — OpenRouter routed to its cheapest provider for
+		// this model, whose rate limit is a shared pool across all OpenRouter users.
+		// Lead with OpenRouter's verbatim message, then the provider-routing fix.
+		title = "Model rate-limited upstream (not a credit issue)"
+		hint = "OpenRouter picked its lowest-cost provider for this model; that rate limit is shared across all users, independent of your balance. Fix: set Default Provider Routing to prioritize throughput/performance over price at openrouter.ai/settings, add your own provider key, or pick a better-provisioned model."
+		if message == "" {
+			message = "The selected model is temporarily rate-limited by its upstream provider."
+		}
+	case status == 402:
+		title = "Out of OpenRouter credits"
+		hint = "Add credits at openrouter.ai/credits, then retry."
+		if message == "" {
+			message = "Your OpenRouter account is out of credits for this model."
+		}
+	case status == 401 || status == 403:
+		title = "OpenRouter key rejected"
+		hint = "Check the OPENROUTER_API_KEY in Environment Variables."
+		if message == "" {
+			message = "OpenRouter rejected the API key for this request."
+		}
+	case status == 404:
+		title = "Model unavailable"
+		hint = "This model id may be unavailable on OpenRouter — pick another in the Model panel."
+		if message == "" {
+			message = "The selected model was not found on OpenRouter."
+		}
+	case status >= 500:
+		title = "Upstream provider error"
+		hint = "The provider had a temporary error. Retry, or switch model."
+		if message == "" {
+			message = "The upstream provider returned a server error."
+		}
+	default:
+		title = "Model request failed"
+		hint = "Retry, or switch model in the Model panel."
+		if message == "" {
+			message = "The model request failed."
+		}
+	}
+	return title, message, hint
+}
+
 // AddApprovedDomain adds a single approved domain for a custom secret.
 // The allowlist key is session-namespaced (sessionID:secretName) to prevent
 // cross-session collisions when two sessions use the same custom secret name.
@@ -207,6 +294,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		headerName   string
 		headerFormat string
 		secretValue  string
+		providerName string // built-in provider name; "" for custom secrets
 	)
 
 	if providerParts[0] == "custom" && len(providerParts) >= 2 {
@@ -265,7 +353,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		// Built-in provider: /broker/{sessionID}/{provider}/path
-		providerName := providerParts[0]
+		providerName = providerParts[0]
 		configKey = ConfigKey(sessionID, providerName)
 		pathRemainder := ""
 		if len(providerParts) > 1 {
@@ -331,6 +419,30 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authValue := fmt.Sprintf(headerFormat, secretValue)
 	outReq.Header.Set(headerName, authValue)
 
+	// Always log the FIRST brokered call per (session, LLM-provider) — the
+	// zero-config way to confirm e.g. Claude Code is on `openrouter-anthropic`
+	// (OpenRouter) vs `anthropic` (native). Once-per-session so it isn't spammy.
+	// Only "agent" (LLM) providers; "tool" providers (TTS/ASR) are skipped.
+	if spec, ok := Providers[providerName]; ok && spec.Category == "agent" {
+		if _, seen := b.loggedRoutes.LoadOrStore(sessionID+":"+providerName, true); !seen {
+			host := targetURL
+			if parsed, perr := url.Parse(targetURL); perr == nil {
+				host = parsed.Host
+			}
+			log.Printf("[broker] session=%s routing provider=%s → %s", sessionID, providerName, host)
+		}
+	}
+
+	// Verbose per-request trace (every call, all providers). No secret is logged
+	// (auth lives in headers). Enable with ORCABOT_DEBUG_BROKER=1.
+	if os.Getenv("ORCABOT_DEBUG_BROKER") == "1" {
+		prov := providerName
+		if prov == "" {
+			prov = "custom"
+		}
+		log.Printf("[broker] forward session=%s provider=%s %s %s", sessionID, prov, r.Method, targetURL)
+	}
+
 	// Forward request with timeout
 	client := &http.Client{
 		Timeout: 120 * time.Second,
@@ -370,6 +482,27 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for _, v := range values {
 			w.Header().Add(key, v)
 		}
+	}
+
+	// Surface notable model-provider errors (OpenRouter 429/402/…) to the user as a
+	// toast, then forward the body unchanged. Only error statuses are buffered (they
+	// are small JSON, never SSE streams), so streaming success paths are untouched.
+	if isModelRoutingProvider(providerName) && resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		if b.onProviderError != nil {
+			title, message, hint := classifyProviderError(resp.StatusCode, errBody)
+			go b.onProviderError(ProviderError{
+				SessionID: sessionID,
+				Provider:  providerName,
+				Status:    resp.StatusCode,
+				Title:     title,
+				Message:   message,
+				Hint:      hint,
+			})
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(errBody)
+		return
 	}
 
 	w.WriteHeader(resp.StatusCode)

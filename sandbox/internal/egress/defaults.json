@@ -1,5 +1,5 @@
 {
-  "revision": "egress-defaults-v1",
+  "revision": "egress-defaults-v2-openrouter",
   "defaults": [
     {
       "pattern": "registry.npmjs.org",
@@ -318,6 +318,18 @@
       "category": "llm_api",
       "label": "Cohere API",
       "rationale": "Direct model access"
+    },
+    {
+      "pattern": "openrouter.ai",
+      "category": "llm_api",
+      "label": "OpenRouter API",
+      "rationale": "Aggregated model access (Anthropic/OpenAI/Google/etc.)"
+    },
+    {
+      "pattern": "*.openrouter.ai",
+      "category": "llm_api",
+      "label": "OpenRouter subdomains",
+      "rationale": "Aggregated model access (Anthropic/OpenAI/Google/etc.)"
     },
     {
       "pattern": "api-inference.huggingface.co",

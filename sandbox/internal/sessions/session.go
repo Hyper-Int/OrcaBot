@@ -124,6 +124,10 @@ type Session struct {
 	broker     *broker.SecretsBroker
 	brokerPort int
 
+	// Gemini→OpenRouter translation shim port (one shim per VM). Set by the
+	// manager in Create; 0 means the shim is unavailable (Gemini OpenRouter off).
+	geminiShimPort int
+
 	// Egress proxy port: when >0, browser controller routes Chromium through the proxy.
 	// REVISION: browser-v7-proxy-server
 	egressProxyPort int
@@ -275,6 +279,11 @@ func (s *Session) Broker() *broker.SecretsBroker {
 // BrokerPort returns the port the secrets broker is listening on.
 func (s *Session) BrokerPort() int {
 	return s.brokerPort
+}
+
+// GeminiShimPort returns the port of the Gemini→OpenRouter translation shim, or 0.
+func (s *Session) GeminiShimPort() int {
+	return s.geminiShimPort
 }
 
 // Workspace returns the session's filesystem workspace
@@ -527,257 +536,17 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 // If creatorID is provided, they are automatically assigned control.
 // If command is empty, the default shell is used.
 // If workingDir is provided, the PTY starts in that subdirectory of the workspace.
-// REVISION: working-dir-v2-fix-agent-detection
+// Thin wrapper over CreatePTYWithOptions (the canonical entry point) for the
+// no-options path used by tests and the no-opts branch of handleCreatePTY. This
+// keeps a single PTY-creation code path so behaviour (e.g. clearing a stale
+// OpenRouter model from .claude/settings.local.json) can't drift between them.
+// REVISION: model-selection-v3-createpty-delegates
 func (s *Session) CreatePTY(creatorID string, command string, workingDir string) (*PTYInfo, error) {
-	// Pre-generate PTY ID so we can include it in environment variables
-	ptyID, err := id.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate PTY ID: %w", err)
-	}
-
-	// Per-PTY MCP auth nonce: only generated in non-pool mode.
-	// In pool mode, auth is purely UID-based (SO_PEERCRED on the privileged Unix
-	// socket); the server uses a single process-lifetime poolProxyToken instead.
-	var mcpSecret string
-	if pty.GetPool() == nil {
-		var secretErr error
-		mcpSecret, secretErr = id.New()
-		if secretErr != nil {
-			return nil, fmt.Errorf("failed to generate MCP secret: %w", secretErr)
-		}
-		s.mcpSecretsMu.Lock()
-		s.mcpSecrets[ptyID] = mcpSecret
-		s.mcpSecretsMu.Unlock()
-	}
-
-	// Detect agent type BEFORE modifying command with cd prefix
-	// This ensures hooks are still generated correctly
-	agentType := mcp.DetectAgentType(command)
-
-	// Compute and validate working directory
-	actualWorkDir := s.workspace.Root()
-	if workingDir != "" {
-		actualWorkDir, err = s.resolveWorkingDir(workingDir)
-		if err != nil {
-			return nil, err
-		}
-		// For agent commands, prefix with cd to ensure correct working directory
-		// This fixes agents like Codex that don't respect inherited PTY cwd
-		if command != "" && agentType != mcp.AgentTypeUnknown {
-			command = fmt.Sprintf("cd %q && %s", actualWorkDir, command)
-		}
-	}
-
-	envVars := loadEnvFile(filepath.Join(s.workspace.Root(), ".env"))
-	if _, ok := envVars["HISTCONTROL"]; !ok {
-		envVars["HISTCONTROL"] = "ignorespace"
-	}
-	envVars["ORCABOT_SESSION_ID"] = s.ID
-	envVars["ORCABOT_PTY_ID"] = ptyID
-	envVars["DASHBOARD_ID"] = s.DashboardID
-	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
-	envVars["HOME"] = s.workspace.Root()
-	// Point agents to the localhost-only MCP server (no auth required)
-	mcpPort := os.Getenv("MCP_LOCAL_PORT")
-	if mcpPort == "" {
-		mcpPort = "8081"
-	}
-	envVars["MCP_LOCAL_PORT"] = mcpPort
-	envVars["ORCABOT_MCP_URL"] = "http://localhost:" + mcpPort + "/sessions/" + s.ID + "/mcp"
-	envVars["BROWSER"] = "/usr/local/bin/xdg-open"
-	envVars["XDG_OPEN"] = "/usr/local/bin/xdg-open"
-	envVars["CHROME_BIN"] = "/usr/bin/chromium"
-	// Set DISPLAY so CLIs that check for a graphical environment (e.g., Gemini CLI's
-	// shouldAttemptBrowserLaunch) will attempt xdg-open instead of falling back to
-	// "copy this URL" mode. The value doesn't need a real X server — our xdg-open
-	// wrapper intercepts the call and routes it to the browser block.
-	envVars["DISPLAY"] = ":0"
-	// When pool is active, do NOT set ORCABOT_MCP_SECRET in the PTY environment.
-	// The privileged Unix socket uses kernel SO_PEERCRED for auth — no secret needed.
-	// The secret is still stored in s.mcpSecrets[ptyID] for use by the socket proxy.
-	// REVISION: session-v15-uid-pool-unix-socket
-	if pty.GetPool() == nil {
-		envVars["ORCABOT_MCP_SECRET"] = mcpSecret
-	}
-
-	applyEgressProxyEnv(envVars)
-
-	// Write MCP config to per-PTY files so mcp-bridge can discover them
-	// even when agents (like Codex) don't forward env vars to subprocesses.
-	// REVISION: mcp-files-v5-no-secret-in-run-bridge
-	// NOTE: mcp-secret is NOT embedded in run-bridge CLI args (visible in ps).
-	// mcp-bridge picks it up from the inherited ORCABOT_MCP_SECRET env var instead.
-	// REVISION: session-v15-uid-pool-unix-socket
-	// When pool is active, do NOT write mcp-secret file (Unix socket proves identity).
-	// Do NOT write the pty-id compatibility pointer (superseded by pool registry).
-	// Per-PTY config directory: non-pool mode only.
-	// Pool mode skips this entirely: mcp-bridge auto-detects the Unix socket and
-	// needs no on-disk config. Creating even an empty directory in pool mode would:
-	//   (a) reveal PTY IDs to sibling pty-NNN users via ls .orcabot/pty/ (the
-	//       parent is 0750/sandbox-group so all pool users can enumerate it), and
-	//   (b) create filesystem state before pool.Allocate() fires, meaning
-	//       a pool-exhaustion failure leaves a stale directory behind.
-	// REVISION: session-v22-pool-empty-mcp-env
-	if pty.GetPool() == nil {
-		orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
-		if err := os.MkdirAll(orcabotPtyDir, 0750); err == nil {
-			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-url"), []byte(envVars["ORCABOT_MCP_URL"]+"\n"), 0644)
-			os.WriteFile(filepath.Join(orcabotPtyDir, "pty-id"), []byte(ptyID+"\n"), 0644)
-			os.WriteFile(filepath.Join(orcabotPtyDir, "mcp-secret"), []byte(mcpSecret+"\n"), 0600)
-			wrapperScript := fmt.Sprintf("#!/bin/sh\nexec mcp-bridge --mcp-url=%s --pty-id=%s\n",
-				envVars["ORCABOT_MCP_URL"], ptyID)
-			os.WriteFile(filepath.Join(orcabotPtyDir, "run-bridge"), []byte(wrapperScript), 0755)
-		}
-	}
-
-	// Allocate pool slot BEFORE writing any workspace config files (.mcp.json,
-	// hooks, settings.local.json). Pool exhaustion is a documented hard-fail;
-	// if it fires after workspace writes, stale per-PTY config pointing at a
-	// slot that never launched corrupts other live PTYs sharing /workspace.
-	// cleanupSecrets is defined here so the early failure path can use it.
-	// REVISION: session-v22-pool-empty-mcp-env
-	cleanupSecrets := func() {
-		s.mcpSecretsMu.Lock()
-		delete(s.mcpSecrets, ptyID)
-		s.mcpSecretsMu.Unlock()
-		s.apiKeyTokensMu.Lock()
-		delete(s.apiKeyTokens, ptyID)
-		s.apiKeyTokensMu.Unlock()
-	}
-	var poolSlot *pty.SlotEntry
-	if pool := pty.GetPool(); pool != nil {
-		var allocErr error
-		poolSlot, allocErr = pool.Allocate()
-		if allocErr != nil {
-			cleanupSecrets()
-			return nil, fmt.Errorf("PTY pool exhausted: %w", allocErr)
-		}
-		poolSlot.PTYID = ptyID
-	}
-
-	// Generate MCP settings for the specific agent being launched (if detected).
-	// IMPORTANT: Do NOT use GenerateSettings (all agents) here — that overwrites
-	// ALL agent settings files (Gemini, Claude, Codex, etc.) with this PTY's
-	// credentials, breaking MCP secret auth for already-running agents.
-	// REVISION: mcp-settings-v1-no-overwrite-all
-	userTools := s.fetchUserMCPTools()
-	// Pool mode: empty mcpEnv. mcp-bridge auto-detects the Unix socket and derives
-	// session+PTY identity from SO_PEERCRED — no URL, PTY ID, or secret belongs in
-	// the shared workspace config file. buildServerConfigs falls back to bare
-	// "mcp-bridge" with no args/env when mcpEnv is empty.
-	// Non-pool mode: embed URL, IDs, and secret so mcp-bridge can authenticate to
-	// the TCP MCPLocal server even when agents (e.g. Codex) strip inherited env vars.
-	// REVISION: session-v22-pool-empty-mcp-env
-	mcpEnv := map[string]string{}
-	if pty.GetPool() == nil {
-		mcpEnv["ORCABOT_SESSION_ID"] = s.ID
-		mcpEnv["ORCABOT_MCP_URL"] = envVars["ORCABOT_MCP_URL"]
-		mcpEnv["MCP_LOCAL_PORT"] = mcpPort
-		mcpEnv["ORCABOT_PTY_ID"] = ptyID
-		mcpEnv["ORCABOT_MCP_SECRET"] = mcpSecret
-		mcpEnv["ORCABOT_BRIDGE_COMMAND"] = filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID, "run-bridge")
-	}
-	if agentType != mcp.AgentTypeUnknown {
-		if err := mcp.GenerateSettingsForAgent(s.workspace.Root(), agentType, userTools, mcpEnv); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to generate MCP settings for %s: %v\n", agentType, err)
-		}
-	}
-
-	// Generate agent stop hooks only for the specific agent being launched
-	// (hooks are agent-specific and should only be created when needed)
-	// Use pre-computed agentType (detected before cd prefix was added to command)
-	if agentType != mcp.AgentTypeUnknown {
-		if err := agenthooks.GenerateHooksForAgent(s.workspace.Root(), agentType, s.ID, ptyID); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
-		}
-
-		// For Claude Code: if ANTHROPIC_API_KEY is brokered, set apiKeyHelper.
-		// When the UID pool is active, use the Unix socket (no token distributed).
-		// Otherwise fall back to the token-based TCP endpoint.
-		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
-			if pty.GetPool() != nil {
-				// Unix socket: kernel proves identity via SO_PEERCRED — no token needed.
-				if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
-				}
-				delete(envVars, "ANTHROPIC_API_KEY")
-			} else {
-				// Fallback: token embedded in settings.local.json, verified at /anthropic-key.
-				apiKeyToken, tokenErr := id.New()
-				if tokenErr == nil {
-					s.apiKeyTokensMu.Lock()
-					s.apiKeyTokens[ptyID] = apiKeyToken
-					s.apiKeyTokensMu.Unlock()
-					if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
-					}
-					// Remove ANTHROPIC_API_KEY from the PTY env — apiKeyHelper is sole auth.
-					delete(envVars, "ANTHROPIC_API_KEY")
-				}
-			}
-		}
-
-		// Gemini CLI overwrites ~/.gemini/settings.json on startup, losing our hooks
-		// and UI settings. Point it to a system override file (highest precedence).
-		if agentType == mcp.AgentTypeGemini {
-			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
-		}
-	}
-
-	// Spawn PTY. Pool slot was allocated before workspace config writes above,
-	// so pool exhaustion cannot occur here. ptyID is already bound to poolSlot.PTYID.
-	// REVISION: session-v22-pool-empty-mcp-env
-	var p *pty.PTY
-	if poolSlot != nil {
-		p, err = pty.NewWithCommandEnvIDSlot(poolSlot, s.ID, command, 80, 24, actualWorkDir, envVars)
-		if err != nil {
-			if pool := pty.GetPool(); pool != nil {
-				pool.Release(poolSlot.UID)
-			}
-			cleanupSecrets()
-			return nil, err
-		}
-	} else {
-		p, err = pty.NewWithCommandEnvID(ptyID, command, 80, 24, actualWorkDir, envVars)
-		if err != nil {
-			cleanupSecrets()
-			return nil, err
-		}
-	}
-
-	hub := pty.NewHub(p, creatorID)
-	hub.SetWorkspaceRoot(s.workspace.Root())
-
-	// Set secret values for output redaction
-	hub.SetSecretValues(s.GetSecretValues())
-
-	// Register cleanup callback for when hub auto-stops (idle timeout, PTY closed)
-	hub.SetOnStop(func() {
-		s.mu.Lock()
-		delete(s.ptys, ptyID)
-		s.mu.Unlock()
-		// Clean up MCP secret
-		s.mcpSecretsMu.Lock()
-		delete(s.mcpSecrets, ptyID)
-		s.mcpSecretsMu.Unlock()
-		// Clean up api key token (if set)
-		s.apiKeyTokensMu.Lock()
-		delete(s.apiKeyTokens, ptyID)
-		s.apiKeyTokensMu.Unlock()
+	return s.CreatePTYWithOptions(CreatePTYOptions{
+		CreatorID:  creatorID,
+		Command:    command,
+		WorkingDir: workingDir,
 	})
-
-	go hub.Run()
-
-	info := &PTYInfo{
-		ID:  p.ID,
-		Hub: hub,
-	}
-
-	s.mu.Lock()
-	s.ptys[p.ID] = info
-	s.mu.Unlock()
-
-	return info, nil
 }
 
 // resolveWorkingDir validates and resolves a working directory path.
@@ -809,11 +578,26 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 	return actualWorkDir, nil
 }
 
-// CreatePTYWithToken creates a new PTY with an optional pre-generated ID and integration token.
-// REVISION: working-dir-v2-fix-agent-detection
-// If ptyID is provided, it will be used instead of generating a new one.
-// If integrationToken is provided, it will be stored and injected into the PTY environment.
-func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken, workingDir string) (*PTYInfo, error) {
+// CreatePTYOptions bundles optional parameters for PTY creation.
+type CreatePTYOptions struct {
+	CreatorID        string
+	Command          string
+	PtyID            string
+	IntegrationToken string
+	WorkingDir       string
+	ModelSelection   *ModelSelection
+}
+
+// CreatePTYWithOptions is the canonical PTY creation entry point. CreatePTY is
+// a thin wrapper for the no-options path used by tests.
+// REVISION: model-selection-v1-openrouter
+func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) {
+	creatorID := opts.CreatorID
+	command := opts.Command
+	ptyID := opts.PtyID
+	integrationToken := opts.IntegrationToken
+	workingDir := opts.WorkingDir
+	modelSelection := opts.ModelSelection
 	// Use provided ID or generate new one
 	var err error
 	if ptyID == "" {
@@ -841,6 +625,13 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	// Detect agent type BEFORE modifying command with cd prefix
 	// This ensures MCP settings and hooks are still generated correctly
 	agentType := mcp.DetectAgentType(command)
+
+	// Codex ignores OPENAI_BASE_URL/OPENAI_MODEL; route OpenRouter via CLI flags.
+	// Must run before the cd prefix so the flags attach to the codex invocation.
+	// REVISION: model-selection-v4-codex-cli-flags
+	if agentType == mcp.AgentTypeCodex {
+		command = buildCodexOpenRouterCommand(command, modelSelection, s.ID, s.BrokerPort())
+	}
 
 	// Compute and validate working directory
 	actualWorkDir := s.workspace.Root()
@@ -870,6 +661,14 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	envVars["ORCABOT_SESSION_ID"] = s.ID
 	envVars["ORCABOT_PTY_ID"] = ptyID
 	envVars["DASHBOARD_ID"] = s.DashboardID
+	// Claude Code refuses --dangerously-skip-permissions (the "Skip Permissions"
+	// toggle) when running as root unless IS_SANDBOX=1. Orcabot PTYs run as root
+	// inside an isolated single-tenant VM, so declaring the sandbox is correct —
+	// without it, enabling Skip Permissions makes Claude exit instantly, which the
+	// reconnect logic turns into a PTY restart loop.
+	if agentType == mcp.AgentTypeClaude {
+		envVars["IS_SANDBOX"] = "1"
+	}
 	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
 	envVars["HOME"] = s.workspace.Root()
 	// Point agents to the localhost-only MCP server (no auth required)
@@ -898,6 +697,11 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 	}
 
 	applyEgressProxyEnv(envVars)
+
+	// Apply per-harness OpenRouter env vars when requested. Must come after agentType is
+	// known (above) and before the PTY spawns. No-op when modelSelection is nil or default.
+	// REVISION: model-selection-v1-openrouter
+	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort(), s.GeminiShimPort())
 
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
 	// REVISION: session-v22-pool-empty-mcp-env
@@ -962,25 +766,43 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 			fmt.Fprintf(os.Stderr, "Warning: failed to generate stop hooks for %s: %v\n", agentType, err)
 		}
 
-		// For Claude Code: if ANTHROPIC_API_KEY is brokered, set apiKeyHelper.
-		// When the UID pool is active, use the Unix socket (no token distributed).
-		// Otherwise fall back to the token-based TCP endpoint.
-		if agentType == mcp.AgentTypeClaude && s.broker.GetAnthropicKey(s.ID) != "" {
-			if pty.GetPool() != nil {
-				if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
+		// For Claude Code: pick the right Anthropic credential path.
+		// REVISION: model-selection-v1-openrouter
+		//
+		//   OpenRouter selected → broker (openrouter-anthropic) injects Bearer at
+		//     URL boundary; ANTHROPIC_BASE_URL was set above. Write the model id
+		//     into settings.local.json and strip any leftover apiKeyHelper.
+		//   Default + ANTHROPIC_API_KEY brokered → standard apiKeyHelper flow.
+		//   Default + no brokered Anthropic key → nothing to do.
+		if agentType == mcp.AgentTypeClaude {
+			if modelSelection.IsOpenRouter() {
+				if err := agenthooks.SetClaudeModelForOpenRouter(s.workspace.Root(), modelSelection.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude OpenRouter model: %v\n", err)
 				}
-				delete(envVars, "ANTHROPIC_API_KEY")
 			} else {
-				apiKeyToken, tokenErr := id.New()
-				if tokenErr == nil {
-					s.apiKeyTokensMu.Lock()
-					s.apiKeyTokens[ptyID] = apiKeyToken
-					s.apiKeyTokensMu.Unlock()
-					if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+				// Default provider — wipe any leftover OpenRouter model id so the
+				// native Anthropic endpoint doesn't see provider-prefixed ids.
+				if err := agenthooks.ClearClaudeOpenRouterModel(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clear OpenRouter model: %v\n", err)
+				}
+			}
+			if !modelSelection.IsOpenRouter() && s.broker.GetAnthropicKey(s.ID) != "" {
+				if pty.GetPool() != nil {
+					if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
 					}
 					delete(envVars, "ANTHROPIC_API_KEY")
+				} else {
+					apiKeyToken, tokenErr := id.New()
+					if tokenErr == nil {
+						s.apiKeyTokensMu.Lock()
+						s.apiKeyTokens[ptyID] = apiKeyToken
+						s.apiKeyTokensMu.Unlock()
+						if err := agenthooks.SetClaudeApiKeyHelper(s.workspace.Root(), s.ID, ptyID, apiKeyToken); err != nil {
+							fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper: %v\n", err)
+						}
+						delete(envVars, "ANTHROPIC_API_KEY")
+					}
 				}
 			}
 		}
@@ -989,6 +811,20 @@ func (s *Session) CreatePTYWithToken(creatorID, command, ptyID, integrationToken
 		// and UI settings. Point it to a system override file (highest precedence).
 		if agentType == mcp.AgentTypeGemini {
 			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
+
+			// OpenRouter routing relies on the CLI's GATEWAY auth honoring the
+			// shim URL in GOOGLE_GEMINI_BASE_URL. Set the gateway auth fields when
+			// OpenRouter is selected; clear them otherwise so native auth returns.
+			// REVISION: gemini-shim-v1-openrouter-bridge
+			if modelSelection.IsOpenRouter() {
+				if err := agenthooks.SetGeminiOpenRouterAuth(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to set Gemini OpenRouter auth: %v\n", err)
+				}
+			} else {
+				if err := agenthooks.ClearGeminiOpenRouterAuth(s.workspace.Root()); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clear Gemini OpenRouter auth: %v\n", err)
+				}
+			}
 		}
 	}
 

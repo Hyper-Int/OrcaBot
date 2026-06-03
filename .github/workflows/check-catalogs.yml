@@ -1,0 +1,70 @@
+name: Check static catalogs
+
+on:
+  schedule:
+    # Mondays at 13:00 UTC
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "frontend/src/data/openrouter-models.json"
+      - "frontend/src/data/claude-subagents.json"
+      - "frontend/scripts/check-catalogs.mjs"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check catalogs
+        id: check
+        working-directory: frontend
+        continue-on-error: true
+        # Capture the real exit code so later steps can tell drift (1) from an
+        # upstream/network error (2). Without this, `outcome == 'failure'` lumps
+        # them together and a transient fetch blip opens a spurious "drift" issue.
+        run: |
+          set +e
+          npm run check-catalogs | tee /tmp/catalog-report.txt
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit $code
+      - name: Open issue on drift
+        if: steps.check.outputs.exit_code == '1' && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/catalog-report.txt', 'utf8');
+            const title = 'Catalog drift detected (weekly check)';
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'catalog-drift',
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues[0].number,
+                body: '```\n' + body + '\n```',
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: 'Run `npm run check-catalogs` in `frontend/` to reproduce.\n\n```\n' + body + '\n```',
+                labels: ['catalog-drift'],
+              });
+            }
+      - name: Warn on upstream/network error
+        if: steps.check.outputs.exit_code == '2'
+        run: echo "::warning::check-catalogs could not reach an upstream source (exit 2); drift was not evaluated. See the report in the previous step."
+      - name: Fail job if drift
+        if: steps.check.outputs.exit_code == '1'
+        run: exit 1

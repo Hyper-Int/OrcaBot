@@ -427,6 +427,154 @@ func SetClaudeApiKeyHelperUnixSocket(workspaceRoot string) error {
 	return nil
 }
 
+// ClearClaudeOpenRouterModel removes the OpenRouter-specific model id from
+// .claude/settings.local.json. Called when switching a Claude Code terminal
+// back to its default Anthropic provider — leaving the OpenRouter-format id
+// would cause native Anthropic to 400 on every request.
+// REVISION: model-selection-v1-openrouter
+func ClearClaudeOpenRouterModel(workspaceRoot string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil // nothing to clear
+	}
+	var settings map[string]interface{}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil
+	}
+	model, _ := settings["model"].(string)
+	// Only clear OpenRouter-shaped ids (contain "/"); leave any user-set native
+	// Anthropic model alone.
+	if !strings.Contains(model, "/") {
+		return nil
+	}
+	delete(settings, "model")
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, out, 0644)
+}
+
+// SetClaudeModelForOpenRouter writes the OpenRouter model id into
+// .claude/settings.local.json's "model" field and removes any pre-existing
+// apiKeyHelper. With ANTHROPIC_BASE_URL pointed at the broker, the broker
+// injects the OpenRouter Bearer token — Claude Code's own apiKeyHelper would
+// override that with the wrong (Anthropic-format) credential.
+// REVISION: model-selection-v1-openrouter
+func SetClaudeModelForOpenRouter(workspaceRoot, model string) error {
+	settingsPath := filepath.Join(workspaceRoot, ".claude", "settings.local.json")
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return fmt.Errorf("failed to create .claude dir: %w", err)
+	}
+
+	var settings map[string]interface{}
+	data, err := os.ReadFile(settingsPath)
+	if err == nil {
+		if jsonErr := json.Unmarshal(data, &settings); jsonErr != nil {
+			settings = make(map[string]interface{})
+		}
+	} else {
+		settings = make(map[string]interface{})
+	}
+
+	if model != "" {
+		settings["model"] = model
+	}
+	// Strip any apiKeyHelper — broker injects auth at the URL boundary.
+	delete(settings, "apiKeyHelper")
+
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+	if err := os.WriteFile(settingsPath, out, 0644); err != nil {
+		return fmt.Errorf("failed to write settings: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "[agenthooks] Claude OpenRouter model=%q applied at %s\n", model, settingsPath)
+	return nil
+}
+
+// geminiSystemSettingsPath returns the Gemini system settings override file
+// (highest precedence; never overwritten by the CLI on startup).
+func geminiSystemSettingsPath(workspaceRoot string) string {
+	return filepath.Join(workspaceRoot, ".orcabot", "gemini-system-settings.json")
+}
+
+// SetGeminiOpenRouterAuth configures the official Gemini CLI to use GATEWAY auth so
+// it honors GOOGLE_GEMINI_BASE_URL (pointed at the local Gemini→OpenRouter shim).
+//
+// Interactive mode requires BOTH `security.auth.selectedType = "gateway"` AND
+// `security.auth.useExternal = true`: an unset selectedType opens a blocking auth
+// dialog, and without useExternal the CLI rejects "gateway" as an invalid method
+// (validateAuthMethod only allows oauth/gemini-api-key/vertex). useExternal=true
+// short-circuits that validation for externally-injected (broker) auth.
+// REVISION: gemini-shim-v1-openrouter-bridge
+func SetGeminiOpenRouterAuth(workspaceRoot string) error {
+	path := geminiSystemSettingsPath(workspaceRoot)
+	settings := readGeminiSettings(path)
+
+	security, _ := settings["security"].(map[string]interface{})
+	if security == nil {
+		security = make(map[string]interface{})
+	}
+	auth, _ := security["auth"].(map[string]interface{})
+	if auth == nil {
+		auth = make(map[string]interface{})
+	}
+	auth["selectedType"] = "gateway" // AuthType.GATEWAY
+	auth["useExternal"] = true
+	security["auth"] = auth
+	settings["security"] = security
+
+	return writeGeminiSettings(path, settings)
+}
+
+// ClearGeminiOpenRouterAuth removes the gateway auth override so a Gemini terminal
+// returns to native Google auth when OpenRouter is deselected.
+// REVISION: gemini-shim-v1-openrouter-bridge
+func ClearGeminiOpenRouterAuth(workspaceRoot string) error {
+	path := geminiSystemSettingsPath(workspaceRoot)
+	settings := readGeminiSettings(path)
+
+	security, _ := settings["security"].(map[string]interface{})
+	if security == nil {
+		return nil
+	}
+	auth, _ := security["auth"].(map[string]interface{})
+	if auth == nil {
+		return nil
+	}
+	if auth["selectedType"] == "gateway" {
+		delete(auth, "selectedType")
+	}
+	delete(auth, "useExternal")
+
+	return writeGeminiSettings(path, settings)
+}
+
+// readGeminiSettings loads a JSON settings object, returning an empty map on any error.
+func readGeminiSettings(path string) map[string]interface{} {
+	settings := make(map[string]interface{})
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &settings)
+	}
+	return settings
+}
+
+// writeGeminiSettings writes a JSON settings object, creating the parent dir.
+func writeGeminiSettings(path string, settings map[string]interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0644)
+}
+
 // generateGeminiHooks creates AfterAgent hook for Gemini CLI
 func generateGeminiHooks(workspaceRoot, hooksDir string) error {
 	scriptPath := filepath.Join(hooksDir, "gemini-stop.sh")

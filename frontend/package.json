@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint src/",
+    "check-catalogs": "node scripts/check-catalogs.mjs",
     "test": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

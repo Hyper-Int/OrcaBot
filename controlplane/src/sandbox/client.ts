@@ -208,7 +208,7 @@ export class SandboxClient {
     return Array.isArray(payload.ptys) ? payload.ptys : [];
   }
 
-  // REVISION: working-dir-v2-createpty-error-propagation
+  // REVISION: openrouter-v1-model-selection
   async createPty(
     sessionId: string,
     creatorId?: string,
@@ -224,9 +224,19 @@ export class SandboxClient {
       workingDir?: string;
       // Schedule execution ID — set at creation time so callback is in place before process starts
       executionId?: string;
+      // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
+      modelSelection?: {
+        provider: 'default' | 'openrouter';
+        model?: string;
+        contextWindow?: number;
+        maxOutputTokens?: number;
+      };
     }
   ): Promise<SandboxPty> {
-    const shouldSendBody = Boolean(creatorId || command || options?.ptyId || options?.integrationToken || options?.workingDir || options?.executionId);
+    const shouldSendBody = Boolean(
+      creatorId || command || options?.ptyId || options?.integrationToken ||
+      options?.workingDir || options?.executionId || options?.modelSelection
+    );
     const body = shouldSendBody
       ? JSON.stringify({
           creator_id: creatorId,
@@ -239,6 +249,8 @@ export class SandboxClient {
           working_dir: options?.workingDir,
           // Execution ID for schedule tracking — stored before process starts
           execution_id: options?.executionId,
+          // Model selection — sandbox translates to per-harness env vars (OPENAI_BASE_URL etc.)
+          model_selection: options?.modelSelection,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());

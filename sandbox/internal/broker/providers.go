@@ -3,7 +3,7 @@
 
 // Package broker implements a session-local auth broker that injects API keys
 // into outbound requests, preventing LLMs from accessing secrets directly.
-// REVISION: broker-v2-fix-gemini-baseurl
+// REVISION: broker-v4-openrouter-anthropic
 package broker
 
 import "fmt"
@@ -52,6 +52,30 @@ var Providers = map[string]ProviderSpec{
 		HeaderName:    "x-goog-api-key",
 		HeaderFormat:  "%s",
 		BrokerEnvKey:  "GOOGLE_GEMINI_BASE_URL",
+		Category:      "agent",
+	},
+	"openrouter": {
+		EnvKey:        "OPENROUTER_API_KEY",
+		TargetBaseURL: "https://openrouter.ai/api/v1",
+		HeaderName:    "Authorization",
+		HeaderFormat:  "Bearer %s",
+		BrokerEnvKey:  "OPENROUTER_BASE_URL",
+		Category:      "agent",
+	},
+	// Sibling entry for OpenRouter's Anthropic-compatible endpoint.
+	// Anthropic SDKs (Claude Code) append /v1/messages to ANTHROPIC_BASE_URL,
+	// so the broker target ends one path segment earlier (no /v1) — final URL
+	// becomes https://openrouter.ai/api/v1/messages. Shares OPENROUTER_API_KEY
+	// with the "openrouter" entry; env.go installs both broker configs together.
+	// BrokerEnvKey is empty because the sibling spec's BrokerEnvKey is never
+	// surfaced to the harness — applyOpenRouterEnv writes ANTHROPIC_BASE_URL
+	// directly using the broker URL template.
+	"openrouter-anthropic": {
+		EnvKey:        "OPENROUTER_API_KEY",
+		TargetBaseURL: "https://openrouter.ai/api",
+		HeaderName:    "Authorization",
+		HeaderFormat:  "Bearer %s",
+		BrokerEnvKey:  "",
 		Category:      "agent",
 	},
 
@@ -130,16 +154,44 @@ var Providers = map[string]ProviderSpec{
 	},
 }
 
+// envKeyPrimary maps an env var to its canonical/primary provider name when
+// multiple providers share the same env key (e.g. OPENROUTER_API_KEY drives
+// both "openrouter" and "openrouter-anthropic"). The primary owns the
+// BrokerEnvKey that the harness sees in its environment.
+var envKeyPrimary = map[string]string{
+	"OPENROUTER_API_KEY": "openrouter",
+}
+
 // GetProviderByEnvKey finds a provider spec by environment variable name.
 // Returns the provider name and spec, or empty values if not found.
+// When multiple providers share an env key, the entry in envKeyPrimary wins.
 func GetProviderByEnvKey(envKey string) (string, *ProviderSpec) {
+	if primary, ok := envKeyPrimary[envKey]; ok {
+		if spec, exists := Providers[primary]; exists {
+			s := spec
+			return primary, &s
+		}
+	}
 	for name, spec := range Providers {
 		if spec.EnvKey == envKey {
-			s := spec // Copy to avoid range var pointer issues
+			s := spec
 			return name, &s
 		}
 	}
 	return "", nil
+}
+
+// GetAllProvidersByEnvKey returns every provider spec that consumes the given
+// env var. Used when one secret needs to power multiple broker entries
+// (e.g. OpenRouter's OpenAI-compatible + Anthropic-compatible endpoints).
+func GetAllProvidersByEnvKey(envKey string) map[string]ProviderSpec {
+	out := map[string]ProviderSpec{}
+	for name, spec := range Providers {
+		if spec.EnvKey == envKey {
+			out[name] = spec
+		}
+	}
+	return out
 }
 
 // GetDummyValue returns a placeholder message for a brokered key.

@@ -289,7 +289,11 @@ func shouldSuppressProcessLine(proc, line string) bool {
 		if strings.Contains(line, "ERROR:dbus/") ||
 			strings.Contains(line, "Failed to connect to the bus") ||
 			strings.Contains(line, "org.freedesktop.DBus") ||
-			strings.Contains(line, "org.freedesktop.UPower") {
+			strings.Contains(line, "org.freedesktop.UPower") ||
+			// GCM/push registration phones home to a retired Google endpoint and
+			// fails with DEPRECATED_ENDPOINT. Harmless — the sandbox never uses push.
+			strings.Contains(line, "google_apis/gcm") ||
+			strings.Contains(line, "DEPRECATED_ENDPOINT") {
 			return true
 		}
 	case "x11vnc":

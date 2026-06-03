@@ -59,6 +59,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Process management
     procps \
     kmod \
+    # Codex sandboxing (avoids "could not find bubblewrap on PATH" warning;
+    # otherwise Codex falls back to its bundled bwrap)
+    bubblewrap \
     # Networking tools
     openssh-client \
     socat \

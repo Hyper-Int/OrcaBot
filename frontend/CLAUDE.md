@@ -228,6 +228,16 @@ The frontend provides UI for managing secrets and environment variables.
 - Voice selection dropdown per provider
 - Live status display from WebSocket events
 
+### Model Selection (OpenRouter)
+- Per-terminal Model panel in the terminal settings dropdown (Claude/Codex/OpenCode/Droid/Gemini)
+- One flat list: Default section at top, OpenRouter section below with per-model pricing + context window
+- The panel warns when the selected model needs an `OPENROUTER_API_KEY` that isn't set (chip + ring + "Key needed" badge on the menu item)
+- Changing selection sets `pendingConfigRestart=true` → existing "restart to apply" banner fires (same flow as TTS/MCP/subagents)
+- Selection persisted in `terminalContent.modelSelection` (provider/model + catalog-resolved `contextWindow`/`maxOutputTokens`) and round-tripped to the sandbox via `model_selection` on PTY create; the limits drive Codex's `-c model_context_window`/`model_max_output_tokens`
+- Catalog: `src/data/openrouter-models.json` (curated; per-model pricing + context + `maxOutputTokens`; `compatibleHarnesses` filters which models appear per harness)
+- Freshness: `npm run check-catalogs` diffs local pricing, context length, and max output tokens vs the upstream OpenRouter API
+- Upstream errors: the sandbox broker emits a `model_provider_error` WS event on OpenRouter 429/402/etc; `TerminalWSManager` re-dispatches it and `dashboards/[id]/page.tsx` shows a toast with the fix (e.g. rate-limited → adjust OpenRouter provider routing, not a credit issue)
+
 Frontend does NOT:
 - Store secrets locally (all in control plane, encrypted)
 - Make decisions about which domains are safe

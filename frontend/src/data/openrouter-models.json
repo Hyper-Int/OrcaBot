@@ -1,0 +1,114 @@
+{
+  "version": "openrouter-v1",
+  "source": "https://openrouter.ai/api/v1/models",
+  "lastUpdated": "2026-06-03",
+  "models": [
+    {
+      "id": "anthropic/claude-sonnet-4.6",
+      "label": "Claude Sonnet 4.6",
+      "provider": "Anthropic",
+      "contextLength": 1000000,
+      "maxOutputTokens": 128000,
+      "pricing": { "input": 3.0, "output": 15.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "label": "Claude Opus 4.7",
+      "provider": "Anthropic",
+      "contextLength": 1000000,
+      "maxOutputTokens": 128000,
+      "pricing": { "input": 5.0, "output": 25.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "label": "Claude Haiku 4.5",
+      "provider": "Anthropic",
+      "contextLength": 200000,
+      "maxOutputTokens": 64000,
+      "pricing": { "input": 1.0, "output": 5.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "openai/gpt-4o",
+      "label": "GPT-4o",
+      "provider": "OpenAI",
+      "contextLength": 128000,
+      "maxOutputTokens": 16384,
+      "pricing": { "input": 2.5, "output": 10.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "label": "GPT-4o mini",
+      "provider": "OpenAI",
+      "contextLength": 128000,
+      "maxOutputTokens": 16384,
+      "pricing": { "input": 0.15, "output": 0.6 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "openai/o1",
+      "label": "o1",
+      "provider": "OpenAI",
+      "contextLength": 200000,
+      "maxOutputTokens": 100000,
+      "pricing": { "input": 15.0, "output": 60.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "google/gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash",
+      "provider": "Google",
+      "contextLength": 1048576,
+      "maxOutputTokens": 65535,
+      "pricing": { "input": 0.3, "output": 2.5 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "label": "Llama 3.3 70B",
+      "provider": "Meta",
+      "contextLength": 131072,
+      "maxOutputTokens": 16384,
+      "pricing": { "input": 0.1, "output": 0.32 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "deepseek/deepseek-chat",
+      "label": "DeepSeek V3",
+      "provider": "DeepSeek",
+      "contextLength": 131072,
+      "maxOutputTokens": 16000,
+      "pricing": { "input": 0.2, "output": 0.8 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "deepseek/deepseek-r1",
+      "label": "DeepSeek R1",
+      "provider": "DeepSeek",
+      "contextLength": 163840,
+      "maxOutputTokens": 16000,
+      "pricing": { "input": 0.7, "output": 2.5 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "mistralai/mistral-large",
+      "label": "Mistral Large",
+      "provider": "Mistral",
+      "contextLength": 128000,
+      "pricing": { "input": 2.0, "output": 6.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    },
+    {
+      "id": "qwen/qwen-2.5-coder-32b-instruct",
+      "label": "Qwen 2.5 Coder 32B",
+      "provider": "Qwen",
+      "contextLength": 128000,
+      "maxOutputTokens": 32768,
+      "pricing": { "input": 0.66, "output": 1.0 },
+      "compatibleHarnesses": ["claude", "codex", "opencode", "droid", "gemini"]
+    }
+  ]
+}
