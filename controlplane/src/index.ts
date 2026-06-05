@@ -26,6 +26,7 @@ import { nearestFlyRegion } from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as modelProviders from './model-providers/handler';
 import * as secrets from './secrets/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
@@ -2095,6 +2096,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
+  }
+
+  // GET /model-providers - List saved custom model endpoints
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.listModelProviders(env, auth.user!.id);
+  }
+
+  // POST /model-providers - Create custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return modelProviders.createModelProvider(env, auth.user!.id, data);
+  }
+
+  // DELETE /model-providers/:id - Delete custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.deleteModelProvider(env, auth.user!.id, segments[1]);
   }
 
   // DELETE /secrets/:id - Delete secret

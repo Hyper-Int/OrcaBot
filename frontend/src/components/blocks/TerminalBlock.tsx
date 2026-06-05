@@ -108,6 +108,10 @@ import {
   listMcpTools,
   type UserMcpTool,
   listSessionFiles,
+  listModelProviders,
+  createModelProvider,
+  deleteModelProvider,
+  type UserModelProvider,
 } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
@@ -214,12 +218,17 @@ type McpToolCatalogCategory = {
 type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "model" | "integrations" | "working-dir" | "tasks" | null;
 
 type ModelSelection = {
-  provider: "default" | "openrouter";
-  model?: string; // OpenRouter model id, only set when provider === "openrouter"
-  // Resolved from the catalog at selection time; forwarded to the sandbox so Codex
-  // gets correct -c model_context_window / model_max_output_tokens flags.
+  provider: "default" | "openrouter" | "custom";
+  model?: string; // OpenRouter model id (openrouter) or custom endpoint model id (custom)
+  // Resolved from the catalog/saved-provider at selection time; forwarded to the
+  // sandbox so Codex gets correct -c model_context_window / model_max_output_tokens.
   contextWindow?: number;
   maxOutputTokens?: number;
+  // Custom endpoint fields (provider === "custom"); see PLAN-custom-endpoints.md.
+  customProviderId?: string;
+  baseUrl?: string;
+  format?: "openai" | "anthropic";
+  secretName?: string;
 };
 
 type OpenRouterModel = {
@@ -924,6 +933,34 @@ export function TerminalBlock({
     },
   });
 
+  // Custom model endpoints (per-user saved providers)
+  const modelProvidersQuery = useQuery({
+    queryKey: ["model-providers"],
+    queryFn: () => listModelProviders(),
+    enabled: activePanel === "model",
+    staleTime: 60000,
+  });
+  const customProviders: UserModelProvider[] = modelProvidersQuery.data ?? [];
+
+  const createModelProviderMutation = useMutation({
+    mutationFn: createModelProvider,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["model-providers"] }),
+  });
+  const deleteModelProviderMutation = useMutation({
+    mutationFn: deleteModelProvider,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["model-providers"] }),
+  });
+
+  // Add-custom-endpoint form state
+  const [showCustomForm, setShowCustomForm] = React.useState(false);
+  const [cpLabel, setCpLabel] = React.useState("");
+  const [cpBaseUrl, setCpBaseUrl] = React.useState("");
+  const [cpModelId, setCpModelId] = React.useState("");
+  const [cpFormat, setCpFormat] = React.useState<"openai" | "anthropic">("openai");
+  const [cpApiKey, setCpApiKey] = React.useState("");
+  const [cpContextWindow, setCpContextWindow] = React.useState("");
+  const [cpMaxOutput, setCpMaxOutput] = React.useState("");
+
   // Agent Skills queries and mutations
   const agentSkillsQuery = useQuery({
     queryKey: ["agent-skills"],
@@ -1334,7 +1371,8 @@ export function TerminalBlock({
       const current = terminalMeta.modelSelection ?? { provider: "default" as const };
       const providerChanged = current.provider !== next.provider;
       const modelChanged = current.model !== next.model;
-      if (!providerChanged && !modelChanged) return;
+      const customChanged = current.customProviderId !== next.customProviderId;
+      if (!providerChanged && !modelChanged && !customChanged) return;
 
       // Resolve context/output limits from the catalog at selection time so the
       // sandbox can pass Codex correct -c model_context_window / max_output_tokens.
@@ -3426,6 +3464,194 @@ export function TerminalBlock({
                   {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).length === 0 && (
                     <div className="text-[10px] text-[var(--foreground-muted)] italic">
                       No OpenRouter models are compatible with this harness yet.
+                    </div>
+                  )}
+                </div>
+
+                {/* Custom endpoint section (Ollama / vLLM / self-hosted / BYO) */}
+                <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
+                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Custom endpoint
+                  </div>
+                  {customProviders
+                    .filter((p) => p.compatibleHarnesses.length === 0 || p.compatibleHarnesses.includes(terminalType))
+                    .map((p) => {
+                      const selected =
+                        terminalMeta.modelSelection?.provider === "custom" &&
+                        terminalMeta.modelSelection?.customProviderId === p.id;
+                      return (
+                        <label
+                          key={p.id}
+                          className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name={`model-${id}`}
+                            checked={selected}
+                            onChange={() =>
+                              handleModelChange({
+                                provider: "custom",
+                                model: p.modelId,
+                                contextWindow: p.contextWindow,
+                                maxOutputTokens: p.maxOutputTokens,
+                                customProviderId: p.id,
+                                baseUrl: p.baseUrl,
+                                format: p.format,
+                                secretName: p.secretName,
+                              })
+                            }
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs text-[var(--foreground)] truncate">{p.label}</div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  deleteModelProviderMutation.mutate(p.id);
+                                }}
+                                className="text-[10px] text-[var(--foreground-muted)] hover:text-[var(--status-error)] shrink-0"
+                                title="Remove endpoint"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="text-[10px] text-[var(--foreground-muted)] truncate">
+                              {p.format} · <code className="font-mono">{p.modelId}</code> · {p.baseUrl}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+
+                  {!showCustomForm ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowCustomForm(true)}
+                      className="h-6 text-[10px] text-[var(--accent-primary)]"
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add custom endpoint
+                    </Button>
+                  ) : (
+                    <div className="space-y-1.5 p-2 rounded border border-[var(--border)] bg-[var(--background)]">
+                      <input
+                        value={cpLabel}
+                        onChange={(e) => setCpLabel(e.target.value)}
+                        placeholder="Label (e.g. Local Ollama)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <input
+                        value={cpBaseUrl}
+                        onChange={(e) => setCpBaseUrl(e.target.value)}
+                        placeholder="Base URL (e.g. http://localhost:11434/v1)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <input
+                        value={cpModelId}
+                        onChange={(e) => setCpModelId(e.target.value)}
+                        placeholder="Model id (e.g. llama3.3:70b)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <div className="flex gap-1.5">
+                        <select
+                          value={cpFormat}
+                          onChange={(e) => setCpFormat(e.target.value as "openai" | "anthropic")}
+                          className="px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        >
+                          <option value="openai">OpenAI-compatible</option>
+                          <option value="anthropic">Anthropic-compatible</option>
+                        </select>
+                        <input
+                          value={cpApiKey}
+                          onChange={(e) => setCpApiKey(e.target.value)}
+                          type="password"
+                          placeholder="API key (optional)"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          value={cpContextWindow}
+                          onChange={(e) => setCpContextWindow(e.target.value)}
+                          placeholder="Context window"
+                          inputMode="numeric"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                        <input
+                          value={cpMaxOutput}
+                          onChange={(e) => setCpMaxOutput(e.target.value)}
+                          placeholder="Max output"
+                          inputMode="numeric"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                      </div>
+                      <div className="text-[10px] text-[var(--foreground-muted)] leading-snug">
+                        This endpoint receives the full conversation context — only add providers you trust.
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={!cpLabel.trim() || !cpBaseUrl.trim() || !cpModelId.trim() || createModelProviderMutation.isPending}
+                          onClick={async () => {
+                            const cw = parseInt(cpContextWindow, 10);
+                            const mo = parseInt(cpMaxOutput, 10);
+                            // Store the raw key as a brokered secret (a valid env-var
+                            // name); the broker injects it server-side. The provider only
+                            // references the name, never the value.
+                            let secretName: string | undefined;
+                            const apiKey = cpApiKey.trim();
+                            if (apiKey) {
+                              secretName = `CUSTOM_KEY_${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+                              try {
+                                await createSecret({ dashboardId: "_global", name: secretName, value: apiKey });
+                              } catch (e) {
+                                console.error("[custom-endpoint] failed to store API key:", e);
+                                return;
+                              }
+                            }
+                            createModelProviderMutation.mutate(
+                              {
+                                label: cpLabel.trim(),
+                                baseUrl: cpBaseUrl.trim(),
+                                modelId: cpModelId.trim(),
+                                format: cpFormat,
+                                secretName,
+                                contextWindow: Number.isFinite(cw) ? cw : undefined,
+                                maxOutputTokens: Number.isFinite(mo) ? mo : undefined,
+                                compatibleHarnesses: ["claude", "codex", "opencode", "droid", "gemini"],
+                                isLocal: false,
+                              },
+                              {
+                                onSuccess: () => {
+                                  setShowCustomForm(false);
+                                  setCpLabel("");
+                                  setCpBaseUrl("");
+                                  setCpModelId("");
+                                  setCpApiKey("");
+                                  setCpContextWindow("");
+                                  setCpMaxOutput("");
+                                  setCpFormat("openai");
+                                },
+                              }
+                            );
+                          }}
+                          className="h-6 px-2 text-[10px]"
+                        >
+                          {createModelProviderMutation.isPending ? "Saving..." : "Save"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowCustomForm(false)}
+                          className="h-6 px-2 text-[10px]"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>

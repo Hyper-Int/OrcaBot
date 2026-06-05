@@ -703,6 +703,30 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	// REVISION: model-selection-v1-openrouter
 	applyOpenRouterEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort(), s.GeminiShimPort())
 
+	// Custom endpoint (Ollama / vLLM / self-hosted / cloud BYO): install a broker
+	// customprovider config pointing at the user URL (with the brokered key, if any),
+	// then wire the harness env. The broker's built-in forwarding handles the rest.
+	// REVISION: model-selection-v6-custom-endpoint
+	if modelSelection.IsCustom() {
+		key := ""
+		if modelSelection.SecretName != "" {
+			key = s.broker.GetCustomSecretValue(s.ID, modelSelection.SecretName)
+		}
+		headerName, headerFormat := "", ""
+		if key != "" {
+			headerName, headerFormat = "Authorization", "Bearer %s"
+		}
+		s.broker.SetConfig(broker.ConfigKey(s.ID, customProviderName), &broker.ProviderConfig{
+			Name:          customProviderName,
+			TargetBaseURL: rewriteCustomBaseURLForDesktop(modelSelection.BaseURL),
+			HeaderName:    headerName,
+			HeaderFormat:  headerFormat,
+			SecretValue:   key,
+			SessionID:     s.ID,
+		})
+		applyCustomEndpointEnv(envVars, agentType, modelSelection, s.ID, s.BrokerPort(), s.GeminiShimPort())
+	}
+
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
 	// REVISION: session-v22-pool-empty-mcp-env
 	if pty.GetPool() == nil {
@@ -775,18 +799,28 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 		//   Default + ANTHROPIC_API_KEY brokered → standard apiKeyHelper flow.
 		//   Default + no brokered Anthropic key → nothing to do.
 		if agentType == mcp.AgentTypeClaude {
-			if modelSelection.IsOpenRouter() {
+			switch {
+			case modelSelection.IsOpenRouter():
 				if err := agenthooks.SetClaudeModelForOpenRouter(s.workspace.Root(), modelSelection.Model); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set Claude OpenRouter model: %v\n", err)
 				}
-			} else {
+			case modelSelection.IsCustom():
+				// Custom endpoint via the /av1 shim: the shim takes the model from the
+				// URL, so don't write a model id. Pass "" to strip any leftover
+				// apiKeyHelper so the placeholder key + shim ANTHROPIC_BASE_URL stand.
+				if err := agenthooks.SetClaudeModelForOpenRouter(s.workspace.Root(), ""); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to clear Claude apiKeyHelper for custom: %v\n", err)
+				}
+			default:
 				// Default provider — wipe any leftover OpenRouter model id so the
 				// native Anthropic endpoint doesn't see provider-prefixed ids.
 				if err := agenthooks.ClearClaudeOpenRouterModel(s.workspace.Root()); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to clear OpenRouter model: %v\n", err)
 				}
 			}
-			if !modelSelection.IsOpenRouter() && s.broker.GetAnthropicKey(s.ID) != "" {
+			// apiKeyHelper is for NATIVE Claude only — not OpenRouter, not custom
+			// (both inject auth at the broker URL boundary).
+			if !modelSelection.IsOpenRouter() && !modelSelection.IsCustom() && s.broker.GetAnthropicKey(s.ID) != "" {
 				if pty.GetPool() != nil {
 					if err := agenthooks.SetClaudeApiKeyHelperUnixSocket(s.workspace.Root()); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to set Claude apiKeyHelper (unix-socket): %v\n", err)
@@ -812,11 +846,12 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 		if agentType == mcp.AgentTypeGemini {
 			envVars["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = filepath.Join(s.workspace.Root(), ".orcabot", "gemini-system-settings.json")
 
-			// OpenRouter routing relies on the CLI's GATEWAY auth honoring the
-			// shim URL in GOOGLE_GEMINI_BASE_URL. Set the gateway auth fields when
-			// OpenRouter is selected; clear them otherwise so native auth returns.
+			// OpenRouter / custom routing relies on the CLI's GATEWAY auth honoring
+			// the shim URL in GOOGLE_GEMINI_BASE_URL. Set the gateway auth fields when
+			// OpenRouter or a custom endpoint is selected; clear them otherwise so
+			// native auth returns.
 			// REVISION: gemini-shim-v1-openrouter-bridge
-			if modelSelection.IsOpenRouter() {
+			if modelSelection.IsOpenRouter() || modelSelection.IsCustom() {
 				if err := agenthooks.SetGeminiOpenRouterAuth(s.workspace.Root()); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to set Gemini OpenRouter auth: %v\n", err)
 				}

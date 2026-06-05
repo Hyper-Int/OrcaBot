@@ -135,6 +135,7 @@ export const API = {
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     subagents: `${CLOUDFLARE_API_URL}/subagents`,
+    modelProviders: `${CLOUDFLARE_API_URL}/model-providers`,
     templates: `${CLOUDFLARE_API_URL}/templates`,
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
     pendingApprovals: `${CLOUDFLARE_API_URL}/pending-approvals`,

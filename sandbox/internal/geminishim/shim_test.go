@@ -17,14 +17,17 @@ import (
 func TestParsePath(t *testing.T) {
 	model := "deepseek/deepseek-chat"
 	b64 := base64.RawURLEncoding.EncodeToString([]byte(model))
-	path := "/gv1/sess123/" + b64 + "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
+	path := "/gv1/sess123/openrouter/" + b64 + "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
 
-	sid, gotModel, method, ok := parsePath(path)
+	sid, provider, gotModel, method, ok := parsePath(path)
 	if !ok {
 		t.Fatalf("parsePath failed for %q", path)
 	}
 	if sid != "sess123" {
 		t.Errorf("sid = %q, want sess123", sid)
+	}
+	if provider != "openrouter" {
+		t.Errorf("provider = %q, want openrouter", provider)
 	}
 	if gotModel != model {
 		t.Errorf("model = %q, want %q", gotModel, model)
@@ -210,7 +213,7 @@ func brokerPortFromURL(t *testing.T, raw string) int {
 
 func callShim(s *Shim, model, method, body string) *httptest.ResponseRecorder {
 	b64 := base64.RawURLEncoding.EncodeToString([]byte(model))
-	path := "/gv1/sid/" + b64 + "/v1beta/models/gemini-x:" + method
+	path := "/gv1/sid/openrouter/" + b64 + "/v1beta/models/gemini-x:" + method
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)

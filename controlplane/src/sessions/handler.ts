@@ -94,11 +94,15 @@ export function nearestFlyRegion(cfContinent: string | undefined, warmPoolRegion
 }
 
 interface ModelSelection {
-  provider: 'default' | 'openrouter';
+  provider: 'default' | 'openrouter' | 'custom';
   model?: string;
   // Catalog-resolved limits, forwarded to the sandbox for Codex context flags.
   contextWindow?: number;
   maxOutputTokens?: number;
+  // Custom endpoint fields (provider === 'custom').
+  baseUrl?: string;
+  format?: 'openai' | 'anthropic';
+  secretName?: string;
 }
 
 interface TerminalContent {
@@ -200,16 +204,17 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
       bootCommand = talkitoArgs.join(' ');
     }
 
+    const ms = parsed.modelSelection;
     const modelSelection: ModelSelection | undefined =
-      parsed.modelSelection &&
-      (parsed.modelSelection.provider === 'default' || parsed.modelSelection.provider === 'openrouter')
+      ms && (ms.provider === 'default' || ms.provider === 'openrouter' || ms.provider === 'custom')
         ? {
-            provider: parsed.modelSelection.provider,
-            model: typeof parsed.modelSelection.model === 'string' ? parsed.modelSelection.model : undefined,
-            contextWindow:
-              typeof parsed.modelSelection.contextWindow === 'number' ? parsed.modelSelection.contextWindow : undefined,
-            maxOutputTokens:
-              typeof parsed.modelSelection.maxOutputTokens === 'number' ? parsed.modelSelection.maxOutputTokens : undefined,
+            provider: ms.provider,
+            model: typeof ms.model === 'string' ? ms.model : undefined,
+            contextWindow: typeof ms.contextWindow === 'number' ? ms.contextWindow : undefined,
+            maxOutputTokens: typeof ms.maxOutputTokens === 'number' ? ms.maxOutputTokens : undefined,
+            baseUrl: typeof ms.baseUrl === 'string' ? ms.baseUrl : undefined,
+            format: ms.format === 'anthropic' ? 'anthropic' : ms.format === 'openai' ? 'openai' : undefined,
+            secretName: typeof ms.secretName === 'string' ? ms.secretName : undefined,
           }
         : undefined;
 

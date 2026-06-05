@@ -146,6 +146,27 @@ CREATE TABLE IF NOT EXISTS user_subagents (
 
 CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
 
+-- User custom model endpoints (Ollama / vLLM / self-hosted / cloud BYO).
+-- See PLAN-custom-endpoints.md. The API key (if any) is a user_secrets entry
+-- referenced by secret_name; this table never stores the key.
+CREATE TABLE IF NOT EXISTS user_model_providers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  format TEXT NOT NULL DEFAULT 'openai',            -- 'openai' | 'anthropic'
+  model_id TEXT NOT NULL,
+  secret_name TEXT,                                 -- ref to user_secrets.name (the API key), nullable
+  context_window INTEGER,
+  max_output_tokens INTEGER,
+  compatible_harnesses TEXT NOT NULL DEFAULT '[]',  -- JSON array of harness ids
+  is_local INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_model_providers_user ON user_model_providers(user_id);
+
 -- User agent skills (Claude Code slash command favorites)
 CREATE TABLE IF NOT EXISTS user_agent_skills (
   id TEXT PRIMARY KEY,
