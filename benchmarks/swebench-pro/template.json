@@ -1,0 +1,33 @@
+{
+  "_comment": "Importable Orcabot dashboard template for SWE-bench Pro (public 731). Shape matches DashboardTemplateWithData. Viewer panes are spawned by the orchestrator at runtime.",
+  "name": "SWE-bench Pro Runner",
+  "description": "Run Scale's public SWE-bench Pro (731 tasks) with a Claude Code orchestrator you drive in English. Inference produces a {instance_id,patch,prefix} JSON on host; evaluation runs Docker-per-task via Modal or local Docker.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"SWE-bench Pro Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"SWE-bench_Pro-os\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "{\"text\":\"# SWE-bench Pro Runner\\n\\nDrive the **SWE-bench Pro Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Run inference on 5 instances with SWE-agent.\\\"*\\n- *\\\"Gather the patches into a predictions JSON.\\\"*\\n- *\\\"Evaluate on Modal.\\\"*\\n- *\\\"Show me the running task logs.\\\"* -> spawns a viewer pane\\n\\nPublic 731 set, self-scoring. Two phases: inference (host, needs key) -> patches JSON -> eval (Docker-per-task, Modal or local). Keys in the secrets broker. Guide: benchmarks/swebench-pro/orchestrator-runbook.md\"}",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 400, "height": 320 }
+    },
+    {
+      "placeholderId": "leaderboard",
+      "type": "browser",
+      "content": "{\"name\":\"SWE-bench Pro Leaderboard\",\"url\":\"https://labs.scale.com/leaderboard/swe_bench_pro_public\"}",
+      "position": { "x": 680, "y": 360 },
+      "size": { "width": 720, "height": 500 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "leaderboard" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

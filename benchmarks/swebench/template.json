@@ -1,0 +1,33 @@
+{
+  "_comment": "Importable Orcabot dashboard template for running SWE-bench. Shape matches DashboardTemplateWithData in frontend/src/types/dashboard.ts. Viewer panes (per-instance log tails) are spawned by the orchestrator at runtime, not baked into the template.",
+  "name": "SWE-bench Runner",
+  "description": "Run SWE-bench (Lite/Verified/Full) with a Claude Code orchestrator you drive in English. Inference produces a predictions JSONL on host; evaluation runs Docker-per-task via Modal or a DinD sandbox.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"SWE-bench Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"SWE-bench\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "{\"text\":\"# SWE-bench Runner\\n\\nDrive the **SWE-bench Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Run inference on 5 Lite instances with claude.\\\"* -> writes preds.jsonl\\n- *\\\"Sanity-check the Modal backend with gold.\\\"*\\n- *\\\"Evaluate preds.jsonl on Lite via Modal.\\\"*\\n- *\\\"Show me instance astropy__astropy-12345.\\\"* -> spawns a log viewer pane\\n\\nTwo phases: inference (host, needs key) -> predictions JSONL -> eval (Docker-per-task, Modal or DinD). Keys live in the secrets broker. Full guide: benchmarks/swebench/orchestrator-runbook.md\"}",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 400, "height": 320 }
+    },
+    {
+      "placeholderId": "leaderboard",
+      "type": "browser",
+      "content": "{\"name\":\"SWE-bench Leaderboard\",\"url\":\"https://www.swebench.com\"}",
+      "position": { "x": 680, "y": 360 },
+      "size": { "width": 720, "height": 500 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "leaderboard" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}

@@ -1,0 +1,33 @@
+{
+  "_comment": "Importable Orcabot dashboard template for Terminal-Bench 2.1 (Harbor). Shape matches DashboardTemplateWithData. Viewer panes are spawned by the orchestrator at runtime.",
+  "name": "Terminal-Bench 2.1 Runner",
+  "description": "Run Terminal-Bench 2.1 via the Harbor harness with a Claude Code orchestrator you drive in English. Docker-per-task; use the Daytona/Modal remote backend to avoid local Docker.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"Terminal-Bench Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"terminal-bench\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "{\"text\":\"# Terminal-Bench 2.1 Runner (Harbor)\\n\\nDrive the **Terminal-Bench Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Validate the env with the oracle agent.\\\"* (no key)\\n- *\\\"Run task hello-world with claude-code on opus.\\\"*\\n- *\\\"Run the full 2.1 set on Daytona, 4 concurrent.\\\"*\\n- *\\\"Show me the running job.\\\"* -> spawns a viewer pane\\n\\nUses **Harbor** (not legacy tb). Dataset slug: terminal-bench/terminal-bench-2-1. Docker-per-task; prefer --env daytona/Modal. Keys in the secrets broker. Guide: benchmarks/terminal-bench/orchestrator-runbook.md\"}",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 400, "height": 340 }
+    },
+    {
+      "placeholderId": "leaderboard",
+      "type": "browser",
+      "content": "{\"name\":\"Terminal-Bench 2.1 Leaderboard\",\"url\":\"https://www.tbench.ai/leaderboard/terminal-bench/2.1\"}",
+      "position": { "x": 680, "y": 380 },
+      "size": { "width": 720, "height": 480 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "leaderboard" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}
