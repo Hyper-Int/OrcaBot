@@ -1,0 +1,33 @@
+{
+  "_comment": "Importable Orcabot dashboard template for running slop-code-bench with a Claude Code orchestrator + read-only run viewers + results browser. Shape matches DashboardTemplateWithData in frontend/src/types/dashboard.ts. `content` fields are JSON strings matching each block type's content schema (terminal: TerminalContentState; browser: {url}; note: {text}). The viewer panes are NOT in the template — the orchestrator spawns them dynamically per run via the create_terminal MCP tool (see orchestrator-runbook.md).",
+  "name": "SlopCodeBench Runner",
+  "description": "Run slop-code-bench (or its skills variant) with a Claude Code orchestrator you drive in English. Each agent run shows up as a live, read-only viewer pane; results render in a browser block.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"Benchmark Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"slop-code-bench\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "{\"text\":\"# SlopCodeBench Runner\\n\\nDrive the **Benchmark Orchestrator** (Claude Code) in plain English via Remote Control:\\n\\n- *\\\"Run file_backup and execution_server with claude_code on opus-4.5\\\"*\\n- *\\\"Show me the runs\\\"* -> it spawns a read-only viewer pane per run\\n- *\\\"Stop execution_server, it's stuck\\\"*\\n- *\\\"Score the finished runs and open the dashboard\\\"*\\n\\nKeys live in the secrets broker. Full instructions: benchmarks/slopcodebench/orchestrator-runbook.md\"}",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 380, "height": 300 }
+    },
+    {
+      "placeholderId": "results",
+      "type": "browser",
+      "content": "{\"name\":\"SlopCodeBench Results\",\"url\":\"http://localhost:8050\"}",
+      "position": { "x": 680, "y": 340 },
+      "size": { "width": 720, "height": 520 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "results" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 }
+}
