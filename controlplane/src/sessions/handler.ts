@@ -1853,7 +1853,11 @@ export async function openBrowserFromSandbоxSessionInternal(
   url: string,
   ptyId?: string
 ): Promise<Response> {
+  // REVISION: browser-autoopen-diag-v1
+  console.log(`[browserOpen] internal notify received sandboxSessionId=${sandboxSessionId || '(empty)'} ptyId=${ptyId || '(none)'} urlHost=${(() => { try { return new URL(url).host; } catch { return '(invalid)'; } })()}`);
+
   if (!sandboxSessionId || !url) {
+    console.warn('[browserOpen] missing session or url — returning 400');
     return Response.json({ error: 'E79821: Missing session or URL' }, { status: 400 });
   }
 
@@ -1877,8 +1881,10 @@ export async function openBrowserFromSandbоxSessionInternal(
   }
 
   if (!session?.dashboard_id) {
+    console.warn(`[browserOpen] no session row for sandboxSessionId=${sandboxSessionId} ptyId=${ptyId || '(none)'} — returning 404 (browser block will NOT appear)`);
     return Response.json({ error: 'E79820: Session not found' }, { status: 404 });
   }
+  console.log(`[browserOpen] resolved dashboardId=${session.dashboard_id} terminalItemId=${session.item_id}`);
 
   const dashboardId = session.dashboard_id;
   const terminalItemId = session.item_id;
@@ -2020,6 +2026,7 @@ export async function openBrowserFromSandbоxSessionInternal(
       body: JSON.stringify(formattedEdge),
     }));
   }
+  console.log(`[browserOpen] ${existingBrowser ? 'updated existing' : 'created new'} browser item ${browserItemId} for dashboard ${dashboardId}; broadcasting browser_open`);
   await stub.fetch(new Request('http://do/browser', {
     method: 'POST',
     body: JSON.stringify({ url }),

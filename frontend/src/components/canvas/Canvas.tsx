@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v17-stable-resize-sanitization
-console.log(`[canvas] REVISION: canvas-v17-stable-resize-sanitization loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v20-drag-hold-window-extracted
+console.log(`[canvas] REVISION: canvas-v20-drag-hold-window-extracted loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -29,6 +29,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext, EdgeReverseContext } from "@/components/canvas/IntegrationEdge";
+import { applyLocalPositionOverrides, type PositionOverride } from "@/components/canvas/positionOverrides";
 import { ConnectedHandlesContext } from "@/contexts/ConnectedHandlesContext";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
@@ -381,6 +382,16 @@ export function Canvas({
   const dragStartPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   // Track resize start state for undo
   const resizeStartRef = React.useRef<{ itemId: string; position: { x: number; y: number }; size: { width: number; height: number } } | null>(null);
+  // Optimistic post-drag positions, keyed by node id (stableKey || id). After a drag
+  // ends we persist via a batched mutation, so the item cache lags by a few frames.
+  // A rebuild in that window would otherwise rebuild the node at its pre-drag position
+  // (visible "blink back to start, then jump to drop point"). We hold the dropped
+  // position here and apply it during rebuilds until the cache catches up (positions
+  // match) or a short max-age elapses (so concurrent remote moves still recover).
+  const localPositionsRef = React.useRef<Map<string, PositionOverride>>(new Map());
+  // Must comfortably exceed the position mutation's debounce (~500ms) + server
+  // round-trip + any in-flight refetch, so a stale revert in that window is masked.
+  const LOCAL_POSITION_MAX_AGE_MS = 2500;
 
   // Rebuild nodes from items - extracted so it can be called from effect and drag-stop
   const rebuildNodes = React.useCallback(() => {
@@ -416,7 +427,16 @@ export function Canvas({
     // Preserve selection state from current nodes when rebuilding
     setNodes((currentNodes) => {
       const selectedIds = new Set(currentNodes.filter(n => n.selected).map(n => n.id));
-      const newNodes = [...baseNodes, ...extraNodes];
+      // Apply optimistic post-drag positions so a rebuild before the drag is durably
+      // persisted doesn't flash the node back to its pre-drag position. See
+      // positionOverrides.ts for the full rationale (and its unit tests).
+      const newNodes = applyLocalPositionOverrides(
+        [...baseNodes, ...extraNodes],
+        localPositionsRef.current,
+        Date.now(),
+        LOCAL_POSITION_MAX_AGE_MS,
+      );
+
       if (selectedIds.size === 0) return newNodes;
       return newNodes.map(n => selectedIds.has(n.id) ? { ...n, selected: true } : n);
     });
@@ -557,6 +577,9 @@ export function Canvas({
       onDragStateChange?.(false);
 
       if (onItemChange && node.position) {
+        // Hold the dropped position locally (keyed by node id) until the item cache
+        // reflects it, so any rebuild in the interim doesn't blink back to start.
+        localPositionsRef.current.set(node.id, { x: node.position.x, y: node.position.y, at: Date.now() });
         // Use itemId (real ID) for API calls, not node.id (which may be stable key)
         const itemId = (node.data as { itemId?: string })?.itemId || node.id;
         onItemChange(itemId, { position: node.position });
