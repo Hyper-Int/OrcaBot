@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v7-proxy-server
+// REVISION: browser-v8-perf-timing
 package browser
 
 import (
@@ -44,8 +44,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v7-proxy-server
-const browserRevision = "browser-v7-proxy-server"
+// REVISION: browser-v8-perf-timing
+const browserRevision = "browser-v8-perf-timing"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -62,7 +62,7 @@ func NewController(workspace string) *Controller {
 // that redirects, XHR, and subresource loads are subject to the same
 // CheckAndHold approval flow as the initial navigation URL.
 // Loopback addresses bypass the proxy so the CDP debug connection is unaffected.
-// REVISION: browser-v7-proxy-server
+// REVISION: browser-v8-perf-timing
 func NewControllerWithEgress(workspace string, egressProxyPort int) *Controller {
 	return &Controller{workspace: workspace, egressProxyPort: egressProxyPort}
 }
@@ -74,6 +74,9 @@ func (c *Controller) Start() (Status, error) {
 	if c.running {
 		return c.statusLocked(), nil
 	}
+
+	// Perf: time the full cold browser bring-up (dominated by chromium boot).
+	startTime := time.Now()
 
 	if err := ensureBinary("chromium"); err != nil {
 		return Status{}, err
@@ -180,7 +183,7 @@ func (c *Controller) Start() (Status, error) {
 	// Chromium runs as root and is outside the iptables UID range, so without
 	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
 	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
-	// REVISION: browser-v7-proxy-server
+	// REVISION: browser-v8-perf-timing
 	if c.egressProxyPort > 0 {
 		chromiumArgs = append(chromiumArgs,
 			"--proxy-server=http://127.0.0.1:"+strconv.Itoa(c.egressProxyPort),
@@ -239,9 +242,15 @@ func (c *Controller) Start() (Status, error) {
 	c.debugPort = debugPort
 	c.processes = processes
 	c.running = true
+	spawnElapsed := time.Since(startTime)
+	readyStart := time.Now()
 	c.ready = waitForDebugReady(debugPort, 10*time.Second)
 
-	log.Printf("browser started display=%d wsPort=%d vncPort=%d", display, wsPort, vncPort)
+	// Perf: spawn = time to launch all 4 processes; debugReady = time waiting for
+	// chromium's DevTools endpoint to answer; total = full cold bring-up.
+	log.Printf("[browser][perf] started display=%d wsPort=%d vncPort=%d spawn=%dms debugReady=%dms total=%dms ready=%t",
+		display, wsPort, vncPort,
+		spawnElapsed.Milliseconds(), time.Since(readyStart).Milliseconds(), time.Since(startTime).Milliseconds(), c.ready)
 	return c.statusLocked(), nil
 }
 

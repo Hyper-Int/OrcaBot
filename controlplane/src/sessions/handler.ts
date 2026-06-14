@@ -1333,7 +1333,11 @@ export async function createSessiоn(
     // Use ensureDashboardSandbox which checks machine health via Fly API,
     // handles destroyed machines (FlyMachineNotFoundError → reprovision),
     // and validates the session is still reachable on the sandbox.
+    // Perf: this is the "first connect to sandbox" cost (warm-pool claim is fast,
+    // cold provision is slow). Logged so we can attribute terminal startup latency.
+    const ensureStart = Date.now();
     const sandboxResult = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
+    console.log(`[perf][createSession] ensureDashboardSandbox=${Date.now() - ensureStart}ms dashboard=${dashboardId}`);
     if (sandboxResult instanceof Response) {
       // Access denied or other error — clean up the creating session record
       await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();

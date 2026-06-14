@@ -23,6 +23,7 @@ import { HelpButton } from "@/components/help/HelpDialog";
 import { browserDoc } from "@/docs/content/browser";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
 import { ApiError } from "@/lib/api/client";
+import { perfStart, perfMark, perfEnd, perfCancel } from "@/lib/perf";
 import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
 import { useAuthStore } from "@/stores/auth-store";
 import type { DashboardItem } from "@/types/dashboard";
@@ -134,6 +135,9 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
     }
 
     let cancelled = false;
+    // Perf: time browser start → ready (dominated by chromium cold-boot when the
+    // VM isn't pre-warmed). perfEnd fires when the sandbox reports running+ready.
+    perfStart(`browser:${dashboardId}`);
     setStatus("starting");
     setErrorMessage(null);
 
@@ -148,6 +152,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       })
       .finally(() => {
         if (cancelled) return;
+        perfMark(`browser:${dashboardId}`, "retained");
         let attempts = 0;
         const poll = async () => {
           attempts += 1;
@@ -157,11 +162,13 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
           const statusResponse = await getDashboardBrowserStatus(dashboardId);
           if (cancelled) return;
           if (statusResponse?.running && statusResponse?.ready !== false) {
+            perfEnd(`browser:${dashboardId}`, `ready (after ${attempts} polls)`);
             setStatus("running");
             setErrorMessage(null);
             return;
           }
           if (attempts >= 40) {
+            perfCancel(`browser:${dashboardId}`);
             setStatus("error");
             setErrorMessage("Browser failed to start.");
             return;
@@ -173,6 +180,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
 
     return () => {
       cancelled = true;
+      perfCancel(`browser:${dashboardId}`);
       releaseBrowser(dashboardId);
     };
   }, [dashboardId, isMinimized]);
