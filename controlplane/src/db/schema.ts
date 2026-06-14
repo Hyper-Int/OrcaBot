@@ -148,7 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
 
 -- User custom model endpoints (Ollama / vLLM / self-hosted / cloud BYO).
 -- See PLAN-custom-endpoints.md. The API key (if any) is a user_secrets entry
--- referenced by secret_name; this table never stores the key.
+-- referenced by secret_name — this table never stores the key.
 CREATE TABLE IF NOT EXISTS user_model_providers (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1139,7 +1139,17 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   // This filters out comment-only blocks that would cause "SQL code did not contain a statement" errors.
   const isValidSql = (s: string) => /\b(CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|SELECT)\b/i.test(s);
 
-  const statements = SCHEMA
+  // Strip `--` line comments BEFORE splitting on ';'. A semicolon inside a comment
+  // (e.g. "-- referenced by secret_name; this table...") would otherwise split the
+  // comment mid-sentence and feed the trailing fragment to D1 as a bogus statement
+  // ("near 'this': syntax error"). No schema string literal contains '--', so
+  // removing from the first '--' to end-of-line per line is safe.
+  const withoutComments = SCHEMA
+    .split('\n')
+    .map(line => line.replace(/--.*$/, ''))
+    .join('\n');
+
+  const statements = withoutComments
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0 && isValidSql(s));
