@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v8-stale-team-reset-popup-cleanup
+// REVISION: teams-block-v9-title-and-account-menu
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v7-stable-team-selection";
+const MODULE_REVISION = "teams-block-v9-title-and-account-menu";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -29,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -453,11 +454,31 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {integration?.accountName && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.accountName}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Teams
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={() => { /* focus token input */ }}>
+      <TeamsIcon className="w-3.5 h-3.5 mr-2" />
+      Connect Teams
+    </DropdownMenuItem>
+  );
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <TeamsIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.accountName || "Teams"}
+        Teams
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={teamsDoc} />
@@ -476,18 +497,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Teams
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-                <TeamsIcon className="w-3.5 h-3.5 mr-2" />
-                Connect Teams
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -508,18 +518,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Teams
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-            <TeamsIcon className="w-3.5 h-3.5 mr-2" />
-            Connect Teams
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -530,7 +529,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         nodeId={id}
         selected={selected}
         icon={<TeamsIcon className="w-14 h-14" />}
-        label={integration?.accountName || "Teams"}
+        label="Teams"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

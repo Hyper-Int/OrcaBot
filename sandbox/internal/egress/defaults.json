@@ -1,5 +1,5 @@
 {
-  "revision": "egress-defaults-v2-openrouter",
+  "revision": "egress-defaults-v3-login-deps",
   "defaults": [
     {
       "pattern": "registry.npmjs.org",
@@ -474,6 +474,30 @@
       "category": "provider_infra",
       "label": "Datadog browser intake subdomains",
       "rationale": "Browser telemetry"
+    },
+    {
+      "pattern": "browser-intake-us5-datadoghq.com",
+      "category": "provider_infra",
+      "label": "Datadog browser intake (US5)",
+      "rationale": "Datadog RUM regional intake (separate apex; e.g. Anthropic login)"
+    },
+    {
+      "pattern": "js.stripe.com",
+      "category": "provider_infra",
+      "label": "Stripe.js",
+      "rationale": "Stripe payments SDK loaded by billing/login pages (e.g. Anthropic)"
+    },
+    {
+      "pattern": "m.stripe.com",
+      "category": "provider_infra",
+      "label": "Stripe Radar",
+      "rationale": "Stripe.js fraud-signal endpoint"
+    },
+    {
+      "pattern": "m.stripe.network",
+      "category": "provider_infra",
+      "label": "Stripe Radar network",
+      "rationale": "Stripe.js fraud-signal endpoint (separate apex stripe.network)"
     },
     {
       "pattern": "intercom.io",

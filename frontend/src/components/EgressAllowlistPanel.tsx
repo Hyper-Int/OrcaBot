@@ -3,8 +3,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-panel-v2-canonical-defaults
-const PANEL_REVISION = "egress-allowlist-panel-v2-canonical-defaults";
+// REVISION: egress-allowlist-panel-v3-deny-always
+const PANEL_REVISION = "egress-allowlist-panel-v3-deny-always";
 console.log(`[EgressAllowlistPanel] REVISION: ${PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
 import { useState, useEffect, useCallback } from "react";
@@ -14,11 +14,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Shield, Trash2, Loader2, Globe, ChevronDown, ChevronRight, ShieldOff, ShieldCheck } from "lucide-react";
+import { Shield, Trash2, Loader2, Globe, ChevronDown, ChevronRight, ShieldOff, ShieldCheck, Ban } from "lucide-react";
 import { toast } from "sonner";
 import {
   listEgressAllowlist,
   revokeEgressDomain,
+  revokeEgressDenied,
   blockDefaultDomain,
   unblockDefaultDomain,
   type EgressAllowlistEntry,
@@ -37,11 +38,13 @@ export function EgressAllowlistPanel({
   onOpenChange,
 }: EgressAllowlistPanelProps) {
   const [entries, setEntries] = useState<EgressAllowlistEntry[]>([]);
+  const [denied, setDenied] = useState<EgressAllowlistEntry[]>([]);
   const [defaults, setDefaults] = useState<EgressDefaultEntry[]>([]);
   const [blockedPatterns, setBlockedPatterns] = useState<Set<string>>(new Set());
   const [defaultsExpanded, setDefaultsExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [unblocking, setUnblocking] = useState<string | null>(null);
   const [overriding, setOverriding] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -49,6 +52,7 @@ export function EgressAllowlistPanel({
     try {
       const result = await listEgressAllowlist(dashboardId);
       setEntries(result.entries);
+      setDenied(result.denied);
       setDefaults(result.defaults);
       setBlockedPatterns(new Set(result.blocked));
     } catch {
@@ -74,6 +78,19 @@ export function EgressAllowlistPanel({
       toast.error(`Failed to revoke: ${err}`);
     } finally {
       setRevoking(null);
+    }
+  };
+
+  const handleUnDeny = async (entry: EgressAllowlistEntry) => {
+    setUnblocking(entry.id);
+    try {
+      await revokeEgressDenied(dashboardId, entry.id);
+      setDenied(prev => prev.filter(e => e.id !== entry.id));
+      toast.success(`Unblocked: ${entry.domain} will require approval again`);
+    } catch (err) {
+      toast.error(`Failed to unblock: ${err}`);
+    } finally {
+      setUnblocking(null);
     }
   };
 
@@ -255,6 +272,53 @@ export function EgressAllowlistPanel({
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-sm font-medium">
+              Blocked domains
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Domains denied via &quot;Deny Always&quot; (e.g. trackers). Agents are blocked
+              from these without prompting. Unblock to require approval again.
+            </p>
+
+            {loading ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : denied.length === 0 ? (
+              <div className="text-center py-6 text-sm text-muted-foreground">
+                No blocked domains yet.
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {denied.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-destructive/5 border border-destructive/20"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Ban className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+                      <span className="font-mono text-xs truncate">{entry.domain}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleUnDeny(entry)}
+                      disabled={unblocking !== null}
+                      className="flex-shrink-0 h-6 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                    >
+                      {unblocking === entry.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <><ShieldCheck className="w-3 h-3 mr-1" />Unblock</>
                       )}
                     </Button>
                   </div>

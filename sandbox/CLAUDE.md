@@ -266,7 +266,8 @@ An HTTP/HTTPS forward proxy on `localhost:8083` that acts as "Little Snitch for 
 - **CONNECT** (HTTPS): Extracts domain from `CONNECT host:port`, checks allowlist
 - **Regular HTTP**: Extracts domain from Host header, checks allowlist
 - **Allowed domains**: Connection proceeds immediately
-- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny.
+- **Permanently denied domains** ("deny always"): Connection rejected immediately (403), no prompt. Deny takes precedence over the allowlist.
+- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny / Deny Always.
 - **Timeout**: 60 seconds with no response = deny (fail-closed)
 - **Coalescing**: Multiple connections to the same unknown domain share one approval prompt
 
@@ -300,7 +301,7 @@ Localhost traffic (`localhost`, `127.0.0.1`, `::1`) always bypasses the proxy:
 
 ### Sandbox Endpoints
 - `POST /egress/approve` — Control plane delivers user decision
-- `POST /egress/revoke` — Remove domain from runtime allowlist
+- `POST /egress/revoke` — Remove domain from runtime allow/deny sets (clears both an "always allow" and a "deny always")
 - `GET /egress/pending` — List pending approvals (for UI sync on reconnect)
 - `GET /egress/allowlist` — Current allowlist (default + user)
 

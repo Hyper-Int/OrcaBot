@@ -35,6 +35,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -311,12 +312,33 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
 
   const isUnread = (message: GmailMessage) => message.labels.includes("UNREAD");
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountEmail = integration?.emailAddress || status?.emailAddress;
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {accountEmail && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-[10px] text-[var(--foreground-muted)] truncate">{accountEmail}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Gmail
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <Mail className="w-3.5 h-3.5 mr-2" />
+      Connect Gmail
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <GmailIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || status?.emailAddress || "Gmail"}
+        Gmail
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={gmailDoc} />
@@ -353,18 +375,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Gmail
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <Mail className="w-3.5 h-3.5 mr-2" />
-                Connect Gmail
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -391,18 +402,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Gmail
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <Mail className="w-3.5 h-3.5 mr-2" />
-            Connect Gmail
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -414,7 +414,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         nodeId={id}
         selected={selected}
         icon={<GmailIcon className="w-14 h-14" />}
-        label={integration?.emailAddress || "Gmail"}
+        label="Gmail"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

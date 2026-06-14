@@ -115,6 +115,48 @@ func TestAllowlist_UserDomains(t *testing.T) {
 	}
 }
 
+func TestAllowlist_DeniedDomains(t *testing.T) {
+	al := NewAllowlist()
+
+	// Initially not denied
+	if al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to not be denied initially")
+	}
+
+	// Deny always
+	al.AddDeniedDomain("tracker.example.com", "deny-1")
+	if !al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to be denied after AddDeniedDomain")
+	}
+
+	// Case insensitive
+	if !al.IsDenied("TRACKER.EXAMPLE.COM") {
+		t.Error("Expected case-insensitive match for denied domains")
+	}
+
+	// Denying a domain clears any prior user-allow entry (deny is unambiguous)
+	al.AddUserDomain("dual.example.com", "allow-1")
+	al.AddDeniedDomain("dual.example.com", "deny-2")
+	if al.IsAllowed("dual.example.com") {
+		t.Error("Expected AddDeniedDomain to remove the matching user-allow entry")
+	}
+	if !al.IsDenied("dual.example.com") {
+		t.Error("Expected dual.example.com to be denied")
+	}
+
+	// List denied domains
+	denied := al.DeniedDomains()
+	if denied["tracker.example.com"] != "deny-1" {
+		t.Error("Expected denied domain to be in list")
+	}
+
+	// Un-deny
+	al.RemoveDeniedDomain("tracker.example.com")
+	if al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to no longer be denied after removal")
+	}
+}
+
 func TestAllowlist_DefaultPatterns(t *testing.T) {
 	al := NewAllowlist()
 	patterns := al.DefaultPatterns()

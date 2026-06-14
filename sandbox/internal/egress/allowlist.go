@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-v7-canonical-default-catalog
+// REVISION: egress-allowlist-v8-deny-always
 
 package egress
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const allowlistRevision = "egress-allowlist-v7-canonical-default-catalog"
+const allowlistRevision = "egress-allowlist-v8-deny-always"
 
 func init() {
 	log.Printf("[egress-allowlist] REVISION: %s loaded at %s", allowlistRevision, time.Now().Format(time.RFC3339))
@@ -28,6 +28,7 @@ type Allowlist struct {
 	defaults []string          // glob patterns (e.g., "*.github.com")
 	blocked  map[string]bool   // blocked default patterns -> true
 	user     map[string]string // domain -> entryID (for revocation tracking)
+	denied   map[string]string // permanently denied domains -> entryID ("deny always")
 }
 
 type DefaultCatalog struct {
@@ -95,7 +96,21 @@ func NewAllowlist() *Allowlist {
 		defaults: DefaultPatterns(),
 		blocked:  make(map[string]bool),
 		user:     make(map[string]string),
+		denied:   make(map[string]string),
 	}
+}
+
+// IsDenied reports whether a domain has been permanently denied ("deny always").
+// Denied domains are rejected immediately without prompting, and a deny takes
+// precedence over both default and user allowlists (fail-closed to user intent).
+func (a *Allowlist) IsDenied(domain string) bool {
+	domain = strings.ToLower(domain)
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	_, ok := a.denied[domain]
+	return ok
 }
 
 // IsAllowed checks if a domain is permitted by the default or user allowlist.
@@ -141,6 +156,40 @@ func (a *Allowlist) RemoveUserDomain(domain string) {
 	defer a.mu.Unlock()
 
 	delete(a.user, domain)
+}
+
+// AddDeniedDomain permanently denies a domain ("deny always"). Also removes any
+// matching user-approved entry so the deny is unambiguous.
+func (a *Allowlist) AddDeniedDomain(domain, entryID string) {
+	domain = strings.ToLower(domain)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.denied[domain] = entryID
+	delete(a.user, domain)
+}
+
+// RemoveDeniedDomain lifts a permanent deny (un-deny).
+func (a *Allowlist) RemoveDeniedDomain(domain string) {
+	domain = strings.ToLower(domain)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	delete(a.denied, domain)
+}
+
+// DeniedDomains returns a copy of all permanently denied domains.
+func (a *Allowlist) DeniedDomains() map[string]string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	result := make(map[string]string, len(a.denied))
+	for k, v := range a.denied {
+		result[k] = v
+	}
+	return result
 }
 
 // UserDomains returns a copy of all user-approved domains.

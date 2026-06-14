@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v7-loopback-range
+// REVISION: egress-proxy-v8-deny-always
 
 package egress
 
@@ -20,7 +20,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v7-loopback-range"
+const proxyRevision = "egress-proxy-v8-deny-always"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -42,6 +42,7 @@ const (
 	DecisionAllowOnce   = "allow_once"
 	DecisionAllowAlways = "allow_always"
 	DecisionDeny        = "deny"
+	DecisionDenyAlways  = "deny_always"
 	DecisionTimeout     = "timeout"
 	DecisionDefault     = "default_allowed"
 )
@@ -207,9 +208,12 @@ func (p *EgressProxy) Resolve(requestID, domain, decision string) bool {
 	delete(p.pendingByDomain, pending.Domain)
 	p.pendingMu.Unlock()
 
-	// If always allow, add to allowlist
-	if decision == DecisionAllowAlways {
+	// Persist "always" decisions into the runtime allow/deny sets.
+	switch decision {
+	case DecisionAllowAlways:
 		p.allowlist.AddUserDomain(pending.Domain, "runtime-"+pending.RequestID)
+	case DecisionDenyAlways:
+		p.allowlist.AddDeniedDomain(pending.Domain, "runtime-"+pending.RequestID)
 	}
 
 	// Broadcast decision to all waiting goroutines
@@ -273,6 +277,13 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Permanently denied domains are rejected immediately — no prompt, no hold.
+	// This takes precedence over the allowlist so trackers the user blocked stay blocked.
+	if p.allowlist.IsDenied(host) {
+		http.Error(w, "Egress denied: domain permanently blocked", http.StatusForbidden)
+		return
+	}
+
 	if p.allowlist.IsAllowed(host) {
 		p.emitAudit(host, port, "", DecisionDefault)
 		p.tunnelConnect(w, host, port)
@@ -302,6 +313,10 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Localhost always bypasses — never hold or prompt for loopback traffic.
 	if isLocalhost(host) {
 		// fall through to forward
+	} else if p.allowlist.IsDenied(host) {
+		// Permanently denied — reject immediately, no prompt (takes precedence over allowlist).
+		http.Error(w, "Egress denied: domain permanently blocked", http.StatusForbidden)
+		return
 	} else if !p.allowlist.IsAllowed(host) {
 		decision := p.holdForApproval(host, port)
 		if decision != DecisionAllowOnce && decision != DecisionAllowAlways {

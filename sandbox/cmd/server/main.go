@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v31-canonical-egress-defaults
+// REVISION: main-v32-egress-deny-always
 
 package main
 
@@ -35,7 +35,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v31-canonical-egress-defaults"
+const mainRevision = "main-v32-egress-deny-always"
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -630,6 +630,7 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	var payload struct {
 		Domains         []string `json:"domains"`
 		BlockedPatterns []string `json:"blocked_patterns"`
+		DeniedDomains   []string `json:"denied_domains"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
@@ -646,11 +647,18 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	for _, pattern := range payload.BlockedPatterns {
 		allowlist.BlockDefault(pattern)
 	}
+	for _, domain := range payload.DeniedDomains {
+		domain = strings.TrimSpace(strings.ToLower(domain))
+		if domain == "" {
+			continue
+		}
+		allowlist.AddDeniedDomain(domain, "persisted-"+dashboardID)
+	}
 
 	s.egressAllowlistMu.Lock()
 	s.egressAllowlistDashboardID = dashboardID
 	s.egressAllowlistMu.Unlock()
-	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains and %d blocked defaults for dashboard %s", len(payload.Domains), len(payload.BlockedPatterns), dashboardID)
+	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains, %d blocked defaults, and %d denied domains for dashboard %s", len(payload.Domains), len(payload.BlockedPatterns), len(payload.DeniedDomains), dashboardID)
 	return nil
 }
 
@@ -1653,7 +1661,8 @@ func (s *Server) handleEgressApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Decision != egress.DecisionAllowOnce && req.Decision != egress.DecisionAllowAlways && req.Decision != egress.DecisionDeny {
+	if req.Decision != egress.DecisionAllowOnce && req.Decision != egress.DecisionAllowAlways &&
+		req.Decision != egress.DecisionDeny && req.Decision != egress.DecisionDenyAlways {
 		http.Error(w, "E79862: invalid decision value", http.StatusBadRequest)
 		return
 	}
@@ -1672,8 +1681,9 @@ func (s *Server) handleEgressApprove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleEgressRevoke removes a domain from the runtime allowlist.
-// Called by the control plane when a user revokes an always-allowed domain.
+// handleEgressRevoke removes a domain from the runtime allow/deny sets.
+// Called by the control plane when a user revokes an always-allowed domain or
+// lifts a permanent deny ("deny always"). Clearing both is idempotent and safe.
 func (s *Server) handleEgressRevoke(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Domain string `json:"domain"`
@@ -1691,7 +1701,8 @@ func (s *Server) handleEgressRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.egressProxy.Allowlist().RemoveUserDomain(req.Domain)
-	log.Printf("[egress] Revoked domain from runtime allowlist: %s", req.Domain)
+	s.egressProxy.Allowlist().RemoveDeniedDomain(req.Domain)
+	log.Printf("[egress] Revoked domain from runtime allow/deny sets: %s", req.Domain)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1716,6 +1727,7 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 			"defaults": egress.DefaultPatterns(),
 			"blocked":  []string{},
 			"user":     map[string]string{},
+			"denied":   map[string]string{},
 		})
 		return
 	}
@@ -1726,6 +1738,7 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 		"defaults": al.DefaultPatterns(),
 		"blocked":  al.BlockedDefaults(),
 		"user":     al.UserDomains(),
+		"denied":   al.DeniedDomains(),
 	})
 }
 

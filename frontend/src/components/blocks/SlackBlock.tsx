@@ -30,6 +30,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -453,12 +454,33 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const teamName = integration?.teamName || status?.teamName;
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {teamName && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-xs font-medium text-[var(--foreground)] truncate">{teamName}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Slack
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <Hash className="w-3.5 h-3.5 mr-2" />
+      Connect Slack
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <Hash className="w-3.5 h-3.5 text-[#611f69]" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.teamName || status?.teamName || "Slack"}
+        Slack
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={slackDoc} />
@@ -495,18 +517,7 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Slack
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <Hash className="w-3.5 h-3.5 mr-2" />
-                Connect Slack
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -533,18 +544,7 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Slack
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <Hash className="w-3.5 h-3.5 mr-2" />
-            Connect Slack
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -556,7 +556,7 @@ export function SlackBlock({ id, data, selected }: NodeProps<SlackNode>) {
         nodeId={id}
         selected={selected}
         icon={<Hash className="w-14 h-14 text-[#611f69]" />}
-        label={integration?.teamName || "Slack"}
+        label="Slack"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}
