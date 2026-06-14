@@ -218,16 +218,19 @@ The control plane manages user approval decisions and persistent allowlists for 
 
 ### Database Tables
 - `egress_allowlist` — Per-dashboard user-approved domains (domain, created_by, revoked_at)
-- `egress_audit_log` — All egress decisions (domain, port, decision, decided_by)
+- `egress_blocklist` — Per-dashboard permanently-denied domains ("deny always"; domain, created_by, revoked_at). Deny takes precedence over the allowlist
+- `egress_audit_log` — All egress decisions (domain, port, decision, decided_by). The CHECK constraint predates "deny_always", so a "Deny Always" is recorded as `deny`; the durable record is the `egress_blocklist` row
+- `egress_blocked_defaults` — Per-dashboard overrides of built-in default patterns
 
 ### User-Facing Endpoints (authenticated)
-- `POST /api/dashboards/:id/egress/approve` — User decision (allow_once/always/deny) → forward to sandbox
-- `GET /api/dashboards/:id/egress/allowlist` — List user-approved domains
+- `POST /api/dashboards/:id/egress/approve` — User decision (allow_once/allow_always/deny/deny_always) → forward to sandbox; allow_always persists to `egress_allowlist`, deny_always persists to `egress_blocklist` (and revokes any conflicting allowlist row)
+- `GET /api/dashboards/:id/egress/allowlist` — List user-approved + denied domains + defaults/blocked
 - `DELETE /api/dashboards/:id/egress/allowlist/:entryId` — Revoke a user-approved domain
+- `DELETE /api/dashboards/:id/egress/blocklist/:entryId` — Lift a permanent deny (un-block)
 - `GET /api/dashboards/:id/egress/pending` — List currently held connections
 
 ### Internal Endpoints (sandbox → controlplane)
-- `GET /internal/dashboards/:id/egress/allowlist` — Sandbox loads persisted allowlist on startup
+- `GET /internal/dashboards/:id/egress/allowlist` — Sandbox loads persisted allow + denied domains + blocked patterns on startup
 - `POST /internal/dashboards/:id/egress/audit` — Sandbox forwards runtime audit events
 
 ### Key Files

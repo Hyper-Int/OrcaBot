@@ -19,7 +19,7 @@ import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
-import { FlyMachinesClient, FlyMachineNotFoundError } from '../sandbox/fly-machines';
+import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
 import { detectAgentType, logServerEvent } from '../analytics/handler';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
@@ -255,6 +255,64 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
   }>();
 }
 
+// ── Fly machine-state cache (anti-429) ─────────────────────────────────
+// REVISION: fly-getmachine-cache-v1-anti-429
+// Every browser asset request (noVNC loads 20+ assets at once: svg/css/js) and
+// every PTY/session establishment independently calls ensureDashboardSandbox →
+// fly.getMachine. Without throttling, a single browser block load fans out to
+// dozens of Fly API calls in one second and trips Fly's rate limit (429), which
+// then blocks legitimate provisioning (terminal stuck "Connecting to sandbox...").
+//
+// Two layers of defense, both per-isolate (module scope is shared across
+// concurrent requests in the same Worker isolate):
+//  1. In-flight coalescing — simultaneous checks for the same machine share one
+//     Fly call (handles the initial 20-asset burst).
+//  2. Short TTL result cache — once a machine is confirmed 'started', skip the
+//     Fly call entirely for a few seconds (handles sustained polling).
+type MachineStateCacheEntry = { state: string; checkedAt: number };
+const machineStateCache = new Map<string, MachineStateCacheEntry>();
+const inflightMachineChecks = new Map<string, Promise<string>>();
+const MACHINE_STATE_TTL_MS = 10_000;
+
+/**
+ * Returns a machine's current state, collapsing concurrent/repeated checks into
+ * a single Fly API call to avoid self-inflicted 429s. Returns the cached state on
+ * a fresh hit; coalesces an in-flight Fly call otherwise. On a 429 it serves the
+ * last-known state if available (the machine was healthy moments ago), else
+ * rethrows so the caller can fall through to the direct sandbox health check.
+ * Caches only positive ('started') results long-term; transient states are
+ * cached briefly so wake/reprovision logic still re-checks promptly.
+ */
+async function getMachineStateCached(fly: FlyMachinesClient, machineId: string): Promise<string> {
+  const cached = machineStateCache.get(machineId);
+  const now = Date.now();
+  if (cached && cached.state === 'started' && (now - cached.checkedAt) < MACHINE_STATE_TTL_MS) {
+    return cached.state;
+  }
+
+  let inflight = inflightMachineChecks.get(machineId);
+  if (!inflight) {
+    inflight = (async () => {
+      const machine = await fly.getMachine(machineId);
+      machineStateCache.set(machineId, { state: machine.state, checkedAt: Date.now() });
+      return machine.state;
+    })().finally(() => inflightMachineChecks.delete(machineId));
+    inflightMachineChecks.set(machineId, inflight);
+  }
+
+  try {
+    return await inflight;
+  } catch (err) {
+    // Rate-limited: this is self-inflicted fan-out, not a dead machine. Serve the
+    // last-known state so we don't reprovision a healthy VM or spam Fly further.
+    if (err instanceof FlyApiError && err.status === 429 && cached) {
+      console.warn(`[ensureDashboardSandbox] Fly getMachine 429 for ${machineId}; using cached state '${cached.state}'`);
+      return cached.state;
+    }
+    throw err;
+  }
+}
+
 /**
  * Ensures a dashboard has exactly one sandbox VM.
  *
@@ -295,21 +353,23 @@ export async function ensureDashbоardSandbоx(
     if (flyProvisioningEnabled && existingSandbox.sandbox_machine_id) {
       const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
       try {
-        const machine = await fly.getMachine(existingSandbox.sandbox_machine_id);
-        if (machine.state === 'stopped' || machine.state === 'suspended') {
+        const machineState = await getMachineStateCached(fly, existingSandbox.sandbox_machine_id);
+        if (machineState === 'stopped' || machineState === 'suspended') {
           // Wake the stopped machine
           console.log(`[ensureDashboardSandbox] Starting stopped machine ${existingSandbox.sandbox_machine_id} for dashboard ${dashboardId}`);
           await fly.startMachine(existingSandbox.sandbox_machine_id);
           await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 30);
+          machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
           await env.DB.prepare(`
             UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
           `).bind(dashboardId).run();
         }
-        if (machine.state === 'created' || machine.state === 'starting' || machine.state === 'replacing') {
+        if (machineState === 'created' || machineState === 'starting' || machineState === 'replacing') {
           // Machine is mid-replacement or mid-boot — wait for it instead of reprovisioning
-          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} in state '${machine.state}', waiting for started (up to 90s)...`);
+          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} in state '${machineState}', waiting for started (up to 90s)...`);
           try {
             await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 90);
+            machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
             await env.DB.prepare(`
               UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
             `).bind(dashboardId).run();
@@ -335,11 +395,19 @@ export async function ensureDashbоardSandbоx(
           // Fall through to provisioning below
           return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
         }
-        // For other Fly API errors, mark state as stale and fall through to session validation
-        console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
-        await env.DB.prepare(`
-          UPDATE dashboard_sandboxes SET machine_state = 'unknown' WHERE dashboard_id = ?
-        `).bind(dashboardId).run().catch(() => {});
+        // Rate-limited with no cached state to fall back on: this is transient and
+        // self-inflicted, NOT a dead machine. Don't mark the VM 'unknown' (which can
+        // cascade into needless reprovisioning) — just fall through to the direct
+        // sandbox health check below, which talks to the VM and doesn't touch Fly.
+        if (err instanceof FlyApiError && err.status === 429) {
+          console.warn(`[ensureDashboardSandbox] Fly getMachine rate-limited (429) for ${existingSandbox.sandbox_machine_id}; skipping machine check, validating session directly`);
+        } else {
+          // For other Fly API errors, mark state as stale and fall through to session validation
+          console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
+          await env.DB.prepare(`
+            UPDATE dashboard_sandboxes SET machine_state = 'unknown' WHERE dashboard_id = ?
+          `).bind(dashboardId).run().catch(() => {});
+        }
       }
     }
 
@@ -1785,7 +1853,11 @@ export async function openBrowserFromSandbоxSessionInternal(
   url: string,
   ptyId?: string
 ): Promise<Response> {
+  // REVISION: browser-autoopen-diag-v1
+  console.log(`[browserOpen] internal notify received sandboxSessionId=${sandboxSessionId || '(empty)'} ptyId=${ptyId || '(none)'} urlHost=${(() => { try { return new URL(url).host; } catch { return '(invalid)'; } })()}`);
+
   if (!sandboxSessionId || !url) {
+    console.warn('[browserOpen] missing session or url — returning 400');
     return Response.json({ error: 'E79821: Missing session or URL' }, { status: 400 });
   }
 
@@ -1809,8 +1881,10 @@ export async function openBrowserFromSandbоxSessionInternal(
   }
 
   if (!session?.dashboard_id) {
+    console.warn(`[browserOpen] no session row for sandboxSessionId=${sandboxSessionId} ptyId=${ptyId || '(none)'} — returning 404 (browser block will NOT appear)`);
     return Response.json({ error: 'E79820: Session not found' }, { status: 404 });
   }
+  console.log(`[browserOpen] resolved dashboardId=${session.dashboard_id} terminalItemId=${session.item_id}`);
 
   const dashboardId = session.dashboard_id;
   const terminalItemId = session.item_id;
@@ -1952,6 +2026,7 @@ export async function openBrowserFromSandbоxSessionInternal(
       body: JSON.stringify(formattedEdge),
     }));
   }
+  console.log(`[browserOpen] ${existingBrowser ? 'updated existing' : 'created new'} browser item ${browserItemId} for dashboard ${dashboardId}; broadcasting browser_open`);
   await stub.fetch(new Request('http://do/browser', {
     method: 'POST',
     body: JSON.stringify({ url }),

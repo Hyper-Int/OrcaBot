@@ -247,7 +247,7 @@ Frontend does NOT:
 - Egress events arrive via terminal WebSockets (not collaboration WS)
 - `TerminalWSManager` dispatches `window.CustomEvent` for `egress_approval_needed` / `egress_approval_resolved`
 - Dashboard page listens for CustomEvents and shows toast + approval dialog
-- Approval dialog: Deny / Allow Once / Always Allow (3 buttons)
+- Approval dialog: Deny Always / Deny / Allow Once / Always Allow (4 buttons). "Deny Always" persistently blocks the domain (e.g. trackers) so it is denied without prompting again; managed/undone in the allowlist panel's "Blocked domains" section
 - Allowlist panel: Shield icon in title bar, shows user-approved domains with revoke
 - Egress is enabled globally via `EGRESS_PROXY_ENABLED=true` on the sandbox machine; there is no per-user or per-session opt-in
 

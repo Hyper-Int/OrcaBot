@@ -1,14 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-api-v4-canonical-defaults
-const MODULE_REVISION = "egress-api-v4-canonical-defaults";
+// REVISION: egress-api-v5-deny-always
+const MODULE_REVISION = "egress-api-v5-deny-always";
 console.log(`[egress-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiDelete } from "../client";
 
-export type EgressDecision = 'allow_once' | 'allow_always' | 'deny';
+export type EgressDecision = 'allow_once' | 'allow_always' | 'deny' | 'deny_always';
 
 export interface EgressAllowlistEntry {
   id: string;
@@ -43,6 +43,7 @@ export interface EgressAllowlistResponse {
   entries: EgressAllowlistEntry[];
   defaults: EgressDefaultEntry[];
   blocked: string[];
+  denied: EgressAllowlistEntry[];
   revision: string;
 }
 
@@ -90,6 +91,7 @@ export async function listEgressAllowlist(
     entries: response.entries || [],
     defaults: response.defaults || [],
     blocked: response.blocked || [],
+    denied: response.denied || [],
     revision: response.revision || "",
   };
 }
@@ -122,6 +124,16 @@ export async function revokeEgressDomain(
   entryId: string,
 ): Promise<void> {
   await apiDelete(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/allowlist/${entryId}`);
+}
+
+/**
+ * Lift a permanent deny ("deny always") so the domain requires approval again.
+ */
+export async function revokeEgressDenied(
+  dashboardId: string,
+  entryId: string,
+): Promise<void> {
+  await apiDelete(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/blocklist/${entryId}`);
 }
 
 /**

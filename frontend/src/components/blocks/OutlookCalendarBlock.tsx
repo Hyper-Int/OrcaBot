@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: outlook-calendar-block-v1-initial
+// REVISION: outlook-calendar-block-v2-title-and-account-menu
 
 "use client";
 
-const MODULE_REVISION = "outlook-calendar-block-v1-initial";
+const MODULE_REVISION = "outlook-calendar-block-v2-title-and-account-menu";
 console.log(`[OutlookCalendarBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -27,6 +27,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -229,6 +230,31 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {(integration?.accountName || integration?.emailAddress) && (
+        <DropdownMenuLabel className="font-normal">
+          {integration?.accountName && (
+            <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.accountName}</div>
+          )}
+          {integration?.emailAddress && (
+            <div className="text-[10px] text-[var(--foreground-muted)] truncate">{integration.emailAddress}</div>
+          )}
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Outlook Calendar
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <OutlookCalendarIcon className="w-3.5 h-3.5 mr-2" />
+      Connect Outlook Calendar
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
@@ -236,7 +262,7 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
         <OutlookCalendarIcon className="w-4 h-4" />
       </div>
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || integration?.accountName || "Outlook Calendar"}
+        Outlook Calendar
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={outlookCalendarDoc} />
@@ -273,18 +299,7 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Outlook Calendar
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <OutlookCalendarIcon className="w-3.5 h-3.5 mr-2" />
-                Connect Outlook Calendar
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -311,18 +326,7 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Outlook Calendar
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <OutlookCalendarIcon className="w-3.5 h-3.5 mr-2" />
-            Connect Outlook Calendar
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -338,7 +342,7 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
             <OutlookCalendarIcon className="w-12 h-12" />
           </div>
         }
-        label={integration?.emailAddress || integration?.accountName || "Outlook Calendar"}
+        label="Outlook Calendar"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

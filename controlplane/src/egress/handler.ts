@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-handler-v8-canonical-defaults
-console.log(`[egress] REVISION: egress-handler-v8-canonical-defaults loaded at ${new Date().toISOString()}`);
+// REVISION: egress-handler-v9-deny-always
+console.log(`[egress] REVISION: egress-handler-v9-deny-always loaded at ${new Date().toISOString()}`);
 
 /**
  * Egress Proxy Management
@@ -70,7 +70,7 @@ export async function handleApproveEgress(
 
   const normalizedDomain = body.domain.trim().toLowerCase();
 
-  const validDecisions = ['allow_once', 'allow_always', 'deny'];
+  const validDecisions = ['allow_once', 'allow_always', 'deny', 'deny_always'];
   if (!validDecisions.includes(body.decision)) {
     return Response.json({ error: 'E79871: invalid decision' }, { status: 400 });
   }
@@ -118,7 +118,7 @@ export async function handleApproveEgress(
     );
   }
 
-  // If "always allow", persist to D1 only after sandbox accepted the decision.
+  // If "always allow", persist to the allowlist only after sandbox accepted.
   if (body.decision === 'allow_always') {
     const entryId = generateId();
     await env.DB.prepare(`
@@ -131,13 +131,35 @@ export async function handleApproveEgress(
     `).bind(entryId, dashboardId, normalizedDomain, userId, dashboardId, normalizedDomain).run();
   }
 
+  // If "deny always", persist to the blocklist and revoke any conflicting allowlist
+  // entry for the same domain so the deny is unambiguous (deny wins).
+  if (body.decision === 'deny_always') {
+    await env.DB.prepare(`
+      UPDATE egress_allowlist SET revoked_at = datetime('now')
+      WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
+    `).bind(dashboardId, normalizedDomain).run();
+
+    const entryId = generateId();
+    await env.DB.prepare(`
+      INSERT INTO egress_blocklist (id, dashboard_id, domain, created_by, created_at)
+      SELECT ?, ?, ?, ?, datetime('now')
+      WHERE NOT EXISTS (
+        SELECT 1 FROM egress_blocklist
+        WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
+      )
+    `).bind(entryId, dashboardId, normalizedDomain, userId, dashboardId, normalizedDomain).run();
+  }
+
   // Log the decision after successful sandbox forward.
+  // The audit_log CHECK constraint predates "deny_always"; record it as "deny"
+  // (the persistent blocklist row above is the durable record of the "always").
   const auditPort = body.port ?? 443;
+  const auditDecision = body.decision === 'deny_always' ? 'deny' : body.decision;
   const auditId = generateId();
   await env.DB.prepare(`
     INSERT INTO egress_audit_log (id, dashboard_id, domain, port, decision, decided_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-  `).bind(auditId, dashboardId, normalizedDomain, auditPort, body.decision, userId).run();
+  `).bind(auditId, dashboardId, normalizedDomain, auditPort, auditDecision, userId).run();
 
   return Response.json({ ok: true });
 }
@@ -165,10 +187,18 @@ export async function handleListEgressAllowlist(
     ORDER BY created_at ASC
   `).bind(dashboardId).all<{ pattern: string }>();
 
+  const denied = await env.DB.prepare(`
+    SELECT id, domain, created_by, created_at
+    FROM egress_blocklist
+    WHERE dashboard_id = ? AND revoked_at IS NULL
+    ORDER BY created_at ASC
+  `).bind(dashboardId).all();
+
   return Response.json({
     entries: entries.results || [],
     defaults: CANONICAL_DEFAULTS,
     blocked: (blockedRows.results || []).map((row) => row.pattern),
+    denied: denied.results || [],
     revision: egressDefaultsCatalog.revision,
   });
 }
@@ -295,6 +325,89 @@ export async function handleRevokeEgressDomain(
       `).bind(...activeIds, revokedAt).run();
       return Response.json(
         { error: 'E79877: failed to reach sandbox', detail: String(err) },
+        { status: 502 },
+      );
+    }
+  }
+
+  return Response.json({ ok: true });
+}
+
+/**
+ * DELETE /api/dashboards/:id/egress/blocklist/:entryId
+ * Lift a permanent deny ("deny always") so the domain requires approval again.
+ */
+export async function handleRevokeEgressDenied(
+  request: Request,
+  env: Env,
+  dashboardId: string,
+  entryId: string,
+): Promise<Response> {
+  const entry = await env.DB.prepare(`
+    SELECT domain FROM egress_blocklist
+    WHERE id = ? AND dashboard_id = ? AND revoked_at IS NULL
+  `).bind(entryId, dashboardId).first<{ domain: string }>();
+
+  if (!entry) {
+    return Response.json({ error: 'E79883: entry not found' }, { status: 404 });
+  }
+
+  const activeRows = await env.DB.prepare(`
+    SELECT id FROM egress_blocklist
+    WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
+  `).bind(dashboardId, entry.domain).all<{ id: string }>();
+  const activeIds = (activeRows.results || []).map((row) => row.id);
+  if (activeIds.length === 0) {
+    return Response.json({ error: 'E79883: entry not found' }, { status: 404 });
+  }
+
+  const revokedAt = new Date().toISOString();
+  const idPlaceholders = placeholders(activeIds.length);
+
+  await env.DB.prepare(`
+    UPDATE egress_blocklist
+    SET revoked_at = ?
+    WHERE id IN (${idPlaceholders}) AND revoked_at IS NULL
+  `).bind(revokedAt, ...activeIds).run();
+
+  // Forward to sandbox so the runtime deny set is cleared (same endpoint as
+  // allowlist revoke — it clears both allow and deny entries for the domain).
+  const sandbox = await env.DB.prepare(
+    `SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?`
+  ).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+
+  if (sandbox) {
+    try {
+      const revokeUrl = sandboxUrl(env, '/egress/revoke');
+      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      headers.set('Content-Type', 'application/json');
+
+      const resp = await fetch(revokeUrl.toString(), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ domain: entry.domain }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        console.log(`[egress] Sandbox un-deny returned ${resp.status} for ${entry.domain} dashboardId=${dashboardId}: ${errText}`);
+        await env.DB.prepare(`
+          UPDATE egress_blocklist SET revoked_at = NULL
+          WHERE id IN (${idPlaceholders}) AND revoked_at = ?
+        `).bind(...activeIds, revokedAt).run();
+        return Response.json(
+          { error: `E79884: sandbox rejected un-deny (${resp.status})`, detail: errText },
+          { status: 502 },
+        );
+      }
+    } catch (err) {
+      console.log(`[egress] Failed to forward un-deny to sandbox dashboardId=${dashboardId}: ${err}`);
+      await env.DB.prepare(`
+        UPDATE egress_blocklist SET revoked_at = NULL
+        WHERE id IN (${idPlaceholders}) AND revoked_at = ?
+      `).bind(...activeIds, revokedAt).run();
+      return Response.json(
+        { error: 'E79885: failed to reach sandbox', detail: String(err) },
         { status: 502 },
       );
     }
@@ -508,9 +621,15 @@ export async function handleInternalGetAllowlist(
       AND revoked_at IS NULL
   `).bind(dashboardId).all<{ pattern: string }>();
 
+  const deniedRows = await env.DB.prepare(`
+    SELECT domain FROM egress_blocklist
+    WHERE dashboard_id = ? AND revoked_at IS NULL
+  `).bind(dashboardId).all<{ domain: string }>();
+
   return Response.json({
     domains: (entries.results || []).map(e => e.domain),
     blocked_patterns: (blockedRows.results || []).map((row) => row.pattern),
+    denied_domains: (deniedRows.results || []).map((row) => row.domain),
   });
 }
 

@@ -148,7 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
 
 -- User custom model endpoints (Ollama / vLLM / self-hosted / cloud BYO).
 -- See PLAN-custom-endpoints.md. The API key (if any) is a user_secrets entry
--- referenced by secret_name; this table never stores the key.
+-- referenced by secret_name — this table never stores the key.
 CREATE TABLE IF NOT EXISTS user_model_providers (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1024,6 +1024,21 @@ CREATE TABLE IF NOT EXISTS egress_blocked_defaults (
 CREATE INDEX IF NOT EXISTS idx_egress_blocked_defaults_dashboard
   ON egress_blocked_defaults(dashboard_id);
 
+-- Egress blocklist (user permanently-denied domains per dashboard — "deny always")
+CREATE TABLE IF NOT EXISTS egress_blocklist (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_egress_blocklist_dashboard
+  ON egress_blocklist(dashboard_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_blocklist_dashboard_domain_active
+  ON egress_blocklist(dashboard_id, domain)
+  WHERE revoked_at IS NULL;
+
 -- Egress audit log (all proxy decisions)
 CREATE TABLE IF NOT EXISTS egress_audit_log (
   id TEXT PRIMARY KEY,
@@ -1112,7 +1127,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v13-dashboard-links";
+const SCHEMA_REVISION = "schema-v14-egress-blocklist";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1124,7 +1139,17 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   // This filters out comment-only blocks that would cause "SQL code did not contain a statement" errors.
   const isValidSql = (s: string) => /\b(CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|SELECT)\b/i.test(s);
 
-  const statements = SCHEMA
+  // Strip `--` line comments BEFORE splitting on ';'. A semicolon inside a comment
+  // (e.g. "-- referenced by secret_name; this table...") would otherwise split the
+  // comment mid-sentence and feed the trailing fragment to D1 as a bogus statement
+  // ("near 'this': syntax error"). No schema string literal contains '--', so
+  // removing from the first '--' to end-of-line per line is safe.
+  const withoutComments = SCHEMA
+    .split('\n')
+    .map(line => line.replace(/--.*$/, ''))
+    .join('\n');
+
+  const statements = withoutComments
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0 && isValidSql(s));

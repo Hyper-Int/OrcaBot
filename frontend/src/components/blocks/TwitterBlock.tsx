@@ -30,6 +30,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -223,11 +224,27 @@ export function TwitterBlock({ id, data, selected }: NodeProps<TwitterNode>) {
   };
 
   // Header
+  // Account details + disconnect — one section, shown in every settings menu.
+  // (X connects via the credentials form in the body, so there's no connect item.)
+  const accountMenuSection = connected ? (
+    <>
+      {username && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-xs font-medium text-[var(--foreground)] truncate">@{username}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect X
+      </DropdownMenuItem>
+    </>
+  ) : null;
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <XLogo className="w-3.5 h-3.5 text-[var(--foreground)]" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {username ? `@${username}` : "X"}
+        X
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={twitterDoc} />
@@ -246,12 +263,7 @@ export function TwitterBlock({ id, data, selected }: NodeProps<TwitterNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            {connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect X
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -272,12 +284,7 @@ export function TwitterBlock({ id, data, selected }: NodeProps<TwitterNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect X
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -288,7 +295,7 @@ export function TwitterBlock({ id, data, selected }: NodeProps<TwitterNode>) {
         nodeId={id}
         selected={selected}
         icon={<XLogo className="w-14 h-14 text-[var(--foreground)]" />}
-        label={username ? `@${username}` : "X"}
+        label="X"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}
