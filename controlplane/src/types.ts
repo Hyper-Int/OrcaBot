@@ -206,6 +206,22 @@ export interface UserSubagent {
   updatedAt: string;
 }
 
+export interface UserModelProvider {
+  id: string;
+  userId: string;
+  label: string;
+  baseUrl: string;
+  format: 'openai' | 'anthropic';
+  modelId: string;
+  secretName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  compatibleHarnesses: string[];
+  isLocal: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserAgentSkill {
   id: string;
   userId: string;

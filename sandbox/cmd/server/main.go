@@ -716,7 +716,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 			Model           string `json:"model"`
 			ContextWindow   int    `json:"contextWindow"`
 			MaxOutputTokens int    `json:"maxOutputTokens"`
-		} `json:"model_selection"` // Per-PTY OpenRouter override
+			BaseURL         string `json:"baseUrl"`
+			Format          string `json:"format"`
+			SecretName      string `json:"secretName"`
+		} `json:"model_selection"` // Per-PTY OpenRouter / custom-endpoint override
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
@@ -740,6 +743,9 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 				Model:           req.ModelSelection.Model,
 				ContextWindow:   req.ModelSelection.ContextWindow,
 				MaxOutputTokens: req.ModelSelection.MaxOutputTokens,
+				BaseURL:         req.ModelSelection.BaseURL,
+				Format:          req.ModelSelection.Format,
+				SecretName:      req.ModelSelection.SecretName,
 			}
 		}
 		ptyInfo, err = session.CreatePTYWithOptions(opts)
