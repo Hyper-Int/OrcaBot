@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v8-deny-always
+// REVISION: egress-proxy-v9-tracker-denylist
 
 package egress
 
@@ -20,7 +20,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v8-deny-always"
+const proxyRevision = "egress-proxy-v9-tracker-denylist"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -290,6 +290,14 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Known trackers (analytics/ads) are silently denied — no prompt, no connection.
+	// Checked AFTER IsAllowed so a user "Always Allow" still wins. No audit emit:
+	// trackers retry aggressively and would flood the log.
+	if p.allowlist.IsTracker(host) {
+		http.Error(w, "Egress denied: tracker blocked", http.StatusForbidden)
+		return
+	}
+
 	// Hold the connection and wait for approval
 	decision := p.holdForApproval(host, port)
 
@@ -317,14 +325,20 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		// Permanently denied — reject immediately, no prompt (takes precedence over allowlist).
 		http.Error(w, "Egress denied: domain permanently blocked", http.StatusForbidden)
 		return
-	} else if !p.allowlist.IsAllowed(host) {
+	} else if p.allowlist.IsAllowed(host) {
+		p.emitAudit(host, port, "", DecisionDefault)
+		// fall through to forward
+	} else if p.allowlist.IsTracker(host) {
+		// Known tracker — silently denied (no prompt). Checked after IsAllowed so a
+		// user "Always Allow" still wins.
+		http.Error(w, "Egress denied: tracker blocked", http.StatusForbidden)
+		return
+	} else {
 		decision := p.holdForApproval(host, port)
 		if decision != DecisionAllowOnce && decision != DecisionAllowAlways {
 			http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
 			return
 		}
-	} else {
-		p.emitAudit(host, port, "", DecisionDefault)
 	}
 
 	// Forward the request

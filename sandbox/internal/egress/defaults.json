@@ -1,5 +1,5 @@
 {
-  "revision": "egress-defaults-v3-login-deps",
+  "revision": "egress-defaults-v5-ad-attribution-denylist",
   "defaults": [
     {
       "pattern": "registry.npmjs.org",
@@ -798,6 +798,266 @@
       "category": "integration",
       "label": "X developer",
       "rationale": "First-party integration domains"
+    }
+  ],
+  "trackers": [
+    {
+      "pattern": "www.googletagmanager.com",
+      "category": "analytics",
+      "label": "Google Tag Manager",
+      "rationale": "Third-party analytics/marketing loader; not required for any agent task or login. Silently denied."
+    },
+    {
+      "pattern": "*.googletagmanager.com",
+      "category": "analytics",
+      "label": "Google Tag Manager",
+      "rationale": "Third-party analytics/marketing loader; not required for any agent task or login. Silently denied."
+    },
+    {
+      "pattern": "www.google-analytics.com",
+      "category": "analytics",
+      "label": "Google Analytics",
+      "rationale": "Web analytics endpoint; also a known covert exfiltration channel. Silently denied."
+    },
+    {
+      "pattern": "ssl.google-analytics.com",
+      "category": "analytics",
+      "label": "Google Analytics",
+      "rationale": "Web analytics endpoint; also a known covert exfiltration channel. Silently denied."
+    },
+    {
+      "pattern": "*.google-analytics.com",
+      "category": "analytics",
+      "label": "Google Analytics",
+      "rationale": "Web analytics endpoint; also a known covert exfiltration channel. Silently denied."
+    },
+    {
+      "pattern": "analytics.google.com",
+      "category": "analytics",
+      "label": "Google Analytics 4",
+      "rationale": "Web analytics endpoint; also a known covert exfiltration channel. Silently denied."
+    },
+    {
+      "pattern": "*.analytics.google.com",
+      "category": "analytics",
+      "label": "Google Analytics 4",
+      "rationale": "Web analytics endpoint; also a known covert exfiltration channel. Silently denied."
+    },
+    {
+      "pattern": "*.doubleclick.net",
+      "category": "advertising",
+      "label": "Google DoubleClick",
+      "rationale": "Ad/tracking network; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "connect.facebook.net",
+      "category": "advertising",
+      "label": "Facebook Pixel/SDK",
+      "rationale": "Facebook tracking pixel/SDK; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.hotjar.com",
+      "category": "analytics",
+      "label": "Hotjar",
+      "rationale": "Session-replay/heatmap tracker; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "cdn.segment.com",
+      "category": "analytics",
+      "label": "Segment",
+      "rationale": "Customer-data/analytics pipeline; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "api.segment.io",
+      "category": "analytics",
+      "label": "Segment",
+      "rationale": "Customer-data/analytics pipeline; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.mixpanel.com",
+      "category": "analytics",
+      "label": "Mixpanel",
+      "rationale": "Product analytics; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.amplitude.com",
+      "category": "analytics",
+      "label": "Amplitude",
+      "rationale": "Product analytics; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.fullstory.com",
+      "category": "analytics",
+      "label": "FullStory",
+      "rationale": "Session-replay tracker; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.heap.io",
+      "category": "analytics",
+      "label": "Heap",
+      "rationale": "Product analytics; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.heapanalytics.com",
+      "category": "analytics",
+      "label": "Heap Analytics",
+      "rationale": "Product analytics; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.optimizely.com",
+      "category": "analytics",
+      "label": "Optimizely",
+      "rationale": "A/B testing & experimentation tracker; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.clarity.ms",
+      "category": "analytics",
+      "label": "Microsoft Clarity",
+      "rationale": "Session-replay/heatmap tracker; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "googleadservices.com",
+      "category": "advertising",
+      "label": "Google Ads",
+      "rationale": "Ad conversion/tracking; agent browsers have no use for ads. Silently denied."
+    },
+    {
+      "pattern": "*.googleadservices.com",
+      "category": "advertising",
+      "label": "Google Ads",
+      "rationale": "Ad conversion/tracking; agent browsers have no use for ads. Silently denied."
+    },
+    {
+      "pattern": "*.googlesyndication.com",
+      "category": "advertising",
+      "label": "Google AdSense/Syndication",
+      "rationale": "Ad serving network; agent browsers have no use for ads. Silently denied."
+    },
+    {
+      "pattern": "adservice.google.com",
+      "category": "advertising",
+      "label": "Google Ad Service",
+      "rationale": "Ad serving; agent browsers have no use for ads. Silently denied."
+    },
+    {
+      "pattern": "*.adnxs.com",
+      "category": "advertising",
+      "label": "Xandr/AppNexus",
+      "rationale": "Programmatic ad exchange; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.adsrvr.org",
+      "category": "advertising",
+      "label": "The Trade Desk",
+      "rationale": "Programmatic ad platform; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.criteo.com",
+      "category": "advertising",
+      "label": "Criteo",
+      "rationale": "Retargeting ad network; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.criteo.net",
+      "category": "advertising",
+      "label": "Criteo",
+      "rationale": "Retargeting ad network; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.taboola.com",
+      "category": "advertising",
+      "label": "Taboola",
+      "rationale": "Content-recommendation ad network; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.outbrain.com",
+      "category": "advertising",
+      "label": "Outbrain",
+      "rationale": "Content-recommendation ad network; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.scorecardresearch.com",
+      "category": "advertising",
+      "label": "comScore",
+      "rationale": "Audience measurement/tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.quantserve.com",
+      "category": "advertising",
+      "label": "Quantcast",
+      "rationale": "Audience measurement/tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "bat.bing.com",
+      "category": "advertising",
+      "label": "Microsoft/Bing Ads (UET)",
+      "rationale": "Bing ad conversion pixel; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "px.ads.linkedin.com",
+      "category": "advertising",
+      "label": "LinkedIn Ads Pixel",
+      "rationale": "LinkedIn ad/insight tag; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "static.ads-twitter.com",
+      "category": "advertising",
+      "label": "X/Twitter Ads Pixel",
+      "rationale": "Twitter ad pixel; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "analytics.twitter.com",
+      "category": "advertising",
+      "label": "X/Twitter Analytics",
+      "rationale": "Twitter conversion tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "ct.pinterest.com",
+      "category": "advertising",
+      "label": "Pinterest Tag",
+      "rationale": "Pinterest conversion pixel; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "tr.snapchat.com",
+      "category": "advertising",
+      "label": "Snapchat Pixel",
+      "rationale": "Snapchat conversion pixel; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "analytics.tiktok.com",
+      "category": "advertising",
+      "label": "TikTok Pixel",
+      "rationale": "TikTok conversion/analytics pixel; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.branch.io",
+      "category": "attribution",
+      "label": "Branch",
+      "rationale": "Mobile/web attribution & deep-link tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.appsflyer.com",
+      "category": "attribution",
+      "label": "AppsFlyer",
+      "rationale": "Mobile attribution tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.adjust.com",
+      "category": "attribution",
+      "label": "Adjust",
+      "rationale": "Mobile attribution tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.kochava.com",
+      "category": "attribution",
+      "label": "Kochava",
+      "rationale": "Mobile attribution tracking; never needed by the agent. Silently denied."
+    },
+    {
+      "pattern": "*.singular.net",
+      "category": "attribution",
+      "label": "Singular",
+      "rationale": "Marketing attribution tracking; never needed by the agent. Silently denied."
     }
   ]
 }

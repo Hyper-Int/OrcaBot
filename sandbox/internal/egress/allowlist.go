@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-v8-deny-always
+// REVISION: egress-allowlist-v9-tracker-denylist
 
 package egress
 
@@ -26,6 +26,7 @@ func init() {
 type Allowlist struct {
 	mu       sync.RWMutex
 	defaults []string          // glob patterns (e.g., "*.github.com")
+	trackers []string          // built-in tracker glob patterns (silently denied)
 	blocked  map[string]bool   // blocked default patterns -> true
 	user     map[string]string // domain -> entryID (for revocation tracking)
 	denied   map[string]string // permanently denied domains -> entryID ("deny always")
@@ -34,6 +35,11 @@ type Allowlist struct {
 type DefaultCatalog struct {
 	Revision string                `json:"revision"`
 	Defaults []DefaultCatalogEntry `json:"defaults"`
+	// Trackers are well-known analytics/ad domains that are NOT essential to any
+	// agent task or login. They are silently denied (no prompt, no connection) —
+	// smoother first-run UX than prompting, and they're never opened as an egress
+	// channel. User "Always Allow" still wins (checked before trackers in the proxy).
+	Trackers []DefaultCatalogEntry `json:"trackers"`
 }
 
 type DefaultCatalogEntry struct {
@@ -69,6 +75,20 @@ func mustLoadDefaultCatalog() DefaultCatalog {
 		filtered = append(filtered, entry)
 	}
 	catalog.Defaults = filtered
+
+	// Normalize tracker patterns (trim/lower, drop empties). Duplicates are
+	// harmless for matching, so we don't panic on them.
+	trackers := make([]DefaultCatalogEntry, 0, len(catalog.Trackers))
+	for _, entry := range catalog.Trackers {
+		pattern := strings.TrimSpace(strings.ToLower(entry.Pattern))
+		if pattern == "" {
+			continue
+		}
+		entry.Pattern = pattern
+		trackers = append(trackers, entry)
+	}
+	catalog.Trackers = trackers
+
 	return catalog
 }
 
@@ -90,14 +110,41 @@ func DefaultPatterns() []string {
 	return result
 }
 
+// TrackerPatterns returns the built-in tracker glob patterns (silently denied).
+func TrackerPatterns() []string {
+	result := make([]string, 0, len(defaultCatalog.Trackers))
+	for _, entry := range defaultCatalog.Trackers {
+		result = append(result, entry.Pattern)
+	}
+	return result
+}
+
 // NewAllowlist creates an Allowlist with default domains.
 func NewAllowlist() *Allowlist {
 	return &Allowlist{
 		defaults: DefaultPatterns(),
+		trackers: TrackerPatterns(),
 		blocked:  make(map[string]bool),
 		user:     make(map[string]string),
 		denied:   make(map[string]string),
 	}
+}
+
+// IsTracker reports whether a domain matches a built-in tracker pattern. Trackers
+// are silently denied (no prompt) UNLESS the user has explicitly allowed the domain,
+// which the proxy checks first via IsAllowed.
+func (a *Allowlist) IsTracker(domain string) bool {
+	domain = strings.ToLower(domain)
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	for _, pattern := range a.trackers {
+		if matchGlob(pattern, domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsDenied reports whether a domain has been permanently denied ("deny always").
