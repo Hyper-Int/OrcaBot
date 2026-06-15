@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v20-drag-hold-window-extracted
-console.log(`[canvas] REVISION: canvas-v20-drag-hold-window-extracted loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v22-browser-canvas-zspace
+console.log(`[canvas] REVISION: canvas-v22-browser-canvas-zspace loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -294,11 +294,13 @@ export function Canvas({
     (nextNodes: Node[]) =>
       nextNodes.map((node) => {
         const base = getZIndex(node.id);
-        const zIndex = node.type === "browser"
-          ? base + 12000
-          : node.type === "terminal"
-            ? base + 10000
-            : base;
+        // Terminals render their xterm in a separate overlay layer (z-10, above the
+        // whole canvas) so it stays crisp under zoom — so the terminal *node* keeps a
+        // high band to match "terminals live on their own level".
+        // Everything else (browser — now a native in-canvas noVNC node — plus notes,
+        // prompts, todos, …) shares the normal canvas z-space and orders freely via
+        // bringToFront, so any of them can be clicked to the front of the others.
+        const zIndex = node.type === "terminal" ? base + 10000 : base;
         return {
           ...node,
           style: {

@@ -2453,6 +2453,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return framedResponse;
   }
 
+  // GET /dashboards/:id/sandbox/status - Read-only VM status for the traffic light
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'sandbox' && segments[3] === 'status' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.getDashbоardSandbоxStatus(env, segments[1], auth.user!.id);
+  }
+
   // GET /dashboards/:id/metrics - Dashboard-scoped sandbox metrics
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'metrics' && method === 'GET') {
     const authError = requireAuth(auth);

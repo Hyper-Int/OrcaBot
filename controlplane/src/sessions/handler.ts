@@ -313,6 +313,27 @@ async function getMachineStateCached(fly: FlyMachinesClient, machineId: string):
   }
 }
 
+// Cached sandbox /health probe for the status light, so polling doesn't round-trip
+// to the VM every time. A machine can be Fly-'started' while the server is still
+// booting — this is what distinguishes "warmed up" (green) from "starting" (orange).
+const sandboxHealthCache = new Map<string, { healthy: boolean; checkedAt: number }>();
+const SANDBOX_HEALTH_TTL_MS = 8000;
+
+async function getSandbоxHealthCached(env: EnvWithDriveCache, machineId: string): Promise<boolean> {
+  const cached = sandboxHealthCache.get(machineId);
+  const now = Date.now();
+  if (cached && now - cached.checkedAt < SANDBOX_HEALTH_TTL_MS) return cached.healthy;
+  let healthy = false;
+  try {
+    const res = await sandboxFetch(env, '/health', { machineId, timeoutMs: 2500, retries: 0 });
+    healthy = res.ok;
+  } catch {
+    healthy = false;
+  }
+  sandboxHealthCache.set(machineId, { healthy, checkedAt: now });
+  return healthy;
+}
+
 /**
  * Ensures a dashboard has exactly one sandbox VM.
  *
@@ -1785,6 +1806,79 @@ export async function stоpDashbоardBrowser(
   });
 
   return new Response(null, { status: 204 });
+}
+
+// REVISION: sandbox-status-light-v1
+// Read-only VM status for the dashboard "traffic light". Does NOT provision —
+// reports the current Fly machine state, mapped to a small status enum:
+//   ready    (green)  — machine started/running
+//   starting (orange) — booting/transitioning (created/starting/replacing)
+//   asleep   (red)    — stopped/suspended, or no VM provisioned yet
+//   unknown  (orange) — couldn't determine (transient Fly error / provisioning off)
+// Uses getMachineStateCached so polling doesn't hammer the Fly API (anti-429).
+export async function getDashbоardSandbоxStatus(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+): Promise<Response> {
+  const access = await env.DB.prepare(
+    `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, userId).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79201: Not found or no access' }, { status: 404 });
+  }
+
+  const sandbox = await getDashbоardSandbоx(env, dashboardId);
+  if (!sandbox?.sandbox_machine_id) {
+    // No VM (or no machine id yet) — asleep until the first terminal/browser opens.
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
+  }
+
+  const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+    && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+  if (!flyProvisioningEnabled) {
+    // Can't query Fly (e.g. local/desktop). A recorded session implies it's up.
+    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id });
+  }
+
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+  let flyState: string;
+  try {
+    flyState = await getMachineStateCached(fly, sandbox.sandbox_machine_id);
+  } catch (err) {
+    if (err instanceof FlyMachineNotFoundError) {
+      return Response.json({ state: 'asleep', flyState: 'not_found', machineId: sandbox.sandbox_machine_id });
+    }
+    // Transient (e.g. 429) — report in-between rather than failing the poll.
+    return Response.json({ state: 'unknown', flyState: null, machineId: sandbox.sandbox_machine_id });
+  }
+
+  // Machine running at the Fly level — but only call it "ready" (green) once the
+  // sandbox server actually answers /health. Started-but-not-yet-serving = orange.
+  if (flyState === 'started') {
+    const healthy = await getSandbоxHealthCached(env, sandbox.sandbox_machine_id);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState,
+      machineId: sandbox.sandbox_machine_id,
+    });
+  }
+
+  let state: 'starting' | 'asleep' | 'unknown';
+  switch (flyState) {
+    case 'starting':
+    case 'created':
+    case 'replacing':
+      state = 'starting';
+      break;
+    case 'stopped':
+    case 'suspended':
+      state = 'asleep';
+      break;
+    default:
+      state = 'unknown';
+  }
+  return Response.json({ state, flyState, machineId: sandbox.sandbox_machine_id });
 }
 
 export async function getDashbоardBrowserStatus(

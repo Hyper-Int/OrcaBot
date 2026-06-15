@@ -411,6 +411,15 @@ export async function getDashboardBrowserStatus(
   return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/status`);
 }
 
+export type SandboxState = "ready" | "starting" | "asleep" | "unknown";
+
+/** Read-only VM status for the dashboard traffic light (does not provision). */
+export async function getDashboardSandboxStatus(
+  dashboardId: string
+): Promise<{ state: SandboxState; flyState: string | null; machineId: string | null }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/sandbox/status`);
+}
+
 export async function openDashboardBrowser(dashboardId: string, url: string): Promise<void> {
   await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/open`, { url });
 }
