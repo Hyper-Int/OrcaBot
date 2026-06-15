@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v8-perf-timing
+// REVISION: browser-v9-ready-reprobe
 package browser
 
 import (
@@ -44,8 +44,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v8-perf-timing
-const browserRevision = "browser-v8-perf-timing"
+// REVISION: browser-v9-ready-reprobe
+const browserRevision = "browser-v9-ready-reprobe"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -62,7 +62,7 @@ func NewController(workspace string) *Controller {
 // that redirects, XHR, and subresource loads are subject to the same
 // CheckAndHold approval flow as the initial navigation URL.
 // Loopback addresses bypass the proxy so the CDP debug connection is unaffected.
-// REVISION: browser-v8-perf-timing
+// REVISION: browser-v9-ready-reprobe
 func NewControllerWithEgress(workspace string, egressProxyPort int) *Controller {
 	return &Controller{workspace: workspace, egressProxyPort: egressProxyPort}
 }
@@ -183,7 +183,7 @@ func (c *Controller) Start() (Status, error) {
 	// Chromium runs as root and is outside the iptables UID range, so without
 	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
 	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
-	// REVISION: browser-v8-perf-timing
+	// REVISION: browser-v9-ready-reprobe
 	if c.egressProxyPort > 0 {
 		chromiumArgs = append(chromiumArgs,
 			"--proxy-server=http://127.0.0.1:"+strconv.Itoa(c.egressProxyPort),
@@ -244,7 +244,10 @@ func (c *Controller) Start() (Status, error) {
 	c.running = true
 	spawnElapsed := time.Since(startTime)
 	readyStart := time.Now()
-	c.ready = waitForDebugReady(debugPort, 10*time.Second)
+	// Short readiness budget under the lock — warm/fast browsers report ready right
+	// away; cold chromium boot (can exceed 20s) is picked up by the Status() re-probe
+	// instead of blocking Start() (and the mutex) for the whole boot.
+	c.ready = waitForDebugReady(debugPort, 3*time.Second)
 
 	// Perf: spawn = time to launch all 4 processes; debugReady = time waiting for
 	// chromium's DevTools endpoint to answer; total = full cold bring-up.
@@ -373,6 +376,23 @@ func (c *Controller) Status() Status {
 			}
 			c.mu.Unlock()
 		}
+	}
+
+	// Re-evaluate readiness. c.ready may have been false at Start() time if chromium's
+	// DevTools hadn't answered within the short startup budget (cold boot can take
+	// >20s). Probe again here so the browser flips to ready on a later status poll,
+	// instead of staying stuck until an OpenURL call happens to set it.
+	c.mu.Lock()
+	stillRunning := c.running
+	alreadyReady := c.ready
+	debugPort := c.debugPort
+	c.mu.Unlock()
+	if stillRunning && !alreadyReady && debugPort > 0 && probeDebugReady(debugPort) {
+		c.mu.Lock()
+		if c.running && c.debugPort == debugPort {
+			c.ready = true
+		}
+		c.mu.Unlock()
 	}
 
 	c.mu.Lock()
@@ -587,6 +607,22 @@ func waitForPort(port int, timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
+}
+
+// probeDebugReady does a single quick check of chromium's DevTools endpoint.
+// Unlike waitForDebugReady (which loops until a deadline), this returns immediately,
+// so it's safe to call on every Status() poll without blocking.
+func probeDebugReady(port int) bool {
+	if port == 0 {
+		return false
+	}
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/version", port))
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode < 300
 }
 
 func waitForDebugReady(port int, timeout time.Duration) bool {

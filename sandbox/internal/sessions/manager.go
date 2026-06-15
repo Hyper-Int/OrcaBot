@@ -6,9 +6,12 @@ package sessions
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminishim"
@@ -131,7 +134,42 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
+	// REVISION: browser-prewarm-v1
+	// Pre-warm chromium in the background so the browser is ready (~instant) when the
+	// user or an agent first opens it, instead of paying chromium's ~25s cold boot on
+	// demand. One sandbox session per VM, so this warms one browser per VM. On by
+	// default; set BROWSER_PREWARM=false to disable (saves ~250-350MB idle RAM/VM).
+	// A short delay yields CPU to the initial terminal/agent launch first (chromium
+	// boot is heavy and the VM has only 2 vCPUs).
+	if browserPrewarmEnabled() {
+		go func(s *Session) {
+			time.Sleep(3 * time.Second)
+			// Skip if the session was deleted during the delay, so we don't start an
+			// orphan chromium on a torn-down session (Session.Close stops the browser,
+			// but only if it was already created).
+			if _, err := m.Get(s.ID); err != nil {
+				return
+			}
+			if _, err := s.StartBrowser(); err != nil {
+				log.Printf("[browser][prewarm] session %s: failed: %v", s.ID, err)
+			} else {
+				log.Printf("[browser][prewarm] session %s: started", s.ID)
+			}
+		}(session)
+	}
+
 	return session, nil
+}
+
+// browserPrewarmEnabled reports whether chromium should be pre-warmed at session
+// creation. Defaults to ON; BROWSER_PREWARM=false/0/no/off disables it.
+func browserPrewarmEnabled() bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv("BROWSER_PREWARM"))) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 // Get retrieves a session by ID

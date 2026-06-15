@@ -653,9 +653,9 @@ async function claimWarmMachine(
       return null;
     }
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine.
-    // Warm pool machines have autostop:'stop' for hibernation; once claimed, disable it.
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // Warm machines are created with autostop:'off' (genuinely warm), so there's no
+    // hibernation to disable on claim — and avoiding a config update here means no
+    // machine restart right when the user claims it.
 
     // Create sandbox session pinned to this machine
     const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
@@ -747,6 +747,10 @@ async function coldProvisionMachine(
       volumeId,
       image,
       region,
+      // Dashboard VMs suspend (RAM snapshot, ~sub-second resume) when idle instead of
+      // cold-stopping, so coming back to a dashboard doesn't cold-boot ("stuck
+      // connecting"). The cron escalates long-idle VMs from suspended → stopped.
+      autostop: 'suspend',
       env: {
         SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -763,8 +767,10 @@ async function coldProvisionMachine(
     // Step 3: Wait for machine to be ready
     await fly.waitForState(machineId, 'started', 90);
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // NOTE: do NOT force autostop off here. Dashboard VMs are created with
+    // autostop:'suspend' (fast RAM-snapshot resume) so idle dashboards suspend
+    // instead of cold-stopping. A config update here would (a) override that and
+    // (b) trigger a machine restart right after provisioning.
 
     // Step 4: Create sandbox session with retry (server may not be listening immediately after started)
     let sandboxSession!: { id: string; machineId?: string };
