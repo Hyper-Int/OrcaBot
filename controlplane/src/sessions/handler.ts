@@ -313,6 +313,27 @@ async function getMachineStateCached(fly: FlyMachinesClient, machineId: string):
   }
 }
 
+// Cached sandbox /health probe for the status light, so polling doesn't round-trip
+// to the VM every time. A machine can be Fly-'started' while the server is still
+// booting — this is what distinguishes "warmed up" (green) from "starting" (orange).
+const sandboxHealthCache = new Map<string, { healthy: boolean; checkedAt: number }>();
+const SANDBOX_HEALTH_TTL_MS = 8000;
+
+async function getSandbоxHealthCached(env: EnvWithDriveCache, machineId: string): Promise<boolean> {
+  const cached = sandboxHealthCache.get(machineId);
+  const now = Date.now();
+  if (cached && now - cached.checkedAt < SANDBOX_HEALTH_TTL_MS) return cached.healthy;
+  let healthy = false;
+  try {
+    const res = await sandboxFetch(env, '/health', { machineId, timeoutMs: 2500, retries: 0 });
+    healthy = res.ok;
+  } catch {
+    healthy = false;
+  }
+  sandboxHealthCache.set(machineId, { healthy, checkedAt: now });
+  return healthy;
+}
+
 /**
  * Ensures a dashboard has exactly one sandbox VM.
  *
@@ -653,9 +674,9 @@ async function claimWarmMachine(
       return null;
     }
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine.
-    // Warm pool machines have autostop:'stop' for hibernation; once claimed, disable it.
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // Warm machines are created with autostop:'off' (genuinely warm), so there's no
+    // hibernation to disable on claim — and avoiding a config update here means no
+    // machine restart right when the user claims it.
 
     // Create sandbox session pinned to this machine
     const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
@@ -747,6 +768,10 @@ async function coldProvisionMachine(
       volumeId,
       image,
       region,
+      // Dashboard VMs suspend (RAM snapshot, ~sub-second resume) when idle instead of
+      // cold-stopping, so coming back to a dashboard doesn't cold-boot ("stuck
+      // connecting"). The cron escalates long-idle VMs from suspended → stopped.
+      autostop: 'suspend',
       env: {
         SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -763,8 +788,10 @@ async function coldProvisionMachine(
     // Step 3: Wait for machine to be ready
     await fly.waitForState(machineId, 'started', 90);
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // NOTE: do NOT force autostop off here. Dashboard VMs are created with
+    // autostop:'suspend' (fast RAM-snapshot resume) so idle dashboards suspend
+    // instead of cold-stopping. A config update here would (a) override that and
+    // (b) trigger a machine restart right after provisioning.
 
     // Step 4: Create sandbox session with retry (server may not be listening immediately after started)
     let sandboxSession!: { id: string; machineId?: string };
@@ -1333,7 +1360,11 @@ export async function createSessiоn(
     // Use ensureDashboardSandbox which checks machine health via Fly API,
     // handles destroyed machines (FlyMachineNotFoundError → reprovision),
     // and validates the session is still reachable on the sandbox.
+    // Perf: this is the "first connect to sandbox" cost (warm-pool claim is fast,
+    // cold provision is slow). Logged so we can attribute terminal startup latency.
+    const ensureStart = Date.now();
     const sandboxResult = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
+    console.log(`[perf][createSession] ensureDashboardSandbox=${Date.now() - ensureStart}ms dashboard=${dashboardId}`);
     if (sandboxResult instanceof Response) {
       // Access denied or other error — clean up the creating session record
       await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
@@ -1775,6 +1806,79 @@ export async function stоpDashbоardBrowser(
   });
 
   return new Response(null, { status: 204 });
+}
+
+// REVISION: sandbox-status-light-v1
+// Read-only VM status for the dashboard "traffic light". Does NOT provision —
+// reports the current Fly machine state, mapped to a small status enum:
+//   ready    (green)  — machine started/running
+//   starting (orange) — booting/transitioning (created/starting/replacing)
+//   asleep   (red)    — stopped/suspended, or no VM provisioned yet
+//   unknown  (orange) — couldn't determine (transient Fly error / provisioning off)
+// Uses getMachineStateCached so polling doesn't hammer the Fly API (anti-429).
+export async function getDashbоardSandbоxStatus(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+): Promise<Response> {
+  const access = await env.DB.prepare(
+    `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, userId).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79201: Not found or no access' }, { status: 404 });
+  }
+
+  const sandbox = await getDashbоardSandbоx(env, dashboardId);
+  if (!sandbox?.sandbox_machine_id) {
+    // No VM (or no machine id yet) — asleep until the first terminal/browser opens.
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
+  }
+
+  const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+    && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+  if (!flyProvisioningEnabled) {
+    // Can't query Fly (e.g. local/desktop). A recorded session implies it's up.
+    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id });
+  }
+
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+  let flyState: string;
+  try {
+    flyState = await getMachineStateCached(fly, sandbox.sandbox_machine_id);
+  } catch (err) {
+    if (err instanceof FlyMachineNotFoundError) {
+      return Response.json({ state: 'asleep', flyState: 'not_found', machineId: sandbox.sandbox_machine_id });
+    }
+    // Transient (e.g. 429) — report in-between rather than failing the poll.
+    return Response.json({ state: 'unknown', flyState: null, machineId: sandbox.sandbox_machine_id });
+  }
+
+  // Machine running at the Fly level — but only call it "ready" (green) once the
+  // sandbox server actually answers /health. Started-but-not-yet-serving = orange.
+  if (flyState === 'started') {
+    const healthy = await getSandbоxHealthCached(env, sandbox.sandbox_machine_id);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState,
+      machineId: sandbox.sandbox_machine_id,
+    });
+  }
+
+  let state: 'starting' | 'asleep' | 'unknown';
+  switch (flyState) {
+    case 'starting':
+    case 'created':
+    case 'replacing':
+      state = 'starting';
+      break;
+    case 'stopped':
+    case 'suspended':
+      state = 'asleep';
+      break;
+    default:
+      state = 'unknown';
+  }
+  return Response.json({ state, flyState, machineId: sandbox.sandbox_machine_id });
 }
 
 export async function getDashbоardBrowserStatus(

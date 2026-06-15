@@ -678,6 +678,11 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         volumeId,
         image,
         region,
+        // Warm pool stays genuinely warm — Fly must NOT auto-stop idle warm machines,
+        // otherwise they cold-cycle (stop→autostart→stop) and a claim hits a stopped
+        // machine that must cold-boot ("stuck connecting"). The pool is small
+        // (WARM_POOL_TARGET) so the always-on cost is bounded.
+        autostop: 'off',
         env: {
           SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -2446,6 +2451,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
     headers.delete('X-Frame-Options');
     return framedResponse;
+  }
+
+  // GET /dashboards/:id/sandbox/status - Read-only VM status for the traffic light
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'sandbox' && segments[3] === 'status' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.getDashbоardSandbоxStatus(env, segments[1], auth.user!.id);
   }
 
   // GET /dashboards/:id/metrics - Dashboard-scoped sandbox metrics

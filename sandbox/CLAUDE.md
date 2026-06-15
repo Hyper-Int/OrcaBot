@@ -403,8 +403,10 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 - `OpenURL()` reuses blank tabs or deduplicates existing URLs via Chrome DevTools Protocol
 - Port waiting with timeouts (10–20s per process)
 - Status returns: `Running`, `Ready`, `WSPort`, `Display`, `DebugPort`
+- **Readiness re-probe**: `Ready` is re-evaluated on every `Status()` poll (cold chromium boot can exceed the short startup budget), so the browser flips to ready as soon as DevTools answers instead of latching `false` until an `OpenURL`.
+- **Pre-warm**: chromium is started in the background at sandbox session creation (`Manager.Create`) so the browser is ready (~instant) when first opened, instead of paying the ~25s cold boot on demand. One sandbox session per VM ⇒ one pre-warmed browser per VM (~250–350 MB idle on the 4 GB VMs). **On by default; set `BROWSER_PREWARM=false` to disable.** Future: idle auto-stop to reclaim RAM when unused.
 
-**Key file:** `internal/browser/browser.go`
+**Key file:** `internal/browser/browser.go`, pre-warm hook in `internal/sessions/manager.go`
 
 ---
 

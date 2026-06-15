@@ -49,6 +49,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
+import { perfStart, perfMark, perfEnd } from "@/lib/perf";
 import { BlockWrapper } from "./BlockWrapper";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import {
@@ -1889,8 +1890,10 @@ export function TerminalBlock({
   React.useEffect(() => {
     if (connectionState === "connected") {
       wasConnectedRef.current = true;
+      // Perf: close the create→connected span (no-op if not started, e.g. reconnect).
+      perfEnd(`terminal:${data.itemId || id}`, "ws-connected");
     }
-  }, [connectionState]);
+  }, [connectionState, data.itemId, id]);
 
   // Reset wasConnected when session changes (new session created)
   React.useEffect(() => {
@@ -2236,8 +2239,12 @@ export function TerminalBlock({
     setSessionError(null);
 
     try {
+      // Perf: time terminal create → first connected. perfEnd fires in the
+      // connectionState effect when the WS reaches "connected".
+      perfStart(`terminal:${actualItemId}`);
       console.log(`[TerminalBlock] Creating session...`);
       const newSession = await createSession(data.dashboardId, actualItemId);
+      perfMark(`terminal:${actualItemId}`, "session-created");
       console.log(`[TerminalBlock] Session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);

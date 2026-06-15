@@ -113,6 +113,7 @@ import {
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
 import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
+import { SandboxStatusLight } from "@/components/SandboxStatusLight";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
 import { getUserSetup, dismissAiSetup } from "@/lib/api/cloudflare/user-setup";
@@ -3606,6 +3607,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3 justify-end">
+            {/* Sandbox VM traffic light */}
+            <div className="flex items-center px-1.5 py-1 bg-[var(--background)] rounded">
+              <SandboxStatusLight dashboardId={dashboardId} />
+            </div>
+
             {/* Presence indicators */}
             <div className="flex items-center gap-2">
               <Tooltip
