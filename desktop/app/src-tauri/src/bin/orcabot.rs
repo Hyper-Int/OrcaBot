@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v3-integrations
+// REVISION: orcabot-cli-v4-pty-stream
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -30,7 +30,7 @@ const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v3-integrations";
+const REVISION: &str = "orcabot-cli-v4-pty-stream";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -41,6 +41,7 @@ fn main() {
     let code = match cmd {
         "tui" | "ui" => cmd_tui(),
         "ls" | "components" => cmd_ls(rest),
+        "tail" => cmd_tail(rest),
         "new" | "create" => cmd_new(rest),
         "connect" => cmd_connect(rest),
         "attach" => cmd_attach(rest),
@@ -651,6 +652,132 @@ fn cmd_new(rest: &[String]) -> i32 {
             2
         }
     }
+}
+
+// ---- PTY streaming (terminal I/O) -----------------------------------------
+
+/// Resolve a terminal component (item id) to its (control-plane session id, pty id).
+fn session_for_item(dash: &str, item_id: &str) -> Result<(String, String), String> {
+    let v = cp_call("GET", &format!("/dashboards/{}", dash), None)?;
+    let sessions = v.get("sessions").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    for s in sessions {
+        if s.get("itemId").and_then(|x| x.as_str()) == Some(item_id) {
+            let sid = s.get("id").and_then(|x| x.as_str()).unwrap_or("");
+            let pty = s.get("ptyId").and_then(|x| x.as_str()).unwrap_or("");
+            if !sid.is_empty() && !pty.is_empty() {
+                return Ok((sid.to_string(), pty.to_string()));
+            }
+        }
+    }
+    Err("that terminal has no running session yet (start it first)".to_string())
+}
+
+/// Open the PTY WebSocket through the control plane (dev-auth via X-User-ID).
+/// Returns a connected, blocking WebSocket with a short read timeout so callers
+/// can poll without blocking forever.
+fn open_pty_ws(
+    session_id: &str,
+    pty_id: &str,
+    read_timeout: Duration,
+) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, String> {
+    use tungstenite::client::IntoClientRequest;
+    // WS auth goes via the user_id query param (browsers can't set headers on a WS
+    // handshake, so that's how the frontend authenticates). Also send an allowed
+    // Origin + the X-User-ID header as belt-and-suspenders.
+    let url = format!(
+        "ws://127.0.0.1:{}/sessions/{}/ptys/{}/ws?user_id={}",
+        CONTROLPLANE_PORT, session_id, pty_id, DEV_USER
+    );
+    let mut req = url.into_client_request().map_err(|e| e.to_string())?;
+    req.headers_mut().insert(
+        "X-User-ID",
+        tungstenite::http::HeaderValue::from_static(DEV_USER),
+    );
+    req.headers_mut().insert(
+        "Origin",
+        tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
+    );
+    let (ws, _resp) = tungstenite::connect(req).map_err(|e| format!("ws connect: {e}"))?;
+    if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
+        let _ = s.set_read_timeout(Some(read_timeout));
+    }
+    Ok(ws)
+}
+
+fn is_timeout(e: &tungstenite::Error) -> bool {
+    matches!(e, tungstenite::Error::Io(io)
+        if io.kind() == std::io::ErrorKind::WouldBlock || io.kind() == std::io::ErrorKind::TimedOut)
+}
+
+/// Headless verification of the PTY stream: connect and print whatever the
+/// terminal emits for `secs` seconds. Proves WS auth + routing + streaming.
+fn cmd_tail(rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: run `orcabot up` first");
+        return 1;
+    }
+    let (pos, dash) = split_dash_flag(rest);
+    let Some(item) = pos.first() else {
+        eprintln!("usage: orcabot tail <terminal-id> [--dash <id>] [--secs N]");
+        return 2;
+    };
+    let mut secs = 5u64;
+    if let Some(i) = pos.iter().position(|a| a == "--secs") {
+        if let Some(v) = pos.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
+            secs = v;
+        }
+    }
+    let did = match dash_for_terminal(item, dash) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    let (sid, pty) = match session_for_item(&did, item) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    let mut ws = match open_pty_ws(&sid, &pty, Duration::from_millis(400)) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    eprintln!("orcabot: connected to pty {} — streaming for {secs}s…", &pty[..pty.len().min(8)]);
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    let mut total = 0usize;
+    while Instant::now() < deadline {
+        match ws.read() {
+            Ok(tungstenite::Message::Binary(b)) => {
+                total += b.len();
+                print!("{}", String::from_utf8_lossy(&b));
+                let _ = std::io::stdout().flush();
+            }
+            Ok(tungstenite::Message::Text(t)) => {
+                total += t.len();
+                print!("{t}");
+                let _ = std::io::stdout().flush();
+            }
+            Ok(tungstenite::Message::Ping(p)) => {
+                let _ = ws.send(tungstenite::Message::Pong(p));
+            }
+            Ok(tungstenite::Message::Close(_)) => break,
+            Ok(_) => {}
+            Err(e) if is_timeout(&e) => continue,
+            Err(e) => {
+                eprintln!("\norcabot: ws error: {e}");
+                break;
+            }
+        }
+    }
+    let _ = ws.close(None);
+    eprintln!("\norcabot: stream ended ({total} bytes received)");
+    0
 }
 
 // ---- integrations: connect / attach / detach ------------------------------
