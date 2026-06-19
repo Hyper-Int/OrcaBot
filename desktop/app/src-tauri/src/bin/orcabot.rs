@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v4-pty-stream
+// REVISION: orcabot-cli-v5-terminal-pane
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -17,20 +17,25 @@ use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
+
+use tungstenite::Message;
 
 const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v4-pty-stream";
+const REVISION: &str = "orcabot-cli-v5-terminal-pane";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -727,6 +732,14 @@ fn cmd_tail(rest: &[String]) -> i32 {
             secs = v;
         }
     }
+    // --screen feeds the stream through vt100 and prints the rendered grid at the
+    // end (verifies the exact render pipeline the TUI uses), instead of raw bytes.
+    let screen_mode = pos.iter().any(|a| a == "--screen");
+    // --send <text>: take control and type <text> + Enter (verifies the input path).
+    let send_text = pos
+        .iter()
+        .position(|a| a == "--send")
+        .and_then(|i| pos.get(i + 1).cloned());
     let did = match dash_for_terminal(item, dash) {
         Ok(d) => d,
         Err(e) => {
@@ -749,19 +762,41 @@ fn cmd_tail(rest: &[String]) -> i32 {
         }
     };
     eprintln!("orcabot: connected to pty {} — streaming for {secs}s…", &pty[..pty.len().min(8)]);
+    // In screen mode, nudge the PTY to redraw so we capture a full frame.
+    let mut parser = vt100::Parser::new(24, 80, 0);
+    if screen_mode {
+        let _ = ws.send(tungstenite::Message::Text(
+            serde_json::json!({ "type": "resize", "cols": 80, "rows": 24 }).to_string(),
+        ));
+    }
+    if let Some(text) = &send_text {
+        let _ = ws.send(tungstenite::Message::Text(
+            serde_json::json!({ "type": "take_control" }).to_string(),
+        ));
+        std::thread::sleep(Duration::from_millis(300));
+        let mut bytes = text.clone().into_bytes();
+        bytes.push(b'\n');
+        let _ = ws.send(tungstenite::Message::Binary(bytes));
+    }
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut total = 0usize;
     while Instant::now() < deadline {
         match ws.read() {
             Ok(tungstenite::Message::Binary(b)) => {
                 total += b.len();
-                print!("{}", String::from_utf8_lossy(&b));
-                let _ = std::io::stdout().flush();
+                if screen_mode {
+                    parser.process(&b);
+                } else {
+                    print!("{}", String::from_utf8_lossy(&b));
+                    let _ = std::io::stdout().flush();
+                }
             }
             Ok(tungstenite::Message::Text(t)) => {
-                total += t.len();
-                print!("{t}");
-                let _ = std::io::stdout().flush();
+                if !screen_mode {
+                    total += t.len();
+                    print!("{t}");
+                    let _ = std::io::stdout().flush();
+                }
             }
             Ok(tungstenite::Message::Ping(p)) => {
                 let _ = ws.send(tungstenite::Message::Pong(p));
@@ -776,8 +811,177 @@ fn cmd_tail(rest: &[String]) -> i32 {
         }
     }
     let _ = ws.close(None);
+    if screen_mode {
+        println!("{}", parser.screen().contents());
+    }
     eprintln!("\norcabot: stream ended ({total} bytes received)");
     0
+}
+
+// ---- live PTY session (background WS thread + vt100 screen) ----------------
+
+enum WsOut {
+    Bin(Vec<u8>),
+    Text(String),
+}
+
+/// A live attachment to a terminal's PTY: a background thread owns the WebSocket,
+/// feeds binary output into a vt100 parser, and sends queued input/control frames.
+struct PtySession {
+    item_id: String,
+    pty_short: String,
+    parser: Arc<Mutex<vt100::Parser>>,
+    status: Arc<Mutex<String>>,
+    stop: Arc<AtomicBool>,
+    out: mpsc::Sender<WsOut>,
+    rows: u16,
+    cols: u16,
+}
+
+impl PtySession {
+    fn send_input(&self, bytes: Vec<u8>) {
+        let _ = self.out.send(WsOut::Bin(bytes));
+    }
+    fn resize(&mut self, rows: u16, cols: u16) {
+        if rows == 0 || cols == 0 || (rows == self.rows && cols == self.cols) {
+            return;
+        }
+        self.rows = rows;
+        self.cols = cols;
+        if let Ok(mut p) = self.parser.lock() {
+            p.set_size(rows, cols);
+        }
+        let _ = self.out.send(WsOut::Text(
+            serde_json::json!({ "type": "resize", "cols": cols, "rows": rows }).to_string(),
+        ));
+    }
+    fn parser_status(&self) -> String {
+        self.status.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+}
+
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn spawn_pty_session(
+    item_id: &str,
+    session_id: &str,
+    pty_id: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<PtySession, String> {
+    let mut ws = open_pty_ws(session_id, pty_id, Duration::from_millis(40))?;
+    // Take control so our keystrokes reach the PTY, and size it to our pane.
+    let _ = ws.send(Message::Text(serde_json::json!({ "type": "take_control" }).to_string()));
+    let _ = ws.send(Message::Text(
+        serde_json::json!({ "type": "resize", "cols": cols, "rows": rows }).to_string(),
+    ));
+
+    let parser = Arc::new(Mutex::new(vt100::Parser::new(rows.max(1), cols.max(1), 0)));
+    let status = Arc::new(Mutex::new("connected".to_string()));
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel::<WsOut>();
+
+    let (p, st, stt) = (parser.clone(), stop.clone(), status.clone());
+    std::thread::spawn(move || {
+        loop {
+            if st.load(Ordering::Relaxed) {
+                break;
+            }
+            // Drain queued output (keystrokes / control frames).
+            while let Ok(m) = rx.try_recv() {
+                let r = match m {
+                    WsOut::Bin(b) => ws.send(Message::Binary(b)),
+                    WsOut::Text(t) => ws.send(Message::Text(t)),
+                };
+                if r.is_err() {
+                    break;
+                }
+            }
+            match ws.read() {
+                // Binary = PTY output → vt100. Text = JSON control frames → not rendered.
+                Ok(Message::Binary(b)) => {
+                    if let Ok(mut pp) = p.lock() {
+                        pp.process(&b);
+                    }
+                }
+                Ok(Message::Ping(x)) => {
+                    let _ = ws.send(Message::Pong(x));
+                }
+                Ok(Message::Text(_)) => {}
+                Ok(Message::Close(_)) => {
+                    if let Ok(mut s) = stt.lock() {
+                        *s = "closed".into();
+                    }
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) if is_timeout(&e) => {}
+                Err(e) => {
+                    if let Ok(mut s) = stt.lock() {
+                        *s = format!("error: {e}");
+                    }
+                    break;
+                }
+            }
+        }
+        let _ = ws.close(None);
+    });
+
+    Ok(PtySession {
+        item_id: item_id.to_string(),
+        pty_short: pty_id.chars().take(8).collect(),
+        parser,
+        status,
+        stop,
+        out: tx,
+        rows,
+        cols,
+    })
+}
+
+/// Encode a key event into the bytes a PTY expects.
+fn key_to_bytes(code: KeyCode, mods: KeyModifiers) -> Option<Vec<u8>> {
+    let b = match code {
+        KeyCode::Char(c) => {
+            if mods.contains(KeyModifiers::CONTROL) {
+                let lc = c.to_ascii_lowercase();
+                if lc.is_ascii_alphabetic() {
+                    vec![lc as u8 - b'a' + 1]
+                } else {
+                    return None;
+                }
+            } else {
+                c.to_string().into_bytes()
+            }
+        }
+        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Tab => vec![b'\t'],
+        KeyCode::Esc => vec![0x1b],
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
+        KeyCode::Right => b"\x1b[C".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        _ => return None,
+    };
+    Some(b)
+}
+
+fn conv_color(c: vt100::Color) -> Color {
+    match c {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(i) => Color::Indexed(i),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
 }
 
 // ---- integrations: connect / attach / detach ------------------------------
@@ -1062,6 +1266,8 @@ struct App {
     input: String,
     log: Vec<String>,
     quit: bool,
+    /// When set, we're in "terminal mode" streaming a component's live PTY.
+    term: Option<PtySession>,
 }
 
 impl App {
@@ -1075,6 +1281,7 @@ impl App {
                 "orcabot TUI — `help` for commands, Enter to run, Esc to quit.".to_string(),
             ],
             quit: false,
+            term: None,
         };
         a.reload_dashboards();
         a.reload_components();
@@ -1116,30 +1323,94 @@ impl App {
 
     fn run(&mut self, term: &mut DefaultTerminal) -> std::io::Result<()> {
         while !self.quit {
+            // Keep the live PTY sized to the screen (minus the 1-line status bar).
+            if self.term.is_some() {
+                if let Ok(sz) = term.size() {
+                    if let Some(t) = self.term.as_mut() {
+                        t.resize(sz.height.saturating_sub(1), sz.width);
+                    }
+                }
+            }
             term.draw(|f| self.ui(f))?;
-            if event::poll(Duration::from_millis(300))? {
+            // Poll fast in terminal mode for responsive output.
+            let poll = if self.term.is_some() { 30 } else { 200 };
+            if event::poll(Duration::from_millis(poll))? {
                 if let Event::Key(k) = event::read()? {
                     if k.kind == KeyEventKind::Press {
-                        match k.code {
-                            KeyCode::Esc => self.quit = true,
-                            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
-                                self.quit = true
-                            }
-                            KeyCode::Enter => {
-                                let line = std::mem::take(&mut self.input);
-                                self.run_command(line.trim());
-                            }
-                            KeyCode::Backspace => {
-                                self.input.pop();
-                            }
-                            KeyCode::Char(c) => self.input.push(c),
-                            _ => {}
+                        if self.term.is_some() {
+                            self.on_key_terminal(k);
+                        } else {
+                            self.on_key_list(k);
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Key handling while a live terminal is focused: forward to the PTY, except
+    /// Ctrl-] which detaches and returns to the component list.
+    fn on_key_terminal(&mut self, k: ratatui::crossterm::event::KeyEvent) {
+        if k.code == KeyCode::Char(']') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            self.term = None; // Drop closes the WS thread.
+            self.logln("detached from terminal");
+            self.reload_components();
+            return;
+        }
+        if let Some(bytes) = key_to_bytes(k.code, k.modifiers) {
+            if let Some(t) = self.term.as_ref() {
+                t.send_input(bytes);
+            }
+        }
+    }
+
+    /// Key handling in the component-list view: type + run commands.
+    fn on_key_list(&mut self, k: ratatui::crossterm::event::KeyEvent) {
+        match k.code {
+            KeyCode::Esc => self.quit = true,
+            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => self.quit = true,
+            KeyCode::Enter => {
+                let line = std::mem::take(&mut self.input);
+                self.run_command(line.trim());
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+    }
+
+    /// Open a component (by 1-based index) as a live terminal pane.
+    fn open_component(&mut self, idx1: usize) {
+        let Some(dash) = self.current_dash_id() else {
+            self.logln("! no dashboard selected");
+            return;
+        };
+        let Some(c) = self.components.get(idx1.wrapping_sub(1)) else {
+            self.logln(format!("! no component #{idx1}"));
+            return;
+        };
+        if c.kind != "terminal" {
+            self.logln(format!("! #{idx1} is a {} — only terminals can be opened", c.kind));
+            return;
+        }
+        let item_id = c.id.clone();
+        let (sid, pty) = match session_for_item(&dash, &item_id) {
+            Ok(v) => v,
+            Err(e) => {
+                self.logln(format!("! {e}"));
+                return;
+            }
+        };
+        match spawn_pty_session(&item_id, &sid, &pty, 24, 80) {
+            Ok(s) => {
+                self.logln(format!("opened terminal #{idx1} (Ctrl-] to detach)"));
+                self.term = Some(s);
+            }
+            Err(e) => self.logln(format!("! open: {e}")),
+        }
     }
 
     fn run_command(&mut self, line: &str) {
@@ -1157,6 +1428,7 @@ impl App {
                     "  dash                 list dashboards",
                     "  dash new <name>      create a dashboard",
                     "  new terminal <agent> start a terminal (claude|gemini|codex|shell)",
+                    "  open <n>             attach to terminal #n live (Ctrl-] to detach)",
                     "  new note <text>      add a note component",
                     "  connect <provider>   get OAuth URL (gmail|drive|calendar|github|twitter)",
                     "  attach <id> <prov>   attach a connected integration to terminal <id>",
@@ -1271,6 +1543,10 @@ impl App {
                 }
                 _ => self.logln("! use <n>: invalid index"),
             },
+            ["open", n] => match n.parse::<usize>() {
+                Ok(i) => self.open_component(i),
+                _ => self.logln("! open <n>: component number from the list"),
+            },
             ["rm", id] => {
                 let Some(dash) = self.current_dash_id() else {
                     self.logln("! no dashboard selected");
@@ -1304,6 +1580,10 @@ impl App {
     }
 
     fn ui(&self, f: &mut Frame) {
+        if self.term.is_some() {
+            self.ui_terminal(f);
+            return;
+        }
         let chunks = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(3),
@@ -1356,6 +1636,63 @@ impl App {
             Paragraph::new(format!("> {}", self.input)).block(Block::bordered().title("Command")),
             chunks[3],
         );
+    }
+
+    /// Render the focused live terminal: a status bar + the vt100 screen grid.
+    fn ui_terminal(&self, f: &mut Frame) {
+        let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(f.area());
+        let Some(term) = self.term.as_ref() else { return };
+
+        let bar = Paragraph::new(format!(
+            " terminal pty {} — {}   (Ctrl-] to detach)",
+            term.pty_short,
+            term.parser_status()
+        ))
+        .style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD));
+        f.render_widget(bar, chunks[0]);
+
+        let area = chunks[1];
+        let Ok(parser) = term.parser.lock() else { return };
+        let screen = parser.screen();
+        let (rows, cols) = screen.size();
+        let mut lines: Vec<Line> = Vec::with_capacity(rows as usize);
+        for r in 0..rows.min(area.height) {
+            let mut spans: Vec<Span> = Vec::with_capacity(cols as usize);
+            for c in 0..cols.min(area.width) {
+                match screen.cell(r, c) {
+                    Some(cell) => {
+                        let mut content = cell.contents();
+                        if content.is_empty() {
+                            content = " ".to_string();
+                        }
+                        let mut style = Style::default()
+                            .fg(conv_color(cell.fgcolor()))
+                            .bg(conv_color(cell.bgcolor()));
+                        if cell.bold() {
+                            style = style.add_modifier(Modifier::BOLD);
+                        }
+                        if cell.inverse() {
+                            style = style.add_modifier(Modifier::REVERSED);
+                        }
+                        if cell.underline() {
+                            style = style.add_modifier(Modifier::UNDERLINED);
+                        }
+                        spans.push(Span::styled(content, style));
+                    }
+                    None => spans.push(Span::raw(" ")),
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+        f.render_widget(Paragraph::new(lines), area);
+
+        // Mirror the PTY cursor (if visible) into the pane.
+        if !screen.hide_cursor() {
+            let (cr, cc) = screen.cursor_position();
+            if cr < area.height && cc < area.width {
+                f.set_cursor_position((area.x + cc, area.y + cr));
+            }
+        }
     }
 }
 
