@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v34-debug-exec-token
+// REVISION: main-v35-pty-close-reap
 
 package main
 
@@ -38,7 +38,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v34-debug-exec-token"
+const mainRevision = "main-v35-pty-close-reap"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the

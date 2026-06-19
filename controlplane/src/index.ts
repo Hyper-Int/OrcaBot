@@ -1360,7 +1360,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'items' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as Partial<DashboardItem>;
+    let data: Partial<DashboardItem>;
+    try {
+      data = await request.json() as Partial<DashboardItem>;
+    } catch {
+      return Response.json({ error: 'E79305: Invalid JSON body' }, { status: 400 });
+    }
+    const VALID_ITEM_TYPES = new Set([
+      'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
+      'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram',
+      'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
+    ]);
+    if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
+      return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });
+    }
     return dashboards.upsertItem(env, segments[1], auth.user!.id, data);
   }
 
@@ -1690,14 +1703,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as {
+    let data: {
       provider: string;
       userIntegrationId?: string;
       policy?: Record<string, unknown>;
       accountLabel?: string;
       highRiskConfirmations?: string[];
     };
-    return integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    try {
+      data = await request.json() as typeof data;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    if (!data || typeof data.provider !== 'string' || !data.provider) {
+      return Response.json({ error: 'Missing or invalid provider' }, { status: 400 });
+    }
+    try {
+      return await integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    } catch (e) {
+      // attachIntegration throws on an unknown provider (unguarded switch) — that's
+      // bad input, not a server fault. Surface as 400 rather than 500.
+      return Response.json(
+        { error: `Invalid integration request: ${e instanceof Error ? e.message : 'unknown'}` },
+        { status: 400 }
+      );
+    }
   }
 
   // PUT /dashboards/:id/terminals/:terminalId/integrations/:provider - Update integration policy
