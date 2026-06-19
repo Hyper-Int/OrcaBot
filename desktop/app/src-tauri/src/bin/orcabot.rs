@@ -11,12 +11,20 @@
 // sandbox on 127.0.0.1:8080 (host loopback). `exec` uses the sandbox /debug/exec
 // endpoint, authenticated with the per-boot token the VM writes to its console.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, List, ListItem, Paragraph};
+use ratatui::{DefaultTerminal, Frame};
 
 const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
@@ -26,10 +34,13 @@ const REVISION: &str = "orcabot-cli-v1-foundation";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(String::as_str).unwrap_or("help");
+    // Bare `orcabot` opens the interactive TUI — the primary interface.
+    let cmd = args.get(1).map(String::as_str).unwrap_or("tui");
     let rest = &args[args.len().min(2)..];
 
     let code = match cmd {
+        "tui" | "ui" => cmd_tui(),
+        "ls" | "components" => cmd_ls(rest),
         "up" | "start" => cmd_up(rest),
         "down" | "stop" => cmd_down(),
         "status" => cmd_status(),
@@ -56,16 +67,17 @@ fn print_help() {
         "orcabot — control the Orcabot desktop stack from the terminal\n\n\
          USAGE:\n  orcabot <command> [args]\n\n\
          COMMANDS:\n\
+         \x20 (no args) / tui    Open the interactive TUI (component list + command line)\n\
+         \x20 ls                 Print the dashboard's components + status (non-interactive)\n\
          \x20 up [--timeout N]   Launch the stack headlessly (background) and wait until ready\n\
          \x20 down               Stop the headless stack\n\
          \x20 status             Show service health (control plane, sandbox, frontend)\n\
          \x20 exec <cmd...>      Run a shell command inside the sandbox VM\n\
          \x20 version            Print CLI revision\n\n\
          EXAMPLES:\n\
-         \x20 orcabot up\n\
-         \x20 orcabot exec 'ip -4 addr show eth0'\n\
-         \x20 orcabot status\n\
-         \x20 orcabot down"
+         \x20 orcabot up && orcabot          # bring up the stack, then open the TUI\n\
+         \x20 orcabot ls\n\
+         \x20 orcabot exec 'ip -4 addr show eth0'"
     );
 }
 
@@ -372,4 +384,469 @@ fn cmd_exec(rest: &[String]) -> i32 {
         }
     }
     json.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32
+}
+
+// ===========================================================================
+// Control-plane client (the engine) — dev-auth, components, mutations.
+// ===========================================================================
+
+const DEV_USER: &str = "dev-desktop";
+
+fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
+    let url = format!("http://127.0.0.1:{}{}", CONTROLPLANE_PORT, path);
+    let req = agent(Duration::from_secs(15))
+        .request(method, &url)
+        .set("X-User-ID", DEV_USER)
+        .set("Content-Type", "application/json");
+    let resp = match body {
+        Some(b) => req.send_json(b),
+        None => req.call(),
+    };
+    match resp {
+        Ok(r) => Ok(r.into_json().unwrap_or(serde_json::Value::Null)),
+        Err(ureq::Error::Status(code, r)) => Err(format!(
+            "HTTP {code}: {}",
+            r.into_string().unwrap_or_default().trim()
+        )),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// (id, name) for each dashboard the dev user can see.
+fn list_dashboards() -> Result<Vec<(String, String)>, String> {
+    let v = cp_call("GET", "/dashboards", None)?;
+    let arr = v.get("dashboards").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    Ok(arr
+        .iter()
+        .filter_map(|d| {
+            let id = d.get("id")?.as_str()?.to_string();
+            let name = d
+                .get("name")
+                .or_else(|| d.get("title"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("(untitled)")
+                .to_string();
+            Some((id, name))
+        })
+        .collect())
+}
+
+struct Component {
+    id: String,
+    kind: String,
+    label: String,
+    status: String,
+}
+
+fn is_integration(kind: &str) -> bool {
+    matches!(
+        kind,
+        "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "twitter" | "outlook"
+            | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat"
+            | "github" | "drive"
+    )
+}
+
+fn label_for(item: &serde_json::Value, content: &str) -> String {
+    // Terminals (and some blocks) store JSON content with a human "name".
+    if let Ok(j) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(n) = j.get("name").and_then(|x| x.as_str()) {
+            if !n.is_empty() {
+                return n.to_string();
+            }
+        }
+    }
+    if let Some(t) = item
+        .get("metadata")
+        .and_then(|m| m.get("title"))
+        .and_then(|x| x.as_str())
+    {
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    let first = content.lines().next().unwrap_or("").trim();
+    if first.is_empty() {
+        "(empty)".to_string()
+    } else if first.len() > 44 {
+        format!("{}…", &first[..44])
+    } else {
+        first.to_string()
+    }
+}
+
+fn get_components(dash_id: &str) -> Result<Vec<Component>, String> {
+    let v = cp_call("GET", &format!("/dashboards/{}", dash_id), None)?;
+    let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    let sessions = v.get("sessions").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+
+    let mut sess: HashMap<String, String> = HashMap::new();
+    for s in &sessions {
+        if let (Some(it), Some(st)) = (
+            s.get("itemId").and_then(|x| x.as_str()),
+            s.get("status").and_then(|x| x.as_str()),
+        ) {
+            sess.insert(it.to_string(), st.to_string());
+        }
+    }
+
+    let mut out = Vec::new();
+    for it in &items {
+        let id = it.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let kind = it.get("type").and_then(|x| x.as_str()).unwrap_or("?").to_string();
+        let content = it.get("content").and_then(|x| x.as_str()).unwrap_or("");
+        let label = label_for(it, content);
+        let status = if kind == "terminal" {
+            match sess.get(&id).map(String::as_str) {
+                Some("active") => "running",
+                Some("creating") => "starting",
+                Some(other) => other,
+                None => "idle",
+            }
+            .to_string()
+        } else if is_integration(&kind) {
+            "attached".to_string()
+        } else {
+            "-".to_string()
+        };
+        out.push(Component { id, kind, label, status });
+    }
+    Ok(out)
+}
+
+// ---- ls (non-interactive dump, used for headless verification) ------------
+
+fn cmd_ls(_rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: control plane not reachable — run `orcabot up` first");
+        return 1;
+    }
+    let dashboards = match list_dashboards() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    if dashboards.is_empty() {
+        println!("(no dashboards yet — create one in the app or with the TUI)");
+        return 0;
+    }
+    for (id, name) in &dashboards {
+        println!("# {name}  [{id}]");
+        match get_components(id) {
+            Ok(cs) if cs.is_empty() => println!("  (no components)"),
+            Ok(cs) => {
+                for c in cs {
+                    println!("  {:<9} {:<9} {}", c.status, c.kind, c.label);
+                }
+            }
+            Err(e) => println!("  ! {e}"),
+        }
+    }
+    0
+}
+
+// ===========================================================================
+// Interactive TUI
+// ===========================================================================
+
+fn status_glyph(status: &str) -> &'static str {
+    match status {
+        "running" => "●",
+        "starting" => "◐",
+        "attached" | "connected" => "◉",
+        "idle" | "stopped" => "○",
+        _ => "·",
+    }
+}
+
+struct App {
+    dashboards: Vec<(String, String)>,
+    dash_idx: usize,
+    components: Vec<Component>,
+    input: String,
+    log: Vec<String>,
+    quit: bool,
+}
+
+impl App {
+    fn new() -> Self {
+        let mut a = App {
+            dashboards: Vec::new(),
+            dash_idx: 0,
+            components: Vec::new(),
+            input: String::new(),
+            log: vec![
+                "orcabot TUI — `help` for commands, Enter to run, Esc to quit.".to_string(),
+            ],
+            quit: false,
+        };
+        a.reload_dashboards();
+        a.reload_components();
+        a
+    }
+
+    fn logln(&mut self, s: impl Into<String>) {
+        self.log.push(s.into());
+        if self.log.len() > 500 {
+            self.log.drain(0..self.log.len() - 500);
+        }
+    }
+
+    fn current_dash_id(&self) -> Option<String> {
+        self.dashboards.get(self.dash_idx).map(|(id, _)| id.clone())
+    }
+
+    fn reload_dashboards(&mut self) {
+        match list_dashboards() {
+            Ok(d) => {
+                self.dashboards = d;
+                if self.dash_idx >= self.dashboards.len() {
+                    self.dash_idx = 0;
+                }
+            }
+            Err(e) => self.logln(format!("! dashboards: {e}")),
+        }
+    }
+
+    fn reload_components(&mut self) {
+        match self.current_dash_id() {
+            Some(id) => match get_components(&id) {
+                Ok(c) => self.components = c,
+                Err(e) => self.logln(format!("! components: {e}")),
+            },
+            None => self.components.clear(),
+        }
+    }
+
+    fn run(&mut self, term: &mut DefaultTerminal) -> std::io::Result<()> {
+        while !self.quit {
+            term.draw(|f| self.ui(f))?;
+            if event::poll(Duration::from_millis(300))? {
+                if let Event::Key(k) = event::read()? {
+                    if k.kind == KeyEventKind::Press {
+                        match k.code {
+                            KeyCode::Esc => self.quit = true,
+                            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                                self.quit = true
+                            }
+                            KeyCode::Enter => {
+                                let line = std::mem::take(&mut self.input);
+                                self.run_command(line.trim());
+                            }
+                            KeyCode::Backspace => {
+                                self.input.pop();
+                            }
+                            KeyCode::Char(c) => self.input.push(c),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn run_command(&mut self, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        self.logln(format!("> {line}"));
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        match parts.as_slice() {
+            ["help"] | ["?"] => {
+                for l in [
+                    "commands:",
+                    "  refresh|r            reload dashboards + components",
+                    "  use <n>              switch to dashboard number <n>",
+                    "  dash                 list dashboards",
+                    "  dash new <name>      create a dashboard",
+                    "  rm <id>              delete a component by id",
+                    "  exec <cmd...>        run a shell command in the sandbox VM",
+                    "  status               service health",
+                    "  quit|q | Esc         exit the TUI",
+                ] {
+                    self.logln(l);
+                }
+            }
+            ["quit"] | ["q"] | ["exit"] => self.quit = true,
+            ["refresh"] | ["r"] => {
+                self.reload_dashboards();
+                self.reload_components();
+                self.logln("refreshed");
+            }
+            ["dash"] => {
+                let lines: Vec<String> = self
+                    .dashboards
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (id, n))| format!("  {}{}. {}  [{}]", if i == self.dash_idx { "*" } else { " " }, i + 1, n, id))
+                    .collect();
+                if lines.is_empty() {
+                    self.logln("  (no dashboards)");
+                } else {
+                    for l in lines {
+                        self.logln(l);
+                    }
+                }
+            }
+            ["dash", "new", rest @ ..] => {
+                let name = rest.join(" ");
+                let name = if name.is_empty() { "Untitled".to_string() } else { name };
+                match cp_call("POST", "/dashboards", Some(serde_json::json!({ "name": name }))) {
+                    Ok(_) => {
+                        self.logln(format!("created dashboard '{name}'"));
+                        self.reload_dashboards();
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["use", n] => match n.parse::<usize>() {
+                Ok(i) if i >= 1 && i <= self.dashboards.len() => {
+                    self.dash_idx = i - 1;
+                    self.reload_components();
+                    self.logln(format!("using dashboard {i}"));
+                }
+                _ => self.logln("! use <n>: invalid index"),
+            },
+            ["rm", id] => {
+                let Some(dash) = self.current_dash_id() else {
+                    self.logln("! no dashboard selected");
+                    return;
+                };
+                match cp_call("DELETE", &format!("/dashboards/{}/items/{}", dash, id), None) {
+                    Ok(_) => {
+                        self.logln(format!("deleted {id}"));
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["status"] => {
+                let cp = controlplane_healthy();
+                let sb = sandbox_health().is_some();
+                self.logln(format!(
+                    "control plane: {}   sandbox: {}",
+                    if cp { "ready" } else { "down" },
+                    if sb { "ready" } else { "down" }
+                ));
+            }
+            ["exec", rest @ ..] if !rest.is_empty() => {
+                let out = run_in_vm(&rest.join(" "));
+                for l in out.lines() {
+                    self.logln(l.to_string());
+                }
+            }
+            _ => self.logln(format!("! unknown command: {line} (try `help`)")),
+        }
+    }
+
+    fn ui(&self, f: &mut Frame) {
+        let chunks = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(3),
+            Constraint::Length(8),
+            Constraint::Length(3),
+        ])
+        .split(f.area());
+
+        let dash_name = self
+            .dashboards
+            .get(self.dash_idx)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| "(no dashboard)".to_string());
+        let header = Paragraph::new(format!(
+            " orcabot — {}   [{} components]   (Esc to quit, `help` for commands)",
+            dash_name,
+            self.components.len()
+        ))
+        .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD));
+        f.render_widget(header, chunks[0]);
+
+        let items: Vec<ListItem> = if self.components.is_empty() {
+            vec![ListItem::new("  (no components — `dash new <name>`, or create them in the app)")]
+        } else {
+            self.components
+                .iter()
+                .map(|c| {
+                    ListItem::new(format!(
+                        " {}  {:<9} {:<9} {}  ({})",
+                        status_glyph(&c.status),
+                        c.status,
+                        c.kind,
+                        c.label,
+                        &c.id[..c.id.len().min(8)]
+                    ))
+                })
+                .collect()
+        };
+        f.render_widget(List::new(items).block(Block::bordered().title("Components")), chunks[1]);
+
+        let log_h = chunks[2].height.saturating_sub(2) as usize;
+        let start = self.log.len().saturating_sub(log_h.max(1));
+        let log_lines: Vec<Line> = self.log[start..].iter().map(|l| Line::from(l.clone())).collect();
+        f.render_widget(
+            Paragraph::new(log_lines).block(Block::bordered().title("Log")),
+            chunks[2],
+        );
+
+        f.render_widget(
+            Paragraph::new(format!("> {}", self.input)).block(Block::bordered().title("Command")),
+            chunks[3],
+        );
+    }
+}
+
+/// Run a shell command in the sandbox VM, returning a human-readable result.
+fn run_in_vm(command: &str) -> String {
+    let token = match read_debug_token() {
+        Some(t) => t,
+        None => return "! cannot read debug-exec token (was the stack started via `orcabot up`?)".into(),
+    };
+    let body = serde_json::json!({ "cmd": command, "timeout_ms": 60000 });
+    match agent(Duration::from_secs(65))
+        .post(&format!("http://127.0.0.1:{}/debug/exec", SANDBOX_PORT))
+        .set("X-Debug-Exec-Token", &token)
+        .set("Content-Type", "application/json")
+        .send_json(body)
+    {
+        Ok(r) => {
+            let j: serde_json::Value = r.into_json().unwrap_or_default();
+            let mut s = String::new();
+            if let Some(o) = j.get("stdout").and_then(|v| v.as_str()) {
+                s.push_str(o);
+            }
+            if let Some(e) = j.get("stderr").and_then(|v| v.as_str()) {
+                if !e.is_empty() {
+                    s.push_str(e);
+                }
+            }
+            if s.trim().is_empty() {
+                s = format!("(exit {})", j.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0));
+            }
+            s
+        }
+        Err(ureq::Error::Status(code, r)) => {
+            format!("! HTTP {code}: {}", r.into_string().unwrap_or_default().trim())
+        }
+        Err(e) => format!("! exec failed: {e}"),
+    }
+}
+
+fn cmd_tui() -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: stack not running — start it with `orcabot up` first.");
+        return 1;
+    }
+    let mut app = App::new();
+    let mut terminal = ratatui::init();
+    let res = app.run(&mut terminal);
+    ratatui::restore();
+    if let Err(e) = res {
+        eprintln!("orcabot tui error: {e}");
+        return 1;
+    }
+    0
 }

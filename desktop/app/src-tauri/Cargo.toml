@@ -31,6 +31,8 @@ filetime = "0.2"
 ctrlc = "3"
 # Minimal blocking HTTP client for the CLI (localhost only — no TLS needed).
 ureq = { version = "2", default-features = false, features = ["json"] }
+# Terminal UI for the interactive `orcabot` session (re-exports crossterm).
+ratatui = "0.29"
 
 # Note: virt-fwk for native Virtualization.framework on macOS is not yet
 # stable enough. The current implementation uses QEMU as a fallback.
