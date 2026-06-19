@@ -374,6 +374,19 @@ async function prоxySandbоxWebSоcket(
     console.warn(
       `[ws-proxy] upstream PTY WS failed status=${response.status} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
     );
+    // Reconcile: the sandbox no longer has this PTY (process died, or the VM was
+    // restarted), but D1 may still show the session 'active' ("ghost" session →
+    // stale 'running' status + "stuck connecting"). Mark it stopped so the client
+    // recreates instead of hanging, and listings reflect reality. Best-effort.
+    if (response.status === 404) {
+      try {
+        await env.DB.prepare(
+          `UPDATE sessions SET status = 'stopped', stopped_at = ? WHERE pty_id = ? AND status != 'stopped'`
+        ).bind(new Date().toISOString(), ptyId).run();
+      } catch {
+        // ignore — reconciliation is best-effort
+      }
+    }
   } else {
     console.log(
       `[ws-proxy] upstream PTY WS upgraded sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
