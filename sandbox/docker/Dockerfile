@@ -66,6 +66,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     socat \
     iptables \
+    # DHCP client + iproute2: only used by the desktop VM (Virtualization.framework
+    # NAT provides a DHCP server; the guest must lease its own address). On Fly the
+    # platform configures networking externally, so these sit inert there.
+    isc-dhcp-client \
+    iproute2 \
     # Browser stack
     chromium \
     xvfb \
