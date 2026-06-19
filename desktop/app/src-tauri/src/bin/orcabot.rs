@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v2-create-components
+// REVISION: orcabot-cli-v3-integrations
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -30,7 +30,7 @@ const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v2-create-components";
+const REVISION: &str = "orcabot-cli-v3-integrations";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -42,6 +42,9 @@ fn main() {
         "tui" | "ui" => cmd_tui(),
         "ls" | "components" => cmd_ls(rest),
         "new" | "create" => cmd_new(rest),
+        "connect" => cmd_connect(rest),
+        "attach" => cmd_attach(rest),
+        "detach" => cmd_detach(rest),
         "up" | "start" => cmd_up(rest),
         "down" | "stop" => cmd_down(),
         "status" => cmd_status(),
@@ -650,6 +653,234 @@ fn cmd_new(rest: &[String]) -> i32 {
     }
 }
 
+// ---- integrations: connect / attach / detach ------------------------------
+
+/// Map a provider name to its OAuth connect sub-path under /integrations/.
+fn connect_subpath(provider: &str) -> Option<&'static str> {
+    Some(match provider {
+        "gmail" => "google/gmail",
+        "drive" | "google_drive" => "google/drive",
+        "calendar" | "google_calendar" => "google/calendar",
+        "contacts" | "google_contacts" => "google/contacts",
+        "github" => "github",
+        "twitter" | "x" => "twitter",
+        "box" => "box",
+        "onedrive" => "onedrive",
+        _ => return None,
+    })
+}
+
+fn provider_matches(a: &str, b: &str) -> bool {
+    a == b
+        || (a == "drive" && b == "google_drive")
+        || (a == "google_drive" && b == "drive")
+}
+
+/// Fetch the OAuth authorization URL for a provider (the connect route 302-redirects
+/// to the provider; we capture the Location instead of following it).
+fn connect_url(provider: &str) -> Result<String, String> {
+    let sub = connect_subpath(provider)
+        .ok_or_else(|| format!("unknown provider '{provider}' (gmail|drive|calendar|github|twitter|box|onedrive)"))?;
+    let url = format!("http://127.0.0.1:{}/integrations/{}/connect", CONTROLPLANE_PORT, sub);
+    let ag = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(10))
+        .redirects(0)
+        .build();
+    let loc_from = |code: u16, resp: ureq::Response| -> Result<String, String> {
+        if (300..400).contains(&code) {
+            resp.header("location")
+                .map(|s| s.to_string())
+                .ok_or_else(|| "redirect without Location header".to_string())
+        } else {
+            let body = resp.into_string().unwrap_or_default();
+            if body.contains("not configured") || body.contains("Connection failed") {
+                Err(format!(
+                    "OAuth not configured for {provider} — relaunch with its *_CLIENT_ID/*_CLIENT_SECRET set"
+                ))
+            } else {
+                Err(format!("unexpected HTTP {code} (no redirect) connecting {provider}"))
+            }
+        }
+    };
+    match ag.get(&url).set("X-User-ID", DEV_USER).call() {
+        Ok(resp) => loc_from(resp.status(), resp),
+        Err(ureq::Error::Status(code, resp)) => loc_from(code, resp),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Find the connected user_integration id for a provider on a terminal, if any.
+fn find_user_integration(dash: &str, terminal: &str, provider: &str) -> Result<Option<String>, String> {
+    let v = cp_call(
+        "GET",
+        &format!("/dashboards/{}/terminals/{}/available-integrations", dash, terminal),
+        None,
+    )?;
+    let arr = v.get("integrations").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    for e in arr {
+        let p = e.get("provider").and_then(|x| x.as_str()).unwrap_or("");
+        if provider_matches(p, provider) {
+            if let Some(uid) = e.get("userIntegrationId").and_then(|x| x.as_str()) {
+                return Ok(Some(uid.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve a terminal component (dashboard item id) to its session's PTY id —
+/// integrations key off the PTY id, not the item id. Requires a running session.
+fn pty_for_item(dash: &str, item_id: &str) -> Result<String, String> {
+    let v = cp_call("GET", &format!("/dashboards/{}", dash), None)?;
+    let sessions = v.get("sessions").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    for s in sessions {
+        if s.get("itemId").and_then(|x| x.as_str()) == Some(item_id) {
+            if let Some(p) = s.get("ptyId").and_then(|x| x.as_str()) {
+                if !p.is_empty() {
+                    return Ok(p.to_string());
+                }
+            }
+        }
+    }
+    Err("that terminal has no running session/PTY yet (start it first)".to_string())
+}
+
+fn attach_integration(dash: &str, item_id: &str, provider: &str) -> Result<(), String> {
+    let pty = pty_for_item(dash, item_id)?;
+    match find_user_integration(dash, &pty, provider)? {
+        Some(uid) => {
+            cp_call(
+                "POST",
+                &format!("/dashboards/{}/terminals/{}/integrations", dash, pty),
+                Some(serde_json::json!({ "provider": provider, "userIntegrationId": uid })),
+            )?;
+            Ok(())
+        }
+        None => Err(format!(
+            "{provider} isn't connected — run `connect {provider}` and authorize it first"
+        )),
+    }
+}
+
+fn detach_integration(dash: &str, item_id: &str, provider: &str) -> Result<(), String> {
+    let pty = pty_for_item(dash, item_id)?;
+    cp_call(
+        "DELETE",
+        &format!("/dashboards/{}/terminals/{}/integrations/{}", dash, pty, provider),
+        None,
+    )?;
+    Ok(())
+}
+
+/// Find which dashboard a terminal/item id belongs to (so attach/detach can take
+/// just the component id). Falls back to a provided --dash.
+fn dash_for_terminal(terminal: &str, hint: Option<String>) -> Result<String, String> {
+    if let Some(h) = hint {
+        return Ok(h);
+    }
+    for (id, _) in list_dashboards()? {
+        if let Ok(cs) = get_components(&id) {
+            if cs.iter().any(|c| c.id == terminal) {
+                return Ok(id);
+            }
+        }
+    }
+    Err("could not find which dashboard that terminal belongs to (pass --dash <id>)".to_string())
+}
+
+fn split_dash_flag(rest: &[String]) -> (Vec<String>, Option<String>) {
+    let mut dash = None;
+    let mut pos = Vec::new();
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        if a == "--dash" {
+            dash = it.next().cloned();
+        } else {
+            pos.push(a.clone());
+        }
+    }
+    (pos, dash)
+}
+
+fn cmd_connect(rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: run `orcabot up` first");
+        return 1;
+    }
+    let Some(provider) = rest.first() else {
+        eprintln!("usage: orcabot connect <gmail|drive|calendar|github|twitter|box|onedrive>");
+        return 2;
+    };
+    match connect_url(provider) {
+        Ok(url) => {
+            println!("Open this URL in a browser to authorize {provider}:\n  {url}");
+            0
+        }
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            1
+        }
+    }
+}
+
+fn cmd_attach(rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: run `orcabot up` first");
+        return 1;
+    }
+    let (pos, dash) = split_dash_flag(rest);
+    let (Some(terminal), Some(provider)) = (pos.first(), pos.get(1)) else {
+        eprintln!("usage: orcabot attach <terminal-id> <provider> [--dash <id>]");
+        return 2;
+    };
+    let did = match dash_for_terminal(terminal, dash) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    match attach_integration(&did, terminal, provider) {
+        Ok(()) => {
+            println!("attached {provider} to {terminal}");
+            0
+        }
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            1
+        }
+    }
+}
+
+fn cmd_detach(rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: run `orcabot up` first");
+        return 1;
+    }
+    let (pos, dash) = split_dash_flag(rest);
+    let (Some(terminal), Some(provider)) = (pos.first(), pos.get(1)) else {
+        eprintln!("usage: orcabot detach <terminal-id> <provider> [--dash <id>]");
+        return 2;
+    };
+    let did = match dash_for_terminal(terminal, dash) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            return 1;
+        }
+    };
+    match detach_integration(&did, terminal, provider) {
+        Ok(()) => {
+            println!("detached {provider} from {terminal}");
+            0
+        }
+        Err(e) => {
+            eprintln!("orcabot: {e}");
+            1
+        }
+    }
+}
+
 // ---- ls (non-interactive dump, used for headless verification) ------------
 
 fn cmd_ls(_rest: &[String]) -> i32 {
@@ -800,6 +1031,9 @@ impl App {
                     "  dash new <name>      create a dashboard",
                     "  new terminal <agent> start a terminal (claude|gemini|codex|shell)",
                     "  new note <text>      add a note component",
+                    "  connect <provider>   get OAuth URL (gmail|drive|calendar|github|twitter)",
+                    "  attach <id> <prov>   attach a connected integration to terminal <id>",
+                    "  detach <id> <prov>   detach an integration from terminal <id>",
                     "  rm <id>              delete a component by id",
                     "  exec <cmd...>        run a shell command in the sandbox VM",
                     "  status               service health",
@@ -864,6 +1098,39 @@ impl App {
                 match create_note(&dash, &note_rest.join(" ")) {
                     Ok(_) => {
                         self.logln("created note");
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["connect", provider] => match connect_url(provider) {
+                Ok(url) => {
+                    self.logln(format!("open to authorize {provider}:"));
+                    self.logln(format!("  {url}"));
+                }
+                Err(e) => self.logln(format!("! {e}")),
+            },
+            ["attach", terminal, provider] => {
+                let Some(dash) = self.current_dash_id() else {
+                    self.logln("! no dashboard selected");
+                    return;
+                };
+                match attach_integration(&dash, terminal, provider) {
+                    Ok(()) => {
+                        self.logln(format!("attached {provider} to {terminal}"));
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["detach", terminal, provider] => {
+                let Some(dash) = self.current_dash_id() else {
+                    self.logln("! no dashboard selected");
+                    return;
+                };
+                match detach_integration(&dash, terminal, provider) {
+                    Ok(()) => {
+                        self.logln(format!("detached {provider} from {terminal}"));
                         self.reload_components();
                     }
                     Err(e) => self.logln(format!("! {e}")),
