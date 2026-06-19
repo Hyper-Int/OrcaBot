@@ -5,6 +5,17 @@ edition = "2021"
 description = "Orcabot Desktop shell"
 license = "UNLICENSED"
 
+# The Tauri GUI app (default binary from src/main.rs).
+[[bin]]
+name = "orcabot-desktop"
+path = "src/main.rs"
+
+# The `orcabot` CLI: launches the desktop services headlessly and drives them from
+# the terminal (exec/status/agents/integrations). Does not reference Tauri.
+[[bin]]
+name = "orcabot"
+path = "src/bin/orcabot.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -18,6 +29,8 @@ libc = "0.2"
 flate2 = "1"
 filetime = "0.2"
 ctrlc = "3"
+# Minimal blocking HTTP client for the CLI (localhost only — no TLS needed).
+ureq = { version = "2", default-features = false, features = ["json"] }
 
 # Note: virt-fwk for native Virtualization.framework on macOS is not yet
 # stable enough. The current implementation uses QEMU as a fallback.

@@ -765,6 +765,26 @@ fn main() {
       }
 
       app.manage(Arc::clone(&services));
+
+      // Headless mode (used by the `orcabot` CLI): run all services in the
+      // background with no GUI. The window is created hidden (tauri.conf.json
+      // visible=false); in GUI mode we show it, in headless we leave it hidden and
+      // drop the macOS dock icon so this behaves like a daemon.
+      let headless = std::env::var("ORCABOT_DESKTOP_HEADLESS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+      if headless {
+        eprintln!("[main] HEADLESS: services running in background, no GUI window");
+        #[cfg(target_os = "macos")]
+        {
+          let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
+      } else {
+        for (_, w) in app.webview_windows() {
+          let _ = w.show();
+          let _ = w.set_focus();
+        }
+      }
       Ok(())
     })
     .build(tauri::generate_context!())
