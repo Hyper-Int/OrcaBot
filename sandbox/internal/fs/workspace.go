@@ -200,7 +200,33 @@ func (w *Workspace) Write(path string, content []byte) error {
 		return err
 	}
 
-	return os.WriteFile(resolved, content, 0644)
+	// Write atomically: a fresh temp file + rename. Writing directly with
+	// O_TRUNC blocks indefinitely when the destination is held open by another
+	// process over a shared mount (virtiofs) — e.g. a cache file the host has
+	// mmap'd. rename() replaces the dir entry without opening the held file.
+	tmp, err := os.CreateTemp(dir, ".orcawrite-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, resolved); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // Delete removes a file or directory (recursively)

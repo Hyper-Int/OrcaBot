@@ -610,6 +610,22 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at);
 
+-- Personal access tokens for CLI / external tools (orcabot push/pull).
+-- Only the SHA-256 hash of the token is stored; the plaintext is shown once at creation.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT 'cli',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+
 -- OAuth login states (short-lived)
 CREATE TABLE IF NOT EXISTS auth_states (
   state TEXT PRIMARY KEY,
@@ -1127,7 +1143,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v14-egress-blocklist";
+const SCHEMA_REVISION = "schema-v15-api-tokens";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);

@@ -11,7 +11,7 @@ console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded 
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -48,6 +48,7 @@ import { isAdminEmail } from './auth/admin';
 import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
+import { createApiToken, listApiTokens, revokeApiToken } from './auth/api-token';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
@@ -1164,6 +1165,50 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         'Set-Cookie': cookie,
       },
     });
+  }
+
+  // Personal access tokens for the CLI (orcabot push/pull). Issuance sits behind
+  // the normal user auth (CF Access in prod, dev-auth locally). Paywall-exempt
+  // (auth/*) — a PAT inherits the user's subscription when it's later used.
+
+  // POST /auth/api-token - mint a PAT (plaintext returned once)
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // A PAT must not mint another PAT (else a leaked token survives revocation).
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    let body: { name?: string; ttlDays?: number } = {};
+    try {
+      body = (await request.json()) as { name?: string; ttlDays?: number };
+    } catch {
+      // empty body is fine — use defaults
+    }
+    const name = (body.name || 'cli').toString().slice(0, 100);
+    const ttlDays = typeof body.ttlDays === 'number' ? body.ttlDays : undefined;
+    const { token, meta } = await createApiToken(env, auth.user!.id, name, ttlDays);
+    return Response.json({ token, ...meta }, { status: 201 });
+  }
+
+  // GET /auth/api-tokens - list PAT metadata (no values)
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const tokens = await listApiTokens(env, auth.user!.id);
+    return Response.json({ tokens });
+  }
+
+  // DELETE /auth/api-tokens/:id - revoke a PAT
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 3 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const ok = await revokeApiToken(env, auth.user!.id, segments[2]);
+    if (!ok) return Response.json({ error: 'E79410: Token not found' }, { status: 404 });
+    return new Response(null, { status: 204 });
   }
 
   // POST /dev/workspace/clear - dev-only workspace reset
@@ -2646,6 +2691,75 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       request,
       env,
       `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // GET /sessions/:id/file - Read a single file's content from the sandbox workspace.
+  // (Mirror of the list/delete proxies above. Used by `orcabot pull` to fetch
+  // workspace files over the API when the sandbox is remote and not host-mounted.)
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // PUT /sessions/:id/file - Write a single file into the sandbox workspace.
+  // Owner-only (like DELETE). Used by `orcabot push` to upload workspace files
+  // over the API when the sandbox is remote and not host-mounted.
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // POST /sessions/:id/workspace/import - bulk-extract a tar.gz into the workspace.
+  // Owner-only (writes files). Used by `orcabot push` to upload the whole workspace
+  // in one request instead of one PUT per file.
+  if (segments[0] === 'sessions' && segments.length === 4 && segments[2] === 'workspace' && segments[3] === 'import' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/workspace/import`,
       session.sandbox_machine_id as string
     );
   }

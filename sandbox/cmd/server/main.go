@@ -1,12 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v35-pty-close-reap
+// REVISION: main-v38-import-write-timeout
 
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -38,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v35-pty-close-reap"
+const mainRevision = "main-v38-import-write-timeout"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -49,6 +51,9 @@ var debugExecToken string
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
 	maxRecursiveEntries = 100_000
+	// Upper bound on a bulk workspace import body (compressed tar.gz). Big enough
+	// for real project workspaces; caps memory/disk a single request can consume.
+	maxWorkspaceImportBytes = 1024 * 1024 * 1024
 )
 
 var errTooManyEntries = errors.New("too many files to list")
@@ -638,6 +643,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handlePutFile)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeleteFile)))
 	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.requireMachine(s.auth.RequireAuthFunc(s.handleStatFile)))
+	mux.HandleFunc("POST /sessions/{sessionId}/workspace/import", s.requireMachine(s.auth.RequireAuthFunc(s.handleImportWorkspace)))
 	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.requireMachine(s.auth.RequireAuthFunc(s.handleDriveSync)))
 
 	// MCP proxy - allows agents to call MCP UI tools via the control plane
@@ -1257,6 +1263,99 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleImportWorkspace extracts a gzipped tar (request body) into the session
+// workspace — the bulk equivalent of many PUT /file calls (one request instead
+// of one per file). Each entry is written via Workspace().Write, which scopes
+// to /workspace and rejects traversal/symlink escapes, so path safety is
+// inherited (no separate tar-slip handling needed). Directories and non-regular
+// entries are skipped (parent dirs are created on file write).
+func (s *Server) handleImportWorkspace(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkspaceImportBytes)
+	written, skipped, err := extractTarGzToWоrkspace(session.Wоrkspace(), r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "E79761: import too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "E79762: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"written": written, "skipped": skipped})
+}
+
+// extractTarGzToWоrkspace extracts a gzipped tar stream into the workspace.
+// Regular files are written via Workspace.Write (which scopes to /workspace and
+// rejects ".." / symlink escapes — so a hostile entry is counted as skipped, not
+// an error). Directories and other entry types are ignored. Returns
+// (written, skipped). A malformed gzip/tar (or oversized body) is a hard error.
+func extractTarGzToWоrkspace(ws *fs.Workspace, body io.Reader) (int, int, error) {
+	gz, err := gzip.NewReader(body)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	written, skipped := 0, 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return written, skipped, err
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue // dirs/symlinks/etc — files carry their own parent path
+		}
+		if hdr.Size > maxFileSizeBytes {
+			skipped++
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxFileSizeBytes+1))
+		if err != nil {
+			return written, skipped, err
+		}
+		if int64(len(data)) > maxFileSizeBytes {
+			skipped++
+			continue
+		}
+		// Write() scopes to the workspace and rejects ".." / symlink escapes.
+		// Bound each write: on the desktop, the workspace is a host-shared mount
+		// (virtiofs) and a guest write to a file the *host* holds open (Spotlight,
+		// QuickLook, …) blocks indefinitely — even via temp+rename. A per-file
+		// timeout skips such a file so one stuck entry can't hang the whole import
+		// (matching the per-file PUT path's resilience). On real cloud ext4 writes
+		// never stall, so this never trips. The goroutine for a stuck write leaks
+		// until the host releases the file — bounded and desktop-only.
+		done := make(chan error, 1)
+		name := hdr.Name
+		go func() { done <- ws.Write(name, data) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				if errors.Is(err, fs.ErrPathTraversal) {
+					skipped++
+					continue // hostile entry — skip, don't abort the whole import
+				}
+				return written, skipped, err
+			}
+			written++
+		case <-time.After(10 * time.Second):
+			skipped++ // host-held file over virtiofs; skip and move on
+		}
+	}
+	return written, skipped, nil
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {

@@ -138,6 +138,8 @@ export const API = {
     modelProviders: `${CLOUDFLARE_API_URL}/model-providers`,
     templates: `${CLOUDFLARE_API_URL}/templates`,
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
+    apiTokens: `${CLOUDFLARE_API_URL}/auth/api-tokens`,
+    apiTokenMint: `${CLOUDFLARE_API_URL}/auth/api-token`,
     pendingApprovals: `${CLOUDFLARE_API_URL}/pending-approvals`,
     asrKeys: `${CLOUDFLARE_API_URL}/asr/keys`,
     asrAssemblyAIToken: `${CLOUDFLARE_API_URL}/asr/assemblyai/token`,
