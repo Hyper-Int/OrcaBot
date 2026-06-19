@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v1-foundation
+// REVISION: orcabot-cli-v2-create-components
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -30,7 +30,7 @@ const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v1-foundation";
+const REVISION: &str = "orcabot-cli-v2-create-components";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -41,6 +41,7 @@ fn main() {
     let code = match cmd {
         "tui" | "ui" => cmd_tui(),
         "ls" | "components" => cmd_ls(rest),
+        "new" | "create" => cmd_new(rest),
         "up" | "start" => cmd_up(rest),
         "down" | "stop" => cmd_down(),
         "status" => cmd_status(),
@@ -514,6 +515,141 @@ fn get_components(dash_id: &str) -> Result<Vec<Component>, String> {
     Ok(out)
 }
 
+/// Map an agent name to (display name, boot command). Empty boot = plain shell.
+fn agent_boot(agent: &str) -> (String, String) {
+    match agent {
+        "claude" | "claude-code" => ("Claude Code".into(), "claude".into()),
+        "gemini" => ("Gemini".into(), "gemini".into()),
+        "codex" => ("Codex".into(), "codex".into()),
+        "shell" | "" => ("Shell".into(), String::new()),
+        other => (other.to_string(), other.to_string()),
+    }
+}
+
+/// Create a terminal component running the given agent, then start its session
+/// (boots the agent in a PTY in the sandbox). Returns the new item id.
+fn create_terminal(dash_id: &str, agent: &str) -> Result<String, String> {
+    let (name, boot) = agent_boot(agent);
+    let content = serde_json::json!({
+        "name": name,
+        "bootCommand": boot,
+        "skipApprovals": true,
+        "subagentIds": [],
+        "skillIds": [],
+    })
+    .to_string();
+    let resp = cp_call(
+        "POST",
+        &format!("/dashboards/{}/items", dash_id),
+        Some(serde_json::json!({ "type": "terminal", "content": content })),
+    )?;
+    let item_id = resp
+        .get("item")
+        .and_then(|i| i.get("id"))
+        .and_then(|x| x.as_str())
+        .ok_or("create item: no id in response")?
+        .to_string();
+    // Start the session — provisions the PTY and runs the boot command.
+    cp_call(
+        "POST",
+        &format!("/dashboards/{}/items/{}/session", dash_id, item_id),
+        Some(serde_json::json!({})),
+    )?;
+    Ok(item_id)
+}
+
+fn create_note(dash_id: &str, text: &str) -> Result<String, String> {
+    let resp = cp_call(
+        "POST",
+        &format!("/dashboards/{}/items", dash_id),
+        Some(serde_json::json!({ "type": "note", "content": text })),
+    )?;
+    Ok(resp
+        .get("item")
+        .and_then(|i| i.get("id"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
+fn first_or_named_dash(named: Option<String>) -> Result<String, String> {
+    if let Some(id) = named {
+        return Ok(id);
+    }
+    list_dashboards()?
+        .into_iter()
+        .next()
+        .map(|(id, _)| id)
+        .ok_or_else(|| "no dashboards — create one first".to_string())
+}
+
+// ---- new (non-interactive create, also reused by the TUI) -----------------
+
+fn cmd_new(rest: &[String]) -> i32 {
+    if !controlplane_healthy() {
+        eprintln!("orcabot: control plane not reachable — run `orcabot up` first");
+        return 1;
+    }
+    // Pull out `--dash <id>`; the remainder is positional.
+    let mut dash: Option<String> = None;
+    let mut pos: Vec<String> = Vec::new();
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        if a == "--dash" {
+            dash = it.next().cloned();
+        } else {
+            pos.push(a.clone());
+        }
+    }
+    match pos.first().map(String::as_str) {
+        Some("terminal") => {
+            let agent = pos.get(1).map(String::as_str).unwrap_or("claude");
+            let did = match first_or_named_dash(dash) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("orcabot: {e}");
+                    return 1;
+                }
+            };
+            match create_terminal(&did, agent) {
+                Ok(id) => {
+                    println!("created {agent} terminal {id}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("orcabot: {e}");
+                    1
+                }
+            }
+        }
+        Some("note") => {
+            let text = pos[1..].join(" ");
+            let did = match first_or_named_dash(dash) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("orcabot: {e}");
+                    return 1;
+                }
+            };
+            match create_note(&did, &text) {
+                Ok(id) => {
+                    println!("created note {id}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("orcabot: {e}");
+                    1
+                }
+            }
+        }
+        _ => {
+            eprintln!("usage: orcabot new terminal [claude|gemini|codex|shell] [--dash <id>]");
+            eprintln!("       orcabot new note <text> [--dash <id>]");
+            2
+        }
+    }
+}
+
 // ---- ls (non-interactive dump, used for headless verification) ------------
 
 fn cmd_ls(_rest: &[String]) -> i32 {
@@ -662,6 +798,8 @@ impl App {
                     "  use <n>              switch to dashboard number <n>",
                     "  dash                 list dashboards",
                     "  dash new <name>      create a dashboard",
+                    "  new terminal <agent> start a terminal (claude|gemini|codex|shell)",
+                    "  new note <text>      add a note component",
                     "  rm <id>              delete a component by id",
                     "  exec <cmd...>        run a shell command in the sandbox VM",
                     "  status               service health",
@@ -698,6 +836,34 @@ impl App {
                     Ok(_) => {
                         self.logln(format!("created dashboard '{name}'"));
                         self.reload_dashboards();
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["new", "terminal", agent_rest @ ..] => {
+                let agent = agent_rest.first().copied().unwrap_or("claude");
+                let Some(dash) = self.current_dash_id() else {
+                    self.logln("! no dashboard selected (use `dash new <name>` first)");
+                    return;
+                };
+                self.logln(format!("starting {agent} terminal…"));
+                match create_terminal(&dash, agent) {
+                    Ok(id) => {
+                        self.logln(format!("created terminal {}", &id[..id.len().min(8)]));
+                        self.reload_components();
+                    }
+                    Err(e) => self.logln(format!("! {e}")),
+                }
+            }
+            ["new", "note", note_rest @ ..] => {
+                let Some(dash) = self.current_dash_id() else {
+                    self.logln("! no dashboard selected");
+                    return;
+                };
+                match create_note(&dash, &note_rest.join(" ")) {
+                    Ok(_) => {
+                        self.logln("created note");
                         self.reload_components();
                     }
                     Err(e) => self.logln(format!("! {e}")),
