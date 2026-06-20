@@ -16,6 +16,18 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// Control-plane port for the guest→host reverse vsock bridge.
+///
+/// Fixed at 8787 on BOTH sides on purpose: the host registers
+/// `--reverse-port-forward {CONTROLPLANE_PORT}:{CONTROLPLANE_PORT}` and the guest
+/// (systemd → `/etc/rc.local`, see `vm/scripts/build-images.sh`) runs the matching
+/// `socat TCP-LISTEN:8787 -> VSOCK-CONNECT:2:8787` + sets `CONTROLPLANE_URL`. The
+/// guest value is baked into the image, and we can't securely deliver a per-boot
+/// port to the guest (kernel cmdline / workspace are agent-readable, so the token
+/// can't ride along). Making this configurable end-to-end requires a secure guest
+/// env channel first; until then both sides must use this constant.
+const CONTROLPLANE_PORT: u16 = 8787;
+
 /// macOS VM using Virtualization.framework.
 ///
 /// On macOS 13+, uses native Virtualization.framework for optimal performance.
@@ -144,10 +156,10 @@ impl MacOSVM {
             // Reverse forward: guest vsock:8787 -> host 127.0.0.1:8787 (control plane).
             // Gives the sandbox a guest->host route so it can call the control plane
             // (integration gateway, egress/secret approvals, event callbacks). The
-            // guest runs socat TCP-LISTEN:8787 -> VSOCK-CONNECT:2:8787 and sets
-            // CONTROLPLANE_URL=http://127.0.0.1:8787. (8787 = default CONTROLPLANE_PORT.)
+            // guest init runs the matching socat + sets CONTROLPLANE_URL. Both sides
+            // are pinned to CONTROLPLANE_PORT (see the const for why it's fixed).
             "--reverse-port-forward",
-            "8787:8787",
+            &format!("{}:{}", CONTROLPLANE_PORT, CONTROLPLANE_PORT),
         ]);
 
         cmd.stdout(Stdio::inherit());
