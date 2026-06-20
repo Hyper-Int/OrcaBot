@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: auth-middleware-v1-email-fallback
+// REVISION: auth-middleware-v2-pat-method-gate
 
 /**
  * Auth Middleware
@@ -14,10 +14,17 @@
 import type { Env, User } from '../types';
 import { validateCfAccessTоken, cfAccessUserIdFrоmSub } from './cf-access';
 import { getUserForSession } from './sessions';
+import { getUserForApiToken, PAT_PREFIX } from './api-token';
+
+/** How the request authenticated. Used to gate sensitive routes (e.g. token
+ * management must not be reachable with a PAT — a leaked PAT could otherwise mint
+ * a replacement and survive revocation). */
+export type AuthMethod = 'session' | 'pat' | 'cf-access' | 'dev';
 
 export interface AuthContext {
   user: User | null;
   isAuthenticated: boolean;
+  method?: AuthMethod;
 }
 
 // Extract user from request
@@ -27,7 +34,22 @@ export async function authenticate(
 ): Promise<AuthContext> {
   const sessionUser = await getUserForSession(request, env);
   if (sessionUser) {
-    return { user: sessionUser, isAuthenticated: true };
+    return { user: sessionUser, isAuthenticated: true, method: 'session' };
+  }
+
+  // Personal access token (CLI / external tools). Prefix-gated so it never
+  // collides with the PTY/gateway JWT bearer tokens (verified elsewhere).
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice('Bearer '.length).trim();
+    if (bearer.startsWith(PAT_PREFIX)) {
+      const patUser = await getUserForApiToken(env, bearer);
+      if (patUser) {
+        return { user: patUser, isAuthenticated: true, method: 'pat' };
+      }
+      // Malformed/expired/revoked PAT: fail closed (don't fall through to other modes).
+      return { user: null, isAuthenticated: false };
+    }
   }
 
   // Try Cloudflare Access first (production mode)
@@ -96,6 +118,7 @@ async function authenticateWithCfAccеss(
   return {
     user,
     isAuthenticated: true,
+    method: 'cf-access',
   };
 }
 
@@ -179,6 +202,7 @@ async function authenticateDevMоde(
   return {
     user,
     isAuthenticated: true,
+    method: 'dev',
   };
 }
 
@@ -188,6 +212,19 @@ export function requireAuth(ctx: AuthContext): Response | null {
     return Response.json(
       { error: 'E79401: Authentication required' },
       { status: 401 }
+    );
+  }
+  return null;
+}
+
+// Reject requests authenticated by a PAT. Token management (mint/list/revoke)
+// must be done with a real session (browser/CF Access) or dev auth — never with a
+// PAT, or a leaked token could mint a replacement and survive its own revocation.
+export function rejectPatAuth(ctx: AuthContext): Response | null {
+  if (ctx.method === 'pat') {
+    return Response.json(
+      { error: 'E79411: Personal access tokens cannot manage tokens — use the web app' },
+      { status: 403 }
     );
   }
   return null;

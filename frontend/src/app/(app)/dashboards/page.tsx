@@ -29,6 +29,7 @@ import {
   Clock,
   BarChart3,
   Link2,
+  Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -54,6 +55,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { API, DESKTOP_MODE } from "@/config/env";
+import { switchToCli } from "@/lib/tauri-bridge";
 import {
   listDashboards,
   createDashboard,
@@ -395,6 +397,33 @@ export default function DashboardsPage() {
               )}
             <Tooltip content="Toggle theme">
               <ThemeToggle />
+            </Tooltip>
+            {DESKTOP_MODE && (
+              <Tooltip content="Switch to CLI (opens a terminal)">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={async () => {
+                    try {
+                      const ok = await switchToCli();
+                      if (ok) {
+                        toast.success("Opening the CLI in Terminal…");
+                      } else {
+                        toast.error("CLI switch unavailable (Tauri bridge not found)");
+                      }
+                    } catch (e) {
+                      toast.error(`Could not switch to CLI: ${e}`);
+                    }
+                  }}
+                >
+                  <Terminal className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+            )}
+            <Tooltip content="Settings">
+              <Button variant="ghost" size="icon-sm" onClick={() => router.push("/settings")}>
+                <Settings className="w-4 h-4" />
+              </Button>
             </Tooltip>
             <Tooltip content="Log out">
               <Button variant="ghost" size="icon-sm" onClick={handleLogout}>
