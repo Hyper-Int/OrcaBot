@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v4-vm-host-loopback-url
-const MODULE_REVISION: &str = "main-v4-vm-host-loopback-url";
+// REVISION: main-v5-vm-eth0-dhcp-bringup
+const MODULE_REVISION: &str = "main-v5-vm-eth0-dhcp-bringup";
 
 mod commands;
 mod vm;
@@ -527,10 +527,15 @@ impl DesktopServices {
     }
 
     // Default kernel command line; VZ virtio console shows up as hvc0 on macOS.
+    // net.ifnames=0 biosdevname=0: force legacy interface naming so the virtio NIC
+    // is `eth0` instead of `enp0s1`. This is paired with the DHCP bring-up in the
+    // VM's minimal init (vm/scripts/build-images.sh MININIT): the macOS direct-boot
+    // path runs that init, NOT OpenRC, so it leases an address on eth0 itself.
+    // Without both halves the guest has no IP/DNS/route → no internet (npm hangs).
     let cmdline = if cfg!(target_os = "macos") {
-      "console=hvc0 earlycon=virtio_console keep_bootcon root=/dev/vda rw loglevel=7 ignore_loglevel rdinit=/init"
+      "console=hvc0 earlycon=virtio_console keep_bootcon root=/dev/vda rw net.ifnames=0 biosdevname=0 loglevel=7 ignore_loglevel rdinit=/init"
     } else {
-      "console=ttyS0 root=/dev/vda rw quiet"
+      "console=ttyS0 root=/dev/vda rw net.ifnames=0 biosdevname=0 quiet"
     };
     config = config.with_cmdline(cmdline);
 

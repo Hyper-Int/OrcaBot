@@ -1,14 +1,16 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v32-egress-deny-always
+// REVISION: main-v34-debug-exec-token
 
 package main
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -35,7 +38,13 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v32-egress-deny-always"
+const mainRevision = "main-v34-debug-exec-token"
+
+// debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
+// once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
+// VM console (root-only device), so a non-root agent in a PTY can neither read nor
+// guess it. Empty = endpoint rejects everything.
+var debugExecToken string
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
@@ -48,6 +57,115 @@ func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
 }
 
+// handleDebugExec runs a shell command inside the sandbox and returns its
+// stdout/stderr/exit code as JSON. It is the primitive behind the desktop debug
+// API and the future `orcabot` CLI (`orcabot exec`).
+//
+// SECURITY: two gates. (1) ORCABOT_DEBUG_EXEC=1 — set only by the desktop VM init,
+// never on Fly — so the endpoint is entirely absent in production. (2) a random
+// per-boot token (X-Debug-Exec-Token) delivered to the host only via the root-only
+// VM console, so a non-root agent in a PTY can neither read nor guess it. This
+// matters because /debug/exec runs as root: where agents are non-root (the
+// egress-enabled config), it would otherwise be a privilege-escalation path. The
+// token is checked first thing in the handler, constant-time.
+func (s *Server) handleDebugExec(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("ORCABOT_DEBUG_EXEC") != "1" {
+		http.Error(w, "debug exec disabled (set ORCABOT_DEBUG_EXEC=1)", http.StatusForbidden)
+		return
+	}
+	// Auth via the random per-boot token (X-Debug-Exec-Token), NOT the internal
+	// token — on desktop the internal token is a guessable dev constant. The
+	// per-boot token is delivered only over the root-only VM console, so a non-root
+	// agent can neither read nor guess it. Constant-time compare; empty = reject.
+	if debugExecToken == "" ||
+		subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Debug-Exec-Token")), []byte(debugExecToken)) != 1 {
+		http.Error(w, "forbidden: missing or invalid X-Debug-Exec-Token", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Cmd       string `json:"cmd"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Cmd) == "" {
+		http.Error(w, "bad request: need JSON {\"cmd\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+	timeout := 15 * time.Second
+	if req.TimeoutMs > 0 && req.TimeoutMs <= 120000 {
+		timeout = time.Duration(req.TimeoutMs) * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", req.Cmd)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	exitCode := 0
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"revision":  mainRevision,
+		"cmd":       req.Cmd,
+		"exit_code": exitCode,
+		"stdout":    stdout.String(),
+		"stderr":    stderr.String(),
+		"timed_out": ctx.Err() == context.DeadlineExceeded,
+	})
+}
+
+// initDebugExecToken mints the random per-boot secret for POST /debug/exec and
+// delivers it to the host out of band, where no in-guest agent can read it.
+func initDebugExecToken() {
+	if os.Getenv("ORCABOT_DEBUG_EXEC") != "1" {
+		return
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Printf("[debug-exec] token generation failed: %v — endpoint will reject all requests", err)
+		return
+	}
+	debugExecToken = hex.EncodeToString(b)
+
+	// Deliver to the host via the VM console ONLY. /dev/console is root-only
+	// (crw------- root), so a non-root agent in a PTY cannot read it, and the token
+	// is deliberately NOT written to the agent-readable server log. The desktop host
+	// captures the console (VZ_CONSOLE_DIRECT → /tmp/vz-console.log); the CLI reads
+	// the token from there. Best-effort: if the console is unavailable the endpoint
+	// still works, the operator just has no way to learn the token.
+	if f, err := os.OpenFile("/dev/console", os.O_WRONLY, 0); err == nil {
+		fmt.Fprintf(f, "[debug-exec] auth token: %s\n", debugExecToken)
+		_ = f.Close()
+	} else {
+		log.Printf("[debug-exec] token minted but could not write to /dev/console: %v", err)
+	}
+}
+
+// ensurePathFloor guarantees a usable PATH for exec.LookPath even when the
+// process is started from a bare environment (e.g. the desktop VM's PID-1 init).
+func ensurePathFloor() {
+	const defaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	cur := os.Getenv("PATH")
+	switch {
+	case cur == "":
+		os.Setenv("PATH", defaultPath)
+		log.Printf("[main] PATH was empty; set floor %q", defaultPath)
+	case !strings.Contains(cur, "/usr/bin"):
+		os.Setenv("PATH", cur+":"+defaultPath)
+		log.Printf("[main] PATH missing core dirs; appended floor")
+	}
+}
+
 func main() {
 	// Set umask 0002 so every child process — interactive shell, bash -c, or direct
 	// exec — creates group-writable files by default. Shell startup files (profile.d,
@@ -57,6 +175,17 @@ func main() {
 	// files created by pty-000 are writable by pty-001 and vice versa.
 	// REVISION: main-v20-umask-0002
 	syscall.Umask(0002)
+
+	// Defensive PATH floor. When launched by the desktop VM's minimal init (PID 1
+	// with an empty environment), os.Getenv("PATH") can be empty, which makes
+	// exec.LookPath fail for every child binary — the browser stack
+	// (Xvfb/x11vnc/websockify/chromium), agent CLIs, git, etc. — silently. Ensure a
+	// sane PATH so child exec never fails on a bare environment. No-op on Fly and
+	// anywhere PATH is already set normally.
+	ensurePathFloor()
+
+	// Mint the per-boot /debug/exec token (desktop debug API / orcabot CLI).
+	initDebugExecToken()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -438,6 +567,13 @@ func (s *Server) Handler() http.Handler {
 
 	// Health check - unauthenticated (for load balancer probes)
 	mux.HandleFunc("GET /health", s.handleHеalth)
+
+	// Debug exec — desktop debug API / `orcabot` CLI primitive. Runs a shell command
+	// in the sandbox and returns stdout/stderr/exit. Gated by ORCABOT_DEBUG_EXEC=1
+	// (off by default; only the desktop VM's init sets it) AND a random per-boot
+	// token checked inside the handler, so it is absent in production and
+	// unreachable by in-guest agents. No requireMachine: desktop has no Fly machine id.
+	mux.HandleFunc("POST /debug/exec", s.handleDebugExec)
 
 	// Debug profiling - machine routing first, then auth
 	mux.HandleFunc("GET /debug/pprof/", s.requireMachine(s.auth.RequireAuthFunc(pprof.Index)))

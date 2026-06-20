@@ -6,6 +6,7 @@ import Network
 // MARK: - Global references to prevent deallocation
 var globalVM: VZVirtualMachine?
 var globalForwarders: [TCPToVsockForwarder] = []
+var globalVsockListeners: [VsockListener] = []
 var globalConsolePipe: Pipe?
 var globalConsoleLogFile: FileHandle?
 
@@ -40,6 +41,9 @@ struct VZHelper: ParsableCommand {
     @Option(name: .long, help: "Port forward via vsock (hostPort:guestPort)")
     var portForward: [String] = []
 
+    @Option(name: .long, help: "Reverse forward: guest vsock port to host TCP port (vsockPort:hostPort). Lets the guest reach host loopback services, e.g. the control plane.")
+    var reversePortForward: [String] = []
+
     @Flag(name: .long, help: "Disable directory sharing (for debugging)")
     var noShare: Bool = false
 
@@ -68,6 +72,20 @@ struct VZHelper: ParsableCommand {
                 print("  Port forward: localhost:\(hostPort) -> vsock:\(guestPort)")
             } else {
                 print("Warning: Invalid port forward specification: \(pf)")
+            }
+        }
+
+        // Parse reverse port forwards (guest vsock port -> host TCP port)
+        var reversePortForwards: [(vsockPort: UInt32, hostPort: UInt16)] = []
+        for rpf in reversePortForward {
+            let parts = rpf.split(separator: ":")
+            if parts.count == 2,
+               let vsockPort = UInt32(parts[0]),
+               let hostPort = UInt16(parts[1]) {
+                reversePortForwards.append((vsockPort, hostPort))
+                print("  Reverse forward: guest vsock:\(vsockPort) -> host localhost:\(hostPort)")
+            } else {
+                print("Warning: Invalid reverse port forward specification: \(rpf)")
             }
         }
 
@@ -323,6 +341,27 @@ struct VZHelper: ParsableCommand {
             print("[VZ] WARNING: No vsock device found!")
         }
 
+        // Set up reverse forwarders: accept guest-initiated vsock connections and
+        // bridge them to host loopback TCP (e.g. the control plane on :8787). This
+        // is what gives the sandbox a guest->host route to call the control plane.
+        if !reversePortForwards.isEmpty {
+            globalVsockListeners = []
+            if let vsockDevice = vm.socketDevices.first as? VZVirtioSocketDevice {
+                for rpf in reversePortForwards {
+                    let l = VsockListener(vsockPort: rpf.vsockPort, hostPort: rpf.hostPort)
+                    let vzl = VZVirtioSocketListener()
+                    vzl.delegate = l
+                    l.vzListener = vzl
+                    vsockDevice.setSocketListener(vzl, forPort: rpf.vsockPort)
+                    globalVsockListeners.append(l)
+                    print("[VZ] Reverse forwarder ACTIVE: guest vsock:\(rpf.vsockPort) -> host 127.0.0.1:\(rpf.hostPort)")
+                }
+            } else {
+                print("[VZ] WARNING: reverse port forwards requested but no vsock device found")
+            }
+            fflush(stdout)
+        }
+
         // Handle signals for graceful shutdown
         signal(SIGINT) { _ in
             print("\nReceived SIGINT, shutting down...")
@@ -487,6 +526,49 @@ class TCPToVsockForwarder {
             lastFailureLog = now
             fflush(stdout)
         }
+    }
+}
+
+// MARK: - Reverse Vsock Listener (guest -> host)
+
+/// Accepts guest-initiated vsock connections on `vsockPort` and bridges each to a
+/// host loopback TCP service at 127.0.0.1:`hostPort`. The inverse of
+/// TCPToVsockForwarder: it gives the guest a route to host-only services (the
+/// control plane on :8787) without exposing anything on a network interface.
+/// The guest side runs `socat TCP-LISTEN:hostPort ... VSOCK-CONNECT:2:vsockPort`.
+class VsockListener: NSObject, VZVirtioSocketListenerDelegate {
+    let vsockPort: UInt32
+    let hostPort: UInt16
+    var vzListener: VZVirtioSocketListener?
+    private var connections: [UUID: ConnectionBridge] = [:]
+    private let queue = DispatchQueue(label: "vsock-listener")
+
+    init(vsockPort: UInt32, hostPort: UInt16) {
+        self.vsockPort = vsockPort
+        self.hostPort = hostPort
+    }
+
+    func listener(_ listener: VZVirtioSocketListener,
+                  shouldAcceptNewConnection connection: VZVirtioSocketConnection,
+                  from socketDevice: VZVirtioSocketDevice) -> Bool {
+        guard let port = NWEndpoint.Port(rawValue: hostPort) else { return false }
+        let id = UUID()
+        // Outbound TCP to the host loopback service; ConnectionBridge starts it.
+        let tcp = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+        print("[RCONN] \(id.uuidString.prefix(8)): guest vsock:\(vsockPort) -> host 127.0.0.1:\(hostPort)")
+        fflush(stdout)
+        let bridge = ConnectionBridge(id: id, tcpConnection: tcp, vsockConnection: connection) { [weak self] cid in
+            self?.queue.async {
+                print("[RCONN] \(cid.uuidString.prefix(8)): closed, removing from pool")
+                fflush(stdout)
+                self?.connections.removeValue(forKey: cid)
+            }
+        }
+        queue.async {
+            self.connections[id] = bridge
+            bridge.start()
+        }
+        return true
     }
 }
 

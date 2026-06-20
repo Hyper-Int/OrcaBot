@@ -182,16 +182,11 @@ func (p *EgressProxy) handleTransparent(conn net.Conn) {
 	}
 	domain = strings.ToLower(domain)
 
-	// Allowlist check + hold for user approval (same flow as CONNECT path)
-	if !isLocalhost(domain) {
-		if p.allowlist.IsAllowed(domain) {
-			p.emitAudit(domain, origPort, "", DecisionDefault)
-		} else {
-			decision := p.holdForApproval(domain, origPort)
-			if decision != DecisionAllowOnce && decision != DecisionAllowAlways {
-				return // denied or timed out
-			}
-		}
+	// Full egress decision ladder (same source of truth as the CONNECT/HTTP paths):
+	// localhost → deny → allowlist → tracker → hold. decide() handles localhost and
+	// emits the allow audit.
+	if !permitted(p.decide(domain, origPort)) {
+		return // denied (permanent/tracker/user) or timed out
 	}
 
 	// Dial the declared domain (not origIP). Using origIP here would allow a PTY
