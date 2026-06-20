@@ -42,7 +42,7 @@ const SLIDES: {
     src: "/videos/gemini_secret.mp4",
     poster: "/videos/gemini_secret-poster.jpg",
     title: "Secrets broker keeps API keys invisible",
-    desc: "API keys are injected at the network layer, not as env vars. The agent only sees placeholders, and any secret in terminal output is redacted before reaching your browser.",
+    desc: "API keys are injected at the network layer, not as env vars. The agent only sees placeholders, and secret values in terminal output are redacted before reaching your browser.",
   },
   {
     type: "video",
@@ -1001,8 +1001,9 @@ export default function Home() {
               </div>
               <h3>Egress Monitoring</h3>
               <p>
-                All outbound traffic intercepted. Unknown domains held for
-                approval. 60-second timeout means deny. Little Snitch for AI.
+                Outbound traffic from agent terminals is intercepted. Unknown
+                domains held for approval. 60-second timeout means deny. Little
+                Snitch for AI.
               </p>
             </div>
 

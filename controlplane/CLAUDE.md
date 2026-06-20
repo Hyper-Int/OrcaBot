@@ -298,6 +298,7 @@ workflows talk to the API.
 - Only the **SHA-256 hash** is stored in D1 (`api_tokens`) — the plaintext is shown once at creation.
 - Middleware is **prefix-gated**: a bearer beginning with `orca_pat_` is resolved as a PAT; everything else falls through to the existing PTY-token / session logic, so there's no collision.
 - **Privilege gating:** `rejectPatAuth(ctx)` returns 403 when `ctx.method === 'pat'`. The token-management routes (`POST /auth/api-token`, `GET`/`DELETE /auth/api-tokens`) call it, so a leaked PAT **cannot** mint, list, or revoke other PATs — only an interactive session can.
+- **Scope (operator note):** apart from the token-management gate above, a PAT inherits the **full authority of the owning user** — it can read/write workspace files, import workspaces, push/pull dashboards, read secrets, and attach integrations, exactly as that user's browser session could. Treat a PAT as a full user credential: store it outside any agent-readable location, scope it to one machine, and revoke (don't just rotate) it if a host is compromised.
 
 Key files:
 - `src/auth/api-token.ts` — `createApiToken` / `listApiTokens` / `revokeApiToken` / `getUserForApiToken` / `hashToken`; `PAT_PREFIX`

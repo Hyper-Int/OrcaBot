@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v38-import-write-timeout
+// REVISION: main-v39-file-read-redaction
 
 package main
 
@@ -40,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v38-import-write-timeout"
+const mainRevision = "main-v39-file-read-redaction"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -1229,8 +1229,26 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Redact known session secret values before the bytes leave the box.
+	// Mirrors PTY output redaction (Hub.redactSecrets) so a secret written to
+	// disk can't be exfiltrated via the authenticated file-read / export path.
+	data = redactFileSecrets(data, session.GetSecretValues())
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
+}
+
+// redactFileSecrets replaces secret values with asterisks in file bytes.
+// Unlike the PTY path there is no cross-chunk tail buffer (the whole file is in
+// memory). session.GetSecretValues() already filters to values >= 8 bytes.
+func redactFileSecrets(data []byte, secrets []string) []byte {
+	for _, secret := range secrets {
+		b := []byte(secret)
+		if len(b) >= 8 && bytes.Contains(data, b) {
+			data = bytes.ReplaceAll(data, b, bytes.Repeat([]byte("*"), len(b)))
+		}
+	}
+	return data
 }
 
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
