@@ -48,15 +48,21 @@ pub fn stage_image(src: &Path, dest: &Path) -> Result<PathBuf, VMError> {
 }
 
 /// Stable signature of the SOURCE file (modification time + size).
+///
+/// Uses NANOSECOND mtime, not seconds: a rebuild that lands in the same wall-clock
+/// second as the previous one (fast `SKIP_KERNEL` iterations) keeps the same size
+/// for the raw `sandbox.img`, so a seconds-resolution stamp would treat it as
+/// "unchanged" and silently boot a stale image. A content hash would be more
+/// robust still, but hashing a multi-GB image on every launch is too slow.
 fn source_signature(src: &Path) -> Result<String, VMError> {
     let meta = fs::metadata(src)?;
-    let mtime = meta
+    let mtime_nanos = meta
         .modified()
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    Ok(format!("{}:{}", mtime, meta.len()))
+    Ok(format!("{}:{}", mtime_nanos, meta.len()))
 }
 
 /// Path of the sidecar stamp file recording the source signature at last stage.

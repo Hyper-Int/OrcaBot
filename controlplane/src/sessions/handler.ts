@@ -1229,7 +1229,38 @@ async function isExistingSessionReusable(
 }
 
 // Create a session for a terminal item
+// Per-item in-flight gate: coalesce concurrent session creates for the same
+// terminal. The reuse check in the impl is check-then-act, so concurrent first
+// creates race past it and each provisions a PTY (duplicate PTYs/leak). This
+// serializes creates per item within the worker isolate (desktop = single
+// isolate, so fully effective). The while-loop has no await between the final
+// has()-check and set(), so exactly one caller becomes the leader at a time;
+// waiters fall through to the impl's reuse check and return the existing session.
+const sessionCreateGates = new Map<string, Promise<void>>();
+
 export async function createSessiоn(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  itemId: string,
+  userId: string,
+  userName: string,
+  preferredRegion?: string,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>
+): Promise<Response> {
+  while (sessionCreateGates.has(itemId)) {
+    await sessionCreateGates.get(itemId)!.catch(() => {});
+  }
+  let release!: () => void;
+  sessionCreateGates.set(itemId, new Promise<void>((r) => { release = r; }));
+  try {
+    return await createSessionImpl(env, dashboardId, itemId, userId, userName, preferredRegion, ctx);
+  } finally {
+    sessionCreateGates.delete(itemId);
+    release();
+  }
+}
+
+async function createSessionImpl(
   env: EnvWithDriveCache,
   dashboardId: string,
   itemId: string,
