@@ -364,6 +364,10 @@ GET    /sessions/:id/file
 PUT    /sessions/:id/file
 DELETE /sessions/:id/file
 POST   /sessions/:id/upload
+POST   /sessions/:id/workspace/import      # bulk tar.gz import (used by `orcabot push`/import)
+
+- `PUT /sessions/:id/file` writes atomically (`internal/fs/workspace.go` `Workspace.Write` = CreateTemp + rename) so a reader never sees a half-written file.
+- `POST /sessions/:id/workspace/import` extracts a tar.gz into `/workspace`: regular files only (`tar.TypeReg`), traversal entries skipped, per-file 10s write timeout (guards against a host-held file hanging over virtiofs on the desktop VM). Path scoping is enforced by `resolvePath`.
 
 ### Broker (session-local, localhost:8082)
 /broker/{sessionID}/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
@@ -569,6 +573,16 @@ internal/agent/
 
 internal/auth/
   WS auth, role checking (viewer vs controller), session ownership.
+
+---
+
+## Desktop-only: debug exec
+
+When the sandbox runs inside the local desktop VM, `POST /debug/exec` runs a shell
+command in the guest from the host (the primitive the `orcabot` CLI's `exec` uses for
+live debugging). It is **off in production** and authenticated with a **per-boot random
+token** written to `/dev/console` (surfaced at `/tmp/vz-console.log` when
+`VZ_CONSOLE_DIRECT=1`). See `desktop/CLAUDE.md` for the host side.
 
 ---
 

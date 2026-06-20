@@ -33,8 +33,12 @@ Tauri App (Rust)
 4. Starts frontend workerd (serves Next.js on port 8788)
 5. Starts control plane workerd (on port 8787)
 6. Waits for health checks on both
-7. Starts sandbox VM in background thread (can take up to 120s)
-8. Window appears immediately (doesn't block on VM boot)
+7. Applies the D1 schema (`POST /init-db`, idempotent) once the control plane is
+   healthy — so schema changes shipped in an app update reach existing users' DBs.
+   The worker otherwise only inits a brand-new DB's first `/health`. (`apply_schema`
+   in `main.rs`)
+8. Starts sandbox VM in background thread (can take up to 120s)
+9. Window appears immediately (doesn't block on VM boot)
 
 ### Shutdown
 - SIGTERM to all children, wait 2s, SIGKILL survivors
@@ -50,8 +54,12 @@ desktop/
 ├── app/                    — Tauri application
 │   ├── src-tauri/
 │   │   ├── src/
-│   │   │   ├── main.rs     — Service orchestration, VM boot, process management
-│   │   │   ├── commands.rs — Tauri commands (workspace path, folder import)
+│   │   │   ├── main.rs     — Service orchestration, VM boot, process management,
+│   │   │   │                 schema-on-boot, SIGUSR1/2 surface toggle
+│   │   │   ├── commands.rs — Tauri commands (workspace path, folder import, switch_to_cli)
+│   │   │   ├── bin/
+│   │   │   │   └── orcabot.rs — the `orcabot` CLI (2nd binary): headless launch + TUI
+│   │   │   │                    + surface switching + session packaging (see below)
 │   │   │   └── vm/         — Cross-platform VM abstraction
 │   │   │       ├── mod.rs      — VMConfig, VirtualMachine trait
 │   │   │       ├── macos.rs    — macOS Virtualization.framework (via vz-helper)
@@ -115,6 +123,92 @@ Platform-native lightweight VM running the Go sandbox server.
 - `vmlinuz` — Custom Linux kernel
 - `initrd.img` — Init ramdisk
 - `sandbox-rootfs.tar.gz` — Root filesystem with Go sandbox server
+
+### Boot path (important, non-obvious)
+The macOS VZ guest boots `rdinit=/init` (Debian initramfs) → `run-init` →
+`/sbin/init`, which is **systemd**. systemd runs `/etc/rc.local` (via
+`rc-local.service`), and **that** is where the sandbox actually starts. The
+`MININIT` heredoc written to `/sbin/init` in `vm/scripts/build-images.sh` is
+**vestigial/inert** — systemd wins. **Put guest boot changes in the `RCLOCAL`
+heredoc, not MININIT.** rc.local:
+- brings up `eth0` via DHCP (Apple NAT) for outbound internet (`net.ifnames=0` on
+  the cmdline forces legacy NIC naming),
+- starts the **forward** vsock bridge `VSOCK-LISTEN:8080 → TCP:127.0.0.1:8080`
+  (host → guest sandbox), and the **reverse** bridge
+  `TCP-LISTEN:8787 → VSOCK-CONNECT:2:8787` (guest → host control plane), pairing
+  with the host's `--reverse-port-forward 8787:8787`,
+- exports `CONTROLPLANE_URL=http://127.0.0.1:8787` + `INTERNAL_API_TOKEN` for the
+  server's control-plane callbacks (filtered out of PTY env, so agents never see them).
+
+### Guest console + debug-exec
+- `VZ_CONSOLE_DIRECT=1` writes the guest serial console to `/tmp/vz-console.log`
+  (name is backwards: DIRECT = file). Without it, console tees to app stdout.
+- The sandbox exposes `POST /debug/exec {"cmd":...}` (desktop only, gated by
+  `ORCABOT_DEBUG_EXEC=1`). Auth is a random **per-boot** token the VM prints to its
+  console (root-only), readable from `/tmp/vz-console.log` — a non-root agent can't
+  read it. This is the primitive the `orcabot` CLI uses to run guest shell commands.
+
+### Image staging
+`vm/image.rs` stages `resources/vm/sandbox.img` → the data dir on launch, keyed by
+a `.stamp` of the **source's nanosecond mtime + size** (not the dest's — the VM
+mounts the image rw and bumps its mtime). Forcing a clean re-stage: delete
+`<data>/vm/sandbox.img` + `.stamp`.
+
+---
+
+## `orcabot` CLI & Surface Switching
+
+`src/bin/orcabot.rs` is a **second binary** in the crate (`[[bin]] name="orcabot"`,
+unix-only — gated in a `#[cfg(unix)] mod unix_cli`). It runs the desktop stack
+*headlessly* and drives it from the terminal — the same things the in-app chat
+does, from outside. It spawns the existing `orcabot-desktop` binary in **headless
+mode** (`ORCABOT_DESKTOP_HEADLESS=1`, no GUI window) and talks to the running
+services over host loopback (control plane `:8787`, sandbox `:8080` incl.
+`/debug/exec`).
+
+### Lifecycle (owned-session, not a daemon)
+Whoever starts the stack owns it and tears it down on exit — nothing lingers.
+- **Bare `orcabot`** opens the TUI; if the stack is down it starts it and stops it
+  when you quit. If a stack is already running (from `up` or the GUI) it attaches
+  and leaves it alone.
+- **`up` / `down`** are the explicit "keep it running across many commands" mode
+  (used by scripts and `tests/regression-smoke.sh`). `down` finds the backend via
+  the pid file or `pgrep orcabot-desktop`.
+
+### Surface switching (cli ↔ desktop ↔ web)
+- **cli → desktop**: type `desktop` in the TUI → SIGUSR1 to the backend shows the
+  GUI window (the `main.rs` signal-hook thread flips the window + macOS
+  ActivationPolicy on the main thread) and hands off ownership (TUI exits without
+  teardown — the GUI now owns the session).
+- **desktop → cli**: the dashboards header has a "Switch to CLI" button (desktop
+  only) → the `switch_to_cli` Tauri command opens Terminal.app running
+  `orcabot cli --owns` (AppleScript `quoted form of` for shell-safety) and hides
+  the GUI. `--owns` makes the CLI tear the stack down when closed.
+- **web**: `orcabot web` pushes the dashboard to a configured remote
+  (`ORCABOT_REMOTE_URL`/`_TOKEN`) and opens it in the browser.
+- The webview reaches Tauri commands via the injected globals
+  (`window.__TAURI__` — `withGlobalTauri: true` in tauri.conf.json), **not** a
+  bundled `@tauri-apps/api` import (a bare specifier the remote-origin webview
+  can't resolve).
+
+### Commands
+`up`/`down`/`status`/`exec` · `ls`/`tail`/`new`/`connect`/`attach`/`detach` ·
+`export`/`import`/`push`/`pull`/`token`/`web` · `desktop`/`cli`/`gui`. CLI dev-auth
+sends `X-User-ID`/`X-User-Email`/`X-User-Name` (matching the frontend's
+`desktop@localhost` identity) so the CLI and GUI converge on one user.
+
+## Session packaging (`export`/`import`/`push`/`pull`)
+
+A `.orcabot` bundle is a tar.gz of `manifest.json` (dashboard + items + edges) +
+`workspace/`. `export`/`import` are local; `push`/`pull` target a remote control
+plane (the API is identical local/cloud), authenticating with a PAT
+(`Authorization: Bearer orca_pat_…`) or dev headers. Workspace transfer uses the
+control-plane file API (`GET`/`PUT /sessions/:id/file`, bulk
+`POST /sessions/:id/workspace/import`) since a remote sandbox isn't host-mounted.
+Excludes regenerable/runtime dirs (`.browser`, `.npm`, `.orcabot`, `.claude/cache`,
+`node_modules`, `.git`); `pull` validates each remote path stays in the workspace
+(no `..`/symlink escape) before writing. Secrets/integrations are intentionally
+NOT transferred. See `controlplane/CLAUDE.md` (file proxies, PATs).
 
 ---
 
