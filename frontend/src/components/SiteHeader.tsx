@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: site-header-v1-shared
+// REVISION: site-header-v4-height-66
 
 "use client";
 
@@ -65,7 +65,7 @@ export function SiteHeader({
         right: position === "fixed" ? 0 : undefined,
         zIndex: 40,
         borderBottom: "1px solid rgba(255,255,255,0.1)",
-        padding: "0.75rem 1.5rem",
+        padding: "0.625rem 1.5rem",
         backgroundColor: glass
           ? "rgba(3,10,22,0.75)"
           : pinned
@@ -109,7 +109,7 @@ export function SiteHeader({
               style={{ width: 28, height: 28, objectFit: "contain" }}
             />
             <span
-              style={{ fontWeight: 600, color: "#ffffff", fontSize: "0.9rem" }}
+              style={{ fontWeight: 700, color: "#ffffff", fontSize: "1rem" }}
             >
               OrcaBot
             </span>
@@ -140,16 +140,17 @@ export function SiteHeader({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              fontSize: "0.82rem",
+              fontSize: "0.92rem",
               fontWeight: 600,
-              color: "#ffffff",
+              color: "#06101f",
               textDecoration: "none",
-              background: "#3b82f6",
-              padding: "7px 16px",
-              borderRadius: "8px",
+              background: "linear-gradient(180deg, #cfe0ff, #8fb4ff)",
+              padding: "10px 18px",
+              borderRadius: "10px",
+              border: "1px solid transparent",
               whiteSpace: "nowrap",
               boxShadow:
-                "0 0 20px rgba(59,130,246,0.3), 0 2px 8px rgba(0,0,0,0.3)",
+                "0 1px 0 rgba(255,255,255,0.4) inset, 0 8px 24px rgba(59,130,246,0.28)",
             }}
           >
             {loginText}

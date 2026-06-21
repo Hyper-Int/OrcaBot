@@ -577,7 +577,8 @@ export default function Home() {
         <div className="hero">
           <img src="/orca.png" alt="OrcaBot" className="hero-orca" />
           <h1 className="hero-tagline">
-            Run AI coding agents in the browser. No setup. No risk.
+            Run AI agents in the browser.{" "}
+            <span className="accent">No setup. No risk.</span>
           </h1>
           <div className="chat-bar">
             <input

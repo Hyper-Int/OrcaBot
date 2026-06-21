@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mobile-nav-v2-css-no-flash
+// REVISION: mobile-nav-v4-desktop-weight
 
 "use client";
 
@@ -41,7 +41,7 @@ export function MobileNav({ links, absolute = false, dropdownBg = "#0b1a2e" }: M
       {/* Desktop nav — hidden on mobile via CSS */}
       <nav className="mn-desktop">
         {links.map((l) => (
-          <Link key={l.href} href={l.href} style={{ fontSize: "0.8rem", color: "rgba(255,255,255,0.65)", textDecoration: "none" }}>
+          <Link key={l.href} href={l.href} style={{ fontSize: "0.9rem", fontWeight: 500, color: "rgba(255,255,255,0.65)", textDecoration: "none" }}>
             {l.label}
           </Link>
         ))}
