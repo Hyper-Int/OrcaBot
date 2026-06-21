@@ -327,6 +327,37 @@ Chat panel for AI-assisted onboarding and help, plus provider setup cards.
 
 ---
 
+## Settings & Personal Access Tokens
+
+The Settings page manages account-level configuration, including **personal access
+tokens (PATs)** used by the `orcabot` CLI to authenticate against a remote control
+plane.
+
+### PAT UI
+- Create a token (name it) → the plaintext is shown **once**, then only the prefix is listed
+- List existing tokens (name, created/last-used) and revoke them
+- The control plane stores only the SHA-256 hash and **method-gates** PAT management so a PAT can't manage other PATs (see `controlplane/CLAUDE.md`)
+
+### Key Files
+- `src/app/(app)/settings/page.tsx` — Settings page
+- `src/components/PersonalAccessTokensPanel.tsx` — PAT create/list/revoke UI
+
+---
+
+## Desktop bridge & surface switching
+
+When the frontend is served inside the Tauri desktop webview, it can hand a live
+session off to the terminal (the `orcabot` CLI). The dashboards header shows a
+**"Switch to CLI"** button (desktop-only).
+
+- `src/lib/tauri-bridge.ts` — detects the Tauri runtime and exposes `switchToCli()`. It resolves the Tauri `invoke` from `window.__TAURI__.core.invoke` (the app sets `withGlobalTauri: true`); a bare `import("@tauri-apps/api/core")` does **not** resolve in the remote-origin webview, so don't rely on it.
+- The button is hidden when not running under Tauri.
+
+See `desktop/CLAUDE.md` for the Rust side (`switch_to_cli` command) and the full
+cli ↔ desktop ↔ web surface-switching model.
+
+---
+
 ## Integration Blocks
 
 Canvas blocks for each integration provider. Users wire edges between terminal blocks and integration blocks to grant MCP tool access.

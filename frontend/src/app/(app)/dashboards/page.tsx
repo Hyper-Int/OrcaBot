@@ -352,14 +352,14 @@ export default function DashboardsPage() {
       <PaywallDialog />
       {/* Header */}
       <header className="border-b border-[var(--border)] bg-[var(--background-elevated)]">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 h-[66px] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
               src="/orca.png"
               alt="Orcabot"
               className="w-7 h-7 object-contain"
             />
-            <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
+            <span className="text-lg font-bold text-[var(--foreground)]">OrcaBot</span>
           </div>
             <div className="flex items-center gap-4">
               <TrialBanner />

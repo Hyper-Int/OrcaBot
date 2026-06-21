@@ -27,7 +27,7 @@ Most agent setups put API keys in environment variables where the LLM can trivia
 
 **Secrets broker**: API keys are injected server-side by a session-local broker. The LLM only sees dummy placeholder values. Even if the agent dumps every environment variable, there's nothing to steal.
 
-**Output redaction**: Any secret value that appears in terminal output is replaced with asterisks before it reaches the WebSocket. The raw values never leave the sandbox.
+**Output redaction**: Secret values that appear in terminal output are replaced with asterisks before they reach the WebSocket. The raw values never leave the sandbox.
 
 **OAuth tokens stay encrypted in the DB**: When an agent calls Gmail or GitHub, the OAuth token is never sent to the sandbox. The control plane makes the API call on behalf of the agent, filters the response, and returns only what the policy allows.
 
