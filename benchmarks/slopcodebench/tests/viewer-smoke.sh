@@ -1,24 +1,28 @@
 #!/usr/bin/env bash
 # Light smoke test for the benchmark *viewer pattern* (branch 2) on the desktop VM.
 #
-# Validates the core claim of benchmarks/slopcodebench without installing
-# slop-code: a read-only Orcabot terminal can WATCH a tmux-mirrored run, and
-# cannot inject input into it.
+# Validates the SECURE viewer mechanism: a read-only Orcabot terminal watches a
+# run by tailing its per-run logfile (`tail -F`), NOT by attaching a shared tmux
+# control socket.
+#
+# Why not a shared tmux socket: a world-accessible tmux control socket would let
+# any in-VM process attach = read every pane AND inject commands into other
+# sessions, bypassing output redaction (CLAUDE.md:96) and the "two terminals
+# cannot see each other" / "no cross-session access" isolation invariants
+# (CLAUDE.md:94, sandbox/CLAUDE.md:248), via a local channel the egress proxy
+# never sees. A logfile tail has no inject capability and no reach into other
+# runs — it stays within the already-shared /workspace trust boundary.
+#
+# This mirrors the real host-tmux executor: it tees each run's output to a
+# per-run logfile (its tmux window stays PRIVATE to the executor's own uid).
+# A cross-PTY viewer tails that same logfile.
 #
 # Flow:
-#   1. (in VM, via /debug/exec) create a tmux session on a SHARED socket in
-#      /workspace that emits a marker — stands in for a host-tmux run.
-#   2. create an Orcabot terminal whose bootCommand attaches read-only
-#      (`tmux attach -r`) to that session.
-#   3. `orcabot tail` the viewer -> assert it shows the marker (it's watching).
-#   4. send keystrokes to the viewer -> assert they do NOT reach the session
-#      pane (read-only holds).
-#
-# A shared socket (`tmux -S /workspace/.scb-smoke/tmux.sock`) is used on purpose:
-# Orcabot PTYs may run under different uids (egress UID pool), and per-uid default
-# tmux sockets aren't cross-visible. A world-accessible shared socket in the
-# shared workspace is the uid-agnostic pattern the real host-tmux executor should
-# also adopt for cross-PTY viewing.
+#   1. (in VM, via /debug/exec) a "run" writes a marker + heartbeats to a logfile.
+#   2. create an Orcabot terminal whose bootCommand is `tail -F <logfile>`.
+#   3. `orcabot tail` the viewer -> assert it shows the marker (watching works).
+#   4. send keystrokes to the viewer -> assert they do NOT reach the run's
+#      logfile (read-only holds; tail cannot write back to the run).
 #
 # Usage:  benchmarks/slopcodebench/tests/viewer-smoke.sh
 # Requires: stack running (`orcabot up`), python3, curl. Exits non-zero on failure.
@@ -30,7 +34,8 @@ CP="http://127.0.0.1:8787"
 SB="http://127.0.0.1:8080"
 U="X-User-ID: dev-desktop"
 VZ_LOG="/tmp/vz-console.log"
-SOCK="/workspace/.scb-smoke/tmux.sock"
+RUNDIR="/workspace/.scb-smoke"
+LOG="$RUNDIR/run1.log"
 MARKER="SMOKE_VIEWER_MARKER_OK"
 INJECT="INJECT_RO_SHOULD_NOT_APPEAR"
 
@@ -50,18 +55,17 @@ X(){ local b; b="$(python3 -c "import json,sys;print(json.dumps({'cmd':sys.argv[
 curl -s -m3 "$CP/health" >/dev/null || { echo "control plane down on :8787 — run 'orcabot up'." >&2; exit 2; }
 [ -n "$TOK" ] || { echo "no /debug/exec token in $VZ_LOG (need VZ_CONSOLE_DIRECT=1 / 'orcabot up')." >&2; exit 2; }
 
-echo "[0] tmux present in VM"
-TV="$(X 'tmux -V')"; case "$TV" in tmux*) ok "tmux: $TV";; *) bad "tmux missing in VM (got '$TV')"; echo "==== $PASS passed, $FAIL failed ===="; exit 1;; esac
+echo "[1] start a 'run' that tees output to a per-run logfile"
+X "rm -rf $RUNDIR; mkdir -p $RUNDIR" >/dev/null
+# marker now; then a detached heartbeat writer so tail -F has something live.
+X "echo $MARKER > $LOG; nohup sh -c 'for i in \$(seq 1 120); do echo hb_\$i >> $LOG; sleep 1; done' >/dev/null 2>&1 &" >/dev/null
+sleep 1
+HAVE="$(X "grep -c $MARKER $LOG 2>/dev/null")"
+[ "$HAVE" = "1" ] && ok "run logfile created with marker" || bad "logfile/marker not present (got '$HAVE')"
 
-echo "[1] create shared-socket tmux session (stand-in for a host-tmux run)"
-X "rm -rf /workspace/.scb-smoke; mkdir -p /workspace/.scb-smoke" >/dev/null
-X "tmux -S $SOCK new-session -d -s scb -n run1 \"sh -c 'echo $MARKER; sleep 600'\"; chmod -R 777 /workspace/.scb-smoke" >/dev/null
-WINS="$(X "tmux -S $SOCK list-windows -t scb -F '#{window_name}'")"
-case "$WINS" in *run1*) ok "session up (windows: $WINS)";; *) bad "session not created (got '$WINS')";; esac
-
-echo "[2] spawn a read-only viewer terminal"
+echo "[2] spawn a read-only viewer terminal (tail -F the logfile)"
 DID="$(curl -s -X POST -H "$U" -H 'Content-Type: application/json' --data-raw '{"name":"viewer-smoke"}' "$CP/dashboards" | jq_py "import json,sys;print(json.load(sys.stdin)['dashboard']['id'])")"
-CONTENT="{\"name\":\"viewer\",\"bootCommand\":\"tmux -S $SOCK attach -r -t scb:run1\"}"
+CONTENT="{\"name\":\"viewer\",\"bootCommand\":\"tail -n +1 -F $LOG\"}"
 # Build the request body with single-quoted python reading $CONTENT from the env,
 # so bash never brace-expands the JSON dict.
 BODY="$(CONTENT="$CONTENT" python3 -c 'import json,os;print(json.dumps({"type":"terminal","content":os.environ["CONTENT"]}))')"
@@ -72,15 +76,15 @@ echo "  dashboard=$DID item=$IT"
 
 echo "[3] viewer shows the run (watching works)"
 OUT="$(timeout 12 "$ORCABOT" tail "$IT" --dash "$DID" --secs 6 2>/dev/null)"
-echo "$OUT" | grep -q "$MARKER" && ok "viewer shows marker (attached + rendering)" || bad "viewer did not show marker"
+echo "$OUT" | grep -q "$MARKER" && ok "viewer shows marker (tailing the run logfile)" || bad "viewer did not show marker"
 
 echo "[4] viewer is read-only (input cannot reach the run)"
 timeout 12 "$ORCABOT" tail "$IT" --dash "$DID" --secs 5 --send "$INJECT" >/dev/null 2>&1; sleep 1
-PANE="$(X "tmux -S $SOCK capture-pane -p -t scb:run1")"
-echo "$PANE" | grep -q "$INJECT" && bad "INPUT LEAKED into run pane (not read-only!)" || ok "read-only holds (injected text absent from run pane)"
+LOGTXT="$(X "cat $LOG")"
+echo "$LOGTXT" | grep -q "$INJECT" && bad "INPUT LEAKED into run logfile (not read-only!)" || ok "read-only holds (injected text absent from run logfile)"
 
 # ---- teardown ----
-X "tmux -S $SOCK kill-server 2>/dev/null; rm -rf /workspace/.scb-smoke" >/dev/null
+X "pkill -f 'seq 1 120' 2>/dev/null; rm -rf $RUNDIR" >/dev/null
 curl -s -o /dev/null -X DELETE -H "$U" "$CP/dashboards/$DID"
 echo
 echo "================  $PASS passed, $FAIL failed  ================"
