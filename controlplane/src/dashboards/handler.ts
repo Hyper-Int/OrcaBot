@@ -198,9 +198,11 @@ export async function createDashbоard(
 
   // If templateId provided, populate dashboard from template
   let templateViewport: { x: number; y: number; zoom: number } | undefined;
+  let hasSetupGuide = false;
   if (data.templateId) {
     const result = await populateFromTemplate(env, id, data.templateId);
     templateViewport = result?.viewport;
+    hasSetupGuide = !!result?.hasSetupGuide;
   }
 
   // Eagerly claim a warm VM so terminals open instantly.
@@ -227,6 +229,7 @@ export async function createDashbоard(
   return Response.json({
     dashboard,
     ...(templateViewport && { viewport: templateViewport }),
+    ...(hasSetupGuide && { hasSetupGuide: true }),
   }, { status: 201 });
 }
 

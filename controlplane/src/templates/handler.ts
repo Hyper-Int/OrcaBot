@@ -439,7 +439,7 @@ export async function populateFromTemplate(
   env: Env,
   dashboardId: string,
   templateId: string
-): Promise<{ viewport?: { x: number; y: number; zoom: number } } | undefined> {
+): Promise<{ viewport?: { x: number; y: number; zoom: number }; hasSetupGuide?: boolean } | undefined> {
   await ensureTemplateColumns(env);
   const template = await env.DB.prepare(
     `SELECT items_json, edges_json, viewport_json, setup_guide FROM dashboard_templates WHERE id = ?`
@@ -534,5 +534,5 @@ export async function populateFromTemplate(
   const viewport = template.viewport_json
     ? JSON.parse(template.viewport_json)
     : undefined;
-  return { viewport };
+  return { viewport, hasSetupGuide: !!template.setup_guide };
 }
