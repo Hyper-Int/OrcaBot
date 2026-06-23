@@ -20,7 +20,9 @@ SANDBOX_DIR="$REPO_ROOT/sandbox"
 OUTPUT_DIR="$VM_DIR/image"
 
 # Image settings
-IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-3072}"
+# 4GB: OpenCode (re-enabled for benchmark harnesses) plus the other agent CLIs
+# overflow the old 3GB rootfs. Override via IMAGE_SIZE_MB if a slimmer build is needed.
+IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-4096}"
 
 # Colors for output
 RED='\033[0;31m'
