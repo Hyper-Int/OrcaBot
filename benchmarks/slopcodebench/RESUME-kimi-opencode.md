@@ -3,8 +3,13 @@
 Goal: run **one** slop-code-bench arm — model **Kimi K2.6 via OpenRouter**, agent
 **opencode** — end-to-end in the Orcabot **desktop VM**, with the API key kept in
 the **secrets broker** and the run watchable via the **host-tmux logfile mirror**.
-We are one issue away: opencode now authenticates through the broker, but the run
-**hangs** at the streamed-response stage. This doc has everything to finish it.
+
+> **RESOLVED 2026-06-23.** The "hang" was an IPv4/IPv6 loopback mismatch, not a
+> streaming bug. The broker listens on `127.0.0.1` only; opencode (Node/undici)
+> resolves `localhost` to IPv6 `::1` first, can't reach the IPv4 broker, and
+> retry-storms into an apparent hang. Fix: hand harnesses `127.0.0.1`, not
+> `localhost`. With that, the arm runs end-to-end (`cost>0`, steps advance through
+> checkpoints). See §2 + §4. The rest of this doc is kept as the run recipe.
 
 ---
 
@@ -23,10 +28,16 @@ We are one issue away: opencode now authenticates through the broker, but the ru
   `--model=scb-openrouter/moonshotai/kimi-k2.6`, reads `baseURL`+`apiKey` from its
   config, request reaches OpenRouter via the broker.
 
-**The remaining blocker:** the run then **hangs** — `cost=0`, no agent messages,
-20+ min, opencode process alive. `stream(timeout=None)` never bails.
-**Ruled out:** network — `registry.npmjs.org` and `openrouter.ai` both return 200
-in <0.3 s from the VM. So it is NOT an npm-fetch or connectivity hang.
+**Root cause of the former "hang" (FIXED):** opencode's `@ai-sdk/openai-compatible`
+provider could not connect to the broker. opencode debug log
+(`--print-logs --log-level DEBUG`) showed `AI_APICallError: Cannot connect to API`
+→ `AI_RetryError: Failed after 3 attempts`, repeating with exponential backoff
+across the title + build sub-agents — i.e. a retry storm, not a stalled stream.
+The broker binds `127.0.0.1:8082` (IPv4 only; `secrets_broker.go:630`), but the
+baseURL was `http://localhost:8082/...`. Node/undici tries IPv6 `::1` first →
+ECONNREFUSED. curl/Go/Python prefer IPv4, which is why the direct streaming curl
+through the broker worked perfectly (chunks in 3 s) and masked the bug.
+**Fix:** use `127.0.0.1`, not `localhost`. Two places — see §2.
 
 ---
 
@@ -37,7 +48,9 @@ in <0.3 s from the VM. So it is NOT an npm-fetch or connectivity hang.
 | fork `feat/host-tmux-executor` | `8956077` | host-tmux executor: tee streamed output to a logfile + tmux mirror (the no-Docker watchable run) |
 | fork `feat/host-tmux-executor` | `bfa9aa6` | opencode local-config materialize + apiKey injection; `kimi-k2.6.yaml` `agent_specific.opencode.endpoint: openai` |
 | fork `feat/host-tmux-executor` | `0adc65c` | **the auth unlock** — `LocalStreamingRuntime` now applies spawn `env_vars`; opencode uses a synthetic `scb-<provider>` `@ai-sdk/openai-compatible` provider |
-| orcabot `feat/benchmark-templates-swe-tbench` | `5bd9360` | re-enable opencode in `sandbox/docker/Dockerfile`; VM image → 4 GB |
+| orcabot `feat/benchmark-templates-swe-tbench` | `5bd9360` | re-enable opencode in `sandbox/docker/Dockerfile` |
+| orcabot `feat/benchmark-templates-swe-tbench` | `b3b7751` | default VM image size → 4 GB (5bd9360 only set it via env, not source) |
+| orcabot `feat/benchmark-templates-swe-tbench` | `17e7cd4` | **the hang fix** — broker env URLs use `127.0.0.1`, not `localhost` (`sandbox/cmd/server/env.go:138,162`). Product-wide; needs a VM image rebuild to reach the deployed sandbox |
 
 Why `0adc65c` was the key: `LocalStreamingRuntime` was **dropping** the agent's
 spawn-time `env_vars`, so opencode ran with `HOME=/root` and never read its
@@ -93,52 +106,32 @@ curl -s -X POST -H "X-User-ID: dev-desktop" -H 'Content-Type: application/json' 
 
 ---
 
-## 4. The plan to resolve the hang (diagnostic-first)
+## 4. How it was resolved (record)
 
-The broker **already streams SSE with flush** (`sandbox/internal/broker/secrets_broker.go:524-540`:
-`WriteHeader` then a read+`Flush()` loop for streaming responses). So do **not**
-assume the broker buffers — first find *where* the hang is.
+The diagnosis was done from a PTY in the Kimi dashboard (which has
+`$OPENROUTER_BASE_URL` + the `[BROKERED]` placeholder key in env):
 
-### Step 1 — Reproduce + localize (do this first)
-From a PTY in the Kimi dashboard (so `$OPENROUTER_BASE_URL` + placeholder key are
-in the env), send a **streaming** chat-completion directly through the broker:
-```bash
-curl -N -s "$OPENROUTER_BASE_URL/chat/completions" \
-  -H "Authorization: Bearer $OPENROUTER_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"model":"moonshotai/kimi-k2.6","stream":true,
-       "messages":[{"role":"user","content":"say PONG"}],"max_tokens":2000}'
-```
-(The earlier PONG test was **non-streaming** — that's the gap.) Interpret:
-- **SSE chunks stream back promptly** → broker streaming is fine; the hang is in
-  opencode's consumption → go to Step 3a.
-- **Hangs / no data** → broker or upstream streaming is the problem → Step 3b.
-- Cross-check the broker's view: the request reaches it at
-  `secrets_broker.go:ServeHTTP` (line 291); `client.Do` (line 480) forwards
-  upstream. Add temporary logging there if needed.
+1. **Streaming curl through the broker** (`"stream":true`) — returned SSE chunks in
+   ~3 s, `http=200`, real cost. So the broker streams fine; the earlier non-stream
+   PONG was not the gap. → hang is opencode-side.
+2. **Ran opencode standalone** with the same synthetic-provider config + a `timeout`
+   so it couldn't hang forever; added `--print-logs --log-level DEBUG`. The log
+   showed `AI_APICallError: Cannot connect to API` → `AI_RetryError: Failed after 3
+   attempts`, retrying with backoff. Config loaded fine (`scb-openrouter` selected) —
+   it simply couldn't open the socket.
+3. **Switched the baseURL `localhost` → `127.0.0.1`** and re-ran: the agent loop
+   completed instantly (reasoning + text + `step_finish` reason=stop). Root cause =
+   IPv4-only broker vs Node/undici's IPv6-first `localhost` resolution.
 
-### Step 2 — Make hangs fail fast (do regardless; small, safe)
-In the fork, `src/slop_code/agent_runner/agents/opencode/agent.py` → `run()` calls
-`self.runtime.stream(command=command, env={}, timeout=None)` (~line 358). Pass a
-real timeout (e.g. 600 s) so a stuck run errors with captured stdout/stderr instead
-of hanging forever. This alone turns the silent hang into a diagnosable failure.
+**Fixes applied:**
+- Product source: `sandbox/cmd/server/env.go:138,162` now emits `127.0.0.1`
+  (commit `17e7cd4`). Fixes every brokered provider for all Node harnesses; needs a
+  VM image rebuild to reach the deployed sandbox.
+- Run recipe (works on the *current* image without a rebuild): the launcher rewrites
+  `providers.yaml`'s broker `api_base` with `localhost`→`127.0.0.1` (see §6).
 
-### Step 3 — Fix, by what Step 1 shows
-- **3a (opencode consumes the stream wrong):** opencode's `@ai-sdk/openai-compatible`
-  provider may need the model id without the `provider/` prefix, or a specific SSE
-  format. Try: (i) confirm the request opencode sends (broker access log / a tcpdump
-  of `localhost:8082`); (ii) try a **non-streaming** opencode path if one exists
-  (some opencode/provider configs support non-stream); (iii) check opencode server
-  log `/root/.local/share/opencode/log/opencode.log` for a post-`stream` error.
-- **3b (broker streaming):** confirm the response writer is an `http.Flusher` in
-  this path (line 527); if not, force flush / disable response buffering. Check the
-  broker's **client** has no premature read timeout and that it forwards
-  `Accept: text/event-stream` + chunked encoding unmodified. Verify
-  `WriteTimeout: 180s` (line 633) isn't cutting a long Kimi stream.
-
-### Step 4 — Re-run + confirm success
-Success = the run advances past `checkpoint_1` with `cost > 0` and `steps > 0`,
-agent messages appear in `…/checkpoint_1/agent/messages.jsonl`, and a solution diff
-is produced. Then optionally drop `--no-evaluate` to score it.
+Success criterion met: the arm advanced past `checkpoint_1` with `cost=0.01027`
+(`steps=1`) into `checkpoint_2`. To score it, drop `--no-evaluate`.
 
 ---
 
@@ -168,10 +161,14 @@ setsid bash -c '
 export HOME=/root TMPDIR=/workspace/.uvtmp
 cd /workspace/slop-code-bench
 cp configs/providers.yaml.orig configs/providers.yaml   # restore pristine
-python3 - <<PY
+python3 - <<'PY'
 import os
 p="configs/providers.yaml"; s=open(p).read()
-open(p,"w").write(s.replace("api_base: https://openrouter.ai/api/v1","api_base: "+os.environ["OPENROUTER_BASE_URL"]))
+# 127.0.0.1, NOT localhost: opencode (Node/undici) resolves localhost to IPv6 ::1
+# first and the broker is IPv4-only -> retry-storm hang. (env.go now emits
+# 127.0.0.1 too; this swap keeps the recipe working on a not-yet-rebuilt image.)
+url=os.environ["OPENROUTER_BASE_URL"].replace("localhost","127.0.0.1")
+open(p,"w").write(s.replace("api_base: https://openrouter.ai/api/v1","api_base: "+url))
 PY
 /workspace/scb-venv/bin/slop-code run --agent opencode --model openrouter/kimi-k2.6 \
   --environment configs/environments/local-tmux-py.yaml \
