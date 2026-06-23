@@ -216,13 +216,12 @@ const terminalTools: BlockTool[] = [
     icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "codex", agentic: true },
   },
-  // OpenCode - temporarily hidden until connection issues are resolved
-  // {
-  //   type: "terminal",
-  //   label: "OpenCode",
-  //   icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
-  //   terminalPreset: { command: "opencode", agentic: true },
-  // },
+  {
+    type: "terminal",
+    label: "OpenCode",
+    icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
+    terminalPreset: { command: "opencode", agentic: true },
+  },
   // Droid - temporarily hidden until stable release
   // {
   //   type: "terminal",
