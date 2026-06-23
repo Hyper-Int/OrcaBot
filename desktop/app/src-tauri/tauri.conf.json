@@ -47,7 +47,7 @@
     "targets": ["app", "dmg"],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "signingIdentity": "-",
+      "signingIdentity": "Developer ID Application: Robert Macrae (3927MKQNPA)",
       "minimumSystemVersion": "13.0"
     }
   }
