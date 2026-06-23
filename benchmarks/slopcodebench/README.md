@@ -89,10 +89,37 @@ convenience); `scb-attach` is for same-uid interactive use only.
 ## Importing the template
 
 `template.json` matches `DashboardTemplateWithData`
-(`frontend/src/types/dashboard.ts`). Templates live in D1, so import it via the
-template API / chat `dashboard_create`, not as a code seed — the file is the
-portable definition. The viewer panes are intentionally **not** in the
-template; the orchestrator creates them per run at runtime.
+(`frontend/src/types/dashboard.ts`). Templates are **DB-only** — there is no code
+seed and nothing imports this file automatically. To make it appear in the
+**New Dashboard** grid, insert it into the `dashboard_templates` table:
+
+```bash
+benchmarks/slopcodebench/bin/scb-insert-template      # desktop d1-shim :9001
+```
+
+(For a cloud control plane, export a template from an existing dashboard via the
+`POST /templates` API instead — direct INSERT is the local/curated path.)
+
+The orchestrator terminal's `bootCommand` appends the operating briefing to a
+`CLAUDE.md` in its working dir, so Claude Code boots **already knowing** the
+validated `slop-code` commands (this is what was missing when a stock agent had
+"no idea" how to run a benchmark). Viewer panes are intentionally **not** in the
+template; the orchestrator can create them per run at runtime.
+
+> **"Set up a benchmark" in the in-app chat is not a feature.** There is no
+> benchmark chat intent — that phrase just spins up a generic agent with no
+> slop-code context. Use this template (above) instead.
+
+### One-time VM setup (manual, required before driving the orchestrator)
+1. Fork at `/workspace/slop-code-bench` with venv `/workspace/scb-venv`
+   (`uv sync --python 3.12`, managed python on `/workspace/.uv-python`). On
+   desktop this is the host-shared workspace, so it persists across reboots.
+2. Add your provider key in the **secrets panel**, broker-protected
+   (e.g. `OPENROUTER_API_KEY`).
+
+Then drive the orchestrator in English: *"Run `file_backup` with opencode on
+kimi-k2.6."* The validated arm + the `localhost`→`127.0.0.1` broker note live in
+`RESUME-kimi-opencode.md`.
 
 ## Status — prototype
 
