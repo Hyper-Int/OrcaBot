@@ -114,13 +114,14 @@ RUN npm cache clean --force && npm install -g @openai/codex@latest
 # Install Gemini CLI (Google)
 RUN npm cache clean --force && npm install -g @google/gemini-cli@latest
 
-# --- Temporarily disabled agents (may re-enable later) ---
-# Keeping Claude Code, Gemini CLI, and Codex CLI for now.
-# OpenCode, Droid, and OpenClaw are commented out to reduce image size (~800MB savings).
+# --- Agents ---
+# Installed: Claude Code, Gemini CLI, Codex CLI, OpenCode.
+# OpenCode re-enabled for benchmark harnesses (slop-code-bench drives it for
+# OpenRouter models, e.g. Kimi). Droid and OpenClaw stay disabled to save space.
 
-# # Install OpenCode CLI and move to shared location
-# RUN curl -fsSL https://opencode.ai/install | bash \
-#     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
+# Install OpenCode CLI and move to shared location
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # # Install Droid CLI (Factory)
 # RUN curl -fsSL https://app.factory.ai/cli | sh \
