@@ -46,8 +46,10 @@ does. The predictions file is the clean handoff boundary.
 2. **Orchestrator** — a Claude Code terminal you drive in English
    (`orchestrator-runbook.md`), running the benchmark's native CLI.
 3. **Viewers** — the orchestrator spawns a read-only viewer pane per run via its
-   `create_terminal` MCP tool. The attach command is benchmark-specific:
-   `tmux attach -r` (slop-code), `docker logs -f <id>` / `tail -f logs/…`
+   `create_terminal` MCP tool, using a **read-only** boot command (never a tmux
+   *control* socket across PTYs — that would grant read+inject across sessions
+   and bypass output redaction). The command is benchmark-specific:
+   `tail -n +1 -F <run-logfile>` (slop-code), `docker logs -f <id>` / `tail -f logs/…`
    (SWE-bench family), `harbor`/Modal log streaming (Terminal-Bench).
 
 ## Status

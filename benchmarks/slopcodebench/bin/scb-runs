@@ -3,8 +3,15 @@
 # List active slop-code-bench runs in the shared tmux session.
 #
 # Each agent run launched by the host-tmux executor appears as a tmux window
-# in the `scb` session. This prints one line per run with the read-only attach
-# command, so the orchestrator (or a human) can spawn a viewer pane for it.
+# in the `scb` session. This prints one line per run with a read-only attach
+# command for SAME-UID INTERACTIVE use (a human in the executor's own shell).
+#
+# NOTE: cross-PTY Orcabot viewer *panes* must NOT attach this tmux socket —
+# a separate viewer PTY may run under a different uid, and bridging the tmux
+# control socket across uids needs world-accessibility (read+inject across
+# sessions, bypassing output redaction). Those panes tail the per-run logfile
+# instead (see orchestrator-runbook.md). `tmux attach -r` here is fine only
+# because it's the same uid as the executor.
 #
 # Usage: scb-runs
 # Env:   SCB_SESSION (default: scb)

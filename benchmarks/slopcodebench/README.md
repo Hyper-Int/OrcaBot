@@ -38,12 +38,19 @@ English via Remote Control, which is the actual product value here.
     │ spawns viewer panes + edges per run
     ▼           ▼           ▼
 ┌─ ▶ run ──┐ ┌─ ▶ run ──┐ ┌─ ▶ run ──┐   boot_command:
-│ tmux -r  │ │ tmux -r  │ │ tmux -r  │   tmux attach -r -t scb:<window>
-└──────────┘ └──────────┘ └──────────┘   (read-only viewers)
-        ▲ tmux session `scb`, one window per run
+│ tail -F  │ │ tail -F  │ │ tail -F  │   tail -n +1 -F <run-logfile>
+└──────────┘ └──────────┘ └──────────┘   (read-only viewers; no inject)
+        ▲ per-run logfiles (the executor tees each run to one)
         │
    host-tmux executor in the slop-code-bench fork
 ```
+
+Viewer panes **tail the per-run logfile**, not the executor's tmux socket — a
+separate viewer PTY may run under a different uid, and bridging a tmux *control*
+socket across uids would need world-accessibility (read+inject across sessions,
+bypassing output redaction). Logfile tail is read-only and reaches only that
+run. The executor's tmux session stays private to its own uid (its multiplexing
+convenience); `scb-attach` is for same-uid interactive use only.
 
 ## Prerequisites
 

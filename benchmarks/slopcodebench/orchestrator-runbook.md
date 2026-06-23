@@ -55,14 +55,24 @@ drives the agent-under-test. You are the operator around it.
 > `SCB_SKILL_<NAME>_DIR`, then use `local-tmux-py-with-<skill>.yaml` +
 > `just-solve-with-<skill>-local-trigger.jinja`.
 >
-> **After starting runs, make them visible.** Run `tmux list-windows -t scb`
-> (or the `scb-runs` helper) to list active run windows. For each run window
+> **After starting runs, make them visible.** Read `<workdir>/.scb_tmux/runs.jsonl`
+> for the active runs (each record has `window` and `logfile`). For each run
 > that does not already have a viewer pane, call the **`create_terminal`** MCP
 > tool with:
-> - `boot_command`: `tmux attach -r -t scb:<window>`   ← read-only (`-r`)
+> - `boot_command`: `tail -n +1 -F <logfile>`   ← read-only by construction
 > - a name like `▶ <window>`
 > Then call **`connect_nodes`** to draw an edge from your own terminal to the
 > new viewer. Never create a second viewer for a run that already has one.
+>
+> **Security — do NOT make viewers attach the tmux socket.** A viewer pane is a
+> separate PTY (potentially a different uid under the egress UID pool). Bridging
+> it to the run's tmux *control* socket would require a world-accessible socket,
+> which grants read+inject across sessions and bypasses output redaction — a
+> local lateral channel the egress proxy never sees. Tailing the per-run logfile
+> is read-only, reaches only that one run, and stays within the shared
+> `/workspace` trust boundary. (A human attaching `tmux attach -r` from *your own*
+> shell — same uid, default socket — is fine; that's what `scb-attach` is for.
+> The rule is specifically about cross-PTY viewer panes.)
 >
 > **Scoring + results**
 > - When runs finish, score them: `uv run slop-code eval outputs/<run-dir>/`.
