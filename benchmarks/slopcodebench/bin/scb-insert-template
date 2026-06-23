@@ -35,17 +35,22 @@ def q(sql, params):
 
 tid = str(uuid.uuid4())
 now = datetime.datetime.utcnow().isoformat()
+# Ensure the setup_guide column exists (idempotent) so older DBs accept the insert.
+try:
+    q("ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT", [])
+except Exception:
+    pass
 q("DELETE FROM dashboard_templates WHERE name = ?", [tpl["name"]])
 q(
     """INSERT INTO dashboard_templates
        (id,name,description,category,author_id,author_name,items_json,edges_json,
-        viewport_json,item_count,is_featured,use_count,status,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        viewport_json,setup_guide,item_count,is_featured,use_count,status,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
     [
         tid, tpl["name"], tpl["description"], tpl.get("category", "coding"),
         AUTHOR_ID, AUTHOR_NAME,
         json.dumps(tpl["items"]), json.dumps(tpl["edges"]),
-        json.dumps(tpl.get("viewport")), len(tpl["items"]),
+        json.dumps(tpl.get("viewport")), tpl.get("setupGuide"), len(tpl["items"]),
         1, 0, "approved", now, now,
     ],
 )

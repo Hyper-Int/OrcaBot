@@ -29,6 +29,11 @@ async function ensureTemplateColumns(env: Env): Promise<void> {
       `ALTER TABLE dashboard_templates ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'`
     ).run();
   } catch { /* already exists */ }
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT`
+    ).run();
+  } catch { /* already exists */ }
   migrated = true;
 }
 
@@ -80,6 +85,12 @@ export interface DashboardTemplateWithData extends DashboardTemplate {
   items: TemplateItem[];
   edges: TemplateEdge[];
   viewport?: { x: number; y: number; zoom: number };
+  /**
+   * Optional guided-setup script. When present, it is copied onto a dashboard
+   * created from this template; the Orcabot chat injects it so it can walk the
+   * user through setup (clone a repo, sync deps, add keys, run a first job).
+   */
+  setupGuide?: string;
 }
 
 function generateId(): string {
@@ -122,6 +133,7 @@ function formatTemplateWithData(
     items: JSON.parse((row.items_json as string) || '[]'),
     edges: JSON.parse((row.edges_json as string) || '[]'),
     ...(viewport && { viewport }),
+    ...(row.setup_guide ? { setupGuide: row.setup_guide as string } : {}),
   };
 }
 
@@ -428,11 +440,12 @@ export async function populateFromTemplate(
   dashboardId: string,
   templateId: string
 ): Promise<{ viewport?: { x: number; y: number; zoom: number } } | undefined> {
+  await ensureTemplateColumns(env);
   const template = await env.DB.prepare(
-    `SELECT items_json, edges_json, viewport_json FROM dashboard_templates WHERE id = ?`
+    `SELECT items_json, edges_json, viewport_json, setup_guide FROM dashboard_templates WHERE id = ?`
   )
     .bind(templateId)
-    .first<{ items_json: string; edges_json: string; viewport_json: string | null }>();
+    .first<{ items_json: string; edges_json: string; viewport_json: string | null; setup_guide: string | null }>();
 
   if (!template) return;
 
@@ -496,6 +509,19 @@ export async function populateFromTemplate(
         )
         .run();
     }
+  }
+
+  // Copy the template's setup guide onto the dashboard so the Orcabot chat can
+  // walk the user through setup for this dashboard (best-effort; column added
+  // by migration). Skipped silently if the column isn't present yet.
+  if (template.setup_guide) {
+    try {
+      await env.DB.prepare(
+        `UPDATE dashboards SET setup_guide = ? WHERE id = ?`
+      )
+        .bind(template.setup_guide, dashboardId)
+        .run();
+    } catch { /* dashboards.setup_guide not migrated yet */ }
   }
 
   // Increment template use count

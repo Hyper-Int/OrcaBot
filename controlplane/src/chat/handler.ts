@@ -1327,6 +1327,28 @@ export async function streamMessage(
 
   // Build dynamic system prompt addendum so Orcabot knows which agent to use
   let systemPrompt = ORCABOT_SYSTEM_PROMPT + '\n\n' + HELP_DOCS_GROUNDING;
+
+  // Template-driven setup walkthrough: if the active dashboard was created from
+  // a template that carries a setup guide, inject it so Orcabot can walk the
+  // user through setup using its tools (terminal_input, secrets_create, etc.).
+  if (dashboardId) {
+    try {
+      const dashRow = await env.DB.prepare(
+        `SELECT setup_guide FROM dashboards WHERE id = ?`
+      ).bind(dashboardId).first<{ setup_guide: string | null }>();
+      const guide = dashRow?.setup_guide?.trim();
+      if (guide) {
+        systemPrompt += `\n\nACTIVE SETUP WALKTHROUGH (for this dashboard):
+Follow this guide to help the user get set up. Use your tools to do the work
+(terminal_input to run commands, secrets_create for keys, create_terminal/
+create_browser as needed) and confirm each step briefly before moving on. Ask
+the user to choose where a choice is offered; never paste or echo secret values.
+
+${guide}`;
+      }
+    } catch { /* dashboards.setup_guide not migrated yet — skip */ }
+  }
+
   if (userKeyNames.length > 0 && bestProvider) {
     const available = userKeyNames.map(k => `${AI_PROVIDER_LABELS[k]?.agent ?? k} (${k})`).join(', ');
     systemPrompt += `\n\nUSER'S AI PROVIDER KEYS (already stored — do NOT ask for them again):
