@@ -10,11 +10,13 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Orcabot Desktop",
         "width": 1200,
-        "height": 800
+        "height": 800,
+        "visible": false
       }
     ]
   },

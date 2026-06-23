@@ -163,6 +163,13 @@ fi
 mkdir -p /mnt/rootfs/sbin
 cat > /mnt/rootfs/sbin/init << "MININIT"
 #!/bin/sh
+# The kernel execs PID 1 with an empty/minimal PATH. Set a full one so tools in
+# /usr/sbin (ip, dhclient, modprobe) resolve — without this the network bring-up
+# below is silently skipped and the guest has no outbound connectivity.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Enable the sandbox debug-exec endpoint (POST /debug/exec) for the desktop VM
+# only. Fly boots via OpenRC, never this init, so it stays off in production.
+export ORCABOT_DEBUG_EXEC=1
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || mount -t devtmpfs dev /dev
@@ -175,6 +182,7 @@ mount -t 9p workspace /workspace -o trans=virtio,version=9p2000.L 2>/dev/null ||
 
 # Log to the VM console for early debugging
 exec >/dev/console 2>&1
+echo "[init] REVISION: mininit-v6-dhcp-no-timeout"
 echo "[init] starting orcabot sandbox"
 
 # Load vsock modules if available
@@ -204,6 +212,44 @@ else
   grep -E "vsock|virtio" /proc/modules > /dev/console 2>/dev/null || true
 fi
 
+# Bring up outbound networking. This minimal init does NOT run OpenRC/ifupdown,
+# so /etc/network/interfaces is never consulted — we must lease an address here
+# ourselves. The Virtualization.framework NAT attachment runs a DHCP server, so a
+# DHCP lease on the (net.ifnames=0 → eth0) virtio NIC gives the guest an IP, a
+# default route, and DNS (dhclient-script writes /etc/resolv.conf). Without this
+# the guest has no internet and `npm install` / agent bootstrap hangs forever.
+NETIF=eth0
+[ -e /sys/class/net/$NETIF ] || NETIF=$(ls /sys/class/net 2>/dev/null | grep -v "^lo$" | head -1)
+IP_BIN=/usr/sbin/ip; [ -x "$IP_BIN" ] || IP_BIN=/sbin/ip; [ -x "$IP_BIN" ] || IP_BIN=ip
+DHC_BIN=/usr/sbin/dhclient; [ -x "$DHC_BIN" ] || DHC_BIN=/sbin/dhclient; [ -x "$DHC_BIN" ] || DHC_BIN=dhclient
+if [ -n "$NETIF" ]; then
+  echo "[init] bringing up $NETIF via DHCP (ip=$IP_BIN dhclient=$DHC_BIN)" > /dev/console
+  # Lease in the background with retries so a slow link/NAT bring-up at early boot
+  # does not block orcabot-server startup. At boot the virtio link often has no
+  # carrier yet and the host VZ NAT DHCP server is not answering, so a single
+  # one-shot attempt fails; we re-up the link and retry. -1 = one attempt per try,
+  # -timeout caps each attempt so the loop stays responsive.
+  (
+    n=0
+    while [ "$n" -lt 20 ]; do
+      "$IP_BIN" link set dev "$NETIF" up 2>/dev/null
+      if "$DHC_BIN" -1 "$NETIF" > /dev/console 2>&1; then
+        echo "[init] DHCP lease acquired on $NETIF (attempt $n)" > /dev/console
+        "$IP_BIN" -4 addr show "$NETIF" > /dev/console 2>&1
+        "$IP_BIN" route show > /dev/console 2>&1
+        cat /etc/resolv.conf > /dev/console 2>&1
+        exit 0
+      fi
+      echo "[init] DHCP attempt $n failed on $NETIF (carrier=$(cat /sys/class/net/$NETIF/carrier 2>/dev/null)); retrying" > /dev/console
+      n=$((n + 1))
+      sleep 2
+    done
+    echo "[init] DHCP gave up on $NETIF after $n attempts" > /dev/console
+  ) &
+else
+  echo "[init] no usable network interface found (have: $(ls /sys/class/net 2>/dev/null | tr "\n" " "))" > /dev/console
+fi
+
 # Start vsock-to-TCP bridge (host connects to vsock, guest listens).
 # The bridge must stay alive as long as the server runs, so we start both
 # as children of PID 1 and wait. Using exec would orphan the background
@@ -212,6 +258,15 @@ if command -v socat >/dev/null 2>&1; then
   echo "[init] starting vsock bridge on port ${PORT:-8080}" > /dev/console
   socat VSOCK-LISTEN:${PORT:-8080},reuseaddr,fork TCP:127.0.0.1:${PORT:-8080} &
   SOCAT_PID=$!
+fi
+
+# Load host-provided env (CONTROLPLANE_URL, INTERNAL_API_TOKEN, etc.). The host
+# writes this file before boot; the OpenRC path sources it too (see init.sh).
+if [ -f /etc/orcabot.env ]; then
+  echo "[init] sourcing /etc/orcabot.env" > /dev/console
+  set -a
+  . /etc/orcabot.env
+  set +a
 fi
 
 echo "[init] starting orcabot-server" > /dev/console
@@ -309,7 +364,7 @@ chmod +x /mnt/rootfs/etc/init.d/orcabot
 mkdir -p /mnt/rootfs/etc/rc.d
 cat > /mnt/rootfs/etc/rc.local << "RCLOCAL"
 #!/bin/sh
-echo "Starting Orcabot sandbox (rc.local v3)..." > /dev/console
+echo "Starting Orcabot sandbox (rc.local v6-reverse-vsock-cp)..." > /dev/console
 
 # Ensure log/run dirs exist
 mkdir -p /var/log /run
@@ -335,11 +390,66 @@ else
   echo "/dev/vsock missing" > /dev/console
 fi
 
+# Bring up outbound networking. systemd boots here but ifupdown/networking.service
+# is not installed, so nothing actions /etc/network/interfaces. The Virtualization.
+# framework NAT attachment runs a DHCP server; lease an address on eth0 (forced by
+# net.ifnames=0) so the guest gets IP/route/DNS (dhclient-script writes resolv.conf).
+# Backgrounded with retries so a slow carrier/NAT bring-up does not delay the server,
+# and so npm/git/agent traffic works once it settles. Without this the guest has no
+# internet and `npm install` / agent bootstrap hangs forever.
+echo "Bringing up network via DHCP..." > /dev/console
+NETIF=eth0
+[ -e /sys/class/net/$NETIF ] || NETIF=$(ls /sys/class/net 2>/dev/null | grep -v "^lo$" | head -1)
+IP_BIN=/usr/sbin/ip; [ -x "$IP_BIN" ] || IP_BIN=/sbin/ip; [ -x "$IP_BIN" ] || IP_BIN=ip
+DHC_BIN=/usr/sbin/dhclient; [ -x "$DHC_BIN" ] || DHC_BIN=/sbin/dhclient; [ -x "$DHC_BIN" ] || DHC_BIN=dhclient
+if [ -n "$NETIF" ]; then
+  (
+    n=0
+    while [ "$n" -lt 10 ]; do
+      "$IP_BIN" link set dev "$NETIF" up 2>/dev/null
+      # -1: one attempt then exit (the dhclient built-in ~60s timeout + retransmit
+      # rides out a not-yet-ready NAT DHCP server). NOTE: dhclient has NO -timeout
+      # CLI flag — passing one makes it exit immediately with "Unknown command".
+      if "$DHC_BIN" -1 "$NETIF" > /dev/console 2>&1; then
+        echo "DHCP lease acquired on $NETIF (attempt $n)" > /dev/console
+        "$IP_BIN" -4 addr show "$NETIF" > /dev/console 2>&1
+        "$IP_BIN" route show > /dev/console 2>&1
+        exit 0
+      fi
+      echo "DHCP attempt $n failed on $NETIF (carrier=$(cat /sys/class/net/$NETIF/carrier 2>/dev/null)); retrying" > /dev/console
+      n=$((n + 1))
+      sleep 2
+    done
+    echo "DHCP gave up on $NETIF after $n attempts" > /dev/console
+  ) &
+else
+  echo "no usable network interface found" > /dev/console
+fi
+
+# Reverse vsock bridge: guest 127.0.0.1:8787 -> vsock CID 2 (host) :8787 -> host
+# control plane. The host vz-helper registers the matching listener
+# (--reverse-port-forward 8787:8787). This is the guest->host route that lets the
+# sandbox call the control plane (integration gateway, approvals, callbacks).
+if command -v socat >/dev/null 2>&1; then
+  echo "Starting reverse vsock bridge (control plane)..." > /dev/console
+  socat TCP-LISTEN:8787,reuseaddr,fork VSOCK-CONNECT:2:8787 > /var/log/vsock-cp.log 2>&1 &
+  echo $! > /run/vsock-cp.pid
+fi
+
 # Start the sandbox server
 export PORT=${PORT:-8080}
 export WORKSPACE_BASE=/workspace
 export ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
 export SANDBOX_INTERNAL_TOKEN=${SANDBOX_INTERNAL_TOKEN:-dev-sandbox-token}
+# Control-plane callback config. CONTROLPLANE_URL points at the reverse vsock bridge
+# above; INTERNAL_API_TOKEN must match what the host workerd expects (main.rs default
+# is dev-internal-token). These reach only the server process — PTY env filters them,
+# so agents never see INTERNAL_API_TOKEN.
+export CONTROLPLANE_URL=${CONTROLPLANE_URL:-http://127.0.0.1:8787}
+export INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
+# Enable the debug-exec endpoint (POST /debug/exec) for the desktop VM only. Fly
+# starts orcabot-server via its own path, never this rc.local, so it stays off there.
+export ORCABOT_DEBUG_EXEC=1
 touch /var/log/orcabot.log /var/log/vsock-bridge.log
 /usr/local/bin/orcabot-server >> /var/log/orcabot.log 2>&1 &
 echo $! > /run/orcabot.pid
@@ -403,6 +513,13 @@ log "Created: $OUTPUT_DIR/sandbox.img"
 # =============================================================================
 # Step 4: Extract kernel and initrd for direct boot
 # =============================================================================
+# The custom-kernel build below compiles Linux from source (~10 min) and only needs
+# to run when the kernel/initrd are missing or the kernel config changes. SKIP_KERNEL=1
+# reuses the existing vmlinuz/initrd/custom-modules from a prior build — use it for fast
+# rootfs-only iterations (rc.local, sandbox server binary), which don't touch the kernel.
+if [ "${SKIP_KERNEL:-0}" = "1" ] && [ -f "$OUTPUT_DIR/vmlinuz" ] && [ -f "$OUTPUT_DIR/initrd.img" ]; then
+log "SKIP_KERNEL=1: reusing existing kernel + initrd (skipping ~10min kernel build)"
+else
 log "Extracting kernel and initrd..."
 
 # macOS Virtualization.framework on ARM64 requires a raw "Image" format kernel,
@@ -516,6 +633,7 @@ else
 fi
 
 '
+fi  # end SKIP_KERNEL guard
 
 # If we built a custom kernel, inject its modules into the disk image.
 if [ -f "$OUTPUT_DIR/custom-modules.tar.gz" ] && [ -f "$OUTPUT_DIR/sandbox.img" ]; then

@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: outlook-mirror-v1-email-sync
+// REVISION: outlook-mirror-v2-title-and-account-menu
 
 "use client";
 
-const MODULE_REVISION = "outlook-mirror-v1-email-sync";
+const MODULE_REVISION = "outlook-mirror-v2-title-and-account-menu";
 console.log(`[OutlookBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -34,6 +34,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -348,12 +349,39 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountEmail = integration?.emailAddress || status?.emailAddress;
+  const accountName = integration?.accountName;
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {(accountName || accountEmail) && (
+        <DropdownMenuLabel className="font-normal">
+          {accountName && (
+            <div className="text-xs font-medium text-[var(--foreground)] truncate">{accountName}</div>
+          )}
+          {accountEmail && (
+            <div className="text-[10px] text-[var(--foreground-muted)] truncate">{accountEmail}</div>
+          )}
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Outlook
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <Mail className="w-3.5 h-3.5 mr-2" />
+      Connect Outlook
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <OutlookIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || status?.emailAddress || integration?.accountName || "Outlook"}
+        Outlook
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={outlookDoc} />
@@ -390,18 +418,7 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Outlook
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <Mail className="w-3.5 h-3.5 mr-2" />
-                Connect Outlook
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -428,18 +445,7 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Outlook
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <Mail className="w-3.5 h-3.5 mr-2" />
-            Connect Outlook
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -451,7 +457,7 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
         nodeId={id}
         selected={selected}
         icon={<OutlookIcon className="w-14 h-14" />}
-        label={integration?.emailAddress || integration?.accountName || "Outlook"}
+        label="Outlook"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

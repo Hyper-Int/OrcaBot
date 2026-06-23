@@ -54,3 +54,26 @@ func TestIsModelRoutingProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestHostAllowed_DesktopCustomHTTP(t *testing.T) {
+	b := NewSecretsBroker(0)
+	// A custom endpoint reachable over http via the desktop VM host gateway.
+	b.SetConfig(ConfigKey("s1", "customprovider"), &ProviderConfig{
+		Name: "customprovider", TargetBaseURL: "http://10.0.2.2:11434/v1", SessionID: "s1",
+	})
+	key := ConfigKey("s1", "customprovider")
+	target := "http://10.0.2.2:11434/v1/chat/completions"
+
+	t.Setenv("ALLOW_HTTP_CUSTOM_ENDPOINT", "")
+	if b.hostAllowed(key, target) {
+		t.Errorf("http custom endpoint must be blocked without the desktop flag")
+	}
+	t.Setenv("ALLOW_HTTP_CUSTOM_ENDPOINT", "true")
+	if !b.hostAllowed(key, target) {
+		t.Errorf("http custom endpoint should be allowed with the desktop flag")
+	}
+	// Host-match still enforced: a different http host is rejected even with the flag.
+	if b.hostAllowed(key, "http://evil.example.com/v1/chat/completions") {
+		t.Errorf("host-match must still reject a non-configured http host")
+	}
+}

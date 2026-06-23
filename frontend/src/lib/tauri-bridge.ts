@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v4-bundler-safe
-const MODULE_REVISION = "tauri-bridge-v4-bundler-safe";
+// REVISION: tauri-bridge-v5-global-invoke
+const MODULE_REVISION = "tauri-bridge-v5-global-invoke";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -19,11 +19,24 @@ const TAURI_DIALOG = "@tauri-apps/plugin-dialog";
 type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<any>;
 
 /**
- * Dynamically import Tauri invoke to avoid breaking web/Cloudflare builds.
- * Returns null if not in desktop mode or if Tauri APIs are unavailable.
+ * Resolve Tauri's `invoke` in the desktop webview. Prefer the runtime globals
+ * Tauri injects (withGlobalTauri → `window.__TAURI__.core.invoke`; and the
+ * always-present `window.__TAURI_INTERNALS__.invoke`) over a dynamic
+ * `import("@tauri-apps/api/core")`, which is a bare specifier the browser can't
+ * resolve at runtime (it throws → every command would silently no-op). Returns
+ * null on web/Cloudflare builds or if Tauri APIs are unavailable.
  */
 async function getTauriInvoke(): Promise<TauriInvoke | null> {
-  if (!DESKTOP_MODE) return null;
+  if (!DESKTOP_MODE || typeof window === "undefined") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const w = window as any;
+  if (typeof w.__TAURI__?.core?.invoke === "function") {
+    return w.__TAURI__.core.invoke as TauriInvoke;
+  }
+  if (typeof w.__TAURI_INTERNALS__?.invoke === "function") {
+    return ((cmd: string, args?: Record<string, unknown>) =>
+      w.__TAURI_INTERNALS__.invoke(cmd, args ?? {})) as TauriInvoke;
+  }
   try {
     const mod = await import(/* webpackIgnore: true */ TAURI_CORE);
     return mod.invoke as TauriInvoke;
@@ -75,6 +88,18 @@ export async function importFolder(
     sourcePath,
     destSubpath: destSubpath ?? null,
   }) as Promise<ImportResult>;
+}
+
+/**
+ * Switch from the desktop GUI to the CLI surface: opens a terminal running
+ * `orcabot cli` (same session) and hides the GUI. Desktop-only; no-op on web.
+ * Returns true if the switch was triggered.
+ */
+export async function switchToCli(): Promise<boolean> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return false;
+  await invoke("switch_to_cli");
+  return true;
 }
 
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */

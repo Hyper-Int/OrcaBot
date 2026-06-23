@@ -16,6 +16,18 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+/// Control-plane port for the guest→host reverse vsock bridge.
+///
+/// Fixed at 8787 on BOTH sides on purpose: the host registers
+/// `--reverse-port-forward {CONTROLPLANE_PORT}:{CONTROLPLANE_PORT}` and the guest
+/// (systemd → `/etc/rc.local`, see `vm/scripts/build-images.sh`) runs the matching
+/// `socat TCP-LISTEN:8787 -> VSOCK-CONNECT:2:8787` + sets `CONTROLPLANE_URL`. The
+/// guest value is baked into the image, and we can't securely deliver a per-boot
+/// port to the guest (kernel cmdline / workspace are agent-readable, so the token
+/// can't ride along). Making this configurable end-to-end requires a secure guest
+/// env channel first; until then both sides must use this constant.
+const CONTROLPLANE_PORT: u16 = 8787;
+
 /// macOS VM using Virtualization.framework.
 ///
 /// On macOS 13+, uses native Virtualization.framework for optimal performance.
@@ -141,6 +153,13 @@ impl MacOSVM {
             // The guest runs socat to bridge vsock:port -> localhost:port
             "--port-forward",
             &format!("{}:{}", config.sandbox_port, config.sandbox_port),
+            // Reverse forward: guest vsock:8787 -> host 127.0.0.1:8787 (control plane).
+            // Gives the sandbox a guest->host route so it can call the control plane
+            // (integration gateway, egress/secret approvals, event callbacks). The
+            // guest init runs the matching socat + sets CONTROLPLANE_URL. Both sides
+            // are pinned to CONTROLPLANE_PORT (see the const for why it's fixed).
+            "--reverse-port-forward",
+            &format!("{}:{}", CONTROLPLANE_PORT, CONTROLPLANE_PORT),
         ]);
 
         cmd.stdout(Stdio::inherit());
@@ -156,18 +175,17 @@ impl MacOSVM {
         self.using_native_vz = true;
         self.sandbox_url = format!("http://127.0.0.1:{}", config.sandbox_port);
 
-        // The native backend uses Apple NAT for guest egress plus a host→guest
-        // vsock forwarder for inbound; it has no guest→host route to services on
-        // the host loopback. Sandbox→controlplane callbacks (integration
-        // gateway, domain approvals, execution callbacks) won't reach the
-        // controlplane unless it's bound to a guest-reachable interface and
-        // CONTROLPLANE_URL is set to match. See vm::host_loopback_url.
+        // The native backend uses Apple NAT for guest egress, a host→guest vsock
+        // forwarder for inbound (sandbox :8080), and a reverse vsock forwarder for
+        // guest→host (--reverse-port-forward 8787:8787 above) so the sandbox can
+        // call back to the control plane. The guest's rc.local runs the matching
+        // `socat TCP-LISTEN:8787 -> VSOCK-CONNECT:2:8787` and sets
+        // CONTROLPLANE_URL=http://127.0.0.1:8787. This keeps the control plane on
+        // host loopback (nothing exposed on a network interface).
         eprintln!(
-            "[vm] WARNING: native Virtualization.framework backend has no guest→host \
-             route to the controlplane on 127.0.0.1; sandbox→controlplane callbacks \
-             (integrations, approvals, execution callbacks) will not reach the host. \
-             Use the QEMU fallback, or bind the controlplane to a guest-reachable \
-             interface and set CONTROLPLANE_URL accordingly."
+            "[vm] native VZ backend: inbound vsock (sandbox :{}), reverse vsock \
+             (guest→host control plane :8787) active.",
+            config.sandbox_port
         );
 
         Ok(())

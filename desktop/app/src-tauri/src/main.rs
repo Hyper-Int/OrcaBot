@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v4-vm-host-loopback-url
-const MODULE_REVISION: &str = "main-v4-vm-host-loopback-url";
+// REVISION: main-v6-apply-schema-on-boot
+const MODULE_REVISION: &str = "main-v6-apply-schema-on-boot";
 
 mod commands;
 mod vm;
@@ -359,7 +359,7 @@ impl DesktopServices {
       ("D1_HTTP_URL", "http://d1-shim".to_string()),
       ("SANDBOX_URL", sandbox_url),
       ("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token),
-      ("INTERNAL_API_TOKEN", internal_api_token),
+      ("INTERNAL_API_TOKEN", internal_api_token.clone()),
       ("DEV_AUTH_ENABLED", dev_auth_enabled),
       ("SECRETS_ENCRYPTION_KEY", secrets_key),
       ("OAUTH_REDIRECT_BASE", std::env::var("OAUTH_REDIRECT_BASE")
@@ -433,6 +433,11 @@ impl DesktopServices {
     );
 
     wait_for_health(&controlplane_port);
+
+    // Apply the D1 schema on every launch (idempotent CREATE TABLE IF NOT EXISTS).
+    // Without this, schema changes shipped in an app update never reach an existing
+    // user's DB — the worker only runs init on a brand-new DB's first /health.
+    apply_schema(&controlplane_port, &internal_api_token);
 
     // Write PID file so next launch can clean up orphans if we crash
     if let Ok(children) = self.children.lock() {
@@ -527,10 +532,15 @@ impl DesktopServices {
     }
 
     // Default kernel command line; VZ virtio console shows up as hvc0 on macOS.
+    // net.ifnames=0 biosdevname=0: force legacy interface naming so the virtio NIC
+    // is `eth0` instead of `enp0s1`. This is paired with the DHCP bring-up in the
+    // VM's minimal init (vm/scripts/build-images.sh MININIT): the macOS direct-boot
+    // path runs that init, NOT OpenRC, so it leases an address on eth0 itself.
+    // Without both halves the guest has no IP/DNS/route → no internet (npm hangs).
     let cmdline = if cfg!(target_os = "macos") {
-      "console=hvc0 earlycon=virtio_console keep_bootcon root=/dev/vda rw loglevel=7 ignore_loglevel rdinit=/init"
+      "console=hvc0 earlycon=virtio_console keep_bootcon root=/dev/vda rw net.ifnames=0 biosdevname=0 loglevel=7 ignore_loglevel rdinit=/init"
     } else {
-      "console=ttyS0 root=/dev/vda rw quiet"
+      "console=ttyS0 root=/dev/vda rw net.ifnames=0 biosdevname=0 quiet"
     };
     config = config.with_cmdline(cmdline);
 
@@ -706,6 +716,31 @@ fn wait_for_health(port: &str) {
   }
 }
 
+/// POST /init-db to apply the D1 schema (idempotent). Best-effort: logs and
+/// continues on failure so a transient hiccup never blocks app startup.
+fn apply_schema(port: &str, internal_token: &str) {
+  let addr = format!("127.0.0.1:{}", port);
+  match std::net::TcpStream::connect(&addr) {
+    Ok(mut stream) => {
+      let req = format!(
+        "POST /init-db HTTP/1.1\r\nHost: localhost\r\nX-Internal-Token: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        internal_token
+      );
+      let _ = stream.write_all(req.as_bytes());
+      let mut buf = [0u8; 256];
+      let n = stream.read(&mut buf).unwrap_or(0);
+      let head = String::from_utf8_lossy(&buf[..n]);
+      let status = head.lines().next().unwrap_or("");
+      if status.contains(" 200") {
+        eprintln!("[schema] applied via /init-db");
+      } else {
+        eprintln!("[schema] /init-db unexpected response: {status}");
+      }
+    }
+    Err(err) => eprintln!("[schema] could not reach control plane for /init-db: {err}"),
+  }
+}
+
 fn main() {
   eprintln!(
     "[main] REVISION: {} loaded at {}",
@@ -721,6 +756,7 @@ fn main() {
     .invoke_handler(tauri::generate_handler![
       commands::get_workspace_path,
       commands::import_folder,
+      commands::switch_to_cli,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());
@@ -760,6 +796,65 @@ fn main() {
       }
 
       app.manage(Arc::clone(&services));
+
+      // Headless mode (used by the `orcabot` CLI): run all services in the
+      // background with no GUI. The window is created hidden (tauri.conf.json
+      // visible=false); in GUI mode we show it, in headless we leave it hidden and
+      // drop the macOS dock icon so this behaves like a daemon.
+      let headless = std::env::var("ORCABOT_DESKTOP_HEADLESS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+      if headless {
+        eprintln!("[main] HEADLESS: services running in background, no GUI window");
+        #[cfg(target_os = "macos")]
+        {
+          let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
+      } else {
+        for (_, w) in app.webview_windows() {
+          let _ = w.show();
+          let _ = w.set_focus();
+        }
+      }
+
+      // Surface toggle: SIGUSR1 -> show the GUI (switch to "desktop"), SIGUSR2 ->
+      // hide it (switch to "cli"/headless). Lets `orcabot desktop` / `orcabot cli`
+      // flip the surface of the already-running backend without a restart.
+      {
+        use signal_hook::consts::{SIGUSR1, SIGUSR2};
+        let handle = app.handle().clone();
+        if let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGUSR1, SIGUSR2]) {
+          std::thread::spawn(move || {
+            for sig in signals.forever() {
+              let show = sig == SIGUSR1;
+              let h = handle.clone();
+              let _ = handle.run_on_main_thread(move || {
+                for (_, w) in h.webview_windows() {
+                  if show {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                  } else {
+                    let _ = w.hide();
+                  }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                  let _ = h.set_activation_policy(if show {
+                    tauri::ActivationPolicy::Regular
+                  } else {
+                    tauri::ActivationPolicy::Accessory
+                  });
+                }
+              });
+              eprintln!(
+                "[surface] signal {} -> {}",
+                sig,
+                if show { "desktop (show window)" } else { "cli (hide window)" }
+              );
+            }
+          });
+        }
+      }
       Ok(())
     })
     .build(tauri::generate_context!())

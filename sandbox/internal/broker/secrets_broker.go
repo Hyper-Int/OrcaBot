@@ -156,6 +156,19 @@ func (b *SecretsBroker) GetAnthropicKey(sessionID string) string {
 	return ""
 }
 
+// GetCustomSecretValue returns the plaintext value of a brokered custom secret for
+// the session, or "" if not configured. Used to resolve the API key for a custom
+// model endpoint at PTY creation (PLAN-custom-endpoints.md).
+func (b *SecretsBroker) GetCustomSecretValue(sessionID, secretName string) string {
+	key := ConfigKey(sessionID, "custom/"+secretName)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if config, exists := b.configs[key]; exists {
+		return config.SecretValue
+	}
+	return ""
+}
+
 // SetOnApprovalNeeded sets the callback for domain approval notifications.
 // The callback receives (sessionID, secretName, domain) so it knows which session to notify.
 func (b *SecretsBroker) SetOnApprovalNeeded(fn func(sessionID, secretName, domain string)) {
@@ -415,15 +428,18 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Inject auth header
-	authValue := fmt.Sprintf(headerFormat, secretValue)
-	outReq.Header.Set(headerName, authValue)
+	// Inject auth header. A custom-provider config with no key leaves headerName
+	// empty (no-auth endpoint) — skip injection rather than send an empty Bearer.
+	if headerName != "" {
+		outReq.Header.Set(headerName, fmt.Sprintf(headerFormat, secretValue))
+	}
 
 	// Always log the FIRST brokered call per (session, LLM-provider) — the
 	// zero-config way to confirm e.g. Claude Code is on `openrouter-anthropic`
 	// (OpenRouter) vs `anthropic` (native). Once-per-session so it isn't spammy.
 	// Only "agent" (LLM) providers; "tool" providers (TTS/ASR) are skipped.
-	if spec, ok := Providers[providerName]; ok && spec.Category == "agent" {
+	spec, isBuiltin := Providers[providerName]
+	if (isBuiltin && spec.Category == "agent") || providerName == "customprovider" {
 		if _, seen := b.loggedRoutes.LoadOrStore(sessionID+":"+providerName, true); !seen {
 			host := targetURL
 			if parsed, perr := url.Parse(targetURL); perr == nil {
@@ -530,6 +546,20 @@ func isLocalhostHTTPAllowed() bool {
 	return os.Getenv("DEV_MODE") == "true" || os.Getenv("ALLOW_HTTP_BROKER_LOCALHOST") == "true"
 }
 
+// allowHTTPCustomEndpoint reports whether http is allowed to a custom model endpoint.
+// Set by the desktop app, where a local model server (Ollama/LM Studio) is reached
+// over plain http via the VM's host gateway (e.g. http://10.0.2.2:11434). Never set
+// in the cloud, so cloud custom endpoints remain https-only.
+func allowHTTPCustomEndpoint() bool {
+	return os.Getenv("ALLOW_HTTP_CUSTOM_ENDPOINT") == "true"
+}
+
+// isCustomProviderConfigKey reports whether a broker config key is a custom model
+// endpoint (the session-scoped "customprovider" entry installed in session.go).
+func isCustomProviderConfigKey(providerID string) bool {
+	return strings.HasSuffix(providerID, ":customprovider")
+}
+
 // isLocalhost checks if a host is localhost
 func isLocalhost(host string) bool {
 	// Strip port if present
@@ -549,9 +579,14 @@ func (b *SecretsBroker) hostAllowed(providerID string, targetURL string) bool {
 		return false
 	}
 
-	// Check scheme: HTTPS required, except HTTP allowed for localhost in dev mode
+	// Check scheme: HTTPS required, except (a) HTTP for localhost in dev mode, and
+	// (b) HTTP to a custom model endpoint on desktop (local Ollama via the VM host
+	// gateway). The host-match check below still restricts (b) to the exact
+	// configured host, so this can't be used to reach an arbitrary http target.
 	if parsed.Scheme == "http" {
-		if !isLocalhost(parsed.Host) || !isLocalhostHTTPAllowed() {
+		localhostOK := isLocalhost(parsed.Host) && isLocalhostHTTPAllowed()
+		desktopCustomOK := isCustomProviderConfigKey(providerID) && allowHTTPCustomEndpoint()
+		if !localhostOK && !desktopCustomOK {
 			return false
 		}
 	} else if parsed.Scheme != "https" {

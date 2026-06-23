@@ -36,33 +36,57 @@ pub fn stage_image(src: &Path, dest: &Path) -> Result<PathBuf, VMError> {
         } else {
             copy_file(src, &dest_path)?;
         }
+        // Record the source signature so a later runtime mutation of dest (the VM
+        // image boots read-write, so the guest bumps its mtime) never makes a
+        // genuinely-updated source look stale and skip re-staging.
+        if let Ok(sig) = source_signature(src) {
+            let _ = fs::write(stamp_path(&dest_path), sig);
+        }
     }
 
     Ok(dest_path)
 }
 
-/// Check if staging is needed based on modification time and size.
+/// Stable signature of the SOURCE file (modification time + size).
+///
+/// Uses NANOSECOND mtime, not seconds: a rebuild that lands in the same wall-clock
+/// second as the previous one (fast `SKIP_KERNEL` iterations) keeps the same size
+/// for the raw `sandbox.img`, so a seconds-resolution stamp would treat it as
+/// "unchanged" and silently boot a stale image. A content hash would be more
+/// robust still, but hashing a multi-GB image on every launch is too slow.
+fn source_signature(src: &Path) -> Result<String, VMError> {
+    let meta = fs::metadata(src)?;
+    let mtime_nanos = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Ok(format!("{}:{}", mtime_nanos, meta.len()))
+}
+
+/// Path of the sidecar stamp file recording the source signature at last stage.
+fn stamp_path(dest: &Path) -> PathBuf {
+    let mut s = dest.as_os_str().to_owned();
+    s.push(".stamp");
+    PathBuf::from(s)
+}
+
+/// Check if staging is needed by comparing the source's signature against the
+/// stamp recorded at the last successful stage.
+///
+/// We deliberately do NOT compare the destination's own mtime: the VM disk image
+/// is mounted read-write, so the running guest mutates the staged copy and bumps
+/// its mtime past a freshly-rebuilt source — which made the old "source newer"
+/// check skip re-staging and silently boot a stale image.
 fn needs_staging(src: &Path, dest: &Path) -> Result<bool, VMError> {
-    let src_meta = fs::metadata(src)?;
-
-    match fs::metadata(dest) {
-        Ok(dest_meta) => {
-            let src_modified = src_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            let dest_modified = dest_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-
-            // Re-stage if source is newer
-            if src_modified > dest_modified {
-                return Ok(true);
-            }
-
-            // For non-gzipped files, also check size
-            if !src.extension().map_or(false, |e| e == "gz") && src_meta.len() != dest_meta.len() {
-                return Ok(true);
-            }
-
-            Ok(false)
-        }
-        Err(_) => Ok(true), // Destination doesn't exist
+    if !dest.exists() {
+        return Ok(true);
+    }
+    let sig = source_signature(src)?;
+    match fs::read_to_string(stamp_path(dest)) {
+        Ok(recorded) => Ok(recorded.trim() != sig),
+        Err(_) => Ok(true), // no stamp (e.g. older install) → re-stage and write one
     }
 }
 

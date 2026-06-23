@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: folder-import-v7-safe-dir-win-nofollow
-const MODULE_REVISION: &str = "folder-import-v7-safe-dir-win-nofollow";
+// REVISION: folder-import-v9-shell-quote-cli
+const MODULE_REVISION: &str = "folder-import-v9-shell-quote-cli";
 
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
@@ -595,4 +595,54 @@ fn chrono_now() -> String {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}s", d.as_secs())
+}
+
+/// Switch the desktop GUI back to the CLI surface: open Terminal.app running the
+/// sibling `orcabot cli` (which attaches to this same running session and opens
+/// the TUI), then hide the GUI window. macOS-only (the desktop app is macOS-only
+/// today); other platforms return an error.
+#[tauri::command]
+pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::Manager;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let orcabot = exe
+            .parent()
+            .ok_or("could not resolve exe directory")?
+            .join("orcabot");
+        if !orcabot.exists() {
+            return Err(format!("orcabot CLI not found next to the app at {}", orcabot.display()));
+        }
+        // Escape the path for the AppleScript string literal, then wrap it in
+        // `quoted form of` so it's also SHELL-safe — `do script` runs its argument
+        // as a shell command, and the packaged bundle path ("Orcabot Desktop.app")
+        // contains a space that would otherwise word-split.
+        let esc = orcabot
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        // `--owns`: the CLI becomes the active surface and stops the session when
+        // it is closed (desktop→CLI ownership hand-off).
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script ((quoted form of \"{}\") & \" cli --owns\")\nend tell",
+            esc
+        );
+        std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .spawn()
+            .map_err(|e| format!("could not open Terminal: {e}"))?;
+        // Hide the GUI — same end state as the SIGUSR2 'switch to cli' path.
+        for (_, w) in app.webview_windows() {
+            let _ = w.hide();
+        }
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("switch_to_cli is only supported on macOS".into())
+    }
 }

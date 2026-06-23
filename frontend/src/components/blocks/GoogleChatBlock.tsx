@@ -29,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -261,11 +262,36 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {(integration?.accountName || integration?.serviceAccountEmail) && (
+        <DropdownMenuLabel className="font-normal">
+          {integration?.accountName && (
+            <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.accountName}</div>
+          )}
+          {integration?.serviceAccountEmail && (
+            <div className="text-[10px] text-[var(--foreground-muted)] truncate">{integration.serviceAccountEmail}</div>
+          )}
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Google Chat
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={() => { /* focus token input */ }}>
+      <GoogleChatIcon className="w-3.5 h-3.5 mr-2" />
+      Connect Google Chat
+    </DropdownMenuItem>
+  );
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <GoogleChatIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.accountName || "Google Chat"}
+        Google Chat
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={googleChatDoc} />
@@ -284,18 +310,7 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Google Chat
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-                <GoogleChatIcon className="w-3.5 h-3.5 mr-2" />
-                Connect Google Chat
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -316,18 +331,7 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Google Chat
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-            <GoogleChatIcon className="w-3.5 h-3.5 mr-2" />
-            Connect Google Chat
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -338,7 +342,7 @@ export function GoogleChatBlock({ id, data, selected }: NodeProps<GoogleChatNode
         nodeId={id}
         selected={selected}
         icon={<GoogleChatIcon className="w-14 h-14" />}
-        label={integration?.accountName || "Google Chat"}
+        label="Google Chat"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

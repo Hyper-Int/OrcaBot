@@ -115,6 +115,90 @@ func TestAllowlist_UserDomains(t *testing.T) {
 	}
 }
 
+func TestAllowlist_DeniedDomains(t *testing.T) {
+	al := NewAllowlist()
+
+	// Initially not denied
+	if al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to not be denied initially")
+	}
+
+	// Deny always
+	al.AddDeniedDomain("tracker.example.com", "deny-1")
+	if !al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to be denied after AddDeniedDomain")
+	}
+
+	// Case insensitive
+	if !al.IsDenied("TRACKER.EXAMPLE.COM") {
+		t.Error("Expected case-insensitive match for denied domains")
+	}
+
+	// Denying a domain clears any prior user-allow entry (deny is unambiguous)
+	al.AddUserDomain("dual.example.com", "allow-1")
+	al.AddDeniedDomain("dual.example.com", "deny-2")
+	if al.IsAllowed("dual.example.com") {
+		t.Error("Expected AddDeniedDomain to remove the matching user-allow entry")
+	}
+	if !al.IsDenied("dual.example.com") {
+		t.Error("Expected dual.example.com to be denied")
+	}
+
+	// List denied domains
+	denied := al.DeniedDomains()
+	if denied["tracker.example.com"] != "deny-1" {
+		t.Error("Expected denied domain to be in list")
+	}
+
+	// Un-deny
+	al.RemoveDeniedDomain("tracker.example.com")
+	if al.IsDenied("tracker.example.com") {
+		t.Error("Expected tracker.example.com to no longer be denied after removal")
+	}
+}
+
+func TestAllowlist_Trackers(t *testing.T) {
+	al := NewAllowlist()
+
+	// Known trackers match.
+	for _, tracker := range []string{
+		"www.googletagmanager.com",
+		"www.google-analytics.com",
+		"region1.google-analytics.com", // matches *.google-analytics.com
+		"connect.facebook.net",
+		"stats.g.doubleclick.net",       // matches *.doubleclick.net
+		"www.googleadservices.com",      // ad conversion
+		"pagead2.googlesyndication.com", // matches *.googlesyndication.com
+		"widget.criteo.com",             // matches *.criteo.com
+		"bat.bing.com",                  // bing ads pixel
+		"cdn.branch.io",                 // matches *.branch.io (attribution)
+		"events.appsflyer.com",          // matches *.appsflyer.com (attribution)
+	} {
+		if !al.IsTracker(tracker) {
+			t.Errorf("Expected %s to be detected as a tracker", tracker)
+		}
+	}
+
+	// Non-trackers are not flagged.
+	for _, ok := range []string{"github.com", "api.anthropic.com", "registry.npmjs.org"} {
+		if al.IsTracker(ok) {
+			t.Errorf("Did not expect %s to be flagged as a tracker", ok)
+		}
+	}
+
+	// A tracker is not auto-allowed by the default/user allowlist.
+	if al.IsAllowed("www.googletagmanager.com") {
+		t.Error("Expected tracker to NOT be in the allowlist by default")
+	}
+
+	// Precedence: an explicit user "Always Allow" makes IsAllowed true, which the
+	// proxy checks BEFORE IsTracker — so a user can still allow a tracker if they insist.
+	al.AddUserDomain("www.googletagmanager.com", "user-1")
+	if !al.IsAllowed("www.googletagmanager.com") {
+		t.Error("Expected user-approved tracker to be allowed (user allow wins)")
+	}
+}
+
 func TestAllowlist_DefaultPatterns(t *testing.T) {
 	al := NewAllowlist()
 	patterns := al.DefaultPatterns()

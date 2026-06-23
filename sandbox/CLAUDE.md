@@ -266,7 +266,8 @@ An HTTP/HTTPS forward proxy on `localhost:8083` that acts as "Little Snitch for 
 - **CONNECT** (HTTPS): Extracts domain from `CONNECT host:port`, checks allowlist
 - **Regular HTTP**: Extracts domain from Host header, checks allowlist
 - **Allowed domains**: Connection proceeds immediately
-- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny.
+- **Permanently denied domains** ("deny always"): Connection rejected immediately (403), no prompt. Deny takes precedence over the allowlist.
+- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny / Deny Always.
 - **Timeout**: 60 seconds with no response = deny (fail-closed)
 - **Coalescing**: Multiple connections to the same unknown domain share one approval prompt
 
@@ -300,7 +301,7 @@ Localhost traffic (`localhost`, `127.0.0.1`, `::1`) always bypasses the proxy:
 
 ### Sandbox Endpoints
 - `POST /egress/approve` — Control plane delivers user decision
-- `POST /egress/revoke` — Remove domain from runtime allowlist
+- `POST /egress/revoke` — Remove domain from runtime allow/deny sets (clears both an "always allow" and a "deny always")
 - `GET /egress/pending` — List pending approvals (for UI sync on reconnect)
 - `GET /egress/allowlist` — Current allowlist (default + user)
 
@@ -363,6 +364,10 @@ GET    /sessions/:id/file
 PUT    /sessions/:id/file
 DELETE /sessions/:id/file
 POST   /sessions/:id/upload
+POST   /sessions/:id/workspace/import      # bulk tar.gz import (used by `orcabot push`/import)
+
+- `PUT /sessions/:id/file` writes atomically (`internal/fs/workspace.go` `Workspace.Write` = CreateTemp + rename) so a reader never sees a half-written file.
+- `POST /sessions/:id/workspace/import` extracts a tar.gz into `/workspace`: regular files only (`tar.TypeReg`), traversal entries skipped, per-file 10s write timeout (guards against a host-held file hanging over virtiofs on the desktop VM). Path scoping is enforced by `resolvePath`.
 
 ### Broker (session-local, localhost:8082)
 /broker/{sessionID}/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
@@ -402,8 +407,10 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 - `OpenURL()` reuses blank tabs or deduplicates existing URLs via Chrome DevTools Protocol
 - Port waiting with timeouts (10–20s per process)
 - Status returns: `Running`, `Ready`, `WSPort`, `Display`, `DebugPort`
+- **Readiness re-probe**: `Ready` is re-evaluated on every `Status()` poll (cold chromium boot can exceed the short startup budget), so the browser flips to ready as soon as DevTools answers instead of latching `false` until an `OpenURL`.
+- **Pre-warm**: chromium is started in the background at sandbox session creation (`Manager.Create`) so the browser is ready (~instant) when first opened, instead of paying the ~25s cold boot on demand. One sandbox session per VM ⇒ one pre-warmed browser per VM (~250–350 MB idle on the 4 GB VMs). **On by default; set `BROWSER_PREWARM=false` to disable.** Future: idle auto-stop to reclaim RAM when unused.
 
-**Key file:** `internal/browser/browser.go`
+**Key file:** `internal/browser/browser.go`, pre-warm hook in `internal/sessions/manager.go`
 
 ---
 
@@ -566,6 +573,16 @@ internal/agent/
 
 internal/auth/
   WS auth, role checking (viewer vs controller), session ownership.
+
+---
+
+## Desktop-only: debug exec
+
+When the sandbox runs inside the local desktop VM, `POST /debug/exec` runs a shell
+command in the guest from the host (the primitive the `orcabot` CLI's `exec` uses for
+live debugging). It is **off in production** and authenticated with a **per-boot random
+token** written to `/dev/console` (surfaced at `/tmp/vz-console.log` when
+`VZ_CONSOLE_DIRECT=1`). See `desktop/CLAUDE.md` for the host side.
 
 ---
 

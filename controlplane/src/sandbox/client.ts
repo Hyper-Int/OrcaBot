@@ -226,10 +226,13 @@ export class SandboxClient {
       executionId?: string;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
-        provider: 'default' | 'openrouter';
+        provider: 'default' | 'openrouter' | 'custom';
         model?: string;
         contextWindow?: number;
         maxOutputTokens?: number;
+        baseUrl?: string;
+        format?: 'openai' | 'anthropic';
+        secretName?: string;
       };
     }
   ): Promise<SandboxPty> {

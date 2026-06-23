@@ -11,7 +11,7 @@ console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded 
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -26,6 +26,7 @@ import { nearestFlyRegion } from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as modelProviders from './model-providers/handler';
 import * as secrets from './secrets/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
@@ -47,6 +48,7 @@ import { isAdminEmail } from './auth/admin';
 import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
+import { createApiToken, listApiTokens, revokeApiToken } from './auth/api-token';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
@@ -373,6 +375,19 @@ async function prоxySandbоxWebSоcket(
     console.warn(
       `[ws-proxy] upstream PTY WS failed status=${response.status} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
     );
+    // Reconcile: the sandbox no longer has this PTY (process died, or the VM was
+    // restarted), but D1 may still show the session 'active' ("ghost" session →
+    // stale 'running' status + "stuck connecting"). Mark it stopped so the client
+    // recreates instead of hanging, and listings reflect reality. Best-effort.
+    if (response.status === 404) {
+      try {
+        await env.DB.prepare(
+          `UPDATE sessions SET status = 'stopped', stopped_at = ? WHERE pty_id = ? AND status != 'stopped'`
+        ).bind(new Date().toISOString(), ptyId).run();
+      } catch {
+        // ignore — reconciliation is best-effort
+      }
+    }
   } else {
     console.log(
       `[ws-proxy] upstream PTY WS upgraded sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
@@ -677,6 +692,11 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         volumeId,
         image,
         region,
+        // Warm pool stays genuinely warm — Fly must NOT auto-stop idle warm machines,
+        // otherwise they cold-cycle (stop→autostart→stop) and a claim hits a stopped
+        // machine that must cold-boot ("stuck connecting"). The pool is small
+        // (WARM_POOL_TARGET) so the always-on cost is bounded.
+        autostop: 'off',
         env: {
           SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -1147,6 +1167,50 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     });
   }
 
+  // Personal access tokens for the CLI (orcabot push/pull). Issuance sits behind
+  // the normal user auth (CF Access in prod, dev-auth locally). Paywall-exempt
+  // (auth/*) — a PAT inherits the user's subscription when it's later used.
+
+  // POST /auth/api-token - mint a PAT (plaintext returned once)
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // A PAT must not mint another PAT (else a leaked token survives revocation).
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    let body: { name?: string; ttlDays?: number } = {};
+    try {
+      body = (await request.json()) as { name?: string; ttlDays?: number };
+    } catch {
+      // empty body is fine — use defaults
+    }
+    const name = (body.name || 'cli').toString().slice(0, 100);
+    const ttlDays = typeof body.ttlDays === 'number' ? body.ttlDays : undefined;
+    const { token, meta } = await createApiToken(env, auth.user!.id, name, ttlDays);
+    return Response.json({ token, ...meta }, { status: 201 });
+  }
+
+  // GET /auth/api-tokens - list PAT metadata (no values)
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const tokens = await listApiTokens(env, auth.user!.id);
+    return Response.json({ tokens });
+  }
+
+  // DELETE /auth/api-tokens/:id - revoke a PAT
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 3 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const ok = await revokeApiToken(env, auth.user!.id, segments[2]);
+    if (!ok) return Response.json({ error: 'E79410: Token not found' }, { status: 404 });
+    return new Response(null, { status: 204 });
+  }
+
   // POST /dev/workspace/clear - dev-only workspace reset
   if (segments[0] === 'dev' && segments[1] === 'workspace' && segments[2] === 'clear' && method === 'POST') {
     if (env.DEV_AUTH_ENABLED !== 'true') {
@@ -1354,7 +1418,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'items' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as Partial<DashboardItem>;
+    let data: Partial<DashboardItem>;
+    try {
+      data = await request.json() as Partial<DashboardItem>;
+    } catch {
+      return Response.json({ error: 'E79305: Invalid JSON body' }, { status: 400 });
+    }
+    const VALID_ITEM_TYPES = new Set([
+      'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
+      'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram',
+      'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
+    ]);
+    if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
+      return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });
+    }
     return dashboards.upsertItem(env, segments[1], auth.user!.id, data);
   }
 
@@ -1563,6 +1640,17 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return egress.handleRevokeEgressDomain(request, env, segments[1], segments[4]);
   }
 
+  // DELETE /dashboards/:id/egress/blocklist/:entryId - Lift a permanent deny ("deny always")
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'egress' && segments[3] === 'blocklist' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79886: Not found or no access' }, { status: 404 });
+    return egress.handleRevokeEgressDenied(request, env, segments[1], segments[4]);
+  }
+
   // POST /dashboards/:id/egress/blocked-defaults - Override a built-in default pattern
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'blocked-defaults' && method === 'POST') {
     const authError = requireAuth(auth);
@@ -1673,14 +1761,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as {
+    let data: {
       provider: string;
       userIntegrationId?: string;
       policy?: Record<string, unknown>;
       accountLabel?: string;
       highRiskConfirmations?: string[];
     };
-    return integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    try {
+      data = await request.json() as typeof data;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    if (!data || typeof data.provider !== 'string' || !data.provider) {
+      return Response.json({ error: 'Missing or invalid provider' }, { status: 400 });
+    }
+    try {
+      return await integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    } catch (e) {
+      // attachIntegration throws on an unknown provider (unguarded switch) — that's
+      // bad input, not a server fault. Surface as 400 rather than 500.
+      return Response.json(
+        { error: `Invalid integration request: ${e instanceof Error ? e.message : 'unknown'}` },
+        { status: 400 }
+      );
+    }
   }
 
   // PUT /dashboards/:id/terminals/:terminalId/integrations/:provider - Update integration policy
@@ -2097,6 +2202,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
   }
 
+  // GET /model-providers - List saved custom model endpoints
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.listModelProviders(env, auth.user!.id);
+  }
+
+  // POST /model-providers - Create custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return modelProviders.createModelProvider(env, auth.user!.id, data);
+  }
+
+  // DELETE /model-providers/:id - Delete custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.deleteModelProvider(env, auth.user!.id, segments[1]);
+  }
+
   // DELETE /secrets/:id - Delete secret
   if (segments[0] === 'secrets' && segments.length === 2 && method === 'DELETE') {
     const authError = requireAuth(auth);
@@ -2414,6 +2541,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return framedResponse;
   }
 
+  // GET /dashboards/:id/sandbox/status - Read-only VM status for the traffic light
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'sandbox' && segments[3] === 'status' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.getDashbоardSandbоxStatus(env, segments[1], auth.user!.id);
+  }
+
   // GET /dashboards/:id/metrics - Dashboard-scoped sandbox metrics
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'metrics' && method === 'GET') {
     const authError = requireAuth(auth);
@@ -2557,6 +2691,75 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       request,
       env,
       `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // GET /sessions/:id/file - Read a single file's content from the sandbox workspace.
+  // (Mirror of the list/delete proxies above. Used by `orcabot pull` to fetch
+  // workspace files over the API when the sandbox is remote and not host-mounted.)
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // PUT /sessions/:id/file - Write a single file into the sandbox workspace.
+  // Owner-only (like DELETE). Used by `orcabot push` to upload workspace files
+  // over the API when the sandbox is remote and not host-mounted.
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // POST /sessions/:id/workspace/import - bulk-extract a tar.gz into the workspace.
+  // Owner-only (writes files). Used by `orcabot push` to upload the whole workspace
+  // in one request instead of one PUT per file.
+  if (segments[0] === 'sessions' && segments.length === 4 && segments[2] === 'workspace' && segments[3] === 'import' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/workspace/import`,
       session.sandbox_machine_id as string
     );
   }

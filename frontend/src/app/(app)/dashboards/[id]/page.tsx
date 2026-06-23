@@ -113,6 +113,7 @@ import {
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
 import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
+import { SandboxStatusLight } from "@/components/SandboxStatusLight";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
 import { getUserSetup, dismissAiSetup } from "@/lib/api/cloudflare/user-setup";
@@ -3512,7 +3513,7 @@ export default function DashboardPage() {
     return (
       <div className="h-screen flex flex-col bg-[var(--background)]">
         {/* Header skeleton */}
-        <div className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
+        <div className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
           <Skeleton className="w-8 h-8" />
           <Skeleton className="w-32 h-5" />
           <div className="flex-1" />
@@ -3535,7 +3536,7 @@ export default function DashboardPage() {
 
     return (
       <div className="h-screen flex flex-col bg-[var(--background)]">
-        <div className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
+        <div className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -3572,7 +3573,7 @@ export default function DashboardPage() {
         </div>
       )}
       {/* Header */}
-      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
+      <header className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
         <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full pointer-events-auto">
           <div className="flex items-center gap-2">
             <Tooltip content="Back to dashboards" side="bottom">
@@ -3589,13 +3590,13 @@ export default function DashboardPage() {
               alt="Orcabot"
               className="w-6 h-6 object-contain"
             />
-            <span className="text-sm font-medium text-[var(--foreground)]">
+            <span className="text-lg font-bold text-[var(--foreground)]">
               OrcaBot
             </span>
           </div>
 
           <div className="flex items-center gap-2 justify-center min-w-0">
-            <h1 className="text-sm font-medium text-[var(--foreground)] truncate max-w-[40vw] text-center">
+            <h1 className="text-base font-semibold text-[var(--foreground)] truncate max-w-[40vw] text-center">
               {dashboard?.name}
             </h1>
             {role !== "owner" && (
@@ -3606,6 +3607,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3 justify-end">
+            {/* Sandbox VM traffic light */}
+            <div className="flex items-center px-1.5 py-1 bg-[var(--background)] rounded">
+              <SandboxStatusLight dashboardId={dashboardId} />
+            </div>
+
             {/* Presence indicators */}
             <div className="flex items-center gap-2">
               <Tooltip

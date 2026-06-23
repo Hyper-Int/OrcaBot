@@ -294,7 +294,10 @@ export class DashboardDO implements DurableObject {
       const url = typeof data.url === 'string' ? data.url : '';
       if (url) {
         // Use getConnectedClientCount() for accurate count after hibernation
-        if (this.getConnectedClientCount() === 0) {
+        const clientCount = this.getConnectedClientCount();
+        // REVISION: browser-autoopen-diag-v1
+        console.log(`[DashboardDO] browser_open: connectedClients=${clientCount} ${clientCount === 0 ? '(stashing as pending — no live client to receive it)' : '(broadcasting to live clients)'}`);
+        if (clientCount === 0) {
           this.pendingBrowserOpenUrl = url;
           await this.persistState();
         } else {

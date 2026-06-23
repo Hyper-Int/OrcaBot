@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-allowlist-v7-canonical-default-catalog
+// REVISION: egress-allowlist-v9-tracker-denylist
 
 package egress
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const allowlistRevision = "egress-allowlist-v7-canonical-default-catalog"
+const allowlistRevision = "egress-allowlist-v8-deny-always"
 
 func init() {
 	log.Printf("[egress-allowlist] REVISION: %s loaded at %s", allowlistRevision, time.Now().Format(time.RFC3339))
@@ -26,13 +26,20 @@ func init() {
 type Allowlist struct {
 	mu       sync.RWMutex
 	defaults []string          // glob patterns (e.g., "*.github.com")
+	trackers []string          // built-in tracker glob patterns (silently denied)
 	blocked  map[string]bool   // blocked default patterns -> true
 	user     map[string]string // domain -> entryID (for revocation tracking)
+	denied   map[string]string // permanently denied domains -> entryID ("deny always")
 }
 
 type DefaultCatalog struct {
 	Revision string                `json:"revision"`
 	Defaults []DefaultCatalogEntry `json:"defaults"`
+	// Trackers are well-known analytics/ad domains that are NOT essential to any
+	// agent task or login. They are silently denied (no prompt, no connection) —
+	// smoother first-run UX than prompting, and they're never opened as an egress
+	// channel. User "Always Allow" still wins (checked before trackers in the proxy).
+	Trackers []DefaultCatalogEntry `json:"trackers"`
 }
 
 type DefaultCatalogEntry struct {
@@ -68,6 +75,20 @@ func mustLoadDefaultCatalog() DefaultCatalog {
 		filtered = append(filtered, entry)
 	}
 	catalog.Defaults = filtered
+
+	// Normalize tracker patterns (trim/lower, drop empties). Duplicates are
+	// harmless for matching, so we don't panic on them.
+	trackers := make([]DefaultCatalogEntry, 0, len(catalog.Trackers))
+	for _, entry := range catalog.Trackers {
+		pattern := strings.TrimSpace(strings.ToLower(entry.Pattern))
+		if pattern == "" {
+			continue
+		}
+		entry.Pattern = pattern
+		trackers = append(trackers, entry)
+	}
+	catalog.Trackers = trackers
+
 	return catalog
 }
 
@@ -89,13 +110,54 @@ func DefaultPatterns() []string {
 	return result
 }
 
+// TrackerPatterns returns the built-in tracker glob patterns (silently denied).
+func TrackerPatterns() []string {
+	result := make([]string, 0, len(defaultCatalog.Trackers))
+	for _, entry := range defaultCatalog.Trackers {
+		result = append(result, entry.Pattern)
+	}
+	return result
+}
+
 // NewAllowlist creates an Allowlist with default domains.
 func NewAllowlist() *Allowlist {
 	return &Allowlist{
 		defaults: DefaultPatterns(),
+		trackers: TrackerPatterns(),
 		blocked:  make(map[string]bool),
 		user:     make(map[string]string),
+		denied:   make(map[string]string),
 	}
+}
+
+// IsTracker reports whether a domain matches a built-in tracker pattern. Trackers
+// are silently denied (no prompt) UNLESS the user has explicitly allowed the domain,
+// which the proxy checks first via IsAllowed.
+func (a *Allowlist) IsTracker(domain string) bool {
+	domain = strings.ToLower(domain)
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	for _, pattern := range a.trackers {
+		if matchGlob(pattern, domain) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDenied reports whether a domain has been permanently denied ("deny always").
+// Denied domains are rejected immediately without prompting, and a deny takes
+// precedence over both default and user allowlists (fail-closed to user intent).
+func (a *Allowlist) IsDenied(domain string) bool {
+	domain = strings.ToLower(domain)
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	_, ok := a.denied[domain]
+	return ok
 }
 
 // IsAllowed checks if a domain is permitted by the default or user allowlist.
@@ -141,6 +203,40 @@ func (a *Allowlist) RemoveUserDomain(domain string) {
 	defer a.mu.Unlock()
 
 	delete(a.user, domain)
+}
+
+// AddDeniedDomain permanently denies a domain ("deny always"). Also removes any
+// matching user-approved entry so the deny is unambiguous.
+func (a *Allowlist) AddDeniedDomain(domain, entryID string) {
+	domain = strings.ToLower(domain)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.denied[domain] = entryID
+	delete(a.user, domain)
+}
+
+// RemoveDeniedDomain lifts a permanent deny (un-deny).
+func (a *Allowlist) RemoveDeniedDomain(domain string) {
+	domain = strings.ToLower(domain)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	delete(a.denied, domain)
+}
+
+// DeniedDomains returns a copy of all permanently denied domains.
+func (a *Allowlist) DeniedDomains() map[string]string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	result := make(map[string]string, len(a.denied))
+	for k, v := range a.denied {
+		result[k] = v
+	}
+	return result
 }
 
 // UserDomains returns a copy of all user-approved domains.

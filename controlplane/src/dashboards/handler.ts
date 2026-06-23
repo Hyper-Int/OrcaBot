@@ -270,6 +270,23 @@ export async function deleteDashbоard(
     return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
   }
 
+  // Stop any active sessions first so their PTYs are killed in the sandbox.
+  // CASCADE-deleting the session rows would otherwise orphan live processes
+  // (shells, and agent children like node/chromium) in the VM. Mirrors deleteItem.
+  try {
+    const activeSessions = await env.DB.prepare(`
+      SELECT id FROM sessions WHERE dashboard_id = ? AND status IN ('creating', 'active')
+    `).bind(dashboardId).all<{ id: string }>();
+    if (activeSessions.results.length > 0) {
+      const { stоpSessiоn } = await import('../sessions/handler');
+      for (const session of activeSessions.results) {
+        await stоpSessiоn(env as EnvWithDriveCache, session.id, userId);
+      }
+    }
+  } catch {
+    // Best-effort — don't block dashboard deletion if session cleanup fails.
+  }
+
   // Delete dependent records that don't have ON DELETE CASCADE
   // Order matters: delete from most dependent tables first
 

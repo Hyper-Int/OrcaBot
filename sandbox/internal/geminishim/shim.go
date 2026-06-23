@@ -98,11 +98,17 @@ func (s *Shim) Stop() error {
 	return s.server.Close()
 }
 
-// ServeHTTP routes a Gemini-format request to the OpenRouter translation.
+// ServeHTTP routes a harness-format request to the chat-completions translation.
+// Gemini requests use the `/gv1/` prefix; Anthropic (Claude) requests use `/av1/`.
 func (s *Shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	sessionID, model, method, ok := parsePath(r.URL.Path)
+	if strings.HasPrefix(r.URL.Path, "/av1/") {
+		s.serveAnthropic(w, r)
+		return
+	}
+
+	sessionID, provider, model, method, ok := parsePath(r.URL.Path)
 	if !ok {
-		writeGeminiError(w, http.StatusBadRequest, "invalid shim path; expected /gv1/{session}/{model}/v1.../models/{m}:{method}")
+		writeGeminiError(w, http.StatusBadRequest, "invalid shim path; expected /gv1/{session}/{provider}/{model}/v1.../models/{m}:{method}")
 		return
 	}
 
@@ -114,9 +120,9 @@ func (s *Shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch method {
 	case "generateContent":
-		s.handleGenerate(w, sessionID, model, body, false)
+		s.handleGenerate(w, sessionID, provider, model, body, false)
 	case "streamGenerateContent":
-		s.handleGenerate(w, sessionID, model, body, true)
+		s.handleGenerate(w, sessionID, provider, model, body, true)
 	case "countTokens":
 		handleCountTokens(w, body)
 	case "embedContent", "batchEmbedContents":
@@ -126,30 +132,31 @@ func (s *Shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parsePath extracts sessionID, the decoded OpenRouter model, and the RPC method
-// from a shim request path of the form:
+// parsePath extracts sessionID, the broker provider, the decoded model, and the
+// RPC method from a shim request path of the form:
 //
-//	/gv1/{sessionID}/{modelB64}/{apiVersion}/models/{cliModel}:{method}
-func parsePath(path string) (sessionID, model, method string, ok bool) {
+//	/gv1/{sessionID}/{provider}/{modelB64}/{apiVersion}/models/{cliModel}:{method}
+func parsePath(path string) (sessionID, provider, model, method string, ok bool) {
 	rest := strings.TrimPrefix(path, "/gv1/")
 	if rest == path {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) < 3 || parts[0] == "" || parts[1] == "" {
-		return "", "", "", false
+	parts := strings.SplitN(rest, "/", 4)
+	if len(parts) < 4 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", "", false
 	}
 	sessionID = parts[0]
-	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	provider = parts[1]
+	decoded, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil || len(decoded) == 0 {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	model = string(decoded)
 
 	// The method is the segment after the final ':'.
 	colon := strings.LastIndex(path, ":")
 	if colon == -1 {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	method = path[colon+1:]
 	// Drop any trailing query that LastIndex(path) wouldn't (URL.Path has no query),
@@ -157,12 +164,31 @@ func parsePath(path string) (sessionID, model, method string, ok bool) {
 	if slash := strings.IndexByte(method, '/'); slash != -1 {
 		method = method[:slash]
 	}
-	return sessionID, model, method, method != ""
+	return sessionID, provider, model, method, method != ""
+}
+
+// forwardChat sends an already-translated OpenAI Chat Completions request through
+// the broker for the given provider (e.g. "openrouter", or a custom-provider ref)
+// and returns the response for the caller to translate. The broker injects the
+// real key; the placeholder Authorization satisfies any client-side key guard.
+//
+// Parameterizing the provider is the foundation for custom/self-hosted endpoints
+// (PLAN-custom-endpoints.md): the same translation core forwards to OpenRouter or
+// to a user-configured custom-provider broker entry.
+func (s *Shim) forwardChat(sessionID, provider string, oreqBody []byte) (*http.Response, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s/chat/completions", s.brokerPort, sessionID, provider)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(oreqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer broker-injected")
+	return s.client.Do(req)
 }
 
 // handleGenerate translates a Gemini generate request to OpenAI Chat Completions,
 // forwards it through the broker, and translates the response back.
-func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, model string, body []byte, stream bool) {
+func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, provider, model string, body []byte, stream bool) {
 	var greq genReq
 	if err := json.Unmarshal(body, &greq); err != nil {
 		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini request: "+err.Error())
@@ -182,20 +208,9 @@ func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, model string, bo
 		log.Printf("[gemini-shim] openai request: %s", truncate(string(oreqBody), 4000))
 	}
 
-	brokerURL := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/openrouter/chat/completions", s.brokerPort, sessionID)
-	upReq, err := http.NewRequest(http.MethodPost, brokerURL, bytes.NewReader(oreqBody))
+	resp, err := s.forwardChat(sessionID, provider, oreqBody)
 	if err != nil {
-		writeGeminiError(w, http.StatusInternalServerError, "failed to build upstream request")
-		return
-	}
-	upReq.Header.Set("Content-Type", "application/json")
-	// The broker strips this and injects the real bearer token; send a placeholder
-	// so any client-side "needs a key" guard upstream is satisfied.
-	upReq.Header.Set("Authorization", "Bearer broker-injected")
-
-	resp, err := s.client.Do(upReq)
-	if err != nil {
-		writeGeminiError(w, http.StatusBadGateway, "broker/openrouter request failed: "+err.Error())
+		writeGeminiError(w, http.StatusBadGateway, "broker request failed: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()

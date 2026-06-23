@@ -247,7 +247,7 @@ Frontend does NOT:
 - Egress events arrive via terminal WebSockets (not collaboration WS)
 - `TerminalWSManager` dispatches `window.CustomEvent` for `egress_approval_needed` / `egress_approval_resolved`
 - Dashboard page listens for CustomEvents and shows toast + approval dialog
-- Approval dialog: Deny / Allow Once / Always Allow (3 buttons)
+- Approval dialog: Deny Always / Deny / Allow Once / Always Allow (4 buttons). "Deny Always" persistently blocks the domain (e.g. trackers) so it is denied without prompting again; managed/undone in the allowlist panel's "Blocked domains" section
 - Allowlist panel: Shield icon in title bar, shows user-approved domains with revoke
 - Egress is enabled globally via `EGRESS_PROXY_ENABLED=true` on the sandbox machine; there is no per-user or per-session opt-in
 
@@ -324,6 +324,37 @@ Chat panel for AI-assisted onboarding and help, plus provider setup cards.
 - `src/components/chat/ChatPanel.tsx` — AI chat interface
 - `src/components/chat/AiProviderSetupCard.tsx` — API key setup onboarding
 - `src/components/help/HelpDialog.tsx` — Help dialog with documentation
+
+---
+
+## Settings & Personal Access Tokens
+
+The Settings page manages account-level configuration, including **personal access
+tokens (PATs)** used by the `orcabot` CLI to authenticate against a remote control
+plane.
+
+### PAT UI
+- Create a token (name it) → the plaintext is shown **once**, then only the prefix is listed
+- List existing tokens (name, created/last-used) and revoke them
+- The control plane stores only the SHA-256 hash and **method-gates** PAT management so a PAT can't manage other PATs (see `controlplane/CLAUDE.md`)
+
+### Key Files
+- `src/app/(app)/settings/page.tsx` — Settings page
+- `src/components/PersonalAccessTokensPanel.tsx` — PAT create/list/revoke UI
+
+---
+
+## Desktop bridge & surface switching
+
+When the frontend is served inside the Tauri desktop webview, it can hand a live
+session off to the terminal (the `orcabot` CLI). The dashboards header shows a
+**"Switch to CLI"** button (desktop-only).
+
+- `src/lib/tauri-bridge.ts` — detects the Tauri runtime and exposes `switchToCli()`. It resolves the Tauri `invoke` from `window.__TAURI__.core.invoke` (the app sets `withGlobalTauri: true`); a bare `import("@tauri-apps/api/core")` does **not** resolve in the remote-origin webview, so don't rely on it.
+- The button is hidden when not running under Tauri.
+
+See `desktop/CLAUDE.md` for the Rust side (`switch_to_cli` command) and the full
+cli ↔ desktop ↔ web surface-switching model.
 
 ---
 

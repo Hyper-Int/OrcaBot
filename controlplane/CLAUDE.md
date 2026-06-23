@@ -15,6 +15,8 @@ It is responsible for:
 - integration policy enforcement (Gmail, GitHub, Drive, Calendar, Twitter)
 - OAuth token management (tokens never leave control plane)
 - PTY token issuance for terminal-level gateway auth
+- personal access token (PAT) issuance for CLI / scripted auth
+- file read/write/import proxying to the sandbox (used by the `orcabot` CLI)
 - blog content serving
 - AI chat with help docs
 - subscription & billing management (Stripe)
@@ -96,6 +98,8 @@ Fly.io (execution plane – separate repo)
 - **Integration policy enforcement** (gateway execute, rate limits, audit)
 - **OAuth token lifecycle** (connect, refresh, encrypt at rest)
 - **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth — **fail-closed**: empty `INTERNAL_API_TOKEN` rejects all tokens)
+- **Personal access token (PAT) issuance** (CLI / scripted auth — only the SHA-256 hash is stored; **method-gated** so a PAT cannot mint/list/revoke other PATs)
+- **File proxy** (read/write/import a session workspace, proxied to the sandbox; write + import are owner-only)
 - **Response filtering** (policy-based filtering before LLM sees data)
 - **API execution** (Gmail, GitHub, Drive, Calendar, Twitter calls — tokens stay here)
 - **Blog** content API
@@ -151,6 +155,7 @@ Rules:
 - Artifacts & summaries
 - User secrets (encrypted)
 - Secret domain allowlists
+- Personal access tokens (SHA-256 hash only) — `api_tokens`
 
 ### Not stored here
 - PTY buffers
@@ -218,16 +223,19 @@ The control plane manages user approval decisions and persistent allowlists for 
 
 ### Database Tables
 - `egress_allowlist` — Per-dashboard user-approved domains (domain, created_by, revoked_at)
-- `egress_audit_log` — All egress decisions (domain, port, decision, decided_by)
+- `egress_blocklist` — Per-dashboard permanently-denied domains ("deny always"; domain, created_by, revoked_at). Deny takes precedence over the allowlist
+- `egress_audit_log` — All egress decisions (domain, port, decision, decided_by). The CHECK constraint predates "deny_always", so a "Deny Always" is recorded as `deny`; the durable record is the `egress_blocklist` row
+- `egress_blocked_defaults` — Per-dashboard overrides of built-in default patterns
 
 ### User-Facing Endpoints (authenticated)
-- `POST /api/dashboards/:id/egress/approve` — User decision (allow_once/always/deny) → forward to sandbox
-- `GET /api/dashboards/:id/egress/allowlist` — List user-approved domains
+- `POST /api/dashboards/:id/egress/approve` — User decision (allow_once/allow_always/deny/deny_always) → forward to sandbox; allow_always persists to `egress_allowlist`, deny_always persists to `egress_blocklist` (and revokes any conflicting allowlist row)
+- `GET /api/dashboards/:id/egress/allowlist` — List user-approved + denied domains + defaults/blocked
 - `DELETE /api/dashboards/:id/egress/allowlist/:entryId` — Revoke a user-approved domain
+- `DELETE /api/dashboards/:id/egress/blocklist/:entryId` — Lift a permanent deny (un-block)
 - `GET /api/dashboards/:id/egress/pending` — List currently held connections
 
 ### Internal Endpoints (sandbox → controlplane)
-- `GET /internal/dashboards/:id/egress/allowlist` — Sandbox loads persisted allowlist on startup
+- `GET /internal/dashboards/:id/egress/allowlist` — Sandbox loads persisted allow + denied domains + blocked patterns on startup
 - `POST /internal/dashboards/:id/egress/audit` — Sandbox forwards runtime audit events
 
 ### Key Files
@@ -278,6 +286,35 @@ Sandbox MCP Server
 - **Twitter/X**: search, get_tweet, get_mentions, get_timeline, get_user, post, reply, like, retweet, follow, delete_tweet
 
 ---
+
+## Personal Access Tokens & File Proxy
+
+The `orcabot` CLI (in `desktop/`) authenticates to a remote control plane with a
+**personal access token** instead of a browser session. PATs are also how scripted
+workflows talk to the API.
+
+### Personal Access Tokens
+- Prefix `orca_pat_`, presented as `Authorization: Bearer <token>`.
+- Only the **SHA-256 hash** is stored in D1 (`api_tokens`) — the plaintext is shown once at creation.
+- Middleware is **prefix-gated**: a bearer beginning with `orca_pat_` is resolved as a PAT; everything else falls through to the existing PTY-token / session logic, so there's no collision.
+- **Privilege gating:** `rejectPatAuth(ctx)` returns 403 when `ctx.method === 'pat'`. The token-management routes (`POST /auth/api-token`, `GET`/`DELETE /auth/api-tokens`) call it, so a leaked PAT **cannot** mint, list, or revoke other PATs — only an interactive session can.
+- **Scope (operator note):** apart from the token-management gate above, a PAT inherits the **full authority of the owning user** — it can read/write workspace files, import workspaces, push/pull dashboards, read secrets, and attach integrations, exactly as that user's browser session could. Treat a PAT as a full user credential: store it outside any agent-readable location, scope it to one machine, and revoke (don't just rotate) it if a host is compromised.
+
+Key files:
+- `src/auth/api-token.ts` — `createApiToken` / `listApiTokens` / `revokeApiToken` / `getUserForApiToken` / `hashToken`; `PAT_PREFIX`
+- `src/auth/middleware.ts` — `AuthMethod` (`'session' | 'pat' | 'cf-access' | 'dev'`), tags `ctx.method`, exposes `rejectPatAuth`
+
+### File Proxy
+The CLI's `push`/`pull` and file commands read and write a session workspace
+through the control plane (which forwards to the sandbox FS APIs). OAuth tokens
+and sandbox internals never leak to the client.
+
+- `GET  /sessions/:id/file` — read a file from the session workspace
+- `PUT  /sessions/:id/file` — write a file (**owner-only**)
+- `POST /sessions/:id/workspace/import` — bulk import a tar.gz into the workspace (**owner-only**)
+
+### Database Tables
+- `api_tokens` — `(id, user_id, token_hash, name, created_at, last_used_at, expires_at, revoked_at)`; stores the hash only
 
 ## ASR (Automatic Speech Recognition)
 

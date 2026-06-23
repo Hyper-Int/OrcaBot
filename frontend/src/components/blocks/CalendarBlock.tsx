@@ -32,6 +32,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -308,12 +309,33 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
     return groups;
   }, [events]);
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountEmail = integration?.emailAddress || status?.emailAddress;
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {accountEmail && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-[10px] text-[var(--foreground-muted)] truncate">{accountEmail}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Calendar
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <Calendar className="w-3.5 h-3.5 mr-2" />
+      Connect Calendar
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <GoogleCalendarIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || status?.emailAddress || "Calendar"}
+        Calendar
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={calendarDoc} />
@@ -350,18 +372,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Calendar
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <Calendar className="w-3.5 h-3.5 mr-2" />
-                Connect Calendar
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -388,18 +399,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Calendar
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <Calendar className="w-3.5 h-3.5 mr-2" />
-            Connect Calendar
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -411,7 +411,7 @@ export function CalendarBlock({ id, data, selected }: NodeProps<CalendarNode>) {
         nodeId={id}
         selected={selected}
         icon={<GoogleCalendarIcon className="w-14 h-14" />}
-        label={integration?.emailAddress || "Calendar"}
+        label="Calendar"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

@@ -29,6 +29,7 @@ import {
   Clock,
   BarChart3,
   Link2,
+  Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -54,6 +55,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { API, DESKTOP_MODE } from "@/config/env";
+import { switchToCli } from "@/lib/tauri-bridge";
 import {
   listDashboards,
   createDashboard,
@@ -350,14 +352,14 @@ export default function DashboardsPage() {
       <PaywallDialog />
       {/* Header */}
       <header className="border-b border-[var(--border)] bg-[var(--background-elevated)]">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 h-[66px] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img
               src="/orca.png"
               alt="Orcabot"
               className="w-7 h-7 object-contain"
             />
-            <span className="text-h4 text-[var(--foreground)]">OrcaBot</span>
+            <span className="text-lg font-bold text-[var(--foreground)]">OrcaBot</span>
           </div>
             <div className="flex items-center gap-4">
               <TrialBanner />
@@ -395,6 +397,33 @@ export default function DashboardsPage() {
               )}
             <Tooltip content="Toggle theme">
               <ThemeToggle />
+            </Tooltip>
+            {DESKTOP_MODE && (
+              <Tooltip content="Switch to CLI (opens a terminal)">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={async () => {
+                    try {
+                      const ok = await switchToCli();
+                      if (ok) {
+                        toast.success("Opening the CLI in Terminal…");
+                      } else {
+                        toast.error("CLI switch unavailable (Tauri bridge not found)");
+                      }
+                    } catch (e) {
+                      toast.error(`Could not switch to CLI: ${e}`);
+                    }
+                  }}
+                >
+                  <Terminal className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+            )}
+            <Tooltip content="Settings">
+              <Button variant="ghost" size="icon-sm" onClick={() => router.push("/settings")}>
+                <Settings className="w-4 h-4" />
+              </Button>
             </Tooltip>
             <Tooltip content="Log out">
               <Button variant="ghost" size="icon-sm" onClick={handleLogout}>

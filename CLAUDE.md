@@ -41,7 +41,7 @@ This is non-negotiable. Never speculate about deployment issues - add logs that 
 - `controlplane` — Cloudflare Worker control plane
 - `sandbox` — Go sandbox server
 - `bridge` — Node.js messaging bridge service (WhatsApp via Baileys), deployed on Fly
-- `desktop` — Tauri native desktop app (bundles entire stack locally with VM sandbox)
+- `desktop` — Tauri native desktop app (bundles entire stack locally with VM sandbox); also ships the `orcabot` CLI (a 2nd binary in the same crate) that runs the stack headlessly and drives it from the terminal
 - `e2e` — Playwright end-to-end tests (external, against running instance)
 
 ## App Guides
@@ -86,6 +86,7 @@ npx wrangler dev
 - Frontend never talks directly to sandbox; all traffic goes through the control plane
 - Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`
 - Internal sandbox auth uses `SANDBOX_INTERNAL_TOKEN` (do not reuse Cloudflare API keys)
+- **Personal access tokens (PATs)** authenticate the `orcabot` CLI / scripts against a remote control plane: prefix `orca_pat_`, sent as `Authorization: Bearer`, only the SHA-256 hash is stored (`api_tokens` table). Middleware is prefix-gated (no collision with PTY JWT bearers) and **method-gated** — a PAT cannot mint/list/revoke other PATs (`rejectPatAuth`). See `controlplane/CLAUDE.md`.
 
 ### Secrets Protection (Security-Critical)
 Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
@@ -100,7 +101,7 @@ Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
 
 5. **PTY Token Fail-Closed** - `INTERNAL_API_TOKEN` must be non-empty. If it's missing, PTY token verification rejects all tokens rather than accepting them.
 
-6. **Network Egress Proxy** ("Little Snitch for AI Agents") - An HTTP/HTTPS forward proxy on `localhost:8083` intercepts all outbound network requests from PTY processes. Known domains (package registries, git hosting, CDNs, LLM APIs) are allowed automatically. Unknown domains are **held** (the connection hangs) while a toast + approval dialog is shown to the user. Options: Allow Once, Always Allow, or Deny. 60-second timeout = deny (fail-closed). User-approved "Always Allow" domains persist per-dashboard in D1.
+6. **Network Egress Proxy** ("Little Snitch for AI Agents") - An HTTP/HTTPS forward proxy on `localhost:8083` intercepts all outbound network requests from PTY processes. Known domains (package registries, git hosting, CDNs, LLM APIs) are allowed automatically. Unknown domains are **held** (the connection hangs) while a toast + approval dialog is shown to the user. Options: Allow Once, Always Allow, Deny, or Deny Always. 60-second timeout = deny (fail-closed). User-approved "Always Allow" domains persist per-dashboard in D1; "Deny Always" domains (e.g. trackers) persist per-dashboard in D1 too (`egress_blocklist`) and are then blocked immediately without prompting (deny takes precedence over the allowlist).
 
 Security invariants (non-negotiable):
 - Broker configs keyed by `sessionID:provider` — never global provider name
@@ -208,6 +209,16 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - Sandbox sessions use a shared `/workspace` by default
 - PTY cwd is set to the session workspace
 - Multiple PTYs per sandbox with turn-taking
+
+### Desktop, the `orcabot` CLI & Surface Switching
+- The `desktop` Tauri app bundles the whole stack locally: control plane on `workerd`, a SQLite "D1" shim, and a sandbox VM (Apple Virtualization.framework on macOS / QEMU on Linux).
+- The same crate ships a 2nd binary, **`orcabot`** — a terminal CLI that boots the stack *headlessly* and drives it (interactive TUI + scriptable subcommands: `up`/`down`/`status`/`exec`/`ls`/`tail`/`new`/`connect`/`attach`, plus `export`/`import`/`push`/`pull`).
+- **Owned-session lifecycle**: whoever starts the stack tears it down on exit; there is no always-on daemon. `up`/`down` are the explicit persist-mode escape hatch.
+- **Surface switching** moves a live session between `cli` ↔ `desktop` ↔ `web`. The GUI's "Switch to CLI" button (Tauri `switch_to_cli` command) hands off to the terminal; the TUI can launch the desktop GUI. Desktop boot, the vsock bridges, `/debug/exec`, and the full CLI reference live in `desktop/CLAUDE.md`.
+
+### Session Packaging
+- A dashboard + its workspace can be packaged for transfer. **Locally**: `orcabot export`/`import` produce/consume an `.orcabot` bundle. **Remotely**: `orcabot push`/`pull` sync against a remote control plane, authenticated with a PAT.
+- File transfer goes through the control plane file proxy (`GET`/`PUT /sessions/:id/file`, `POST /sessions/:id/workspace/import`), never directly to a sandbox. Pull writes are path-guarded (`safe_workspace_dest`) so a malicious remote can't escape the workspace.
 
 ### Browser Block
 - Browser block checks embeddability via control plane `/embed-check`

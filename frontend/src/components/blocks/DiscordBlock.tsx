@@ -29,6 +29,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -403,11 +404,31 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
   };
 
   // Header
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {integration?.guildName && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.guildName}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Discord
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <DiscordIcon className="w-3.5 h-3.5 mr-2" />
+      Connect Discord
+    </DropdownMenuItem>
+  );
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <DiscordIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.guildName || "Discord"}
+        Discord
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={discordDoc} />
@@ -444,18 +465,7 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Discord
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <DiscordIcon className="w-3.5 h-3.5 mr-2" />
-                Connect Discord
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -481,18 +491,7 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Discord
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <DiscordIcon className="w-3.5 h-3.5 mr-2" />
-            Connect Discord
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -504,7 +503,7 @@ export function DiscordBlock({ id, data, selected }: NodeProps<DiscordNode>) {
         nodeId={id}
         selected={selected}
         icon={<DiscordIcon className="w-14 h-14" />}
-        label={integration?.guildName || "Discord"}
+        label="Discord"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

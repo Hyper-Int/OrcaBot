@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -25,15 +27,25 @@ func init() {
 
 // ModelSelection describes a per-PTY override for the model/provider the harness should use.
 // provider="default" means the harness uses its built-in API. provider="openrouter" routes
-// requests through the local broker to OpenRouter.
+// requests through the local broker to OpenRouter. provider="custom" routes through the local
+// broker to a user-configured OpenAI-compatible endpoint (PLAN-custom-endpoints.md).
 type ModelSelection struct {
-	Provider string // "default" | "openrouter"
-	Model    string // OpenRouter model id, e.g. "anthropic/claude-sonnet-4.6"
+	Provider string // "default" | "openrouter" | "custom"
+	Model    string // OpenRouter / custom-endpoint model id
 	// Catalog-resolved limits (0 = unknown). Used to set Codex's
 	// model_context_window / model_max_output_tokens so it doesn't fall back to
 	// wrong defaults for models it doesn't recognize.
 	ContextWindow   int
 	MaxOutputTokens int
+	// Custom endpoint fields (Provider == "custom").
+	BaseURL    string // user endpoint base URL, e.g. https://my-llm.example.com/v1
+	Format     string // "openai" | "anthropic" (front-side the harness speaks)
+	SecretName string // name of the brokered secret holding the API key (empty = no auth)
+}
+
+// IsCustom returns true if the selection routes to a user-configured custom endpoint.
+func (m *ModelSelection) IsCustom() bool {
+	return m != nil && m.Provider == "custom" && m.Model != "" && m.BaseURL != ""
 }
 
 // IsOpenRouter returns true if the selection requests routing through OpenRouter.
@@ -104,7 +116,7 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 			return
 		}
 		modelB64 := base64.RawURLEncoding.EncodeToString([]byte(sel.Model))
-		shimURL := fmt.Sprintf("http://127.0.0.1:%d/gv1/%s/%s", geminiShimPort, sessionID, modelB64)
+		shimURL := fmt.Sprintf("http://127.0.0.1:%d/gv1/%s/openrouter/%s", geminiShimPort, sessionID, modelB64)
 		envVars["GOOGLE_GEMINI_BASE_URL"] = shimURL
 		// GATEWAY mode reads GEMINI_API_KEY; a placeholder is enough — the broker
 		// injects the real OpenRouter key downstream of the shim.
@@ -113,6 +125,81 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 	default:
 		log.Printf("[model-selection] agent=%s OpenRouter routing not supported", agentType)
 	}
+}
+
+// customProviderName is the broker provider key for a session's custom endpoint.
+// The broker config (target URL + key) is installed in session.go; the broker's
+// built-in forwarding path handles /broker/{sid}/customprovider/... generically.
+const customProviderName = "customprovider"
+
+// applyCustomEndpointEnv wires a harness to a user-configured custom endpoint via
+// the broker's customprovider config. OpenAI-native harnesses point straight at the
+// broker; Claude goes through the gateway's /av1 Anthropic→chat translator. Codex
+// (Responses→chat) and Gemini custom routing are not wired yet.
+func applyCustomEndpointEnv(envVars map[string]string, agentType mcp.AgentType, sel *ModelSelection, sessionID string, brokerPort, geminiShimPort int) {
+	if !sel.IsCustom() {
+		return
+	}
+	brokerURL := fmt.Sprintf("http://localhost:%d/broker/%s/%s", brokerPort, sessionID, customProviderName)
+	switch agentType {
+	case mcp.AgentTypeOpenCode, mcp.AgentTypeDroid:
+		envVars["OPENAI_BASE_URL"] = brokerURL
+		envVars["OPENAI_MODEL"] = sel.Model
+		envVars["OPENAI_API_KEY"] = broker.GetDummyValue("openai")
+		log.Printf("[model-selection] agent=%s routing via custom endpoint model=%s broker=%s", agentType, sel.Model, brokerURL)
+	case mcp.AgentTypeClaude:
+		modelB64 := base64.RawURLEncoding.EncodeToString([]byte(sel.Model))
+		shimURL := fmt.Sprintf("http://127.0.0.1:%d/av1/%s/%s/%s", geminiShimPort, sessionID, customProviderName, modelB64)
+		envVars["ANTHROPIC_BASE_URL"] = shimURL
+		// Valid-looking placeholder so Claude enters API mode; the broker injects
+		// the real key (if any). See [[claude-openrouter-auth-friction]].
+		envVars["ANTHROPIC_API_KEY"] = "sk-ant-api03-orcabot-custom-endpoint-placeholder"
+		log.Printf("[model-selection] agent=claude routing via custom endpoint model=%s url=%s", sel.Model, shimURL)
+	case mcp.AgentTypeGemini:
+		modelB64 := base64.RawURLEncoding.EncodeToString([]byte(sel.Model))
+		shimURL := fmt.Sprintf("http://127.0.0.1:%d/gv1/%s/%s/%s", geminiShimPort, sessionID, customProviderName, modelB64)
+		envVars["GOOGLE_GEMINI_BASE_URL"] = shimURL
+		// GATEWAY auth flag (security.auth.selectedType/useExternal) is written in
+		// session.go for both OpenRouter and custom Gemini selections.
+		envVars["GEMINI_API_KEY"] = broker.GetDummyValue("gemini")
+		log.Printf("[model-selection] agent=gemini routing via custom endpoint model=%s url=%s", sel.Model, shimURL)
+	default:
+		log.Printf("[model-selection] agent=%s custom endpoint routing not supported yet", agentType)
+	}
+}
+
+// hostGatewayAddr is the address the sandbox VM uses to reach the host (for desktop
+// local model servers). QEMU user-net / slirp maps the host to 10.0.2.2; overridable.
+func hostGatewayAddr() string {
+	if g := os.Getenv("ORCABOT_HOST_GATEWAY"); g != "" {
+		return g
+	}
+	return "10.0.2.2"
+}
+
+// rewriteCustomBaseURLForDesktop rewrites a localhost custom-endpoint URL to the VM
+// host gateway so the sandbox can reach a model server (Ollama/LM Studio) running on
+// the host. Desktop-only — gated on ALLOW_HTTP_CUSTOM_ENDPOINT; no-op otherwise, so
+// cloud endpoints (real public hosts) are untouched.
+func rewriteCustomBaseURLForDesktop(baseURL string) string {
+	if os.Getenv("ALLOW_HTTP_CUSTOM_ENDPOINT") != "true" {
+		return baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		gw := hostGatewayAddr()
+		if port := u.Port(); port != "" {
+			u.Host = gw + ":" + port
+		} else {
+			u.Host = gw
+		}
+		return u.String()
+	}
+	return baseURL
 }
 
 // shellSingleQuote wraps s as a single safe POSIX shell token.
