@@ -32,11 +32,11 @@ type ApprovedDomainConfig struct {
 }
 
 type envUpdateRequest struct {
-	Set             map[string]string        `json:"set"`              // Regular env vars (set directly)
-	Secrets         map[string]SecretConfig  `json:"secrets"`          // Secrets with broker protection option
-	ApprovedDomains []ApprovedDomainConfig   `json:"approved_domains"` // Pre-approved domains for custom secrets
-	Unset           []string                 `json:"unset"`
-	ApplyNow        bool                     `json:"apply_now"`
+	Set             map[string]string       `json:"set"`              // Regular env vars (set directly)
+	Secrets         map[string]SecretConfig `json:"secrets"`          // Secrets with broker protection option
+	ApprovedDomains []ApprovedDomainConfig  `json:"approved_domains"` // Pre-approved domains for custom secrets
+	Unset           []string                `json:"unset"`
+	ApplyNow        bool                    `json:"apply_now"`
 }
 
 type envUpdateResponse struct {
@@ -131,7 +131,11 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 			// Built-in provider: use hardcoded config
 			// Broker URL includes session ID for config isolation
 			effectiveEnvVars[secretName] = broker.GetDummyValue(providerName)
-			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+			// Use 127.0.0.1, not "localhost": the broker listens on 127.0.0.1 only
+			// (IPv4). Node/undici-based harnesses (OpenCode, Droid) resolve
+			// "localhost" to IPv6 ::1 first, get ECONNREFUSED, and retry-storm into
+			// an apparent hang. curl/Go/Python prefer IPv4 so they never hit it.
+			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s",
 				brokerPort, session.ID, providerName)
 
 			// Install configs for every provider that consumes this env key. Most
@@ -153,7 +157,9 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 			// Broker URL includes session ID for config isolation
 			customID := "custom/" + secretName
 			effectiveEnvVars[secretName] = broker.GetCustomDummyValue(secretName)
-			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+			// 127.0.0.1 (not "localhost") — see the built-in provider branch above:
+			// IPv6-first Node harnesses can't reach the IPv4-only broker via "localhost".
+			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s",
 				brokerPort, session.ID, customID)
 
 			sessionBroker.SetConfig(broker.ConfigKey(session.ID, customID), &broker.ProviderConfig{
