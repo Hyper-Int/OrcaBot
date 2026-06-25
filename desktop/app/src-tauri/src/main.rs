@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v6-apply-schema-on-boot
-const MODULE_REVISION: &str = "main-v6-apply-schema-on-boot";
+// REVISION: main-v7-updater
+const MODULE_REVISION: &str = "main-v7-updater";
 
 mod commands;
 mod vm;
@@ -753,6 +753,7 @@ fn main() {
 
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .invoke_handler(tauri::generate_handler![
       commands::get_workspace_path,
       commands::import_folder,
@@ -854,6 +855,31 @@ fn main() {
             }
           });
         }
+      }
+      // Background auto-update check (GUI only — skip in the headless CLI backend
+      // so `orcabot` sessions don't trigger updates). Non-blocking; fails silently.
+      if !headless {
+        use tauri_plugin_updater::UpdaterExt;
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+          match handle.updater() {
+            Ok(updater) => match updater.check().await {
+              Ok(Some(update)) => {
+                eprintln!("[updater] update {} available; downloading", update.version);
+                match update.download_and_install(|_chunk, _total| {}, || {}).await {
+                  Ok(_) => {
+                    eprintln!("[updater] installed; relaunching");
+                    handle.restart();
+                  }
+                  Err(e) => eprintln!("[updater] install failed: {e}"),
+                }
+              }
+              Ok(None) => eprintln!("[updater] up to date"),
+              Err(e) => eprintln!("[updater] check failed: {e}"),
+            },
+            Err(e) => eprintln!("[updater] unavailable: {e}"),
+          }
+        });
       }
       Ok(())
     })

@@ -22,6 +22,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,6 +50,14 @@
       "entitlements": "entitlements.plist",
       "signingIdentity": "Developer ID Application: Robert Macrae (3927MKQNPA)",
       "minimumSystemVersion": "13.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAwRUZEN0I5Qjg3OTY2NUEKUldSYVpubTR1ZGZ2QUFEZlVNNjBkcnUvR1AyQ1F5WWI3ajA5NW1GVnpseEpiV2dPMm8wS29kaUsK",
+      "endpoints": [
+        "https://github.com/Hyper-Int/OrcaBot/releases/latest/download/latest.json"
+      ]
     }
   }
 }
