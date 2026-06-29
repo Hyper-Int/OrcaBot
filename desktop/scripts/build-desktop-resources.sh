@@ -305,3 +305,27 @@ REDIRECT_EOF
 printf '%s\n' "  Created: redirect page in dist/"
 
 printf '%s\n' "Desktop resources staged in $TAURI_RESOURCES_DIR"
+
+# --- Code-sign nested Mach-O binaries for Developer ID notarization ----------
+# Tauri signs the app shell but NOT these bundled resource executables, so we
+# sign them here — before Tauri copies them in and seals/notarizes the bundle.
+# Gated on APPLE_SIGNING_IDENTITY so plain dev builds are unaffected. workerd
+# (V8) needs JIT entitlements; vz-helper needs the virtualization entitlement.
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  ENT_DIR="$ROOT_DIR/app/src-tauri"
+  printf '%s\n' "Code-signing nested binaries with: $APPLE_SIGNING_IDENTITY"
+  sign_bin() {
+    [ -f "$1" ] || { printf '%s\n' "  skip (missing): $1"; return 0; }
+    if [ -n "${2:-}" ]; then
+      codesign --force --options runtime --timestamp --entitlements "$2" --sign "$APPLE_SIGNING_IDENTITY" "$1"
+    else
+      codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$1"
+    fi
+    printf '%s\n' "  signed: $1"
+  }
+  sign_bin "$TAURI_RESOURCES_DIR/workerd/workerd" "$ENT_DIR/entitlements-workerd.plist"
+  sign_bin "$TAURI_RESOURCES_DIR/d1-shim/d1-shim"
+  sign_bin "$TAURI_RESOURCES_DIR/vm/vz-helper" "$ENT_DIR/entitlements-vz-helper.plist"
+else
+  printf '%s\n' "APPLE_SIGNING_IDENTITY not set — skipping nested-binary signing (dev build)"
+fi
