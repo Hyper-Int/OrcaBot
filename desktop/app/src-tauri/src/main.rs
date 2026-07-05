@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v7-updater
-const MODULE_REVISION: &str = "main-v7-updater";
+// REVISION: main-v8-loading-quit
+const MODULE_REVISION: &str = "main-v8-loading-quit";
 
 mod commands;
 mod vm;
@@ -758,6 +758,7 @@ fn main() {
       commands::get_workspace_path,
       commands::import_folder,
       commands::switch_to_cli,
+      commands::quit_app,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

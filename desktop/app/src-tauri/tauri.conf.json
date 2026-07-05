@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Orcabot Desktop",
+  "productName": "Orcabot",
   "version": "0.1.0",
   "identifier": "com.orcabot.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Orcabot Desktop",
+        "title": "Orcabot",
         "width": 1200,
         "height": 800,
         "visible": false
