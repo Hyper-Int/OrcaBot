@@ -270,39 +270,15 @@ if [ -f "$ROOT_DIR/workerd/assets-service/worker.js" ]; then
   printf '%s\n' "  Staged: assets-service worker"
 fi
 
-# Create redirect page for Tauri's frontendDist
-# The actual frontend is served via workerd at localhost:8788
+# Staged loading screen for Tauri's frontendDist: polls the local services,
+# shows the current boot stage (with KSP-style flavor), then redirects to the
+# workerd-served UI at :8788 once it's actually ready.
 DIST_DIR="$ROOT_DIR/app/dist"
 mkdir -p "$DIST_DIR"
-cat > "$DIST_DIR/index.html" << 'REDIRECT_EOF'
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=http://localhost:8788/dashboards?desktop=1">
-  <title>Orcabot Desktop</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      background: #0a0a0a;
-      color: #fafafa;
-    }
-  </style>
-</head>
-<body>
-  <p>Loading Orcabot...</p>
-  <script>
-    window.location.replace('http://localhost:8788/dashboards?desktop=1');
-  </script>
-</body>
-</html>
-REDIRECT_EOF
-printf '%s\n' "  Created: redirect page in dist/"
+cp "$ROOT_DIR/app/loading.html" "$DIST_DIR/index.html"
+# Brand logo for the loading screen (best-effort; the page hides it if missing).
+cp "$ROOT_DIR/../frontend/public/orca.png" "$DIST_DIR/orca.png" 2>/dev/null || true
+printf '%s\n' "  Created: loading page in dist/"
 
 printf '%s\n' "Desktop resources staged in $TAURI_RESOURCES_DIR"
 

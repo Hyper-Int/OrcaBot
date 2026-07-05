@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Orcabot Desktop</title>
+  <style>
+    :root { --bg:#080b12; --fg:#eef2f8; --muted:#8ea0bd; --accent:#5b8cff; --ok:#34d399; --warn:#f59e0b; --err:#ef4444; }
+    * { box-sizing:border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
+      background: radial-gradient(ellipse 80% 60% at 50% 30%, #0e1730 0%, var(--bg) 70%);
+      color: var(--fg); -webkit-font-smoothing:antialiased; user-select:none;
+    }
+    .wrap { width: 460px; max-width: 90vw; text-align:center; }
+    .orca { width:76px; height:76px; object-fit:contain; margin:0 auto 18px;
+      filter: drop-shadow(0 0 26px rgba(91,140,255,.35)); animation: float 4s ease-in-out infinite; }
+    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+    .title { font-size:1.5rem; font-weight:800; letter-spacing:-.02em; }
+    .stage { margin-top:18px; font-size:1.05rem; font-weight:600; min-height:1.3em; }
+    .quip { margin-top:6px; font-size:.9rem; color:var(--muted); min-height:1.2em; transition:opacity .3s; }
+    .steps { list-style:none; padding:0; margin:26px auto 0; max-width:320px; text-align:left; }
+    .steps li { display:flex; align-items:center; gap:10px; padding:6px 2px; font-size:.92rem; color:var(--muted); }
+    .steps li.up { color:var(--fg); }
+    .dot { width:16px; height:16px; flex:none; display:inline-flex; align-items:center; justify-content:center; }
+    .dot .ring { width:12px; height:12px; border-radius:50%; border:2px solid rgba(142,160,189,.35); }
+    .dot.doing .ring { border-top-color:var(--accent); animation:spin .8s linear infinite; }
+    .dot.up .ring { border-color:var(--ok); background:var(--ok); }
+    .dot.err .ring { border-color:var(--err); background:var(--err); }
+    @keyframes spin { to { transform:rotate(360deg) } }
+    .foot { margin-top:22px; font-size:.78rem; color:var(--muted); min-height:1.4em; }
+    .foot .warn { color:var(--warn); }
+    .manual { margin-top:14px; opacity:0; transition:opacity .4s; }
+    .manual.show { opacity:1; }
+    .manual a { color:var(--accent); font-size:.85rem; text-decoration:none; cursor:pointer; }
+    .manual a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <img class="orca" src="./orca.png" alt="" onerror="this.style.display='none'" />
+    <div class="title">Orcabot</div>
+    <div class="stage" id="stage">Warming up the engines…</div>
+    <div class="quip" id="quip"></div>
+    <ul class="steps" id="steps"></ul>
+    <div class="foot"><span id="elapsed">0s</span><span id="hint"></span></div>
+    <div class="manual" id="manual"><a id="openAnyway">Open the dashboard anyway →</a></div>
+  </div>
+  <script>
+    // Boot stages, in start order. `required` gates the redirect; VM boots in the
+    // background so the dashboard can load without it. Quips are lighthearted
+    // flavor (KSP-style) but the stage label always names the real step.
+    var REDIRECT = 'http://localhost:8788/dashboards?desktop=1';
+    var STEPS = [
+      { id:'db',  label:'Local database',  url:'http://127.0.0.1:9001/', required:false, slow:8,
+        quips:['Convincing SQLite to hold still','Filing the bytes alphabetically','Spinning up the ledger'] },
+      { id:'web', label:'Web interface',   url:'http://127.0.0.1:8788/', required:true,  slow:12,
+        quips:['Painting the cockpit dials','Reticulating splines','Hanging up the dashboards'] },
+      { id:'cp',  label:'Control plane',   url:'http://127.0.0.1:8787/health', required:true, slow:12,
+        quips:['Assembling mission control','Powering up the flight computer','Briefing the workers'] },
+      { id:'vm',  label:'Sandbox VM',      url:'http://127.0.0.1:8080/health', required:false, slow:20,
+        quips:['Igniting the boosters 🚀','Spooling up a tiny Linux','Pressurizing the cabin','Waiting on the guidance computer (this can take a minute)'] }
+    ];
+
+    var t0 = Date.now(), quipIdx = 0, quipStep = null, doneRedirect = false, curStartedAt = {};
+    var stepsEl = document.getElementById('steps');
+    STEPS.forEach(function(s){
+      var li = document.createElement('li'); li.id = 'li-'+s.id;
+      li.innerHTML = '<span class="dot" id="dot-'+s.id+'"><span class="ring"></span></span><span>'+s.label+'</span>';
+      stepsEl.appendChild(li);
+    });
+
+    function probe(url){
+      return fetch(url, { mode:'no-cors', cache:'no-store' }).then(function(){ return true; }).catch(function(){ return false; });
+    }
+    function elapsed(){ return Math.round((Date.now()-t0)/1000); }
+
+    function current(){ // first not-yet-up step (required first, then VM)
+      for (var i=0;i<STEPS.length;i++){ if (STEPS[i].required && !STEPS[i].up) return STEPS[i]; }
+      for (var j=0;j<STEPS.length;j++){ if (!STEPS[j].up) return STEPS[j]; }
+      return null;
+    }
+
+    function render(){
+      STEPS.forEach(function(s){
+        var dot = document.getElementById('dot-'+s.id), li = document.getElementById('li-'+s.id);
+        dot.className = 'dot' + (s.up ? ' up' : (s === cur ? ' doing' : ''));
+        li.className = s.up ? 'up' : '';
+      });
+      var cur = current();
+      document.getElementById('elapsed').textContent = elapsed()+'s';
+      if (!cur){ document.getElementById('stage').textContent = 'Ready — casting off 🐋'; document.getElementById('quip').textContent=''; return; }
+      document.getElementById('stage').textContent = cur.label + '…';
+      if (quipStep !== cur.id){ quipStep = cur.id; quipIdx = 0; curStartedAt[cur.id] = curStartedAt[cur.id] || Date.now(); }
+      document.getElementById('quip').textContent = cur.quips[quipIdx % cur.quips.length];
+      // Slow hint + manual escape hatch
+      var waited = (Date.now() - (curStartedAt[cur.id]||t0))/1000;
+      var hint = document.getElementById('hint');
+      if (waited > (cur.slow||12)){ hint.innerHTML = ' · <span class="warn">'+cur.label+' is taking longer than usual…</span>'; }
+      else { hint.textContent = ''; }
+      if (elapsed() > 8){ document.getElementById('manual').classList.add('show'); }
+    }
+    var cur = null; // referenced in render via closure; recomputed each tick
+
+    function tick(){
+      Promise.all(STEPS.map(function(s){ return s.up ? Promise.resolve(true) : probe(s.url).then(function(u){ s.up = u; return u; }); }))
+        .then(function(){
+          cur = current();
+          render();
+          var ready = STEPS.every(function(s){ return !s.required || s.up; });
+          if (ready && !doneRedirect){
+            doneRedirect = true;
+            setTimeout(function(){ window.location.replace(REDIRECT); }, 500);
+          }
+        });
+    }
+
+    document.getElementById('openAnyway').addEventListener('click', function(){ window.location.replace(REDIRECT); });
+    // rotate quips
+    setInterval(function(){ quipIdx++; render(); }, 2600);
+    render(); tick(); setInterval(tick, 800);
+  </script>
+</body>
+</html>
