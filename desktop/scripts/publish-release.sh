@@ -25,11 +25,21 @@ VERSION=$(grep -m1 '"version"' "$SRC_TAURI/tauri.conf.json" | sed -E 's/.*"versi
 [ -n "$VERSION" ] || { echo "could not read version from tauri.conf.json"; exit 1; }
 TAG="v$VERSION"
 
-DMG=$(ls "$BUNDLE"/dmg/*.dmg 2>/dev/null | head -1 || true)
+# Match THIS version's DMG explicitly. Tauri doesn't clean the bundle dir
+# between builds, so a bare *.dmg glob could pick up a stale previous-version
+# (or pre-rename "Orcabot Desktop_...") DMG while latest.json points at the
+# current tarball.
+set -- "$BUNDLE"/dmg/Orcabot_"$VERSION"_*.dmg
+if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+  echo "expected exactly one Orcabot_${VERSION}_*.dmg in $BUNDLE/dmg — found: $*"
+  echo "(clean the bundle dir, or rebuild this version's DMG)"
+  exit 1
+fi
+DMG="$1"
 TARBALL="$BUNDLE/macos/Orcabot.app.tar.gz"
 SIG="$TARBALL.sig"
-for f in "$DMG" "$TARBALL" "$SIG"; do
-  [ -n "$f" ] && [ -f "$f" ] || { echo "missing artifact: ${f:-<dmg>} — run a signed \`cargo tauri build\` first"; exit 1; }
+for f in "$TARBALL" "$SIG"; do
+  [ -f "$f" ] || { echo "missing artifact: $f — run a signed \`cargo tauri build\` first"; exit 1; }
 done
 
 # The updater downloads the tarball from this versioned release URL. (arm64 only
