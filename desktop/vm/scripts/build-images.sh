@@ -502,6 +502,19 @@ NETCONF
 # Create hostname
 echo "orcabot-sandbox" > /mnt/rootfs/etc/hostname
 
+# Create /etc/hosts so "localhost" resolves. Docker supplies /etc/hosts as a
+# runtime bind-mount, so it is NOT in the image and docker export (how this
+# rootfs is built) drops it -- same as /etc/hostname and /etc/network/interfaces
+# recreated above. Without it, anything dialing "localhost:<port>" (e.g.
+# websockify to x11vnc for the browser noVNC stream) fails name resolution.
+# NOTE: no apostrophes in this comment -- the whole block runs inside a
+# single-quoted bash -c script, so a stray apostrophe would terminate it.
+# Mapped IPv4-only (not ::1) so IPv6-first clients do not stall on v4-only ports.
+cat > /mnt/rootfs/etc/hosts << "HOSTS"
+127.0.0.1	localhost orcabot-sandbox
+::1	ip6-localhost ip6-loopback
+HOSTS
+
 # Sync and unmount
 sync
 umount /mnt/rootfs

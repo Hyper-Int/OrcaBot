@@ -151,7 +151,11 @@ func (c *Controller) Start() (Status, error) {
 	webArgs := []string{
 		"--heartbeat", "30",
 		strconv.Itoa(wsPort),
-		fmt.Sprintf("localhost:%d", vncPort),
+		// 127.0.0.1, not "localhost": the VM's /etc/hosts may lack a localhost
+		// entry, in which case websockify's name resolution of "localhost:<port>"
+		// fails and it closes every VNC client with 1011 "Failed to connect to
+		// downstream server". x11vnc listens on 127.0.0.1, so target it directly.
+		fmt.Sprintf("127.0.0.1:%d", vncPort),
 	}
 	if _, err := os.Stat("/usr/share/novnc/vnc.html"); err == nil {
 		webArgs = append([]string{"--web", "/usr/share/novnc"}, webArgs...)
