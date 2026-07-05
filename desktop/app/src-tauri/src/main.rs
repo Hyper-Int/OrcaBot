@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v9-resource-root-fix
-const MODULE_REVISION: &str = "main-v9-resource-root-fix";
+// REVISION: main-v10-updater-prompt
+const MODULE_REVISION: &str = "main-v10-updater-prompt";
 
 mod commands;
 mod vm;
@@ -866,28 +866,45 @@ fn main() {
           });
         }
       }
-      // Background auto-update check (GUI only — skip in the headless CLI backend
-      // so `orcabot` sessions don't trigger updates). Non-blocking; fails silently.
+      // Update check (GUI only — skip in the headless CLI backend so `orcabot`
+      // sessions don't trigger updates). We only *check* automatically; the heavy
+      // part (a ~1GB download + install + restart) is gated behind an explicit
+      // prompt, because restarting tears down any running VM/terminal/agent
+      // session (RunEvent::Exit shuts the services down).
       if !headless {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
         use tauri_plugin_updater::UpdaterExt;
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
-          match handle.updater() {
-            Ok(updater) => match updater.check().await {
-              Ok(Some(update)) => {
-                eprintln!("[updater] update {} available; downloading", update.version);
-                match update.download_and_install(|_chunk, _total| {}, || {}).await {
-                  Ok(_) => {
-                    eprintln!("[updater] installed; relaunching");
-                    handle.restart();
-                  }
-                  Err(e) => eprintln!("[updater] install failed: {e}"),
-                }
-              }
-              Ok(None) => eprintln!("[updater] up to date"),
-              Err(e) => eprintln!("[updater] check failed: {e}"),
-            },
-            Err(e) => eprintln!("[updater] unavailable: {e}"),
+          let updater = match handle.updater() {
+            Ok(u) => u,
+            Err(e) => { eprintln!("[updater] unavailable: {e}"); return; }
+          };
+          let update = match updater.check().await {
+            Ok(Some(u)) => u,
+            Ok(None) => { eprintln!("[updater] up to date"); return; }
+            Err(e) => { eprintln!("[updater] check failed: {e}"); return; }
+          };
+          eprintln!("[updater] update {} available", update.version);
+          let proceed = handle
+            .dialog()
+            .message(format!(
+              "Orcabot {} is available.\n\nInstalling it will download the update and restart the app — any running terminals, agents, or VM session will stop.",
+              update.version
+            ))
+            .title("Update available")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+              "Update & restart".to_string(),
+              "Later".to_string(),
+            ))
+            .blocking_show();
+          if !proceed {
+            eprintln!("[updater] update deferred by user");
+            return;
+          }
+          match update.download_and_install(|_chunk, _total| {}, || {}).await {
+            Ok(_) => { eprintln!("[updater] installed; relaunching"); handle.restart(); }
+            Err(e) => eprintln!("[updater] install failed: {e}"),
           }
         });
       }
