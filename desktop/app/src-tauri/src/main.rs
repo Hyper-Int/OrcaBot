@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v6-apply-schema-on-boot
-const MODULE_REVISION: &str = "main-v6-apply-schema-on-boot";
+// REVISION: main-v10-updater-prompt
+const MODULE_REVISION: &str = "main-v10-updater-prompt";
 
 mod commands;
 mod vm;
@@ -653,9 +653,18 @@ fn resolve_resource_root(app: &tauri::App) -> Option<PathBuf> {
     }
   }
 
-  let resource_dir = app.path().resource_dir().ok()?;
-  if resource_layout_valid(&resource_dir) {
-    return Some(resource_dir);
+  // Installed .app: bundled resources live at Contents/Resources/resources/
+  // (the tauri.conf resource paths are prefixed with "resources/"), while
+  // resource_dir() points at Contents/Resources. Check that `resources` subdir
+  // first, then the dir itself. Without this, an installed app only resolved via
+  // the compile-time dev path below, so it worked on the build machine but had
+  // no resources (and skipped autostart) on any other Mac.
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    for candidate in [resource_dir.join("resources"), resource_dir] {
+      if resource_layout_valid(&candidate) {
+        return Some(candidate);
+      }
+    }
   }
 
   let dev_resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
@@ -753,10 +762,12 @@ fn main() {
 
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .invoke_handler(tauri::generate_handler![
       commands::get_workspace_path,
       commands::import_folder,
       commands::switch_to_cli,
+      commands::quit_app,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());
@@ -854,6 +865,48 @@ fn main() {
             }
           });
         }
+      }
+      // Update check (GUI only — skip in the headless CLI backend so `orcabot`
+      // sessions don't trigger updates). We only *check* automatically; the heavy
+      // part (a ~1GB download + install + restart) is gated behind an explicit
+      // prompt, because restarting tears down any running VM/terminal/agent
+      // session (RunEvent::Exit shuts the services down).
+      if !headless {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        use tauri_plugin_updater::UpdaterExt;
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+          let updater = match handle.updater() {
+            Ok(u) => u,
+            Err(e) => { eprintln!("[updater] unavailable: {e}"); return; }
+          };
+          let update = match updater.check().await {
+            Ok(Some(u)) => u,
+            Ok(None) => { eprintln!("[updater] up to date"); return; }
+            Err(e) => { eprintln!("[updater] check failed: {e}"); return; }
+          };
+          eprintln!("[updater] update {} available", update.version);
+          let proceed = handle
+            .dialog()
+            .message(format!(
+              "Orcabot {} is available.\n\nInstalling it will download the update and restart the app — any running terminals, agents, or VM session will stop.",
+              update.version
+            ))
+            .title("Update available")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+              "Update & restart".to_string(),
+              "Later".to_string(),
+            ))
+            .blocking_show();
+          if !proceed {
+            eprintln!("[updater] update deferred by user");
+            return;
+          }
+          match update.download_and_install(|_chunk, _total| {}, || {}).await {
+            Ok(_) => { eprintln!("[updater] installed; relaunching"); handle.restart(); }
+            Err(e) => eprintln!("[updater] install failed: {e}"),
+          }
+        });
       }
       Ok(())
     })
