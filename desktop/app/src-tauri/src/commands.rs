@@ -601,6 +601,13 @@ fn chrono_now() -> String {
 /// sibling `orcabot cli` (which attaches to this same running session and opens
 /// the TUI), then hide the GUI window. macOS-only (the desktop app is macOS-only
 /// today); other platforms return an error.
+/// Quit the app — used by the loading screen's stuck/error state. `app.exit`
+/// fires RunEvent::Exit, which runs the service-shutdown handler in main.rs.
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]

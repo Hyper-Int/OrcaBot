@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Orcabot Desktop",
-  "version": "0.0.0",
+  "productName": "Orcabot",
+  "version": "0.1.0",
   "identifier": "com.orcabot.desktop",
   "build": {
     "beforeDevCommand": "sh -c \"cd ../../frontend && NEXT_PUBLIC_API_URL=http://localhost:8787 NEXT_PUBLIC_SITE_URL=http://localhost:8788 NEXT_PUBLIC_DEV_MODE_ENABLED=true NEXT_PUBLIC_DESKTOP_MODE=true npx wrangler dev -c wrangler.toml --port 8788\"",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Orcabot Desktop",
+        "title": "Orcabot",
         "width": 1200,
         "height": 800,
         "visible": false
@@ -22,7 +22,14 @@
   },
   "bundle": {
     "active": true,
-    "icon": ["icons/icon.png"],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "resources": [
       "resources/workerd/workerd",
       "resources/workerd/workerd.capnp",
@@ -38,11 +45,19 @@
       "resources/frontend/*",
       "resources/frontend/assets/**/*"
     ],
-    "targets": ["app"],
+    "targets": ["app", "dmg"],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "signingIdentity": "-",
+      "signingIdentity": "Developer ID Application: Robert Macrae (3927MKQNPA)",
       "minimumSystemVersion": "13.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAwRUZEN0I5Qjg3OTY2NUEKUldSYVpubTR1ZGZ2QUFEZlVNNjBkcnUvR1AyQ1F5WWI3ajA5NW1GVnpseEpiV2dPMm8wS29kaUsK",
+      "endpoints": [
+        "https://github.com/Hyper-Int/OrcaBot/releases/latest/download/latest.json"
+      ]
     }
   }
 }
