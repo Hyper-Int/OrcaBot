@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v8-loading-quit
-const MODULE_REVISION: &str = "main-v8-loading-quit";
+// REVISION: main-v9-resource-root-fix
+const MODULE_REVISION: &str = "main-v9-resource-root-fix";
 
 mod commands;
 mod vm;
@@ -653,9 +653,18 @@ fn resolve_resource_root(app: &tauri::App) -> Option<PathBuf> {
     }
   }
 
-  let resource_dir = app.path().resource_dir().ok()?;
-  if resource_layout_valid(&resource_dir) {
-    return Some(resource_dir);
+  // Installed .app: bundled resources live at Contents/Resources/resources/
+  // (the tauri.conf resource paths are prefixed with "resources/"), while
+  // resource_dir() points at Contents/Resources. Check that `resources` subdir
+  // first, then the dir itself. Without this, an installed app only resolved via
+  // the compile-time dev path below, so it worked on the build machine but had
+  // no resources (and skipped autostart) on any other Mac.
+  if let Ok(resource_dir) = app.path().resource_dir() {
+    for candidate in [resource_dir.join("resources"), resource_dir] {
+      if resource_layout_valid(&candidate) {
+        return Some(candidate);
+      }
+    }
   }
 
   let dev_resource_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
