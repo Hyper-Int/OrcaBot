@@ -60,6 +60,8 @@ export interface Env {
   /** WhatsApp Business phone number in E.164 digits-only (e.g., "15551234567") for hybrid mode */
   WHATSAPP_BUSINESS_PHONE?: string;
   OAUTH_REDIRECT_BASE?: string;
+  /** "true" on the desktop build → OAuth uses the public-client (PKCE) flow. */
+  OAUTH_PUBLIC_CLIENT?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
   ALLOWED_ORIGINS?: string;

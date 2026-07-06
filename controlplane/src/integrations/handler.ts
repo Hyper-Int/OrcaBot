@@ -441,6 +441,47 @@ async function consumeState(env: EnvWithDriveCache, state: string, provider: str
   return record;
 }
 
+// ---- Desktop public-client OAuth (PKCE) -----------------------------------
+// REVISION: oauth-pkce-v1
+// The desktop build is a *public* OAuth client: it ships an embedded client_id
+// and can't protect a confidential secret. So on desktop we bind each authorize
+// request with PKCE (RFC 7636) — the S256 challenge goes on the auth URL, the
+// verifier rides along in the state metadata, and the callback replays it at
+// token exchange. Cloud leaves OAUTH_PUBLIC_CLIENT unset, so these are no-ops
+// and the existing confidential (client_secret) flow is unchanged.
+function usePublicClient(env: EnvWithDriveCache): boolean {
+  return env.OAUTH_PUBLIC_CLIENT === 'true';
+}
+
+/**
+ * On the public-client path, generate a PKCE verifier, stash it in `metadata`
+ * (so the callback can read it back via consumeState), and return the S256
+ * challenge to place on the auth URL. Returns null on the confidential path.
+ * Mutates `metadata` — call before createState so the verifier is persisted.
+ */
+async function pkceChallengeForState(
+  env: EnvWithDriveCache,
+  metadata: Record<string, unknown>
+): Promise<string | null> {
+  if (!usePublicClient(env)) return null;
+  const verifier = generateCodeVerifier();
+  metadata.code_verifier = verifier;
+  return await generateCodeChallenge(verifier);
+}
+
+/** Replay the PKCE verifier (if any) from state metadata into a token-exchange body. */
+function applyPkceVerifier(
+  env: EnvWithDriveCache,
+  body: URLSearchParams,
+  metadata: Record<string, unknown> | undefined
+): void {
+  if (!usePublicClient(env)) return;
+  const verifier = metadata?.code_verifier;
+  if (typeof verifier === 'string' && verifier) {
+    body.set('code_verifier', verifier);
+  }
+}
+
 async function refreshGoogleAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     throw new Error('Google OAuth is not configured.');
@@ -1169,10 +1210,12 @@ export async function cоnnectGооgleDrive(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_drive', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_drive', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/drive/callback`;
@@ -1186,6 +1229,10 @@ export async function cоnnectGооgleDrive(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -1223,6 +1270,7 @@ export async function callbackGооgleDrive(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Google Drive token exchange redirect_uri: ${redirectUri} dashboardId=${dashboardId}`);
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -5226,10 +5274,12 @@ export async function connectGmail(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'gmail', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'gmail', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/gmail/callback`;
@@ -5243,6 +5293,10 @@ export async function connectGmail(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -5280,6 +5334,7 @@ export async function callbackGmail(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -6439,10 +6494,12 @@ export async function connectCalendar(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_calendar', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_calendar', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/calendar/callback`;
@@ -6456,6 +6513,10 @@ export async function connectCalendar(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -6493,6 +6554,7 @@ export async function callbackCalendar(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -7382,10 +7444,12 @@ export async function connectContacts(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_contacts', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_contacts', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/contacts/callback`;
@@ -7399,6 +7463,10 @@ export async function connectContacts(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -7436,6 +7504,7 @@ export async function callbackContacts(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -8345,10 +8414,12 @@ export async function connectSheets(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_sheets', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_sheets', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/sheets/callback`;
@@ -8362,6 +8433,10 @@ export async function connectSheets(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -8399,6 +8474,7 @@ export async function callbackSheets(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -9047,10 +9123,12 @@ export async function connectForms(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_forms', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_forms', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/forms/callback`;
@@ -9064,6 +9142,10 @@ export async function connectForms(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -9101,6 +9183,7 @@ export async function callbackForms(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',

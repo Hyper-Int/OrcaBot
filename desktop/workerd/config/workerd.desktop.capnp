@@ -41,7 +41,10 @@ const config :Workerd.Config = (
         # Secrets / crypto
         (name = "SECRETS_ENCRYPTION_KEY", fromEnvironment = "SECRETS_ENCRYPTION_KEY"),
 
-        # OAuth — pass through optionally; empty = feature disabled
+        # OAuth — pass through optionally; empty = feature disabled.
+        # Desktop is a PUBLIC OAuth client (embedded client_id, no protectable
+        # secret) so it uses the PKCE flow — always on here, unset in cloud.
+        (name = "OAUTH_PUBLIC_CLIENT", text = "true"),
         (name = "OAUTH_REDIRECT_BASE", fromEnvironment = "OAUTH_REDIRECT_BASE"),
         (name = "GOOGLE_CLIENT_ID", fromEnvironment = "GOOGLE_CLIENT_ID"),
         (name = "GOOGLE_CLIENT_SECRET", fromEnvironment = "GOOGLE_CLIENT_SECRET"),
