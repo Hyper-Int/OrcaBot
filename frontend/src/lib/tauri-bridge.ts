@@ -159,6 +159,26 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
+/**
+ * Subscribe to the Tauri window regaining focus (the app becoming active again
+ * after the OS browser). More reliable than the webview's own `focus` event
+ * across an OS app-switch. Returns an unsubscribe function; no-op off desktop.
+ */
+export async function onAppFocus(cb: () => void): Promise<() => void> {
+  if (!DESKTOP_MODE || typeof window === "undefined") return () => {};
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const listen = (window as any).__TAURI__?.event?.listen;
+    if (typeof listen === "function") {
+      const unlisten = await listen("tauri://focus", () => cb());
+      return typeof unlisten === "function" ? unlisten : () => {};
+    }
+  } catch {
+    /* fall through — the interval + window focus fallback still runs */
+  }
+  return () => {};
+}
+
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!DESKTOP_MODE) return null;

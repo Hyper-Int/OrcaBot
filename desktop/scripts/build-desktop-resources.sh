@@ -47,7 +47,15 @@ cp "$ROOT_DIR/workerd/config/workerd.desktop.capnp" "$WORKERD_CONFIG_DIR/workerd
 # desktop client secret is non-confidential per Google's installed-app model.
 # Usage:  GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... cargo tauri build
 STAGED_CAPNP="$WORKERD_CONFIG_DIR/workerd.desktop.capnp"
-for _oauth_var in GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_API_KEY GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET; do
+for _oauth_var in \
+  GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_API_KEY \
+  GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET \
+  MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET \
+  ONEDRIVE_CLIENT_ID ONEDRIVE_CLIENT_SECRET \
+  BOX_CLIENT_ID BOX_CLIENT_SECRET \
+  SLACK_CLIENT_ID SLACK_CLIENT_SECRET \
+  DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET \
+  TWITTER_CLIENT_ID TWITTER_CLIENT_SECRET; do
   _oauth_val=$(printenv "$_oauth_var" 2>/dev/null) || _oauth_val=""
   [ -n "$_oauth_val" ] || continue
   if python3 - "$STAGED_CAPNP" "$_oauth_var" "$_oauth_val" <<'PY'

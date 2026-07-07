@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-import { openExternalUrl, ensureSurfaceToken } from "@/lib/tauri-bridge";
+import { openExternalUrl, ensureSurfaceToken, onAppFocus } from "@/lib/tauri-bridge";
 import { getAuthHeaders } from "@/stores/auth-store";
 
 export interface BrowserOAuthConnect {
@@ -57,12 +57,17 @@ export function connectViaBrowser(opts: BrowserOAuthConnect): () => void {
   const start = Date.now();
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let unlistenTauriFocus: (() => void) | null = null;
 
   const cleanup = () => {
     stopped = true;
     if (timer) {
       clearInterval(timer);
       timer = null;
+    }
+    if (unlistenTauriFocus) {
+      unlistenTauriFocus();
+      unlistenTauriFocus = null;
     }
     if (typeof window !== "undefined") {
       window.removeEventListener("focus", onFocus);
@@ -98,6 +103,12 @@ export function connectViaBrowser(opts: BrowserOAuthConnect): () => void {
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
   }
+  // Native Tauri focus event — fires reliably when the app becomes active again
+  // after the OS browser, unlike the webview's own focus event.
+  void onAppFocus(() => void check()).then((unlisten) => {
+    if (stopped) unlisten();
+    else unlistenTauriFocus = unlisten;
+  });
 
   return cleanup;
 }
