@@ -4721,6 +4721,157 @@ export async function callbackGithub(
   return renderSuccessPage('GitHub');
 }
 
+// ---- GitHub device flow (desktop public client) ---------------------------
+// REVISION: github-device-flow-v1
+// GitHub OAuth has no PKCE and its client secret is genuinely confidential, so a
+// downloaded app can't use the redirect+secret flow. Instead we use the OAuth
+// device flow (RFC 8628): no secret, no redirect — the app shows a user code,
+// the user enters it at github.com/login/device, and we poll for the token.
+// Gated to the public-client (desktop) build; cloud keeps the redirect flow.
+function deviceJson(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function deviceStartGithub(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+  if (!usePublicClient(env)) {
+    return deviceJson({ error: 'Device flow is only available on the desktop build.' }, 400);
+  }
+  if (!env.GITHUB_CLIENT_ID) {
+    return deviceJson({ error: 'GitHub OAuth is not configured.' }, 400);
+  }
+
+  let dashboardId: string | null = null;
+  try {
+    const b = await request.json() as { dashboard_id?: string };
+    dashboardId = typeof b?.dashboard_id === 'string' ? b.dashboard_id : null;
+  } catch { /* body optional */ }
+
+  const reqBody = new URLSearchParams();
+  reqBody.set('client_id', env.GITHUB_CLIENT_ID);
+  reqBody.set('scope', GITHUB_SCOPE.join(' '));
+  const resp = await fetch('https://github.com/login/device/code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: reqBody,
+  });
+  if (!resp.ok) {
+    return deviceJson({ error: 'Failed to start GitHub device flow.' }, 502);
+  }
+  const data = await resp.json() as {
+    device_code?: string; user_code?: string; verification_uri?: string;
+    expires_in?: number; interval?: number; error?: string;
+  };
+  if (!data.device_code || !data.user_code || !data.verification_uri) {
+    return deviceJson({ error: data.error || 'GitHub device flow response was incomplete.' }, 502);
+  }
+
+  // Stash the device_code under a random state handle; the frontend polls with it.
+  const state = buildState();
+  await createState(env, auth.user!.id, 'github_device', state, {
+    device_code: data.device_code,
+    dashboardId,
+  });
+
+  return deviceJson({
+    state,
+    user_code: data.user_code,
+    verification_uri: data.verification_uri,
+    expires_in: data.expires_in ?? 900,
+    interval: data.interval ?? 5,
+  });
+}
+
+export async function devicePollGithub(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+  if (!env.GITHUB_CLIENT_ID) {
+    return deviceJson({ status: 'error', error: 'not_configured' }, 400);
+  }
+
+  let state: string | null = null;
+  try {
+    const b = await request.json() as { state?: string };
+    state = typeof b?.state === 'string' ? b.state : null;
+  } catch { /* handled below */ }
+  if (!state) {
+    return deviceJson({ status: 'error', error: 'missing_state' }, 400);
+  }
+
+  // Look up (do NOT consume) the device_code so the frontend can poll repeatedly.
+  const stateData = await getState(env, state, 'github_device');
+  if (!stateData) {
+    return deviceJson({ status: 'error', error: 'expired' });
+  }
+  const deviceCode = stateData.metadata.device_code;
+  if (typeof deviceCode !== 'string') {
+    return deviceJson({ status: 'error', error: 'invalid' });
+  }
+
+  const reqBody = new URLSearchParams();
+  reqBody.set('client_id', env.GITHUB_CLIENT_ID);
+  reqBody.set('device_code', deviceCode);
+  reqBody.set('grant_type', 'urn:ietf:params:oauth:grant-type:device_code');
+  const resp = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: reqBody,
+  });
+  const data = await resp.json() as {
+    access_token?: string; refresh_token?: string; scope?: string;
+    token_type?: string; expires_in?: number; error?: string;
+  };
+
+  // Still waiting on the user, or told to back off.
+  if (data.error === 'authorization_pending') return deviceJson({ status: 'pending' });
+  if (data.error === 'slow_down') return deviceJson({ status: 'slow_down' });
+  if (data.error === 'expired_token') { await deleteState(env, state); return deviceJson({ status: 'error', error: 'expired' }); }
+  if (data.error === 'access_denied') { await deleteState(env, state); return deviceJson({ status: 'error', error: 'denied' }); }
+  if (data.error) return deviceJson({ status: 'error', error: data.error });
+  if (!data.access_token) return deviceJson({ status: 'pending' });
+
+  // Success — persist the token exactly like the redirect callback does.
+  const metadata = JSON.stringify({ scope: data.scope, token_type: data.token_type });
+  const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : null;
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    data.access_token,
+    data.refresh_token || null,
+    data.scope || null,
+    data.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+  await deleteState(env, state);
+
+  return deviceJson({ status: 'complete' });
+}
+
 export async function cоnnectBоx(
   request: Request,
   env: EnvWithDriveCache,

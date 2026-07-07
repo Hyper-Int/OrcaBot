@@ -2011,6 +2011,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'POST google/drive/sync/large': integrations.syncGооgleDriveLargeFiles,
       'GET github/connect': integrations.cоnnectGithub,
       'GET github/callback': (request, env) => integrations.callbackGithub(request, env),
+      'POST github/device/start': integrations.deviceStartGithub,
+      'POST github/device/poll': integrations.devicePollGithub,
       'GET github': integrations.getGithubIntegratiоn,
       'GET github/repos': integrations.getGithubRepоs,
       'GET github/history': integrations.getGithubRepoHistory,
