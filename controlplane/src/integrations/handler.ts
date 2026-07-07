@@ -846,8 +846,9 @@ function renderSuccessPage(providerLabel: string): Response {
   <body>
     <div class="card">
       <h1>${safeLabel} connected</h1>
-      <p>You can close this tab and return to OrcaBot.</p>
-      <button onclick="window.close()">Close tab</button>
+      <p>You're all set — close this tab and return to OrcaBot.</p>
+      <button onclick="window.close(); var h=document.getElementById('hint'); if (h) h.style.display='block';">Close tab</button>
+      <p id="hint" style="display:none; margin-top:12px;">This browser didn't allow closing the tab automatically — you can just close it yourself.</p>
     </div>
   </body>
 </html>`,

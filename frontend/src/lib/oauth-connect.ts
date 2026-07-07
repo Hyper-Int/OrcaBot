@@ -56,24 +56,48 @@ export function connectViaBrowser(opts: BrowserOAuthConnect): () => void {
 
   const start = Date.now();
   let stopped = false;
-  const timer = setInterval(async () => {
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  const cleanup = () => {
+    stopped = true;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
+  };
+
+  const check = async () => {
     if (stopped) return;
     if (Date.now() - start > timeoutMs) {
-      clearInterval(timer);
+      cleanup();
       return;
     }
     try {
       if (await checkConnected()) {
-        clearInterval(timer);
-        if (!stopped) onConnected();
+        cleanup();
+        onConnected();
       }
     } catch {
       /* transient — keep polling */
     }
-  }, intervalMs);
-
-  return () => {
-    stopped = true;
-    clearInterval(timer);
   };
+
+  // Re-check the moment the app regains focus — the OS browser is foreground
+  // while the user authorizes, and background webviews throttle setInterval.
+  const onFocus = () => void check();
+  const onVisibility = () => {
+    if (typeof document !== "undefined" && !document.hidden) void check();
+  };
+
+  timer = setInterval(() => void check(), intervalMs);
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+  }
+
+  return cleanup;
 }
