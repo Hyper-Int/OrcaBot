@@ -331,3 +331,19 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
 else
   printf '%s\n' "APPLE_SIGNING_IDENTITY not set — skipping nested-binary signing (dev build)"
 fi
+
+# Dev convenience: the `cargo build` output binary loads resources from
+# target/release/resources (Tauri copies them there at build time), NOT from the
+# source app/src-tauri/resources this script writes. Keep them in sync so a
+# standalone resources rebuild takes effect on the next `orcabot up` without a
+# full `cargo build`. Only touches the target dir if it already exists (a prior
+# cargo build); the packaged `cargo tauri build` path copies resources itself.
+TARGET_RES_DIR="$ROOT_DIR/app/src-tauri/target/release/resources"
+if [ -d "$TARGET_RES_DIR" ]; then
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$TAURI_RESOURCES_DIR/" "$TARGET_RES_DIR/"
+  else
+    cp -R "$TAURI_RESOURCES_DIR/." "$TARGET_RES_DIR/"
+  fi
+  printf '%s\n' "  synced resources -> target/release/resources (dev binary picks these up)"
+fi
