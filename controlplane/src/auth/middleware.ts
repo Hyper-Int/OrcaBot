@@ -80,7 +80,12 @@ export async function authenticate(
 function devAuthSurfaceTrusted(request: Request, env: Env): boolean {
   const expected = env.SURFACE_TOKEN;
   if (!expected) return true;
-  return request.headers.get('X-Orcabot-Surface') === expected;
+  // Header for fetch/XHR; query param for top-level browser navigations (OAuth
+  // connect opened in the OS browser), which can't set custom headers.
+  const got =
+    request.headers.get('X-Orcabot-Surface') ||
+    new URL(request.url).searchParams.get('surface');
+  return got === expected;
 }
 
 // Production: Cloudflare Access JWT validation
