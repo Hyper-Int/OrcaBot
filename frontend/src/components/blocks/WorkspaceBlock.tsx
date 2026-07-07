@@ -76,7 +76,8 @@ import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
 import { workspaceDoc } from "@/docs/content/workspace";
 import { useAuthStore } from "@/stores/auth-store";
-import { API, DEV_MODE_ENABLED } from "@/config/env";
+import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { GithubDeviceDialog } from "./GithubDeviceDialog";
 
 // Module-level cache to prevent integration reload storms across component remounts
 // Tracks dashboardId -> timestamp of last load
@@ -196,6 +197,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [driveSyncing, setDriveSyncing] = React.useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = React.useState(false);
   const [githubIntegration, setGithubIntegration] = React.useState<GithubIntegration | null>(null);
+  const [githubDeviceOpen, setGithubDeviceOpen] = React.useState(false);
   const [githubStatus, setGithubStatus] = React.useState<GithubSyncStatus | null>(null);
   const [githubSyncing, setGithubSyncing] = React.useState(false);
   const [githubPickerOpen, setGithubPickerOpen] = React.useState(false);
@@ -274,6 +276,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleGithubConnect = React.useCallback(() => {
     if (!user) return;
+    // Desktop is a public OAuth client → GitHub uses the device flow (no secret,
+    // no redirect) via a code dialog instead of the popup redirect.
+    if (DESKTOP_MODE) {
+      setGithubDeviceOpen(true);
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/github/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
@@ -1615,6 +1623,16 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
           )}
         </DialogContent>
       </Dialog>
+      <GithubDeviceDialog
+        open={githubDeviceOpen}
+        onOpenChange={setGithubDeviceOpen}
+        dashboardId={data.dashboardId}
+        onConnected={() => {
+          void loadGithubIntegration();
+          setGithubPickerOpen(true);
+          void loadGithubRepos();
+        }}
+      />
       <Dialog open={githubPickerOpen} onOpenChange={setGithubPickerOpen}>
         <DialogContent className="max-w-xl h-[540px] p-0">
           <DialogTitle className="sr-only">GitHub</DialogTitle>
