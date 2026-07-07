@@ -608,6 +608,14 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Return the per-boot surface token. The host frontend sends it as the
+/// `X-Orcabot-Surface` header so the control plane knows the request is from the
+/// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).
+#[tauri::command]
+pub fn get_surface_token() -> String {
+    crate::surface_token().to_string()
+}
+
 #[tauri::command]
 pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]

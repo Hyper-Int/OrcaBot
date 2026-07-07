@@ -31,6 +31,9 @@ export interface Env {
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
+  /** Desktop per-boot token: when set, dev-auth is only honored for requests
+   *  carrying a matching X-Orcabot-Surface header (blocks VM-origin spoofing). */
+  SURFACE_TOKEN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   AUTH_ALLOWED_EMAILS?: string;

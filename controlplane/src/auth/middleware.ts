@@ -57,14 +57,30 @@ export async function authenticate(
     return authenticateWithCfAccеss(request, env);
   }
 
-  // Fall back to dev auth if enabled
+  // Fall back to dev auth if enabled. Dev-auth is header-spoofable, and on
+  // desktop a process inside the sandbox VM can reach the control plane — so when
+  // a per-boot SURFACE_TOKEN is provisioned, only honor dev-auth for requests
+  // from the trusted host frontend (matching X-Orcabot-Surface). No token
+  // (cloud, local dev, older builds) = unchanged behavior.
   const devAuthEnabled = env.DEV_AUTH_ENABLED === 'true';
-  if (devAuthEnabled) {
+  if (devAuthEnabled && devAuthSurfaceTrusted(request, env)) {
     return authenticateDevMоde(request, env);
   }
 
   // No auth method available
   return { user: null, isAuthenticated: false };
+}
+
+/**
+ * Desktop trust boundary: dev-auth is header-spoofable and the sandbox VM can
+ * reach the control plane. When a per-boot SURFACE_TOKEN is provisioned, only
+ * the host frontend (which sends the matching X-Orcabot-Surface header) may use
+ * dev-auth. When unset (cloud / local dev / older builds), enforcement is off.
+ */
+function devAuthSurfaceTrusted(request: Request, env: Env): boolean {
+  const expected = env.SURFACE_TOKEN;
+  if (!expected) return true;
+  return request.headers.get('X-Orcabot-Surface') === expected;
 }
 
 // Production: Cloudflare Access JWT validation

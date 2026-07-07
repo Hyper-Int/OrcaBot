@@ -120,6 +120,28 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
   }
 }
 
+/// Per-boot token that gates dev-auth to the trusted host frontend. Generated
+/// once at startup, passed to the control-plane worker (`SURFACE_TOKEN`) and
+/// handed to the GUI webview via the `get_surface_token` command. The sandbox VM
+/// can reach the control plane on :8787 but is never given this token — and it
+/// can't reach the frontend on :8788 to scrape it — so a process in the VM can't
+/// spoof dev-auth to impersonate the user. See desktop/CLAUDE.md (trust boundary).
+static SURFACE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn surface_token() -> &'static str {
+  SURFACE_TOKEN.get_or_init(|| {
+    let mut buf = [0u8; 32];
+    #[cfg(unix)]
+    {
+      use std::io::Read;
+      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+      }
+    }
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+  })
+}
+
 /// Kill any processes listed in a stale PID file from a previous run.
 fn cleanup_stale_processes(data_dir: &Path) {
   let pid_path = pid_file_path(data_dir);
@@ -361,6 +383,9 @@ impl DesktopServices {
       ("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token),
       ("INTERNAL_API_TOKEN", internal_api_token.clone()),
       ("DEV_AUTH_ENABLED", dev_auth_enabled),
+      // Gates dev-auth to the host frontend (which sends X-Orcabot-Surface with
+      // this value); the sandbox VM never gets it, so it can't spoof user auth.
+      ("SURFACE_TOKEN", surface_token().to_string()),
       ("SECRETS_ENCRYPTION_KEY", secrets_key),
       ("OAUTH_REDIRECT_BASE", std::env::var("OAUTH_REDIRECT_BASE")
         .unwrap_or_else(|_| format!("http://localhost:{}", controlplane_port))),
@@ -768,6 +793,7 @@ fn main() {
       commands::import_folder,
       commands::switch_to_cli,
       commands::quit_app,
+      commands::get_surface_token,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

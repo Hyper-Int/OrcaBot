@@ -7,6 +7,14 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User, SubscriptionInfo } from "@/types";
 import { generateId } from "@/lib/utils";
+import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
+
+/** On desktop, the control plane only honors dev-auth for requests carrying the
+ *  per-boot surface token, so include it when present (blocks VM-origin spoofing). */
+function surfaceHeader(): Record<string, string> {
+  const t = getCachedSurfaceToken();
+  return t ? { "X-Orcabot-Surface": t } : {};
+}
 
 interface AuthState {
   user: User | null;
@@ -155,6 +163,7 @@ export function useAuthHeaders(): Record<string, string> {
     "X-User-ID": user.id,
     "X-User-Email": user.email,
     "X-User-Name": user.name,
+    ...surfaceHeader(),
   };
 }
 
@@ -172,5 +181,6 @@ export function getAuthHeaders(): Record<string, string> {
     "X-User-ID": state.user.id,
     "X-User-Email": state.user.email,
     "X-User-Name": state.user.name,
+    ...surfaceHeader(),
   };
 }

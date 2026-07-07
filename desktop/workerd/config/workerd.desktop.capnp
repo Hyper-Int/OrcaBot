@@ -44,6 +44,10 @@ const config :Workerd.Config = (
         (name = "D1_SHIM", service = "d1-shim"),
         (name = "D1_SHIM_DEBUG", fromEnvironment = "D1_SHIM_DEBUG"),
         (name = "DEV_AUTH_ENABLED", fromEnvironment = "DEV_AUTH_ENABLED"),
+        # Per-boot token that gates dev-auth to the host frontend. The frontend
+        # sends it as X-Orcabot-Surface; the sandbox VM never has it, so a VM
+        # process reaching :8787 can't spoof user auth. Empty = not enforced.
+        (name = "SURFACE_TOKEN", fromEnvironment = "SURFACE_TOKEN"),
         (name = "ALLOWED_ORIGINS", fromEnvironment = "ALLOWED_ORIGINS"),
         (name = "FRONTEND_URL", fromEnvironment = "FRONTEND_URL"),
 

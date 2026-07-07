@@ -102,6 +102,43 @@ export async function switchToCli(): Promise<boolean> {
   return true;
 }
 
+// ---- Desktop surface token ----
+// Per-boot token that gates dev-auth to the trusted host frontend. Fetched once
+// from the Tauri host and cached; the control plane requires the matching
+// X-Orcabot-Surface header on desktop, so a process in the sandbox VM (which
+// can't reach this command) can't spoof dev-auth. See desktop/CLAUDE.md.
+let cachedSurfaceToken: string | null = null;
+let surfaceTokenPromise: Promise<string | null> | null = null;
+
+async function fetchSurfaceToken(): Promise<string | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    const t = (await invoke("get_surface_token")) as string;
+    return typeof t === "string" && t ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch + cache the surface token once. Await before making authed requests. */
+export async function ensureSurfaceToken(): Promise<string | null> {
+  if (cachedSurfaceToken) return cachedSurfaceToken;
+  if (!DESKTOP_MODE) return null;
+  if (!surfaceTokenPromise) {
+    surfaceTokenPromise = fetchSurfaceToken().then((t) => {
+      cachedSurfaceToken = t;
+      return t;
+    });
+  }
+  return surfaceTokenPromise;
+}
+
+/** Synchronously read the cached surface token (null until ensureSurfaceToken resolves). */
+export function getCachedSurfaceToken(): string | null {
+  return cachedSurfaceToken;
+}
+
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!DESKTOP_MODE) return null;
