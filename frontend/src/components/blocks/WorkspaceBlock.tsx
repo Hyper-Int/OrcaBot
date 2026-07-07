@@ -1531,7 +1531,8 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <span>GitHub</span>
               </Button>
             )}
-            {isBoxConnected ? (
+            {/* Box uses a confidential secret we don't ship on desktop → hidden there */}
+            {!DESKTOP_MODE && (isBoxConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -1586,7 +1587,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <Box className="w-4 h-4" />
                 <span>Box</span>
               </Button>
-            )}
+            ))}
             {isOnedriveConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

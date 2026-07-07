@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { startGithubDevice, pollGithubDevice } from "@/lib/api/cloudflare/integrations";
+import { openExternalUrl } from "@/lib/tauri-bridge";
 
 interface Props {
   open: boolean;
@@ -38,6 +39,12 @@ export function GithubDeviceDialog({ open, onOpenChange, dashboardId, onConnecte
   const [copied, setCopied] = React.useState(false);
   const stateRef = React.useRef<string | null>(null);
   const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  // Keep the latest callbacks in refs so `begin` stays stable and the start
+  // effect doesn't re-run (re-requesting a device code) on every parent render.
+  const onConnectedRef = React.useRef(onConnected);
+  const onOpenChangeRef = React.useRef(onOpenChange);
+  onConnectedRef.current = onConnected;
+  onOpenChangeRef.current = onOpenChange;
 
   const stopPolling = React.useCallback(() => {
     if (pollRef.current) {
@@ -66,8 +73,8 @@ export function GithubDeviceDialog({ open, onOpenChange, dashboardId, onConnecte
           if (p.status === "complete") {
             stopPolling();
             setPhase("connected");
-            onConnected();
-            setTimeout(() => onOpenChange(false), 800);
+            onConnectedRef.current();
+            setTimeout(() => onOpenChangeRef.current(false), 800);
           } else if (p.status === "error") {
             stopPolling();
             setError(
@@ -88,7 +95,7 @@ export function GithubDeviceDialog({ open, onOpenChange, dashboardId, onConnecte
       setError(e instanceof Error ? e.message : "Couldn't start GitHub sign-in.");
       setPhase("error");
     }
-  }, [dashboardId, onConnected, onOpenChange, stopPolling]);
+  }, [dashboardId, stopPolling]);
 
   // Start when opened; always clean up the poller when closed/unmounted.
   React.useEffect(() => {
@@ -143,7 +150,7 @@ export function GithubDeviceDialog({ open, onOpenChange, dashboardId, onConnecte
             </button>
             <Button
               className="w-full"
-              onClick={() => window.open(verificationUri, "_blank", "noopener,noreferrer")}
+              onClick={() => void openExternalUrl(verificationUri)}
             >
               <ExternalLink className="w-4 h-4 mr-2" /> Open github.com/login/device
             </Button>
