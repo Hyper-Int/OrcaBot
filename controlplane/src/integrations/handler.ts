@@ -5004,7 +5004,7 @@ export async function cоnnectОnedrive(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     return renderErrorPage('OneDrive OAuth is not configured.');
   }
 
@@ -5012,10 +5012,12 @@ export async function cоnnectОnedrive(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'onedrive', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'onedrive', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/onedrive/callback`;
@@ -5028,6 +5030,10 @@ export async function cоnnectОnedrive(
   authUrl.searchParams.set('scope', ONEDRIVE_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -5036,7 +5042,7 @@ export async function callbackОnedrive(
   request: Request,
   env: EnvWithDriveCache
 ): Promise<Response> {
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     return renderErrorPage('OneDrive OAuth is not configured.');
   }
 
@@ -5057,11 +5063,12 @@ export async function callbackОnedrive(
 
   const body = new URLSearchParams();
   body.set('client_id', env.ONEDRIVE_CLIENT_ID);
-  body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET);
+  if (!usePublicClient(env)) body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`OneDrive token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -11586,7 +11593,7 @@ export async function connectTeams(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11594,10 +11601,12 @@ export async function connectTeams(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'teams', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'teams', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/teams/callback`;
@@ -11610,6 +11619,10 @@ export async function connectTeams(
   authUrl.searchParams.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11620,7 +11633,7 @@ export async function callbackTeams(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11646,11 +11659,12 @@ export async function callbackTeams(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Teams token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -11771,7 +11785,7 @@ export async function connectOutlook(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11779,10 +11793,12 @@ export async function connectOutlook(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'outlook', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'outlook', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/outlook/callback`;
@@ -11795,6 +11811,10 @@ export async function connectOutlook(
   authUrl.searchParams.set('scope', OUTLOOK_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11805,7 +11825,7 @@ export async function callbackOutlook(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11827,11 +11847,12 @@ export async function callbackOutlook(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', OUTLOOK_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Outlook token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -12516,7 +12537,7 @@ export async function connectOutlookCalendar(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -12524,10 +12545,12 @@ export async function connectOutlookCalendar(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'outlook_calendar', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'outlook_calendar', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/outlook/calendar/callback`;
@@ -12540,6 +12563,10 @@ export async function connectOutlookCalendar(
   authUrl.searchParams.set('scope', OUTLOOK_CALENDAR_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -12550,7 +12577,7 @@ export async function callbackOutlookCalendar(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -12576,11 +12603,12 @@ export async function callbackOutlookCalendar(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', OUTLOOK_CALENDAR_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Outlook Calendar token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
