@@ -198,9 +198,10 @@ const messagingToolsAll: BlockTool[] = [
 ];
 
 // Slack, Discord, and X use confidential OAuth client secrets we don't ship in
-// the desktop build, so hide them there (cloud keeps them).
+// the desktop build; WhatsApp needs the Baileys bridge which desktop doesn't
+// bundle. Hide them on desktop (cloud keeps them).
 const messagingTools: BlockTool[] = messagingToolsAll.filter(
-  (t) => !(DESKTOP_MODE && (t.type === "slack" || t.type === "discord" || t.type === "twitter"))
+  (t) => !(DESKTOP_MODE && ["slack", "discord", "twitter", "whatsapp"].includes(t.type))
 );
 
 const terminalTools: BlockTool[] = [
@@ -3917,7 +3918,8 @@ export default function DashboardPage() {
                 ))}
               </div>
 
-              {/* Messaging integrations section */}
+              {/* Messaging integrations section (hidden when empty, e.g. desktop) */}
+              {messagingTools.length > 0 && (
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
                 <Tooltip content={toolbarMessagingCollapsed ? "Expand Messaging" : "Collapse Messaging"} side="bottom">
                   <Button
@@ -3943,6 +3945,7 @@ export default function DashboardPage() {
                   </Tooltip>
                 ))}
               </div>
+              )}
 
               {/* Connect mode */}
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
