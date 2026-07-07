@@ -139,6 +139,26 @@ export function getCachedSurfaceToken(): string | null {
   return cachedSurfaceToken;
 }
 
+/**
+ * Open an external URL. On desktop, opens the OS default browser (window.open is
+ * a no-op inside the Tauri webview); on web, falls back to window.open. Used for
+ * OAuth connect flows.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (invoke) {
+    try {
+      await invoke("open_url", { url });
+      return;
+    } catch {
+      /* fall through to window.open */
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!DESKTOP_MODE) return null;
