@@ -50,7 +50,8 @@ import {
   type OutlookMessage,
   type OutlookActionType,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { apiGet } from "@/lib/api/client";
 import { OutlookIcon } from "@/components/icons/MessagingIcons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
@@ -262,6 +263,27 @@ export function OutlookBlock({ id, data, selected }: NodeProps<OutlookNode>) {
   // Connect Outlook via OAuth popup
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/outlook/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getOutlookIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try {
+              await setupOutlookMirror(dashboardId);
+              await loadIntegration();
+              await loadMessages();
+            } catch (err) {
+              console.error("Failed to set up Outlook mirror:", err);
+              await loadIntegration();
+            }
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/outlook/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "outlook-connect", "width=600,height=700");
 

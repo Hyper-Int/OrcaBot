@@ -34,7 +34,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { TeamsIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
@@ -365,6 +366,20 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
   const handleConnectOAuth = () => {
     if (!dashboardId) return;
     const base = API.cloudflare.base.replace(/\/$/, "");
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${base}/integrations/teams/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getTeamsIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            await loadIntegration();
+          })();
+        },
+      });
+      return;
+    }
     const url = `${base}/integrations/teams/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(url, "teams-auth", "width=600,height=700");
     if (!popup) return;

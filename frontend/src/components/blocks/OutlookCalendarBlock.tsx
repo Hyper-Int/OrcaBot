@@ -32,7 +32,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { OutlookCalendarIcon } from "@/components/icons/MessagingIcons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
@@ -184,6 +185,20 @@ export function OutlookCalendarBlock({ id, data, selected }: NodeProps<OutlookCa
   // Connect Outlook Calendar via OAuth popup
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/outlook/calendar/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getOutlookCalendarIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            await loadIntegration();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/outlook/calendar/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "outlook-calendar-connect", "width=600,height=700");
 

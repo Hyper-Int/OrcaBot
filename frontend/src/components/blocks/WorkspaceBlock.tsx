@@ -77,6 +77,7 @@ import { HelpButton } from "@/components/help/HelpDialog";
 import { workspaceDoc } from "@/docs/content/workspace";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { GithubDeviceDialog } from "./GithubDeviceDialog";
 
 // Module-level cache to prevent integration reload storms across component remounts
@@ -255,6 +256,25 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleDriveConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
+      connectUrl.searchParams.set("user_id", user.id);
+      connectUrl.searchParams.set("user_email", user.email);
+      connectUrl.searchParams.set("user_name", user.name);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getGoogleDriveIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadDriveIntegration();
+          setDrivePickerOpen(true);
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
     url.searchParams.set("user_id", user.id);
     url.searchParams.set("user_email", user.email);
@@ -300,6 +320,24 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleBoxConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/box/connect`);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getBoxIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadBoxIntegration();
+          setBoxPickerOpen(true);
+          setBoxPath([]);
+          void loadBoxFolders("0");
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/box/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
@@ -318,6 +356,24 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleOnedriveConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getOnedriveIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadOnedriveIntegration();
+          setOnedrivePickerOpen(true);
+          setOnedrivePath([]);
+          void loadOnedriveFolders("root");
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
