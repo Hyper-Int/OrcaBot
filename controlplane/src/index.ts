@@ -1267,6 +1267,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError && env.DEV_AUTH_ENABLED !== 'true') {
       return authError;
     }
+    // embed-check makes a server-side GET of a caller-supplied URL — an
+    // exfil/SSRF-shaped surface. A leaked PAT (full user authority) must not be
+    // able to drive it, and private hosts are already blocked below.
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
 
     const targetUrlParam = url.searchParams.get('url');
     if (!targetUrlParam) {

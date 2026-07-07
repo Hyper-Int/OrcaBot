@@ -13,7 +13,16 @@ using Workerd = import "/workerd.capnp";
 const config :Workerd.Config = (
   services = [
     (name = "internet", network = (
-      allow = ["public", "private", "local"]
+      # public = internet APIs (OAuth token exchange, provider APIs); local =
+      # the loopback d1-shim (:9001) + sandbox (:8080). "private" is deliberately
+      # dropped so a control-plane SSRF can't reach private-LAN hosts
+      # (10.0.0.0/8, 192.168.0.0/16, …) — nothing here needs it.
+      allow = ["public", "local"],
+      # Enable outbound HTTPS from the control-plane worker (OAuth token
+      # exchange, provider APIs, Resend, etc.). Without tlsOptions, workerd's
+      # network service is HTTP-only and every server-side fetch to an https://
+      # URL fails with "this HttpClient doesn't support HTTPS".
+      tlsOptions = (trustBrowserCas = true)
     )),
     (name = "d1-shim", external = (
       address = "127.0.0.1:9001",
