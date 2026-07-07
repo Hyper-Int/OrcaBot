@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import { API, DESKTOP_MODE } from "@/config/env";
+import { ensureSurfaceToken } from "@/lib/tauri-bridge";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
 import type { User, SubscriptionInfo } from "@/types";
 import { initAnalytics, stopAnalytics, resetQueue } from "@/lib/analytics";
@@ -61,15 +62,18 @@ function AuthBootstrapper() {
       if (validatedUserRef.current !== userId) {
         validatedUserRef.current = userId;
         if (DESKTOP_MODE) {
-          const authHeaders = getAuthHeaders();
-          fetch(API.cloudflare.usersMe, {
-            headers: { ...authHeaders },
-            credentials: "include",
-          })
+          void ensureSurfaceToken()
+            .then(() => {
+              const authHeaders = getAuthHeaders();
+              return fetch(API.cloudflare.usersMe, {
+                headers: { ...authHeaders },
+                credentials: "include",
+              });
+            })
             .then((r) => (r.ok ? r.json() : null))
             .then((data: { user?: User; isAdmin?: boolean; subscription?: SubscriptionInfo } | null) => {
               if (data?.user) {
-                if (data.user.id !== authHeaders["X-User-ID"] || data.subscription) {
+                if (data.user.id !== userId || data.subscription) {
                   setUser(data.user, data.isAdmin ?? false, data.subscription);
                 }
               }
@@ -112,6 +116,11 @@ function AuthBootstrapper() {
     const bootstrap = async () => {
       // Desktop mode: auto-login as local user, no auth needed
       if (DESKTOP_MODE) {
+        // Load the surface token first so the raw bootstrap fetches below carry
+        // X-Orcabot-Surface — the control plane requires it to honor dev-auth, or
+        // /auth/dev/session and the /me ID-sync 401 and the local user keeps a
+        // client-generated ID (wrong user → empty dashboards).
+        await ensureSurfaceToken();
         loginDevMode("Desktop User", "desktop@localhost");
         const authHeaders = getAuthHeaders();
         try {
