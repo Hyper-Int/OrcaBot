@@ -636,7 +636,7 @@ async function refreshBoxAccessToken(env: EnvWithDriveCache, userId: string): Pr
 }
 
 async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     throw new Error('OneDrive OAuth is not configured.');
   }
 
@@ -651,7 +651,7 @@ async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string
 
   const body = new URLSearchParams();
   body.set('client_id', env.ONEDRIVE_CLIENT_ID);
-  body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET);
+  if (!usePublicClient(env)) body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET!);
   body.set('grant_type', 'refresh_token');
   body.set('refresh_token', record.refresh_token);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
@@ -11965,7 +11965,7 @@ export async function getOutlookIntegration(
 async function refreshOutlookAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     throw new Error('Microsoft OAuth is not configured.');
   }
 
@@ -11992,7 +11992,7 @@ async function refreshOutlookAccessToken(env: EnvWithDriveCache, userId: string)
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'refresh_token');
   body.set('refresh_token', record.refresh_token);
   body.set('scope', OUTLOOK_SCOPE.join(' '));
