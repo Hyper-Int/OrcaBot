@@ -142,6 +142,21 @@ pub fn surface_token() -> &'static str {
   })
 }
 
+/// Persist the surface token to a host-only file (0600) so trusted host clients
+/// that use dev-auth — the `orcabot` CLI and scripts — can read it and send the
+/// X-Orcabot-Surface header. The app-data dir is NOT shared into the sandbox VM
+/// (only /workspace is), so a process in the VM can't read it.
+fn write_surface_token_file(data_dir: &std::path::Path) {
+  let path = data_dir.join("surface-token");
+  if std::fs::write(&path, surface_token()).is_ok() {
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+  }
+}
+
 /// Kill any processes listed in a stale PID file from a previous run.
 fn cleanup_stale_processes(data_dir: &Path) {
   let pid_path = pid_file_path(data_dir);
@@ -376,6 +391,9 @@ impl DesktopServices {
         String::new()
       }
     };
+
+    // Host-only token file for trusted dev-auth clients (the CLI / scripts).
+    write_surface_token_file(&data_dir);
 
     let mut workerd_env = vec![
       ("D1_HTTP_URL", "http://d1-shim".to_string()),

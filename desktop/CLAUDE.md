@@ -214,6 +214,30 @@ NOT transferred. See `controlplane/CLAUDE.md` (file proxies, PATs).
 
 ## Security
 
+### Desktop trust boundary (dev-auth + surface token)
+On desktop, auth is **dev-auth** (`DEV_AUTH_ENABLED=true`): the control plane
+trusts `X-User-ID`/`X-User-Email` headers. Those headers are **spoofable**, and a
+process inside the sandbox VM **can reach the control plane** at `127.0.0.1:8787`
+(the guest→host reverse bridge; localhost bypasses the egress proxy). So dev-auth
+alone must **not** be enough to act as the user from inside the VM.
+
+Guard: the desktop app generates a **per-boot `SURFACE_TOKEN`** (`surface_token()`
+in `main.rs`) and (a) passes it to the control-plane worker and (b) hands it to the
+GUI webview via the `get_surface_token` Tauri command. The frontend sends it as the
+`X-Orcabot-Surface` header on control-plane calls (fetched+cached in
+`frontend/src/lib/tauri-bridge.ts`, ensured before the first authed request in
+`api/client.ts`), and the control plane **only honors dev-auth when the header
+matches** (`devAuthSurfaceTrusted` in `controlplane/src/auth/middleware.ts`). The
+VM never gets the token (filtered from PTY env) and can't reach the frontend on
+`:8788` to scrape it (only `:8080` and `:8787` are bridged), so a VM process is
+confined to the token-authed paths it's supposed to use: the integration gateway
+(PTY token) and `/internal/*` (`INTERNAL_API_TOKEN`). When `SURFACE_TOKEN` is unset
+(cloud, local `wrangler dev`, older builds) enforcement is off and behavior is
+unchanged.
+
+**Desktop-only**: production runs `DEV_AUTH_ENABLED=false` (real Cloudflare
+Access), where header spoofing doesn't work in the first place.
+
 ### Folder Import
 The `import_folder` Tauri command has hardened path handling:
 - Validates subpath has no `..` or absolute components
