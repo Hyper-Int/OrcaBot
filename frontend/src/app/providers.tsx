@@ -116,12 +116,16 @@ function AuthBootstrapper() {
     const bootstrap = async () => {
       // Desktop mode: auto-login as local user, no auth needed
       if (DESKTOP_MODE) {
-        // Load the surface token first so the raw bootstrap fetches below carry
-        // X-Orcabot-Surface — the control plane requires it to honor dev-auth, or
-        // /auth/dev/session and the /me ID-sync 401 and the local user keeps a
-        // client-generated ID (wrong user → empty dashboards).
-        await ensureSurfaceToken();
+        // Set the local user first so a slow/failed surface-token fetch can't
+        // block login. Then load the token (bounded) so the raw bootstrap fetches
+        // below carry X-Orcabot-Surface — the control plane requires it to honor
+        // dev-auth, or /auth/dev/session and the /me ID-sync 401 (wrong user →
+        // empty dashboards).
         loginDevMode("Desktop User", "desktop@localhost");
+        await Promise.race([
+          ensureSurfaceToken(),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]);
         const authHeaders = getAuthHeaders();
         try {
           // Create server-side session

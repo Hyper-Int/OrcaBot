@@ -61,7 +61,7 @@ export { ASRStreamProxy } from './asr/ASRStreamProxy';
 
 // CORS headers (base - origin is added dynamically)
 const CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
-const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name';
+const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name, X-Orcabot-Surface';
 
 /**
  * Parse allowed origins from env. Returns null if all origins allowed (dev mode).
