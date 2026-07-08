@@ -632,7 +632,7 @@ export default function Home() {
             href="/download"
             style={{
               display: "inline-block",
-              marginTop: "0.85rem",
+              marginTop: "1.9rem",
               fontSize: "0.8rem",
               fontWeight: 500,
               color: "rgba(207,224,255,0.7)",
