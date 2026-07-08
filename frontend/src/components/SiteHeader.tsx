@@ -12,6 +12,7 @@ import { useAuthStore } from "@/stores/auth-store";
 const HOME_LINK: NavLink = { href: "/", label: "Home" };
 
 const BASE_NAV_LINKS: NavLink[] = [
+  { href: "/download", label: "Download" },
   { href: "/docs", label: "Docs" },
   { href: "/blog", label: "Blog" },
   { href: "/terms", label: "Terms" },

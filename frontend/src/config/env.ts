@@ -125,6 +125,7 @@ export const env = {
 export const API = {
   cloudflare: {
     base: CLOUDFLARE_API_URL,
+    releasesLatest: `${CLOUDFLARE_API_URL}/releases/latest`,
     dashboards: `${CLOUDFLARE_API_URL}/dashboards`,
     recipes: `${CLOUDFLARE_API_URL}/recipes`,
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
