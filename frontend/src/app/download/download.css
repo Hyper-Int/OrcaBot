@@ -1,0 +1,210 @@
+/* Copyright 2026 Rob Macrae. All rights reserved. */
+/* On-brand skin for the /download page (mirrors the splash/header palette). */
+
+.dl-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(59, 130, 246, 0.15), transparent 60%),
+    linear-gradient(180deg, #06101f 0%, #081426 100%);
+  color: #e6eefc;
+}
+
+.dl-main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+
+.dl-hero {
+  text-align: center;
+  padding: 2rem 0 1rem;
+}
+
+.dl-orca {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  margin: 0 auto 1rem;
+  display: block;
+}
+
+.dl-hero h1 {
+  font-size: 2.25rem;
+  font-weight: 800;
+  margin: 0 0 0.5rem;
+  color: #fff;
+}
+
+.dl-sub {
+  color: rgba(230, 238, 252, 0.7);
+  margin: 0 0 1.75rem;
+  font-size: 1.05rem;
+}
+
+.dl-cta {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.dl-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 14px 28px;
+  line-height: 1.2;
+}
+
+.dl-btn-primary {
+  color: #06101f;
+  background: linear-gradient(180deg, #cfe0ff, #8fb4ff);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 10px 30px rgba(59, 130, 246, 0.35);
+  font-size: 1.05rem;
+  transition: filter 0.15s ease;
+}
+
+.dl-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.dl-btn-sub {
+  font-weight: 600;
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin-top: 2px;
+}
+
+.dl-meta {
+  color: rgba(230, 238, 252, 0.6);
+  font-size: 0.9rem;
+}
+
+.dl-meta a {
+  color: #9fc0ff;
+  text-decoration: none;
+}
+
+.dl-meta a:hover {
+  text-decoration: underline;
+}
+
+.dl-version {
+  font-weight: 700;
+  color: #cfe0ff;
+}
+
+.dl-card {
+  margin-top: 2rem;
+  padding: 1.5rem 1.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dl-card h2 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: #fff;
+}
+
+.dl-notes {
+  line-height: 1.7;
+  color: rgba(230, 238, 252, 0.85);
+  word-wrap: break-word;
+}
+
+.dl-notes h1,
+.dl-notes h2,
+.dl-notes h3 {
+  color: #fff;
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.dl-notes ul,
+.dl-notes ol {
+  padding-left: 1.25rem;
+}
+
+.dl-notes li {
+  margin: 0.25rem 0;
+}
+
+.dl-notes a {
+  color: #9fc0ff;
+}
+
+.dl-notes code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  font-size: 0.9em;
+}
+
+.dl-notes pre {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1rem;
+  border-radius: 10px;
+  overflow-x: auto;
+}
+
+.dl-notes pre code {
+  background: none;
+  padding: 0;
+}
+
+.dl-assets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dl-assets li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 1rem;
+}
+
+.dl-assets li:last-child {
+  border-bottom: none;
+}
+
+.dl-assets a {
+  color: #cfe0ff;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.dl-assets a:hover {
+  text-decoration: underline;
+}
+
+.dl-muted {
+  color: rgba(230, 238, 252, 0.5);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.dl-error {
+  color: #ffb4b4;
+}
+
+.dl-error a {
+  color: #9fc0ff;
+}
+
+.dl-foot {
+  text-align: center;
+  margin-top: 2.5rem;
+}

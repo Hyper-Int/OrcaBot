@@ -52,6 +52,7 @@ import { createApiToken, listApiTokens, revokeApiToken } from './auth/api-token'
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
+import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
 // Export Durable Objects
@@ -836,6 +837,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+
+  // GET /releases/latest - latest desktop release, edge-cached from GitHub
+  // (public, no auth — powers the on-site /download page)
+  if (path === '/releases/latest' && method === 'GET') {
+    return releases.getLatest();
+  }
 
   // Health check - uses cached status (no outbound calls, prevents amplification)
   if (path === '/health' && method === 'GET') {
