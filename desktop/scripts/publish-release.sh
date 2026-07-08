@@ -67,6 +67,19 @@ cat > "$LATEST" <<JSON
 }
 JSON
 
+# Preflight gate: boot the built stack and verify the core user path (dashboards
+# load + dev-auth surface-token gate + CORS) before shipping — so a build that
+# can't load dashboards never gets published. Override with SKIP_PREFLIGHT=1.
+if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
+  echo "== release preflight (boots the built stack, ~1-2 min) =="
+  if ! "$SCRIPT_DIR/../tests/release-preflight.sh"; then
+    echo
+    echo "PREFLIGHT FAILED — not publishing $TAG."
+    echo "Fix the build, or re-run with SKIP_PREFLIGHT=1 to publish anyway."
+    exit 1
+  fi
+fi
+
 echo "Publishing $TAG to $REPO:"
 echo "  $(basename "$FRESH")"
 echo "  Orcabot.app.tar.gz (+ .sig)"
