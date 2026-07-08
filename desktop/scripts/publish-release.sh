@@ -25,17 +25,21 @@ VERSION=$(grep -m1 '"version"' "$SRC_TAURI/tauri.conf.json" | sed -E 's/.*"versi
 [ -n "$VERSION" ] || { echo "could not read version from tauri.conf.json"; exit 1; }
 TAG="v$VERSION"
 
-# Match THIS version's DMG explicitly. Tauri doesn't clean the bundle dir
-# between builds, so a bare *.dmg glob could pick up a stale previous-version
-# (or pre-rename "Orcabot Desktop_...") DMG while latest.json points at the
-# current tarball.
+# Fresh-install download for THIS version: a DMG if present, else a
+# signed+stapled .app zip (produced for salvaged builds that never reached the
+# DMG step). Match the version explicitly — Tauri doesn't clean the bundle dir,
+# so a bare glob could pick up a stale previous-version file while latest.json
+# points at the current tarball.
 set -- "$BUNDLE"/dmg/Orcabot_"$VERSION"_*.dmg
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-  echo "expected exactly one Orcabot_${VERSION}_*.dmg in $BUNDLE/dmg — found: $*"
-  echo "(clean the bundle dir, or rebuild this version's DMG)"
+if [ "$#" -eq 1 ] && [ -f "$1" ]; then
+  FRESH="$1"
+elif [ -f "$BUNDLE/macos/Orcabot_${VERSION}_aarch64.zip" ]; then
+  FRESH="$BUNDLE/macos/Orcabot_${VERSION}_aarch64.zip"
+else
+  echo "no Orcabot_${VERSION}_*.dmg or Orcabot_${VERSION}_aarch64.zip found in $BUNDLE"
+  echo "(build the DMG, or create the .app zip for a salvaged release)"
   exit 1
 fi
-DMG="$1"
 TARBALL="$BUNDLE/macos/Orcabot.app.tar.gz"
 SIG="$TARBALL.sig"
 for f in "$TARBALL" "$SIG"; do
@@ -64,21 +68,21 @@ cat > "$LATEST" <<JSON
 JSON
 
 echo "Publishing $TAG to $REPO:"
-echo "  $(basename "$DMG")"
+echo "  $(basename "$FRESH")"
 echo "  Orcabot.app.tar.gz (+ .sig)"
 echo "  latest.json -> $URL"
 
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   echo "Release $TAG exists — uploading/replacing assets."
-  gh release upload "$TAG" --repo "$REPO" --clobber "$DMG" "$TARBALL" "$SIG" "$LATEST"
+  gh release upload "$TAG" --repo "$REPO" --clobber "$FRESH" "$TARBALL" "$SIG" "$LATEST"
 else
   gh release create "$TAG" --repo "$REPO" \
     --title "Orcabot $TAG" \
     --notes "Orcabot desktop $TAG" \
-    "$DMG" "$TARBALL" "$SIG" "$LATEST"
+    "$FRESH" "$TARBALL" "$SIG" "$LATEST"
 fi
 
 echo
 echo "Done."
-echo "  Direct download: https://github.com/$REPO/releases/download/$TAG/$(basename "$DMG")"
+echo "  Direct download: https://github.com/$REPO/releases/download/$TAG/$(basename "$FRESH")"
 echo "  Updater manifest: https://github.com/$REPO/releases/latest/download/latest.json"
