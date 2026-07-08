@@ -72,15 +72,43 @@ echo "  $(basename "$FRESH")"
 echo "  Orcabot.app.tar.gz (+ .sig)"
 echo "  latest.json -> $URL"
 
+# Create the release (or reuse it), attaching only the small manifest files via
+# gh. The large assets (~1GB each) are uploaded separately below with a real
+# progress bar — gh's uploader only shows a spinner, useless for big files.
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-  echo "Release $TAG exists — uploading/replacing assets."
-  gh release upload "$TAG" --repo "$REPO" --clobber "$FRESH" "$TARBALL" "$SIG" "$LATEST"
+  echo "Release $TAG exists — updating assets."
+  gh release upload "$TAG" --repo "$REPO" --clobber "$SIG" "$LATEST"
 else
   gh release create "$TAG" --repo "$REPO" \
     --title "Orcabot $TAG" \
     --notes "Orcabot desktop $TAG" \
-    "$FRESH" "$TARBALL" "$SIG" "$LATEST"
+    "$SIG" "$LATEST"
 fi
+
+RELEASE_ID=$(gh release view "$TAG" --repo "$REPO" --json databaseId --jq .databaseId)
+TOKEN=$(gh auth token)
+
+# Upload one large asset with a curl progress bar. POST is create-only (422s on a
+# duplicate name), so clobber by deleting any same-named asset first. Falls back
+# to `gh` if curl fails, so a bad upload never leaves the release half-published.
+upload_big() {
+  _f="$1"; _name=$(basename "$_f")
+  echo "Uploading $_name ($(du -h "$_f" | awk '{print $1}'))..."
+  _old=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" \
+           --jq ".[] | select(.name==\"$_name\") | .id" 2>/dev/null || true)
+  [ -n "${_old:-}" ] && gh api -X DELETE "repos/$REPO/releases/assets/$_old" >/dev/null 2>&1 || true
+  if ! curl -fL --progress-bar -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/octet-stream" \
+        -T "$_f" \
+        "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$_name" \
+        -o /dev/null; then
+    echo "  curl upload failed — falling back to gh (spinner, no bar)."
+    gh release upload "$TAG" --repo "$REPO" --clobber "$_f"
+  fi
+}
+upload_big "$TARBALL"
+upload_big "$FRESH"
 
 echo
 echo "Done."
