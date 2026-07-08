@@ -623,32 +623,24 @@ export default function Home() {
             Run AI agents in secure sandboxes. The sane and secure alternative to
             open-source claws.
           </p>
-          <div style={{ display: "flex", justifyContent: "center", marginTop: "0.6rem" }}>
-            <a
-              href="/download"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.45rem",
-                fontSize: "0.92rem",
-                fontWeight: 600,
-                color: "#cfe0ff",
-                textDecoration: "none",
-                border: "1px solid rgba(207,224,255,0.35)",
-                padding: "9px 18px",
-                borderRadius: "10px",
-                background: "rgba(255,255,255,0.05)",
-                backdropFilter: "blur(6px)",
-              }}
-            >
-              Download the macOS app →
-            </a>
-          </div>
           <p className="hero-legal">
             By continuing, you agree to our{" "}
             <a href="/terms">Terms of Service</a> and{" "}
             <a href="/privacy">Privacy Policy</a>
           </p>
+          <a
+            href="/download"
+            style={{
+              display: "inline-block",
+              marginTop: "0.85rem",
+              fontSize: "0.8rem",
+              fontWeight: 500,
+              color: "rgba(207,224,255,0.7)",
+              textDecoration: "none",
+            }}
+          >
+            Download the macOS app →
+          </a>
           <a href="#about" className="scroll-hint">
             <span>Explore</span>
             <svg

@@ -43,15 +43,7 @@ export default function DownloadPage() {
   }, []);
 
   const primary = release ? pickMacInstaller(release.assets) : null;
-  // User-facing installers only — hide updater artifacts (.tar.gz, .sig) and the manifest.
-  const installers = release
-    ? release.assets.filter(
-        (a) =>
-          a.name !== "latest.json" &&
-          !a.name.endsWith(".sig") &&
-          !a.name.endsWith(".tar.gz")
-      )
-    : [];
+  const assets = release ? release.assets : [];
 
   return (
     <div className="dl-page">
@@ -91,6 +83,7 @@ export default function DownloadPage() {
               </div>
               <div className="dl-meta">
                 <span className="dl-version">v{release.version}</span>
+                <span className="dl-badge">Latest</span>
                 {release.publishedAt && (
                   <span>
                     {" · "}
@@ -119,11 +112,11 @@ export default function DownloadPage() {
           </section>
         )}
 
-        {release && installers.length > 1 && (
+        {release && assets.length > 0 && (
           <section className="dl-card">
-            <h2>All downloads</h2>
+            <h2>Assets</h2>
             <ul className="dl-assets">
-              {installers.map((a) => (
+              {assets.map((a) => (
                 <li key={a.name}>
                   <a href={a.downloadUrl}>{a.name}</a>
                   <span className="dl-muted">{formatBytes(a.size)}</span>

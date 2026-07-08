@@ -98,6 +98,21 @@
   color: #cfe0ff;
 }
 
+.dl-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 1px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #7ee0a8;
+  background: rgba(46, 204, 113, 0.14);
+  border: 1px solid rgba(46, 204, 113, 0.35);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 .dl-card {
   margin-top: 2rem;
   padding: 1.5rem 1.75rem;
