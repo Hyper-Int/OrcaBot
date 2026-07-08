@@ -608,6 +608,37 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Return the per-boot surface token. The host frontend sends it as the
+/// `X-Orcabot-Surface` header so the control plane knows the request is from the
+/// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).
+#[tauri::command]
+pub fn get_surface_token() -> String {
+    crate::surface_token().to_string()
+}
+
+/// Open an http(s) URL in the OS default browser. OAuth connect flows use this
+/// on desktop because `window.open` is a no-op inside the Tauri webview.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("only http(s) URLs are allowed".into());
+    }
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    };
+    cmd.arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to open URL: {e}"))
+}
+
 #[tauri::command]
 pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]

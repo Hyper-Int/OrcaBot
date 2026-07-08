@@ -53,7 +53,8 @@ import {
   type GmailMessage,
   type GmailActionType,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -206,6 +207,22 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   // Connect Gmail
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/google/gmail/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getGmailIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try { await setupGmailMirror(dashboardId); } catch { /* ignore */ }
+            await loadIntegration();
+            await loadMessages();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/google/gmail/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "gmail-connect", "width=600,height=700");
 

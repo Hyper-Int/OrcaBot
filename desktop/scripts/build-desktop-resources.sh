@@ -38,6 +38,44 @@ fi
 cp "$ROOT_DIR/workerd/dist/worker.js" "$WORKERD_DIST_DIR/worker.js"
 cp "$ROOT_DIR/workerd/config/workerd.desktop.capnp" "$WORKERD_CONFIG_DIR/workerd.desktop.capnp"
 
+# --- Bake OAuth client credentials into the bundled capnp (build-time) --------
+# A downloaded app can't read host env vars, so provider client IDs/secrets must
+# ship *inside* the app. When set at build time, rewrite the matching capnp
+# `fromEnvironment` bindings to literal `text` values in the STAGED copy only —
+# source stays clean, so nothing lands in the (public) repo (which also keeps
+# Google from auto-revoking an exposed secret). Client IDs are public; the
+# desktop client secret is non-confidential per Google's installed-app model.
+# Usage:  GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... cargo tauri build
+STAGED_CAPNP="$WORKERD_CONFIG_DIR/workerd.desktop.capnp"
+# Only NON-CONFIDENTIAL values may be baked into a shipped (inspectable) app:
+#   - public client IDs (Google/GitHub/Microsoft/OneDrive)
+#   - GOOGLE_CLIENT_SECRET — a Google "Desktop app" client secret, which Google
+#     explicitly treats as non-confidential and requires you to embed
+#   - GOOGLE_API_KEY — a browser/public API key
+# GitHub uses device flow and Microsoft/OneDrive use PKCE, so no secrets there.
+# Confidential-secret providers (Slack/Discord/X/Box) are NOT baked and stay
+# hidden/disabled on desktop; a *_CLIENT_SECRET set for them is ignored here.
+for _oauth_var in \
+  GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_API_KEY \
+  GITHUB_CLIENT_ID \
+  MICROSOFT_CLIENT_ID \
+  ONEDRIVE_CLIENT_ID; do
+  _oauth_val=$(printenv "$_oauth_var" 2>/dev/null) || _oauth_val=""
+  [ -n "$_oauth_val" ] || continue
+  if python3 - "$STAGED_CAPNP" "$_oauth_var" "$_oauth_val" <<'PY'
+import json, re, sys
+cfg, name, value = sys.argv[1], sys.argv[2], sys.argv[3]
+s = open(cfg).read()
+pat = re.compile(r'\(name = "%s", fromEnvironment = "%s"\)' % (re.escape(name), re.escape(name)))
+new, n = pat.subn('(name = "%s", text = %s)' % (name, json.dumps(value)), s)
+if n:
+    open(cfg, 'w').write(new)
+sys.exit(0 if n else 3)
+PY
+  then printf '%s\n' "  baked OAuth binding: $_oauth_var"
+  else printf '%s\n' "  WARN: $_oauth_var set but no fromEnvironment binding found to bake"; fi
+done
+
 WORKERD_BIN="$CONTROLPLANE_DIR/node_modules/workerd/bin/workerd"
 if [ ! -x "$WORKERD_BIN" ]; then
   printf '%s\n' "workerd binary not found: $WORKERD_BIN" >&2
@@ -304,4 +342,20 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   sign_bin "$TAURI_RESOURCES_DIR/vm/vz-helper" "$ENT_DIR/entitlements-vz-helper.plist"
 else
   printf '%s\n' "APPLE_SIGNING_IDENTITY not set — skipping nested-binary signing (dev build)"
+fi
+
+# Dev convenience: the `cargo build` output binary loads resources from
+# target/release/resources (Tauri copies them there at build time), NOT from the
+# source app/src-tauri/resources this script writes. Keep them in sync so a
+# standalone resources rebuild takes effect on the next `orcabot up` without a
+# full `cargo build`. Only touches the target dir if it already exists (a prior
+# cargo build); the packaged `cargo tauri build` path copies resources itself.
+TARGET_RES_DIR="$ROOT_DIR/app/src-tauri/target/release/resources"
+if [ -d "$TARGET_RES_DIR" ]; then
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$TAURI_RESOURCES_DIR/" "$TARGET_RES_DIR/"
+  else
+    cp -R "$TAURI_RESOURCES_DIR/." "$TARGET_RES_DIR/"
+  fi
+  printf '%s\n' "  synced resources -> target/release/resources (dev binary picks these up)"
 fi

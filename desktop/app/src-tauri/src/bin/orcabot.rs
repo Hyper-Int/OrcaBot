@@ -593,6 +593,16 @@ struct Remote {
     auth: RemoteAuth,
 }
 
+/// Read the per-boot surface token written by orcabot-desktop to a host-only
+/// file. The local control plane gates dev-auth behind it; the CLI is a trusted
+/// host client, so it reads the file and sends the matching header.
+fn read_surface_token() -> Option<String> {
+    std::fs::read_to_string(data_dir().join("surface-token"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 impl Remote {
     fn local() -> Remote {
         Remote {
@@ -606,10 +616,20 @@ impl Remote {
     /// Apply the auth headers for this remote to a ureq request builder.
     fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
         match &self.auth {
-            RemoteAuth::Dev { user } => req
-                .set("X-User-ID", user)
-                .set("X-User-Email", DEV_EMAIL)
-                .set("X-User-Name", DEV_NAME),
+            RemoteAuth::Dev { user } => {
+                let req = req
+                    .set("X-User-ID", user)
+                    .set("X-User-Email", DEV_EMAIL)
+                    .set("X-User-Name", DEV_NAME);
+                // The local desktop control plane may gate dev-auth behind the
+                // per-boot surface token; include it for local targets so the CLI
+                // (a trusted host client) isn't rejected. Remote targets don't
+                // have this token and don't enforce it.
+                match (self.is_local(), read_surface_token()) {
+                    (true, Some(t)) => req.set("X-Orcabot-Surface", &t),
+                    _ => req,
+                }
+            }
             RemoteAuth::Bearer { token } => req.set("Authorization", &format!("Bearer {token}")),
         }
     }

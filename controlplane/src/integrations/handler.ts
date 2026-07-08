@@ -441,6 +441,47 @@ async function consumeState(env: EnvWithDriveCache, state: string, provider: str
   return record;
 }
 
+// ---- Desktop public-client OAuth (PKCE) -----------------------------------
+// REVISION: oauth-pkce-v1
+// The desktop build is a *public* OAuth client: it ships an embedded client_id
+// and can't protect a confidential secret. So on desktop we bind each authorize
+// request with PKCE (RFC 7636) — the S256 challenge goes on the auth URL, the
+// verifier rides along in the state metadata, and the callback replays it at
+// token exchange. Cloud leaves OAUTH_PUBLIC_CLIENT unset, so these are no-ops
+// and the existing confidential (client_secret) flow is unchanged.
+function usePublicClient(env: EnvWithDriveCache): boolean {
+  return env.OAUTH_PUBLIC_CLIENT === 'true';
+}
+
+/**
+ * On the public-client path, generate a PKCE verifier, stash it in `metadata`
+ * (so the callback can read it back via consumeState), and return the S256
+ * challenge to place on the auth URL. Returns null on the confidential path.
+ * Mutates `metadata` — call before createState so the verifier is persisted.
+ */
+async function pkceChallengeForState(
+  env: EnvWithDriveCache,
+  metadata: Record<string, unknown>
+): Promise<string | null> {
+  if (!usePublicClient(env)) return null;
+  const verifier = generateCodeVerifier();
+  metadata.code_verifier = verifier;
+  return await generateCodeChallenge(verifier);
+}
+
+/** Replay the PKCE verifier (if any) from state metadata into a token-exchange body. */
+function applyPkceVerifier(
+  env: EnvWithDriveCache,
+  body: URLSearchParams,
+  metadata: Record<string, unknown> | undefined
+): void {
+  if (!usePublicClient(env)) return;
+  const verifier = metadata?.code_verifier;
+  if (typeof verifier === 'string' && verifier) {
+    body.set('code_verifier', verifier);
+  }
+}
+
 async function refreshGoogleAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     throw new Error('Google OAuth is not configured.');
@@ -595,7 +636,7 @@ async function refreshBoxAccessToken(env: EnvWithDriveCache, userId: string): Pr
 }
 
 async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     throw new Error('OneDrive OAuth is not configured.');
   }
 
@@ -610,7 +651,7 @@ async function refreshOnedriveAccessToken(env: EnvWithDriveCache, userId: string
 
   const body = new URLSearchParams();
   body.set('client_id', env.ONEDRIVE_CLIENT_ID);
-  body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET);
+  if (!usePublicClient(env)) body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET!);
   body.set('grant_type', 'refresh_token');
   body.set('refresh_token', record.refresh_token);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
@@ -805,8 +846,9 @@ function renderSuccessPage(providerLabel: string): Response {
   <body>
     <div class="card">
       <h1>${safeLabel} connected</h1>
-      <p>You can close this tab and return to OrcaBot.</p>
-      <button onclick="window.close()">Close tab</button>
+      <p>You're all set — close this tab and return to OrcaBot.</p>
+      <button onclick="window.close(); var h=document.getElementById('hint'); if (h) h.style.display='block';">Close tab</button>
+      <p id="hint" style="display:none; margin-top:12px;">This browser didn't allow closing the tab automatically — you can just close it yourself.</p>
     </div>
   </body>
 </html>`,
@@ -1169,10 +1211,12 @@ export async function cоnnectGооgleDrive(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_drive', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_drive', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/drive/callback`;
@@ -1186,6 +1230,10 @@ export async function cоnnectGооgleDrive(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -1223,6 +1271,7 @@ export async function callbackGооgleDrive(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Google Drive token exchange redirect_uri: ${redirectUri} dashboardId=${dashboardId}`);
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -4673,6 +4722,157 @@ export async function callbackGithub(
   return renderSuccessPage('GitHub');
 }
 
+// ---- GitHub device flow (desktop public client) ---------------------------
+// REVISION: github-device-flow-v1
+// GitHub OAuth has no PKCE and its client secret is genuinely confidential, so a
+// downloaded app can't use the redirect+secret flow. Instead we use the OAuth
+// device flow (RFC 8628): no secret, no redirect — the app shows a user code,
+// the user enters it at github.com/login/device, and we poll for the token.
+// Gated to the public-client (desktop) build; cloud keeps the redirect flow.
+function deviceJson(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function deviceStartGithub(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+  if (!usePublicClient(env)) {
+    return deviceJson({ error: 'Device flow is only available on the desktop build.' }, 400);
+  }
+  if (!env.GITHUB_CLIENT_ID) {
+    return deviceJson({ error: 'GitHub OAuth is not configured.' }, 400);
+  }
+
+  let dashboardId: string | null = null;
+  try {
+    const b = await request.json() as { dashboard_id?: string };
+    dashboardId = typeof b?.dashboard_id === 'string' ? b.dashboard_id : null;
+  } catch { /* body optional */ }
+
+  const reqBody = new URLSearchParams();
+  reqBody.set('client_id', env.GITHUB_CLIENT_ID);
+  reqBody.set('scope', GITHUB_SCOPE.join(' '));
+  const resp = await fetch('https://github.com/login/device/code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: reqBody,
+  });
+  if (!resp.ok) {
+    return deviceJson({ error: 'Failed to start GitHub device flow.' }, 502);
+  }
+  const data = await resp.json() as {
+    device_code?: string; user_code?: string; verification_uri?: string;
+    expires_in?: number; interval?: number; error?: string;
+  };
+  if (!data.device_code || !data.user_code || !data.verification_uri) {
+    return deviceJson({ error: data.error || 'GitHub device flow response was incomplete.' }, 502);
+  }
+
+  // Stash the device_code under a random state handle; the frontend polls with it.
+  const state = buildState();
+  await createState(env, auth.user!.id, 'github_device', state, {
+    device_code: data.device_code,
+    dashboardId,
+  });
+
+  return deviceJson({
+    state,
+    user_code: data.user_code,
+    verification_uri: data.verification_uri,
+    expires_in: data.expires_in ?? 900,
+    interval: data.interval ?? 5,
+  });
+}
+
+export async function devicePollGithub(
+  request: Request,
+  env: EnvWithDriveCache,
+  auth: AuthContext
+): Promise<Response> {
+  const authError = requireAuth(auth);
+  if (authError) return authError;
+  if (!env.GITHUB_CLIENT_ID) {
+    return deviceJson({ status: 'error', error: 'not_configured' }, 400);
+  }
+
+  let state: string | null = null;
+  try {
+    const b = await request.json() as { state?: string };
+    state = typeof b?.state === 'string' ? b.state : null;
+  } catch { /* handled below */ }
+  if (!state) {
+    return deviceJson({ status: 'error', error: 'missing_state' }, 400);
+  }
+
+  // Look up (do NOT consume) the device_code so the frontend can poll repeatedly.
+  const stateData = await getState(env, state, 'github_device');
+  if (!stateData) {
+    return deviceJson({ status: 'error', error: 'expired' });
+  }
+  const deviceCode = stateData.metadata.device_code;
+  if (typeof deviceCode !== 'string') {
+    return deviceJson({ status: 'error', error: 'invalid' });
+  }
+
+  const reqBody = new URLSearchParams();
+  reqBody.set('client_id', env.GITHUB_CLIENT_ID);
+  reqBody.set('device_code', deviceCode);
+  reqBody.set('grant_type', 'urn:ietf:params:oauth:grant-type:device_code');
+  const resp = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: reqBody,
+  });
+  const data = await resp.json() as {
+    access_token?: string; refresh_token?: string; scope?: string;
+    token_type?: string; expires_in?: number; error?: string;
+  };
+
+  // Still waiting on the user, or told to back off.
+  if (data.error === 'authorization_pending') return deviceJson({ status: 'pending' });
+  if (data.error === 'slow_down') return deviceJson({ status: 'slow_down' });
+  if (data.error === 'expired_token') { await deleteState(env, state); return deviceJson({ status: 'error', error: 'expired' }); }
+  if (data.error === 'access_denied') { await deleteState(env, state); return deviceJson({ status: 'error', error: 'denied' }); }
+  if (data.error) return deviceJson({ status: 'error', error: data.error });
+  if (!data.access_token) return deviceJson({ status: 'pending' });
+
+  // Success — persist the token exactly like the redirect callback does.
+  const metadata = JSON.stringify({ scope: data.scope, token_type: data.token_type });
+  const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : null;
+  await env.DB.prepare(`
+    INSERT INTO user_integrations (
+      id, user_id, provider, access_token, refresh_token, scope, token_type, expires_at, metadata
+    ) VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, provider) DO UPDATE SET
+      access_token = excluded.access_token,
+      refresh_token = COALESCE(excluded.refresh_token, user_integrations.refresh_token),
+      scope = excluded.scope,
+      token_type = excluded.token_type,
+      expires_at = excluded.expires_at,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).bind(
+    crypto.randomUUID(),
+    stateData.userId,
+    data.access_token,
+    data.refresh_token || null,
+    data.scope || null,
+    data.token_type || null,
+    expiresAt,
+    metadata
+  ).run();
+  await deleteState(env, state);
+
+  return deviceJson({ status: 'complete' });
+}
+
 export async function cоnnectBоx(
   request: Request,
   env: EnvWithDriveCache,
@@ -4804,7 +5004,7 @@ export async function cоnnectОnedrive(
   const authError = requireAuth(auth);
   if (authError) return authError;
 
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     return renderErrorPage('OneDrive OAuth is not configured.');
   }
 
@@ -4812,10 +5012,12 @@ export async function cоnnectОnedrive(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'onedrive', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'onedrive', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/onedrive/callback`;
@@ -4828,6 +5030,10 @@ export async function cоnnectОnedrive(
   authUrl.searchParams.set('scope', ONEDRIVE_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -4836,7 +5042,7 @@ export async function callbackОnedrive(
   request: Request,
   env: EnvWithDriveCache
 ): Promise<Response> {
-  if (!env.ONEDRIVE_CLIENT_ID || !env.ONEDRIVE_CLIENT_SECRET) {
+  if (!env.ONEDRIVE_CLIENT_ID || (!usePublicClient(env) && !env.ONEDRIVE_CLIENT_SECRET)) {
     return renderErrorPage('OneDrive OAuth is not configured.');
   }
 
@@ -4857,11 +5063,12 @@ export async function callbackОnedrive(
 
   const body = new URLSearchParams();
   body.set('client_id', env.ONEDRIVE_CLIENT_ID);
-  body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET);
+  if (!usePublicClient(env)) body.set('client_secret', env.ONEDRIVE_CLIENT_SECRET!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', ONEDRIVE_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`OneDrive token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -5226,10 +5433,12 @@ export async function connectGmail(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'gmail', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'gmail', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/gmail/callback`;
@@ -5243,6 +5452,10 @@ export async function connectGmail(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -5280,6 +5493,7 @@ export async function callbackGmail(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -6439,10 +6653,12 @@ export async function connectCalendar(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_calendar', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_calendar', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/calendar/callback`;
@@ -6456,6 +6672,10 @@ export async function connectCalendar(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -6493,6 +6713,7 @@ export async function callbackCalendar(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -7382,10 +7603,12 @@ export async function connectContacts(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_contacts', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_contacts', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/contacts/callback`;
@@ -7399,6 +7622,10 @@ export async function connectContacts(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -7436,6 +7663,7 @@ export async function callbackContacts(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -8345,10 +8573,12 @@ export async function connectSheets(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_sheets', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_sheets', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/sheets/callback`;
@@ -8362,6 +8592,10 @@ export async function connectSheets(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -8399,6 +8633,7 @@ export async function callbackSheets(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -9047,10 +9282,12 @@ export async function connectForms(
   const requestUrl = new URL(request.url);
   const dashboardId = requestUrl.searchParams.get('dashboard_id');
   const mode = requestUrl.searchParams.get('mode');
-  await createState(env, auth.user!.id, 'google_forms', state, {
+  const metadata: Record<string, unknown> = {
     dashboard_id: dashboardId,
     popup: mode === 'popup',
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'google_forms', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/google/forms/callback`;
@@ -9064,6 +9301,10 @@ export async function connectForms(
   authUrl.searchParams.set('prompt', 'select_account');
   authUrl.searchParams.set('include_granted_scopes', 'true');
   authUrl.searchParams.set('state', state);
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -9101,6 +9342,7 @@ export async function callbackForms(
   body.set('code', code);
   body.set('grant_type', 'authorization_code');
   body.set('redirect_uri', redirectUri);
+  applyPkceVerifier(env, body, stateData.metadata);
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -11351,7 +11593,7 @@ export async function connectTeams(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11359,10 +11601,12 @@ export async function connectTeams(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'teams', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'teams', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/teams/callback`;
@@ -11375,6 +11619,10 @@ export async function connectTeams(
   authUrl.searchParams.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11385,7 +11633,7 @@ export async function callbackTeams(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11411,11 +11659,12 @@ export async function callbackTeams(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', TEAMS_OAUTH_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Teams token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -11536,7 +11785,7 @@ export async function connectOutlook(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11544,10 +11793,12 @@ export async function connectOutlook(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'outlook', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'outlook', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/outlook/callback`;
@@ -11560,6 +11811,10 @@ export async function connectOutlook(
   authUrl.searchParams.set('scope', OUTLOOK_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -11570,7 +11825,7 @@ export async function callbackOutlook(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -11592,11 +11847,12 @@ export async function callbackOutlook(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', OUTLOOK_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Outlook token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
@@ -11709,7 +11965,7 @@ export async function getOutlookIntegration(
 async function refreshOutlookAccessToken(env: EnvWithDriveCache, userId: string): Promise<string> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     throw new Error('Microsoft OAuth is not configured.');
   }
 
@@ -11736,7 +11992,7 @@ async function refreshOutlookAccessToken(env: EnvWithDriveCache, userId: string)
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'refresh_token');
   body.set('refresh_token', record.refresh_token);
   body.set('scope', OUTLOOK_SCOPE.join(' '));
@@ -12281,7 +12537,7 @@ export async function connectOutlookCalendar(
 
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -12289,10 +12545,12 @@ export async function connectOutlookCalendar(
   const mode = url.searchParams.get('mode');
   const dashboardId = url.searchParams.get('dashboard_id');
   const state = buildState();
-  await createState(env, auth.user!.id, 'outlook_calendar', state, {
+  const metadata: Record<string, unknown> = {
     mode,
     dashboardId,
-  });
+  };
+  const codeChallenge = await pkceChallengeForState(env, metadata);
+  await createState(env, auth.user!.id, 'outlook_calendar', state, metadata);
 
   const redirectBase = getRedirectBase(request, env);
   const redirectUri = `${redirectBase}/integrations/outlook/calendar/callback`;
@@ -12305,6 +12563,10 @@ export async function connectOutlookCalendar(
   authUrl.searchParams.set('scope', OUTLOOK_CALENDAR_SCOPE.join(' '));
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('prompt', 'select_account');
+  if (codeChallenge) {
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return Response.redirect(authUrl.toString(), 302);
 }
@@ -12315,7 +12577,7 @@ export async function callbackOutlookCalendar(
 ): Promise<Response> {
   const clientId = env.MICROSOFT_CLIENT_ID || env.ONEDRIVE_CLIENT_ID;
   const clientSecret = env.MICROSOFT_CLIENT_SECRET || env.ONEDRIVE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  if (!clientId || (!usePublicClient(env) && !clientSecret)) {
     return renderErrorPage('Microsoft OAuth is not configured.');
   }
 
@@ -12341,11 +12603,12 @@ export async function callbackOutlookCalendar(
 
   const body = new URLSearchParams();
   body.set('client_id', clientId);
-  body.set('client_secret', clientSecret);
+  if (!usePublicClient(env)) body.set('client_secret', clientSecret!);
   body.set('grant_type', 'authorization_code');
   body.set('code', code);
   body.set('redirect_uri', redirectUri);
   body.set('scope', OUTLOOK_CALENDAR_SCOPE.join(' '));
+  applyPkceVerifier(env, body, stateData.metadata);
 
   console.log(`Outlook Calendar token exchange redirect_uri: ${redirectUri} dashboardId=${stateData.metadata.dashboardId}`);
   const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {

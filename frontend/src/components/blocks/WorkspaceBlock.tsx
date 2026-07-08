@@ -76,7 +76,9 @@ import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
 import { workspaceDoc } from "@/docs/content/workspace";
 import { useAuthStore } from "@/stores/auth-store";
-import { API, DEV_MODE_ENABLED } from "@/config/env";
+import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
+import { GithubDeviceDialog } from "./GithubDeviceDialog";
 
 // Module-level cache to prevent integration reload storms across component remounts
 // Tracks dashboardId -> timestamp of last load
@@ -196,6 +198,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   const [driveSyncing, setDriveSyncing] = React.useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = React.useState(false);
   const [githubIntegration, setGithubIntegration] = React.useState<GithubIntegration | null>(null);
+  const [githubDeviceOpen, setGithubDeviceOpen] = React.useState(false);
   const [githubStatus, setGithubStatus] = React.useState<GithubSyncStatus | null>(null);
   const [githubSyncing, setGithubSyncing] = React.useState(false);
   const [githubPickerOpen, setGithubPickerOpen] = React.useState(false);
@@ -253,6 +256,25 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleDriveConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
+      connectUrl.searchParams.set("user_id", user.id);
+      connectUrl.searchParams.set("user_email", user.email);
+      connectUrl.searchParams.set("user_name", user.name);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getGoogleDriveIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadDriveIntegration();
+          setDrivePickerOpen(true);
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
     url.searchParams.set("user_id", user.id);
     url.searchParams.set("user_email", user.email);
@@ -274,6 +296,12 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleGithubConnect = React.useCallback(() => {
     if (!user) return;
+    // Desktop is a public OAuth client → GitHub uses the device flow (no secret,
+    // no redirect) via a code dialog instead of the popup redirect.
+    if (DESKTOP_MODE) {
+      setGithubDeviceOpen(true);
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/github/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
@@ -292,6 +320,24 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleBoxConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/box/connect`);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getBoxIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadBoxIntegration();
+          setBoxPickerOpen(true);
+          setBoxPath([]);
+          void loadBoxFolders("0");
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/box/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
@@ -310,6 +356,24 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const handleOnedriveConnect = React.useCallback(() => {
     if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
+      if (data.dashboardId) {
+        connectUrl.searchParams.set("dashboard_id", data.dashboardId);
+      }
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: async () =>
+          Boolean((await getOnedriveIntegration(data.dashboardId))?.connected),
+        onConnected: () => {
+          void loadOnedriveIntegration();
+          setOnedrivePickerOpen(true);
+          setOnedrivePath([]);
+          void loadOnedriveFolders("root");
+        },
+      });
+      return;
+    }
     const url = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
     url.searchParams.set("mode", "popup");
     if (data.dashboardId) {
@@ -1467,7 +1531,8 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <span>GitHub</span>
               </Button>
             )}
-            {isBoxConnected ? (
+            {/* Box uses a confidential secret we don't ship on desktop → hidden there */}
+            {!DESKTOP_MODE && (isBoxConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -1522,7 +1587,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
                 <Box className="w-4 h-4" />
                 <span>Box</span>
               </Button>
-            )}
+            ))}
             {isOnedriveConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1615,6 +1680,16 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
           )}
         </DialogContent>
       </Dialog>
+      <GithubDeviceDialog
+        open={githubDeviceOpen}
+        onOpenChange={setGithubDeviceOpen}
+        dashboardId={data.dashboardId}
+        onConnected={() => {
+          void loadGithubIntegration();
+          setGithubPickerOpen(true);
+          void loadGithubRepos();
+        }}
+      />
       <Dialog open={githubPickerOpen} onOpenChange={setGithubPickerOpen}>
         <DialogContent className="max-w-xl h-[540px] p-0">
           <DialogTitle className="sr-only">GitHub</DialogTitle>

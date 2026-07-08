@@ -61,7 +61,7 @@ export { ASRStreamProxy } from './asr/ASRStreamProxy';
 
 // CORS headers (base - origin is added dynamically)
 const CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
-const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name';
+const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name, X-Orcabot-Surface';
 
 /**
  * Parse allowed origins from env. Returns null if all origins allowed (dev mode).
@@ -1267,6 +1267,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError && env.DEV_AUTH_ENABLED !== 'true') {
       return authError;
     }
+    // embed-check makes a server-side GET of a caller-supplied URL — an
+    // exfil/SSRF-shaped surface. A leaked PAT (full user authority) must not be
+    // able to drive it, and private hosts are already blocked below.
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
 
     const targetUrlParam = url.searchParams.get('url');
     if (!targetUrlParam) {
@@ -2011,6 +2016,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'POST google/drive/sync/large': integrations.syncGооgleDriveLargeFiles,
       'GET github/connect': integrations.cоnnectGithub,
       'GET github/callback': (request, env) => integrations.callbackGithub(request, env),
+      'POST github/device/start': integrations.deviceStartGithub,
+      'POST github/device/poll': integrations.devicePollGithub,
       'GET github': integrations.getGithubIntegratiоn,
       'GET github/repos': integrations.getGithubRepоs,
       'GET github/history': integrations.getGithubRepoHistory,

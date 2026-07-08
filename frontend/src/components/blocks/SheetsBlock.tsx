@@ -44,7 +44,8 @@ import {
   type Spreadsheet,
   type SheetValues,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -219,6 +220,21 @@ export function SheetsBlock({ id, data, selected }: NodeProps<SheetsNode>) {
   // Connect Sheets
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/google/sheets/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getSheetsIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try { await setupSheetsMirror(dashboardId); } catch { /* ignore */ }
+            await loadIntegration();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/google/sheets/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "sheets-connect", "width=600,height=700");
 
