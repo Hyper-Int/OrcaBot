@@ -99,6 +99,21 @@ fi
 c=$(code "$FRONTEND/")
 [ "$c" != "000" ] && ok "frontend worker responding on :8788 ($c)" || bad "frontend worker not responding on :8788"
 
+# 7. Surface-token URL handoff wired (static guard). The dynamic checks above
+#    use the token file, so they can't see the BROWSER path: the packaged
+#    frontend can't rely on Tauri IPC from the remote origin, so the loading
+#    screen must hand the token off via ?surface= and the frontend must read it.
+#    Assert both so the "dashboards won't load in the packaged app" bug can't
+#    silently return.
+LOADING="$SCRIPT_DIR/../app/loading.html"
+BRIDGE="$SCRIPT_DIR/../../frontend/src/lib/tauri-bridge.ts"
+if grep -q "get_surface_token" "$LOADING" 2>/dev/null && grep -q "surface=" "$LOADING" 2>/dev/null \
+   && grep -q 'get("surface")' "$BRIDGE" 2>/dev/null; then
+  ok "surface-token URL handoff wired (loading screen -> ?surface= -> frontend)"
+else
+  bad "surface-token URL handoff missing — packaged app would 401 and dashboards won't load"
+fi
+
 echo
 echo "==== $PASS passed, $FAIL failed ===="
 [ "$FAIL" -eq 0 ]
