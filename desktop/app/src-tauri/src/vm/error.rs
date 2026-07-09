@@ -1,3 +1,4 @@
+// REVISION: vm-image-ondemand-v1
 use std::path::PathBuf;
 use std::time::Duration;
 

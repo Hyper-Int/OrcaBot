@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v10-updater-prompt
-const MODULE_REVISION: &str = "main-v10-updater-prompt";
+// REVISION: main-v11-vm-image-ondemand
+const MODULE_REVISION: &str = "main-v11-vm-image-ondemand";
 
 mod commands;
 mod vm;

@@ -1,8 +1,10 @@
-//! VM image staging and decompression utilities.
+//! VM image staging, download-on-demand, and decompression utilities.
 //!
-//! Handles extracting bundled VM images from app resources to
-//! the app data directory, with smart caching based on file
-//! modification times and sizes.
+//! The multi-GB disk image is NOT bundled in the app — it's fetched on demand
+//! per image version and verified against a SHA-256 baked into the binary. The
+//! small resources (kernel/initrd/vz-helper) are still staged from the bundle.
+//
+// REVISION: vm-image-ondemand-v1
 
 use super::VMError;
 use sha2::{Digest, Sha256};
@@ -350,6 +352,11 @@ fn write_marker(marker: &Path, version: &str) {
     let _ = fs::write(marker, version);
 }
 
+/// The image version that pre-versioning installs (before this scheme existed)
+/// actually shipped. A marker-less staged image can ONLY be that version, so it
+/// may be adopted without a download only while it's still the required version.
+const LEGACY_IMAGE_VERSION: &str = "v1";
+
 /// Ensure the VM disk image is present in the data dir and matches the required
 /// version, downloading + verifying it on demand. Returns the staged image path.
 ///
@@ -385,15 +392,17 @@ pub fn ensure_vm_image(
         if marker_ver.as_deref() == Some(manifest.version.as_str()) {
             return Ok(target); // 2. correct version already staged
         }
-        if marker_ver.is_none() {
-            // 3. Migration from a pre-versioning install: this build ships the
-            //    same image content it always had, so the existing image IS the
-            //    current one — adopt it with no download.
+        if marker_ver.is_none() && manifest.version == LEGACY_IMAGE_VERSION {
+            // 3. Migration from a pre-versioning install. Those installs shipped
+            //    the LEGACY_IMAGE_VERSION image, so a marker-less image is only
+            //    safe to adopt while that's still the required version. Once the
+            //    image moves on (v2+), a marker-less image is the OLD one and
+            //    must be re-downloaded — fall through.
             write_marker(&marker, &manifest.version);
             return Ok(target);
         }
-        // marker present but a different version → the image genuinely changed →
-        // fall through to download.
+        // marker present but a different version (or a marker-less image on a
+        // newer required version) → the image genuinely differs → download.
     }
 
     // 4. Download + verify + decompress.
@@ -450,8 +459,16 @@ fn download_and_stage_image(
         )));
     }
 
-    // Verified — decompress into place, then drop the temp archive.
-    decompress_gzip(&tmp_gz, target)?;
+    // Verified — decompress to a temp file, then atomically rename into place.
+    // A crash / disk-full mid-decompress must NOT leave a partial sandbox.img,
+    // or a later launch could mistake it for a complete (adoptable) image.
+    let tmp_img = vm_dir.join("sandbox.img.part");
+    if let Err(e) = decompress_gzip(&tmp_gz, &tmp_img) {
+        let _ = fs::remove_file(&tmp_img);
+        let _ = fs::remove_file(&tmp_gz);
+        return Err(e);
+    }
+    fs::rename(&tmp_img, target)?;
     let _ = fs::remove_file(&tmp_gz);
     Ok(())
 }
