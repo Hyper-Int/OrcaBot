@@ -48,6 +48,18 @@ docker build --build-arg "CHROMIUM_CACHEBUST=$(date +%s)" \
   -t orcabot-sandbox:local -f "$SANDBOX_DIR/docker/Dockerfile" "$SANDBOX_DIR"
 
 # =============================================================================
+# Step 1b: Validate the image BEFORE assembling it (fail fast on regressions)
+# =============================================================================
+# Chromium/claude/agents are installed at "latest" (unpinnable — a Debian chromium
+# version pin vanishes on the next security bump), so a rebuild can silently inherit
+# an upstream regression and replace a working VM with a broken one. This launches
+# chromium and runs the agents as a no-home pty user; a failure exits non-zero and,
+# because of `set -e`, aborts the whole build instead of shipping the broken image.
+log "Validating sandbox image (chromium launches + agents run as a pty user)..."
+docker run --rm -v "$SANDBOX_DIR/docker/validate-image.sh:/validate-image.sh:ro" \
+  --entrypoint bash orcabot-sandbox:local /validate-image.sh
+
+# =============================================================================
 # Step 2: Export rootfs tarball (for WSL2)
 # =============================================================================
 log "Exporting rootfs tarball for WSL2..."
