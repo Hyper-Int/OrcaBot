@@ -5,7 +5,7 @@
 "use client";
 
 import * as React from "react";
-import { type NodeProps, type Node, useReactFlow } from "@xyflow/react";
+import { type NodeProps, type Node, useReactFlow, useStore } from "@xyflow/react";
 import { Globe, RefreshCw, X, Minimize2, Settings, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
@@ -90,6 +90,9 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const lastOpenedRef = React.useRef<string | null>(null);
   const user = useAuthStore((state) => state.user);
+  // Live canvas zoom (React Flow transform scale) — passed to VncViewer so it can
+  // correct noVNC's pointer mapping under zoom (clicks otherwise drift when not 100%).
+  const canvasZoom = useStore((s) => s.transform[2]);
   // Desktop surface token for the VNC WS. Resolve it async (the sync cache can be
   // null on an early load); when it arrives the vncWsUrl memo recomputes and the
   // RFB reconnects with `&surface=`. Cross-origin WS gets no session cookie, so
@@ -380,6 +383,7 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
                 wsUrl={vncWsUrl}
                 reloadKey={refreshKey}
                 onConnectionState={handleVncState}
+                zoom={canvasZoom}
                 className="w-full h-full"
               />
               {vncState !== "connected" && (

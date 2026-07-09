@@ -39,6 +39,12 @@ interface VncViewerProps {
   compressionLevel?: number;
   onConnectionState?: (state: VncConnectionState) => void;
   className?: string;
+  /** Current React Flow canvas zoom (transform scale). noVNC maps pointer events
+   *  via getBoundingClientRect (which includes this ancestor CSS transform) but
+   *  divides by an internal scale that does NOT — its ResizeObserver never fires on
+   *  an ancestor `transform`. That makes clicks land off by the zoom factor (only
+   *  correct at 100%). We use this to compensate the coordinate conversion. */
+  zoom?: number;
 }
 
 export function VncViewer({
@@ -49,6 +55,7 @@ export function VncViewer({
   compressionLevel = 3,
   onConnectionState,
   className,
+  zoom = 1,
 }: VncViewerProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
@@ -58,6 +65,10 @@ export function VncViewer({
   onStateRef.current = onConnectionState;
   const optsRef = React.useRef({ viewOnly, qualityLevel, compressionLevel });
   optsRef.current = { viewOnly, qualityLevel, compressionLevel };
+  // Live zoom, read by the patched pointer-coordinate conversion below. Updated
+  // without reconnecting the RFB.
+  const zoomRef = React.useRef(zoom);
+  zoomRef.current = zoom || 1;
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -79,10 +90,36 @@ export function VncViewer({
 
       const r = new RFB(containerRef.current, wsUrl, { wsProtocols: ["binary"] });
       rfb = r;
+
+      // Compensate for React Flow's CSS zoom on pointer input. noVNC's Display
+      // converts an element-relative coordinate to a framebuffer coordinate via
+      // `absX(x) = x / _scale`. `x` comes from getBoundingClientRect and so includes
+      // the ancestor `transform: scale(zoom)`, but `_scale` does not (noVNC's
+      // ResizeObserver doesn't fire on ancestor transforms), so clicks land off by
+      // `zoom`. Pre-dividing the input by the live zoom cancels it: at zoom=1 this is
+      // a no-op. Guarded + best-effort so a noVNC internals change can't break input.
+      try {
+        const disp = (r as unknown as { _display?: {
+          absX: (x: number) => number;
+          absY: (y: number) => number;
+        } })._display;
+        if (disp && typeof disp.absX === "function" && typeof disp.absY === "function") {
+          const origAbsX = disp.absX.bind(disp);
+          const origAbsY = disp.absY.bind(disp);
+          disp.absX = (x: number) => origAbsX(x / (zoomRef.current || 1));
+          disp.absY = (y: number) => origAbsY(y / (zoomRef.current || 1));
+        }
+      } catch {
+        /* noVNC internals changed — leave input mapping as-is */
+      }
       const { viewOnly: vo, qualityLevel: q, compressionLevel: c } = optsRef.current;
-      r.scaleViewport = true; // fit the 1280x720 framebuffer to the (resizable) node
-      r.resizeSession = false;
-      r.background = "#ffffff";
+      // Ask the server (x11vnc/Xvfb) to resize its framebuffer to the node so the
+      // page FILLS the block. Falls back to scaleViewport (aspect-fit) when the
+      // server can't resize — in which case the leftover is painted with `background`
+      // (a neutral dark, NOT the old jarring #ffffff that read as a big white border).
+      r.scaleViewport = true;
+      r.resizeSession = true;
+      r.background = "#0d1117";
       r.qualityLevel = q;
       r.compressionLevel = c;
       r.viewOnly = vo;
