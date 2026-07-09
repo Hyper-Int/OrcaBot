@@ -14,7 +14,7 @@
     {
       "placeholderId": "runbook",
       "type": "note",
-      "content": "{\"text\":\"# SWE-bench Pro Runner\\n\\nDrive the **SWE-bench Pro Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Run inference on 5 instances with SWE-agent.\\\"*\\n- *\\\"Gather the patches into a predictions JSON.\\\"*\\n- *\\\"Evaluate on Modal.\\\"*\\n- *\\\"Show me the running task logs.\\\"* -> spawns a viewer pane\\n\\nPublic 731 set, self-scoring. Two phases: inference (host, needs key) -> patches JSON -> eval (Docker-per-task, Modal or local). Keys in the secrets broker. Guide: benchmarks/swebench-pro/orchestrator-runbook.md\"}",
+      "content": "# SWE-bench Pro Runner\n\nDrive the **SWE-bench Pro Orchestrator** (Claude Code) in English:\n\n- *\"Run inference on 5 instances with SWE-agent.\"*\n- *\"Gather the patches into a predictions JSON.\"*\n- *\"Evaluate on Modal.\"*\n- *\"Show me the running task logs.\"* -> spawns a viewer pane\n\nPublic 731 set, self-scoring. Two phases: inference (host, needs key) -> patches JSON -> eval (Docker-per-task, Modal or local). Keys in the secrets broker. Guide: benchmarks/swebench-pro/orchestrator-runbook.md",
       "position": { "x": 680, "y": 0 },
       "size": { "width": 400, "height": 320 }
     },

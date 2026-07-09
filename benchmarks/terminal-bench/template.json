@@ -14,7 +14,7 @@
     {
       "placeholderId": "runbook",
       "type": "note",
-      "content": "{\"text\":\"# Terminal-Bench 2.1 Runner (Harbor)\\n\\nDrive the **Terminal-Bench Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Validate the env with the oracle agent.\\\"* (no key)\\n- *\\\"Run task hello-world with claude-code on opus.\\\"*\\n- *\\\"Run the full 2.1 set on Daytona, 4 concurrent.\\\"*\\n- *\\\"Show me the running job.\\\"* -> spawns a viewer pane\\n\\nUses **Harbor** (not legacy tb). Dataset slug: terminal-bench/terminal-bench-2-1. Docker-per-task; prefer --env daytona/Modal. Keys in the secrets broker. Guide: benchmarks/terminal-bench/orchestrator-runbook.md\"}",
+      "content": "# Terminal-Bench 2.1 Runner (Harbor)\n\nDrive the **Terminal-Bench Orchestrator** (Claude Code) in English:\n\n- *\"Validate the env with the oracle agent.\"* (no key)\n- *\"Run task hello-world with claude-code on opus.\"*\n- *\"Run the full 2.1 set on Daytona, 4 concurrent.\"*\n- *\"Show me the running job.\"* -> spawns a viewer pane\n\nUses **Harbor** (not legacy tb). Dataset slug: terminal-bench/terminal-bench-2-1. Docker-per-task; prefer --env daytona/Modal. Keys in the secrets broker. Guide: benchmarks/terminal-bench/orchestrator-runbook.md",
       "position": { "x": 680, "y": 0 },
       "size": { "width": 400, "height": 340 }
     },

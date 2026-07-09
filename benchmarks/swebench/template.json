@@ -14,7 +14,7 @@
     {
       "placeholderId": "runbook",
       "type": "note",
-      "content": "{\"text\":\"# SWE-bench Runner\\n\\nDrive the **SWE-bench Orchestrator** (Claude Code) in English:\\n\\n- *\\\"Run inference on 5 Lite instances with claude.\\\"* -> writes preds.jsonl\\n- *\\\"Sanity-check the Modal backend with gold.\\\"*\\n- *\\\"Evaluate preds.jsonl on Lite via Modal.\\\"*\\n- *\\\"Show me instance astropy__astropy-12345.\\\"* -> spawns a log viewer pane\\n\\nTwo phases: inference (host, needs key) -> predictions JSONL -> eval (Docker-per-task, Modal or DinD). Keys live in the secrets broker. Full guide: benchmarks/swebench/orchestrator-runbook.md\"}",
+      "content": "# SWE-bench Runner\n\nDrive the **SWE-bench Orchestrator** (Claude Code) in English:\n\n- *\"Run inference on 5 Lite instances with claude.\"* -> writes preds.jsonl\n- *\"Sanity-check the Modal backend with gold.\"*\n- *\"Evaluate preds.jsonl on Lite via Modal.\"*\n- *\"Show me instance astropy__astropy-12345.\"* -> spawns a log viewer pane\n\nTwo phases: inference (host, needs key) -> predictions JSONL -> eval (Docker-per-task, Modal or DinD). Keys live in the secrets broker. Full guide: benchmarks/swebench/orchestrator-runbook.md",
       "position": { "x": 680, "y": 0 },
       "size": { "width": 400, "height": 320 }
     },

@@ -1438,8 +1438,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
     const VALID_ITEM_TYPES = new Set([
       'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
-      'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord', 'telegram',
-      'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
+      'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord',
+      'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
+      'outlook_calendar',
     ]);
     if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
       return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });

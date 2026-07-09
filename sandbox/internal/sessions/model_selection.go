@@ -140,7 +140,10 @@ func applyCustomEndpointEnv(envVars map[string]string, agentType mcp.AgentType, 
 	if !sel.IsCustom() {
 		return
 	}
-	brokerURL := fmt.Sprintf("http://localhost:%d/broker/%s/%s", brokerPort, sessionID, customProviderName)
+	// 127.0.0.1, NOT localhost: the broker binds IPv4 only, and Node/undici (opencode,
+	// droid) resolves "localhost" to IPv6 ::1 first — which the broker never answers —
+	// causing a multi-minute retry-storm "hang". Same fix as env.go's broker URLs.
+	brokerURL := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s", brokerPort, sessionID, customProviderName)
 	switch agentType {
 	case mcp.AgentTypeOpenCode, mcp.AgentTypeDroid:
 		envVars["OPENAI_BASE_URL"] = brokerURL
