@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v19-pull-path-guard
+// REVISION: orcabot-cli-v21-pull-openat-walk
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -54,7 +54,7 @@ const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v19-pull-path-guard";
+const REVISION: &str = "orcabot-cli-v21-pull-openat-walk";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -900,6 +900,106 @@ fn safe_workspace_dest(ws_canon: &std::path::Path, rel: &str) -> Option<PathBuf>
     Some(dest)
 }
 
+/// Write `data` to `rel` under `ws_root`, walking EVERY path component with
+/// openat + O_NOFOLLOW so no component — intermediate or final — can be a
+/// symlink, even one raced in after validation by a process that shares the
+/// workspace (a sandboxed agent via /workspace). Intermediate dirs are created
+/// under the verified parent fd, so there is no lexical-path revalidation gap.
+#[cfg(unix)]
+fn safe_workspace_write(
+    ws_root: &std::path::Path,
+    rel: &str,
+    data: &[u8],
+) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::io::{Error, ErrorKind, Write};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::FromRawFd;
+
+    fn cstr(bytes: &[u8]) -> std::io::Result<CString> {
+        CString::new(bytes).map_err(|_| Error::new(ErrorKind::InvalidInput, "NUL in path"))
+    }
+
+    // Open the trusted (already-canonicalized) workspace root as a directory fd.
+    let root_c = cstr(ws_root.as_os_str().as_bytes())?;
+    let mut dirfd = unsafe { libc::open(root_c.as_ptr(), libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    if dirfd < 0 {
+        return Err(Error::last_os_error());
+    }
+
+    let comps: Vec<&str> = rel.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    let (file_name, dirs) = match comps.split_last() {
+        Some(x) => x,
+        None => {
+            unsafe { libc::close(dirfd) };
+            return Err(Error::new(ErrorKind::InvalidInput, "empty path"));
+        }
+    };
+
+    // Walk/create each directory component relative to the current fd; O_NOFOLLOW
+    // rejects a symlink component (ELOOP) so the walk can't be redirected.
+    for comp in dirs {
+        if *comp == ".." {
+            unsafe { libc::close(dirfd) };
+            return Err(Error::new(ErrorKind::InvalidInput, "'..' in path"));
+        }
+        let c = cstr(comp.as_bytes())?;
+        let mk = unsafe { libc::mkdirat(dirfd, c.as_ptr(), 0o755) };
+        if mk < 0 {
+            let err = Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EEXIST) {
+                unsafe { libc::close(dirfd) };
+                return Err(err);
+            }
+        }
+        let next = unsafe {
+            libc::openat(
+                dirfd,
+                c.as_ptr(),
+                libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        unsafe { libc::close(dirfd) };
+        if next < 0 {
+            return Err(Error::last_os_error()); // ELOOP if a symlink was raced in
+        }
+        dirfd = next;
+    }
+
+    if *file_name == ".." {
+        unsafe { libc::close(dirfd) };
+        return Err(Error::new(ErrorKind::InvalidInput, "'..' in path"));
+    }
+    let fc = cstr(file_name.as_bytes())?;
+    let filefd = unsafe {
+        libc::openat(
+            dirfd,
+            fc.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644,
+        )
+    };
+    unsafe { libc::close(dirfd) };
+    if filefd < 0 {
+        return Err(Error::last_os_error());
+    }
+    let mut f = unsafe { std::fs::File::from_raw_fd(filefd) };
+    f.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn safe_workspace_write(
+    ws_root: &std::path::Path,
+    rel: &str,
+    data: &[u8],
+) -> std::io::Result<()> {
+    let dest = ws_root.join(rel);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&dest, data)
+}
+
 /// Recreate a dashboard (items + edges, old->new item-id remap) on `dest`.
 /// Returns (new dashboard id, idmap, edges created).
 fn recreate_dashboard(
@@ -1262,15 +1362,14 @@ fn cmd_pull(rest: &[String]) -> i32 {
         if path.is_empty() || ws_excluded(&path) {
             continue;
         }
-        // Reject remote paths that would escape the workspace (traversal/symlink).
-        let dest_path = match safe_workspace_dest(&ws_canon, &path) {
-            Some(d) => d,
-            None => {
-                eprintln!("orcabot: skip unsafe remote path: {path}");
-                skipped += 1;
-                continue;
-            }
-        };
+        // Cheap lexical/ancestor pre-filter; the authoritative guard is the
+        // per-component O_NOFOLLOW walk in safe_workspace_write below (race-safe
+        // even against a symlink planted mid-pull by a workspace-sharing process).
+        if safe_workspace_dest(&ws_canon, &path).is_none() {
+            eprintln!("orcabot: skip unsafe remote path: {path}");
+            skipped += 1;
+            continue;
+        }
         let data = match file_get(&src, &sid, &path) {
             Ok(d) => d,
             Err(e) => {
@@ -1279,10 +1378,7 @@ fn cmd_pull(rest: &[String]) -> i32 {
                 continue;
             }
         };
-        if let Some(parent) = dest_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if fs::write(&dest_path, &data).is_ok() {
+        if safe_workspace_write(&ws_canon, &path, &data).is_ok() {
             n += 1;
             bytes += data.len() as u64;
             if n % 50 == 0 {
@@ -1676,9 +1772,8 @@ fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<
         .set("X-User-Email", DEV_EMAIL)
         .set("X-User-Name", DEV_NAME)
         .set("Content-Type", "application/json");
-    // The local desktop control plane gates dev-auth behind the per-boot surface
-    // token (SURFACE_TOKEN); cp_call always targets the local CP, so include it —
-    // mirrors Remote::apply_auth. Without this, ls/new-terminal/etc. 401.
+    // The local desktop control plane may gate dev-auth behind the per-boot
+    // surface token; include it (the CLI is a trusted host client that can read it).
     if let Some(t) = read_surface_token() {
         req = req.set("X-Orcabot-Surface", &t);
     }
@@ -1983,18 +2078,17 @@ fn open_pty_ws(
         "X-User-Name",
         tungstenite::http::HeaderValue::from_static(DEV_NAME),
     );
-    req.headers_mut().insert(
-        "Origin",
-        tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
-    );
-    // Local desktop CP gates dev-auth behind the per-boot surface token. This
-    // handshake can set headers, so pass it (mirrors cp_call / apply_auth);
-    // without it the PTY WS upgrade 401s.
+    // The local desktop control plane may gate dev-auth behind the per-boot
+    // surface token; send it as a header (this native client can, unlike a browser).
     if let Some(t) = read_surface_token() {
         if let Ok(v) = tungstenite::http::HeaderValue::from_str(&t) {
             req.headers_mut().insert("X-Orcabot-Surface", v);
         }
     }
+    req.headers_mut().insert(
+        "Origin",
+        tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
+    );
     let (ws, _resp) = tungstenite::connect(req).map_err(|e| format!("ws connect: {e}"))?;
     if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
         let _ = s.set_read_timeout(Some(read_timeout));
