@@ -378,6 +378,36 @@ pub fn ensure_vm_image(
     let target = vm_dir.join("sandbox.img");
     let marker = vm_dir.join("sandbox.img.version");
 
+    // 0. Dev override: ORCABOT_VM_IMAGE forces a specific local image (raw .img or
+    //    .gz), bypassing the version check + release download entirely. For local
+    //    VM-image development, so a locally-built sandbox.img is used instead of the
+    //    published release artifact. The marker is set to "dev-override" so that
+    //    unsetting the var re-triggers the normal download of the published version.
+    if let Ok(override_path) = std::env::var("ORCABOT_VM_IMAGE") {
+        if !override_path.is_empty() {
+            let p = Path::new(&override_path);
+            if p.exists() {
+                eprintln!("[vm-image] ORCABOT_VM_IMAGE override: staging {}", p.display());
+                // Force a fresh stage: the release download can replace the staged
+                // image without updating stage_image's mtime stamp, so a stale stamp
+                // would make stage_image skip the copy and keep the downloaded image.
+                // Drop the stamp for the computed dest so needs_staging re-stages.
+                let dest_name = if p.extension().map_or(false, |e| e == "gz") {
+                    p.file_stem().unwrap_or_default().to_owned()
+                } else {
+                    p.file_name().unwrap_or_default().to_owned()
+                };
+                let _ = fs::remove_file(stamp_path(&vm_dir.join(dest_name)));
+                let staged = stage_image(p, &vm_dir)?;
+                write_marker(&marker, "dev-override");
+                return Ok(staged);
+            }
+            eprintln!(
+                "[vm-image] ORCABOT_VM_IMAGE set but file not found: {override_path} — ignoring"
+            );
+        }
+    }
+
     // 1. Dev / bundled: a local resource image is the source of truth. stage_image
     //    is mtime-cached, so this is cheap when unchanged and re-stages on change.
     if resource_image.exists() {
