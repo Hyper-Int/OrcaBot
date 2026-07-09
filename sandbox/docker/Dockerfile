@@ -223,6 +223,20 @@ COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
 COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
 COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
 
+# Force the CURRENT chromium (placed late so this cache-bust only re-runs this cheap
+# layer, not the heavy npm/agent installs above). The base apt layer is Docker-cached
+# and pins whatever chromium was current when it was first built — and 150.0.7871.46
+# is BROKEN: it IMMEDIATE_CRASHes (SIGTRAP) on launch, so the browser block never
+# reaches ready ("Browser failed to start"). Fixed in 150.0.7871.100. This re-reads
+# the mirror and upgrades to the current build; CHROMIUM_CACHEBUST (a timestamp from
+# build-images.sh) makes the layer re-run every build instead of caching stale.
+ARG CHROMIUM_CACHEBUST=0
+RUN echo "chromium-refresh ${CHROMIUM_CACHEBUST}" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && (chromium.real --version 2>/dev/null || chromium --version)
+
 # Working directory
 WORKDIR /workspace
 

@@ -41,7 +41,11 @@ mkdir -p "$OUTPUT_DIR"
 # Step 1: Build sandbox Docker image
 # =============================================================================
 log "Building sandbox Docker image..."
-docker build -t orcabot-sandbox:local -f "$SANDBOX_DIR/docker/Dockerfile" "$SANDBOX_DIR"
+# CHROMIUM_CACHEBUST forces the Dockerfile's chromium-refresh layer to re-run every
+# build (Debian's cached apt layer can otherwise pin a stale/broken chromium — e.g.
+# 150.0.7871.46 SIGTRAPs on launch). A timestamp guarantees a fresh pull each time.
+docker build --build-arg "CHROMIUM_CACHEBUST=$(date +%s)" \
+  -t orcabot-sandbox:local -f "$SANDBOX_DIR/docker/Dockerfile" "$SANDBOX_DIR"
 
 # =============================================================================
 # Step 2: Export rootfs tarball (for WSL2)
