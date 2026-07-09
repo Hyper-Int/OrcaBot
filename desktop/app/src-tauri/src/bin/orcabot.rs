@@ -1987,6 +1987,14 @@ fn open_pty_ws(
         "Origin",
         tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
     );
+    // Local desktop CP gates dev-auth behind the per-boot surface token. This
+    // handshake can set headers, so pass it (mirrors cp_call / apply_auth);
+    // without it the PTY WS upgrade 401s.
+    if let Some(t) = read_surface_token() {
+        if let Ok(v) = tungstenite::http::HeaderValue::from_str(&t) {
+            req.headers_mut().insert("X-Orcabot-Surface", v);
+        }
+    }
     let (ws, _resp) = tungstenite::connect(req).map_err(|e| format!("ws connect: {e}"))?;
     if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
         let _ = s.set_read_timeout(Some(read_timeout));
