@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: terminal-ws-v3-session-expired-recovery
-const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v3-session-expired-recovery";
+// REVISION: terminal-ws-v4-surface-token
+const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v4-surface-token";
 console.log(`[TerminalWS] REVISION: ${MODULE_REVISION_TERMINAL_WS} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -30,6 +30,7 @@ import type {
 } from "@/types/terminal";
 import { API, DESKTOP_MODE, DEV_MODE_ENABLED } from "@/config/env";
 import { useAuthStore } from "@/stores/auth-store";
+import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
 
 
 export interface TerminalWSConfig extends WebSocketConfig {
@@ -89,6 +90,12 @@ export class TerminalWSManager extends BaseWebSocketManager {
       if (email) {
         url += `&user_email=${encodeURIComponent(email)}`;
       }
+    }
+    // Desktop gates dev-auth on the surface token; WebSockets can't send the
+    // header, so pass it as a query param (no-op on web, where it's null).
+    const surface = getCachedSurfaceToken();
+    if (surface) {
+      url += `&surface=${encodeURIComponent(surface)}`;
     }
     super(url, config);
 

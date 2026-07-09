@@ -1,9 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: dashboards-api-v1-surface-token-ws
+
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiPut, apiDelete } from "../client";
 import { useAuthStore } from "@/stores/auth-store";
+import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
 import type {
   Dashboard,
   DashboardItem,
@@ -242,7 +245,18 @@ export async function updateSessionEnv(
   payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean }
 ): Promise<void> {
   const base = API.cloudflare.base.replace(/^http/, "ws");
-  const wsUrl = `${base}/sessions/${sessionId}/control`;
+  // Desktop/dev-auth can't send auth headers over a WebSocket, so pass identity
+  // + the surface token as query params (ignored by cookie-authed web).
+  let wsUrl = `${base}/sessions/${sessionId}/control`;
+  const user = useAuthStore.getState()?.user;
+  const surface = getCachedSurfaceToken();
+  if (user?.id || surface) {
+    const params = new URLSearchParams();
+    if (user?.id) params.set("user_id", user.id);
+    if (user?.email) params.set("user_email", user.email);
+    if (surface) params.set("surface", surface);
+    wsUrl += `?${params.toString()}`;
+  }
   const applyNow = Boolean(payload.applyNow);
   const message = {
     type: "env",
@@ -555,6 +569,12 @@ export function getCollaborationWsUrl(
   const email = useAuthStore.getState()?.user?.email;
   if (email) {
     url += `&user_email=${encodeURIComponent(email)}`;
+  }
+  // Desktop gates dev-auth on the surface token; WebSockets can't send the
+  // header, so pass it as a query param (null → omitted on web).
+  const surface = getCachedSurfaceToken();
+  if (surface) {
+    url += `&surface=${encodeURIComponent(surface)}`;
   }
   return url;
 }

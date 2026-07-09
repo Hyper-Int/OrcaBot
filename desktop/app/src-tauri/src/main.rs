@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v11-vm-image-ondemand
-const MODULE_REVISION: &str = "main-v11-vm-image-ondemand";
+// REVISION: main-v12-surface-ws-hardening
+const MODULE_REVISION: &str = "main-v12-surface-ws-hardening";
 
 mod commands;
 mod vm;
@@ -167,21 +167,61 @@ fn cleanup_stale_processes(data_dir: &Path) {
 
   for line in contents.lines() {
     if let Ok(pid) = line.trim().parse::<i32>() {
-      // Check if the process is still alive
       #[cfg(unix)]
       {
-        if unsafe { libc::kill(pid, 0) } == 0 {
-          eprintln!("[cleanup] Killing stale process {}", pid);
-          unsafe { libc::kill(pid, libc::SIGTERM) };
-          // Give it a moment to exit gracefully, then force kill
-          std::thread::sleep(Duration::from_millis(500));
-          unsafe { libc::kill(pid, libc::SIGKILL) };
+        if unsafe { libc::kill(pid, 0) } != 0 {
+          continue; // not alive
+        }
+        // Verify the PID is actually one of ours before signaling. After a crash
+        // the OS may have recycled the PID for an unrelated process, and blindly
+        // SIGKILLing it would be a nasty bug.
+        match proc_command(pid) {
+          Some(cmd) if is_orcabot_process(&cmd, data_dir) => {
+            eprintln!("[cleanup] Killing stale Orcabot process {pid}");
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            std::thread::sleep(Duration::from_millis(500));
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+          }
+          Some(_) => eprintln!("[cleanup] Skipping PID {pid} — not an Orcabot process (PID reused?)"),
+          None => eprintln!("[cleanup] Skipping PID {pid} — could not verify its identity"),
         }
       }
     }
   }
 
   let _ = std::fs::remove_file(&pid_path);
+}
+
+/// The full command line of a running PID (via `ps`), or None if unreadable/gone.
+#[cfg(unix)]
+fn proc_command(pid: i32) -> Option<String> {
+  let out = std::process::Command::new("ps")
+    .args(["-p", &pid.to_string(), "-o", "command="])
+    .output()
+    .ok()?;
+  if !out.status.success() {
+    return None;
+  }
+  let cmd = String::from_utf8_lossy(&out.stdout).trim().to_string();
+  if cmd.is_empty() {
+    None
+  } else {
+    Some(cmd)
+  }
+}
+
+/// Whether a command line looks like one of Orcabot's own children. Our workerd,
+/// d1-shim, and vz-helper run from the data dir, and the headless backend runs
+/// from the com.orcabot bundle — install-specific markers, so a recycled PID
+/// running an unrelated program is not matched.
+#[cfg(unix)]
+fn is_orcabot_process(cmd: &str, data_dir: &Path) -> bool {
+  let dd = data_dir.to_string_lossy();
+  (!dd.is_empty() && cmd.contains(dd.as_ref()))
+    || cmd.contains("com.orcabot")
+    || cmd.contains("orcabot-desktop")
+    || cmd.contains("d1-shim")
+    || cmd.contains("vz-helper")
 }
 
 /// Write all tracked child PIDs to the PID file.
@@ -765,10 +805,17 @@ fn wait_for_health(port: &str) {
   let addr = format!("127.0.0.1:{}", port);
   for _ in 0..10 {
     if let Ok(mut stream) = std::net::TcpStream::connect(&addr) {
-      let _ = stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+      let _ = stream.write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
       let mut buf = [0u8; 128];
-      let _ = stream.read(&mut buf);
-      return;
+      let n = stream.read(&mut buf).unwrap_or(0);
+      // Ready only on a real HTTP response. We accept ANY status (the d1-shim and
+      // frontend workerd legitimately 404 on /health) but require the "HTTP/"
+      // status line, so a stray non-HTTP listener on the port isn't mistaken for
+      // a healthy service.
+      if String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/") {
+        return;
+      }
     }
     std::thread::sleep(Duration::from_millis(500));
   }

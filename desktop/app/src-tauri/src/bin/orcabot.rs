@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v19-pull-path-guard
+// REVISION: orcabot-cli-v20-surface-token-ws
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -54,7 +54,7 @@ const CONTROLPLANE_PORT: u16 = 8787;
 const SANDBOX_PORT: u16 = 8080;
 const FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v19-pull-path-guard";
+const REVISION: &str = "orcabot-cli-v20-surface-token-ws";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -900,6 +900,29 @@ fn safe_workspace_dest(ws_canon: &std::path::Path, rel: &str) -> Option<PathBuf>
     Some(dest)
 }
 
+/// Write bytes to `dest` without following a symlink at the final path component.
+/// safe_workspace_dest verifies existing ancestors resolve inside the workspace;
+/// O_NOFOLLOW closes the last gap — a pre-planted `dest -> /elsewhere` symlink
+/// fails with ELOOP instead of being written through. Mirrors safe_copy_file in
+/// commands.rs (the Tauri folder-import path).
+#[cfg(unix)]
+fn safe_write(dest: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dest)?;
+    f.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn safe_write(dest: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(dest, data)
+}
+
 /// Recreate a dashboard (items + edges, old->new item-id remap) on `dest`.
 /// Returns (new dashboard id, idmap, edges created).
 fn recreate_dashboard(
@@ -1282,7 +1305,7 @@ fn cmd_pull(rest: &[String]) -> i32 {
         if let Some(parent) = dest_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        if fs::write(&dest_path, &data).is_ok() {
+        if safe_write(&dest_path, &data).is_ok() {
             n += 1;
             bytes += data.len() as u64;
             if n % 50 == 0 {
@@ -1670,12 +1693,17 @@ const DEV_NAME: &str = "Desktop User";
 
 fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
     let url = format!("http://127.0.0.1:{}{}", CONTROLPLANE_PORT, path);
-    let req = agent(Duration::from_secs(15))
+    let mut req = agent(Duration::from_secs(15))
         .request(method, &url)
         .set("X-User-ID", DEV_USER)
         .set("X-User-Email", DEV_EMAIL)
         .set("X-User-Name", DEV_NAME)
         .set("Content-Type", "application/json");
+    // The local desktop control plane may gate dev-auth behind the per-boot
+    // surface token; include it (the CLI is a trusted host client that can read it).
+    if let Some(t) = read_surface_token() {
+        req = req.set("X-Orcabot-Surface", &t);
+    }
     let resp = match body {
         Some(b) => req.send_json(b),
         None => req.call(),
@@ -1977,6 +2005,13 @@ fn open_pty_ws(
         "X-User-Name",
         tungstenite::http::HeaderValue::from_static(DEV_NAME),
     );
+    // The local desktop control plane may gate dev-auth behind the per-boot
+    // surface token; send it as a header (this native client can, unlike a browser).
+    if let Some(t) = read_surface_token() {
+        if let Ok(v) = tungstenite::http::HeaderValue::from_str(&t) {
+            req.headers_mut().insert("X-Orcabot-Surface", v);
+        }
+    }
     req.headers_mut().insert(
         "Origin",
         tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
