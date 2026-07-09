@@ -28,26 +28,32 @@ pub fn stage_image(src: &Path, dest: &Path) -> Result<PathBuf, VMError> {
         dest.join(src.file_name().unwrap_or_default())
     };
 
-    if needs_staging(src, &dest_path)? {
-        // Ensure destination directory exists
+    stage_image_to(src, &dest_path)?;
+    Ok(dest_path)
+}
+
+/// Stage `src` to a specific destination file (decompressing if `src` is `.gz`).
+/// Mtime-cached against the source signature so re-staging an unchanged source is
+/// a no-op.
+fn stage_image_to(src: &Path, dest_path: &Path) -> Result<(), VMError> {
+    let is_gzipped = src.extension().map_or(false, |e| e == "gz");
+    if needs_staging(src, dest_path)? {
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)?;
         }
-
         if is_gzipped {
-            decompress_gzip(src, &dest_path)?;
+            decompress_gzip(src, dest_path)?;
         } else {
-            copy_file(src, &dest_path)?;
+            copy_file(src, dest_path)?;
         }
         // Record the source signature so a later runtime mutation of dest (the VM
         // image boots read-write, so the guest bumps its mtime) never makes a
         // genuinely-updated source look stale and skip re-staging.
         if let Ok(sig) = source_signature(src) {
-            let _ = fs::write(stamp_path(&dest_path), sig);
+            let _ = fs::write(stamp_path(dest_path), sig);
         }
     }
-
-    Ok(dest_path)
+    Ok(())
 }
 
 /// Stable signature of the SOURCE file (modification time + size).
@@ -348,24 +354,26 @@ fn read_marker(marker: &Path) -> Option<String> {
     fs::read_to_string(marker).ok().map(|s| s.trim().to_string())
 }
 
-fn write_marker(marker: &Path, version: &str) {
-    let _ = fs::write(marker, version);
-}
-
 /// The image version that pre-versioning installs (before this scheme existed)
 /// actually shipped. A marker-less staged image can ONLY be that version, so it
 /// may be adopted without a download only while it's still the required version.
 const LEGACY_IMAGE_VERSION: &str = "v1";
 
-/// Ensure the VM disk image is present in the data dir and matches the required
-/// version, downloading + verifying it on demand. Returns the staged image path.
+/// Ensure the VM disk image is present in the data dir and return its path.
+///
+/// The staged image is named by CONTENT (`sandbox-<token>.img`), never a fixed
+/// `sandbox.img`: macOS/Virtualization.framework caches a disk image's SIZE keyed
+/// on its path, so reusing one path for images of different sizes makes the guest
+/// see the OLD size and truncates the disk — everything the filesystem placed past
+/// the cap reads back as garbage ("Exec format error"). A fresh name whenever the
+/// content changes sidesteps that cache entirely.
 ///
 /// Resolution order:
-///  1. a local resource image (dev build / anything bundled) → stage it (trusted,
-///     mtime-cached);
-///  2. the data-dir image already staged for THIS version → use (fast);
-///  3. a data-dir image from a PRIOR install with no version marker → adopt it as
-///     the current version (migration — this build ships the same image content);
+///  0. `ORCABOT_VM_IMAGE` dev override → stage that file (named by its signature);
+///  1. a local resource image (dev build / bundled) → stage it;
+///  2. the versioned image already staged for the manifest version → use it;
+///  3. migrate a pre-content-naming `sandbox.img` by renaming it (if it's the
+///     required version) — a fresh path also clears any stale size cache;
 ///  4. otherwise download the gz artifact, verify its SHA-256, decompress.
 pub fn ensure_vm_image(
     resource_image: &Path,
@@ -375,32 +383,23 @@ pub fn ensure_vm_image(
     let manifest = vm_image_manifest();
     let vm_dir = data_dir.join("vm");
     fs::create_dir_all(&vm_dir)?;
-    let target = vm_dir.join("sandbox.img");
-    let marker = vm_dir.join("sandbox.img.version");
 
     // 0. Dev override: ORCABOT_VM_IMAGE forces a specific local image (raw .img or
-    //    .gz), bypassing the version check + release download entirely. For local
-    //    VM-image development, so a locally-built sandbox.img is used instead of the
-    //    published release artifact. The marker is set to "dev-override" so that
-    //    unsetting the var re-triggers the normal download of the published version.
+    //    .gz), bypassing the version check + release download. Named by the source
+    //    signature so swapping to an image of a different size lands on a fresh path.
     if let Ok(override_path) = std::env::var("ORCABOT_VM_IMAGE") {
         if !override_path.is_empty() {
             let p = Path::new(&override_path);
             if p.exists() {
-                eprintln!("[vm-image] ORCABOT_VM_IMAGE override: staging {}", p.display());
-                // Force a fresh stage: the release download can replace the staged
-                // image without updating stage_image's mtime stamp, so a stale stamp
-                // would make stage_image skip the copy and keep the downloaded image.
-                // Drop the stamp for the computed dest so needs_staging re-stages.
-                let dest_name = if p.extension().map_or(false, |e| e == "gz") {
-                    p.file_stem().unwrap_or_default().to_owned()
-                } else {
-                    p.file_name().unwrap_or_default().to_owned()
-                };
-                let _ = fs::remove_file(stamp_path(&vm_dir.join(dest_name)));
-                let staged = stage_image(p, &vm_dir)?;
-                write_marker(&marker, "dev-override");
-                return Ok(staged);
+                let dest = vm_dir.join(format!("sandbox-ovr-{}.img", local_content_token(p)));
+                eprintln!(
+                    "[vm-image] ORCABOT_VM_IMAGE override: staging {} -> {}",
+                    p.display(),
+                    dest.display()
+                );
+                stage_image_to(p, &dest)?;
+                cleanup_stale_images(&vm_dir, &dest);
+                return Ok(dest);
             }
             eprintln!(
                 "[vm-image] ORCABOT_VM_IMAGE set but file not found: {override_path} — ignoring"
@@ -408,31 +407,34 @@ pub fn ensure_vm_image(
         }
     }
 
-    // 1. Dev / bundled: a local resource image is the source of truth. stage_image
-    //    is mtime-cached, so this is cheap when unchanged and re-stages on change.
+    // 1. Dev / bundled: a local resource image is the source of truth.
     if resource_image.exists() {
-        let staged = stage_image(resource_image, &vm_dir)?;
-        write_marker(&marker, &manifest.version);
-        return Ok(staged);
+        let dest = vm_dir.join(format!("sandbox-res-{}.img", local_content_token(resource_image)));
+        stage_image_to(resource_image, &dest)?;
+        cleanup_stale_images(&vm_dir, &dest);
+        return Ok(dest);
     }
 
-    // Packaged: no bundled image.
-    let marker_ver = read_marker(&marker);
-    if target.exists() {
-        if marker_ver.as_deref() == Some(manifest.version.as_str()) {
-            return Ok(target); // 2. correct version already staged
+    // Packaged: the image is identified by the manifest version.
+    let dest = vm_dir.join(format!("sandbox-{}.img", manifest.version));
+
+    // 2. Already staged for this version.
+    if dest.exists() {
+        return Ok(dest);
+    }
+
+    // 3. Migration: adopt a pre-content-naming `sandbox.img` by renaming it to the
+    //    content path (a fresh path clears any stale size cache), if it is the
+    //    required version. Avoids a needless re-download on upgrade.
+    let legacy = vm_dir.join("sandbox.img");
+    if legacy.exists() {
+        let marker_ver = read_marker(&vm_dir.join("sandbox.img.version"));
+        let is_required = marker_ver.as_deref() == Some(manifest.version.as_str())
+            || (marker_ver.is_none() && manifest.version == LEGACY_IMAGE_VERSION);
+        if is_required && fs::rename(&legacy, &dest).is_ok() {
+            cleanup_stale_images(&vm_dir, &dest);
+            return Ok(dest);
         }
-        if marker_ver.is_none() && manifest.version == LEGACY_IMAGE_VERSION {
-            // 3. Migration from a pre-versioning install. Those installs shipped
-            //    the LEGACY_IMAGE_VERSION image, so a marker-less image is only
-            //    safe to adopt while that's still the required version. Once the
-            //    image moves on (v2+), a marker-less image is the OLD one and
-            //    must be re-downloaded — fall through.
-            write_marker(&marker, &manifest.version);
-            return Ok(target);
-        }
-        // marker present but a different version (or a marker-less image on a
-        // newer required version) → the image genuinely differs → download.
     }
 
     // 4. Download + verify + decompress.
@@ -440,9 +442,46 @@ pub fn ensure_vm_image(
         "[vm-image] fetching sandbox image {} from {}",
         manifest.version, manifest.url
     );
-    download_and_stage_image(&manifest, &vm_dir, &target, progress)?;
-    write_marker(&marker, &manifest.version);
-    Ok(target)
+    download_and_stage_image(&manifest, &vm_dir, &dest, progress)?;
+    cleanup_stale_images(&vm_dir, &dest);
+    Ok(dest)
+}
+
+/// Short, stable token for a local source image's content: nanosecond mtime + size
+/// (via `source_signature`), hashed. Changes whenever the source changes — including
+/// its SIZE, the property the stale VZ/macOS disk-size cache keys on. `DefaultHasher`
+/// uses fixed keys, so this is deterministic across runs.
+fn local_content_token(src: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let sig = source_signature(src).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sig.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Remove staged sandbox images + sidecars other than `keep`, so old versions
+/// don't accumulate in the data dir. Best-effort.
+fn cleanup_stale_images(vm_dir: &Path, keep: &Path) {
+    let keep_stamp = stamp_path(keep);
+    let Ok(entries) = fs::read_dir(vm_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == *keep || path == keep_stamp {
+            continue;
+        }
+        let name = entry.file_name();
+        let n = name.to_string_lossy();
+        let stale = n == "sandbox.img"
+            || n == "sandbox.img.stamp"
+            || n == "sandbox.img.version"
+            || n.ends_with(".img.gz.part")
+            || (n.starts_with("sandbox-") && (n.ends_with(".img") || n.ends_with(".img.stamp")));
+        if stale {
+            let _ = fs::remove_file(&path);
+        }
+    }
 }
 
 fn download_and_stage_image(
