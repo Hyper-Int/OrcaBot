@@ -1670,12 +1670,18 @@ const DEV_NAME: &str = "Desktop User";
 
 fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
     let url = format!("http://127.0.0.1:{}{}", CONTROLPLANE_PORT, path);
-    let req = agent(Duration::from_secs(15))
+    let mut req = agent(Duration::from_secs(15))
         .request(method, &url)
         .set("X-User-ID", DEV_USER)
         .set("X-User-Email", DEV_EMAIL)
         .set("X-User-Name", DEV_NAME)
         .set("Content-Type", "application/json");
+    // The local desktop control plane gates dev-auth behind the per-boot surface
+    // token (SURFACE_TOKEN); cp_call always targets the local CP, so include it —
+    // mirrors Remote::apply_auth. Without this, ls/new-terminal/etc. 401.
+    if let Some(t) = read_surface_token() {
+        req = req.set("X-Orcabot-Surface", &t);
+    }
     let resp = match body {
         Some(b) => req.send_json(b),
         None => req.call(),
