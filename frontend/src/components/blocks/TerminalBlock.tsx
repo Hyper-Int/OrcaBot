@@ -654,15 +654,22 @@ export function TerminalBlock({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        termPan.current = null; // clear on release, NOT in the contextmenu handler
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
     [getViewport, setViewport]
   );
+  // Always suppress the native WebView text context menu over the terminal. macOS
+  // fires (and shows) it on right-mousedown — before we can tell a pan from a plain
+  // click — and once it's up it captures the mouse and the right-drag pan can't run.
+  // The menu is useless here anyway (xterm renders to a canvas, so Cut/Copy are dead;
+  // paste is Cmd+V). Suppressing it lets right-drag pan reliably. We do NOT touch
+  // termPan here — this fires right after mousedown, so nulling it would kill the pan
+  // before the drag starts; mouseup owns cleanup.
   const handleTermContextMenu = React.useCallback((e: React.MouseEvent) => {
-    if (termPan.current?.moved) e.preventDefault();
-    termPan.current = null;
+    e.preventDefault();
   }, []);
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
