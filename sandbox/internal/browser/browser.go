@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v9-ready-reprobe
+// REVISION: browser-v10-no-sandbox-warning
 package browser
 
 import (
@@ -44,8 +44,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v9-ready-reprobe
-const browserRevision = "browser-v9-ready-reprobe"
+// REVISION: browser-v10-no-sandbox-warning
+const browserRevision = "browser-v10-no-sandbox-warning"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -62,7 +62,7 @@ func NewController(workspace string) *Controller {
 // that redirects, XHR, and subresource loads are subject to the same
 // CheckAndHold approval flow as the initial navigation URL.
 // Loopback addresses bypass the proxy so the CDP debug connection is unaffected.
-// REVISION: browser-v9-ready-reprobe
+// REVISION: browser-v10-no-sandbox-warning
 func NewControllerWithEgress(workspace string, egressProxyPort int) *Controller {
 	return &Controller{workspace: workspace, egressProxyPort: egressProxyPort}
 }
@@ -165,6 +165,11 @@ func (c *Controller) Start() (Status, error) {
 
 	chromiumArgs := []string{
 		"--no-sandbox",
+		// Suppress chromium's yellow "You are using an unsupported command-line
+		// flag: --no-sandbox" infobar (--disable-infobars does NOT hide this one in
+		// current chromium). --no-sandbox is required here (chromium runs as root in
+		// the VM), so the warning is noise that just clutters the browser-block view.
+		"--test-type",
 		"--disable-dev-shm-usage",
 		"--no-first-run",
 		"--no-default-browser-check",
@@ -187,7 +192,7 @@ func (c *Controller) Start() (Status, error) {
 	// Chromium runs as root and is outside the iptables UID range, so without
 	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
 	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
-	// REVISION: browser-v9-ready-reprobe
+	// REVISION: browser-v10-no-sandbox-warning
 	if c.egressProxyPort > 0 {
 		chromiumArgs = append(chromiumArgs,
 			"--proxy-server=http://127.0.0.1:"+strconv.Itoa(c.egressProxyPort),
