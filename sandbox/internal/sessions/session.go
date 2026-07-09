@@ -669,8 +669,25 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	if agentType == mcp.AgentTypeClaude {
 		envVars["IS_SANDBOX"] = "1"
 	}
-	// Make ~ resolve to the session workspace so attached assets are UI-manageable.
-	envVars["HOME"] = s.workspace.Root()
+	// HOME resolves to a dedicated dir INSIDE the workspace, not the workspace root
+	// itself. Keeping ~ under the workspace keeps agent home-dir files self-contained
+	// and (being dot-hidden) out of the file sidebar, while cwd stays the workspace
+	// project dir. Crucially cwd must NOT equal HOME: opencode's file picker (fff)
+	// refuses to run when the project dir IS the home dir ("Can not run certain FFF
+	// features in a file system root or home directories"), which sent opencode into a
+	// re-init/crash loop. Agent MCP/config is enforced via HOME-independent overrides
+	// (GEMINI_CLI_SYSTEM_SETTINGS_PATH, /etc/codex/config.toml, project .mcp.json), so
+	// the ~-fallback moving here is harmless.
+	homeDir := filepath.Join(s.workspace.Root(), ".home")
+	if err := os.MkdirAll(homeDir, 0o2775); err != nil {
+		log.Printf("[session] failed to create HOME dir %s: %v (falling back to workspace root)", homeDir, err)
+		homeDir = s.workspace.Root()
+	} else {
+		// Force group-write + setgid past umask so the pty-NNN users (gid=sandbox) can
+		// write, and nested files inherit the sandbox group.
+		_ = os.Chmod(homeDir, 0o2775)
+	}
+	envVars["HOME"] = homeDir
 	// Point agents to the localhost-only MCP server (no auth required)
 	mcpPort := os.Getenv("MCP_LOCAL_PORT")
 	if mcpPort == "" {
