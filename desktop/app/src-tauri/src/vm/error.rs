@@ -9,6 +9,8 @@ pub enum VMError {
     HealthTimeout(Duration),
     MountFailed(String),
     UnsupportedPlatform(String),
+    /// Fetching/verifying the on-demand VM image failed.
+    Download(String),
     Io(std::io::Error),
 }
 
@@ -25,6 +27,7 @@ impl std::fmt::Display for VMError {
             VMError::UnsupportedPlatform(platform) => {
                 write!(f, "Platform not supported: {}", platform)
             }
+            VMError::Download(msg) => write!(f, "VM image download failed: {}", msg),
             VMError::Io(err) => write!(f, "IO error: {}", err),
         }
     }

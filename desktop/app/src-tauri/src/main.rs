@@ -499,19 +499,25 @@ impl DesktopServices {
     // Check if VM resources exist
     let vm_resource_paths = vm::image::VMResourcePaths::from_resource_root(resource_root);
 
-    // VM resources are optional - if not present, skip VM startup
-    if !vm_resource_paths.image.exists() {
-      eprintln!(
-        "VM image not found at {}; sandbox VM disabled.",
-        vm_resource_paths.image.display()
-      );
-      return Ok(());
-    }
-
     eprintln!("Starting sandbox VM ({})...", vm::vm_backend_name());
 
-    // Stage VM resources to app data directory
-    let staged_paths = vm::image::stage_vm_resources(&vm_resource_paths, data_dir)?;
+    // Stage VM resources. The disk image isn't bundled (it would bloat every
+    // auto-update); ensure_vm_image downloads + verifies it on first use, or
+    // adopts an image an earlier install already staged. Log download progress.
+    let last_pct = std::cell::Cell::new(-1i64);
+    let progress = |done: u64, total: u64| {
+      if total > 0 {
+        let pct = (done.saturating_mul(100) / total) as i64;
+        if pct != last_pct.get() && pct % 5 == 0 {
+          last_pct.set(pct);
+          eprintln!(
+            "[vm-image] downloading sandbox image… {}% ({}/{} bytes)",
+            pct, done, total
+          );
+        }
+      }
+    };
+    let staged_paths = vm::image::stage_vm_resources(&vm_resource_paths, data_dir, &progress)?;
 
     // Create workspace directory
     let workspace_dir = data_dir.join("workspace");
