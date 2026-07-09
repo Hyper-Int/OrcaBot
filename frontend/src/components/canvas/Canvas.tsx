@@ -29,7 +29,12 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext, EdgeReverseContext } from "@/components/canvas/IntegrationEdge";
-import { applyLocalPositionOverrides, type PositionOverride } from "@/components/canvas/positionOverrides";
+import {
+  applyLocalPositionOverrides,
+  applyLocalSizeOverrides,
+  type PositionOverride,
+  type SizeOverride,
+} from "@/components/canvas/positionOverrides";
 import { ConnectedHandlesContext } from "@/contexts/ConnectedHandlesContext";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
@@ -391,7 +396,11 @@ export function Canvas({
   // position here and apply it during rebuilds until the cache catches up (positions
   // match) or a short max-age elapses (so concurrent remote moves still recover).
   const localPositionsRef = React.useRef<Map<string, PositionOverride>>(new Map());
-  // Must comfortably exceed the position mutation's debounce (~500ms) + server
+  // Same idea for resize: hold the new size after a resize ends so a rebuild during
+  // the debounced persist doesn't revert to the previous size (~1s later). Position
+  // had this protection; resize did not — the "components revert their size" bug.
+  const localSizesRef = React.useRef<Map<string, SizeOverride>>(new Map());
+  // Must comfortably exceed the position/size mutation's debounce (~500ms) + server
   // round-trip + any in-flight refetch, so a stale revert in that window is masked.
   const LOCAL_POSITION_MAX_AGE_MS = 2500;
 
@@ -432,10 +441,16 @@ export function Canvas({
       // Apply optimistic post-drag positions so a rebuild before the drag is durably
       // persisted doesn't flash the node back to its pre-drag position. See
       // positionOverrides.ts for the full rationale (and its unit tests).
-      const newNodes = applyLocalPositionOverrides(
-        [...baseNodes, ...extraNodes],
-        localPositionsRef.current,
-        Date.now(),
+      const now = Date.now();
+      const newNodes = applyLocalSizeOverrides(
+        applyLocalPositionOverrides(
+          [...baseNodes, ...extraNodes],
+          localPositionsRef.current,
+          now,
+          LOCAL_POSITION_MAX_AGE_MS,
+        ),
+        localSizesRef.current,
+        now,
         LOCAL_POSITION_MAX_AGE_MS,
       );
 
@@ -525,6 +540,21 @@ export function Canvas({
                   width: Math.round(change.dimensions.width),
                   height: Math.round(change.dimensions.height),
                 };
+                // Hold the new size (and position — a top/left resize also moves the
+                // node) locally until the item cache reflects the resize, so a rebuild
+                // during the debounced persist doesn't revert to the previous size.
+                // Keyed by node.id to match rebuildNodes / applyLocal*Overrides.
+                const at = Date.now();
+                localSizesRef.current.set(node.id, {
+                  width: afterSize.width,
+                  height: afterSize.height,
+                  at,
+                });
+                localPositionsRef.current.set(node.id, {
+                  x: node.position.x,
+                  y: node.position.y,
+                  at,
+                });
                 // When resizing from top/left edges, position also changes
                 // Include both size and position to keep the correct corner anchored
                 onItemChange(itemId, {
