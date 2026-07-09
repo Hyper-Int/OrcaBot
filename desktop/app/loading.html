@@ -62,6 +62,21 @@
   </div>
   <script>
     var REDIRECT = 'http://localhost:8788/dashboards?desktop=1';
+    // The dev-auth surface token is only reliably fetchable from THIS trusted
+    // local (tauri://) origin — the remote frontend at :8788 can't count on
+    // Tauri IPC in a packaged build. Grab it here and hand it to the frontend
+    // via the redirect URL. The VM can't reach :8788, so it can't scrape it.
+    var SURFACE = '';
+    try {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        window.__TAURI__.core.invoke('get_surface_token')
+          .then(function(t){ if (t) SURFACE = t; })
+          .catch(function(){});
+      }
+    } catch (e) {}
+    function redirectUrl(){
+      return REDIRECT + (SURFACE ? '&surface=' + encodeURIComponent(SURFACE) : '');
+    }
     var MANUAL_AFTER = 8;   // seconds -> offer "open anyway"
     var FAIL_AFTER   = 60;  // seconds with required services down -> error state
     // Boot stages in start order. `required` gates the redirect; the VM boots in
@@ -136,13 +151,13 @@
       Promise.all(STEPS.map(function(s){ return s.up ? Promise.resolve(true) : probe(s.url).then(function(u){ s.up=u; return u; }); }))
         .then(function(){
           var ready = STEPS.every(function(s){ return !s.required || s.up; });
-          if (ready && !doneRedirect){ doneRedirect = true; render(); setTimeout(function(){ window.location.replace(REDIRECT); }, 500); return; }
+          if (ready && !doneRedirect){ doneRedirect = true; render(); setTimeout(function(){ window.location.replace(redirectUrl()); }, 500); return; }
           if (!ready && elapsed() >= FAIL_AFTER){ failed = true; }
           render();
         });
     }
 
-    $('openAnyway').addEventListener('click', function(){ window.location.replace(REDIRECT); });
+    $('openAnyway').addEventListener('click', function(){ window.location.replace(redirectUrl()); });
     $('retryBtn').addEventListener('click', function(){ window.location.reload(); });
     $('quitBtn').addEventListener('click', function(){
       try { window.__TAURI__.core.invoke('quit_app'); } catch(e) { try { window.close(); } catch(_){} }

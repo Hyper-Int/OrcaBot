@@ -121,10 +121,40 @@ async function fetchSurfaceToken(): Promise<string | null> {
   }
 }
 
+/**
+ * The trusted loading screen (a local tauri:// page whose Tauri IPC always
+ * works) hands the surface token to the frontend via ?surface= on the redirect,
+ * because the remote-origin frontend can't rely on Tauri IPC in a packaged
+ * build. Read it once and strip it from the URL so it doesn't linger.
+ */
+function readSurfaceTokenFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("surface");
+    if (t) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("surface");
+      window.history.replaceState({}, "", url.toString());
+      return t;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 /** Fetch + cache the surface token once. Await before making authed requests. */
 export async function ensureSurfaceToken(): Promise<string | null> {
   if (cachedSurfaceToken) return cachedSurfaceToken;
   if (!DESKTOP_MODE) return null;
+  // Prefer the token handed off in the URL by the loading screen (robust even
+  // when remote-origin Tauri IPC is unavailable); fall back to the IPC command.
+  const fromUrl = readSurfaceTokenFromUrl();
+  if (fromUrl) {
+    cachedSurfaceToken = fromUrl;
+    return fromUrl;
+  }
   if (!surfaceTokenPromise) {
     surfaceTokenPromise = fetchSurfaceToken().then((t) => {
       cachedSurfaceToken = t;
