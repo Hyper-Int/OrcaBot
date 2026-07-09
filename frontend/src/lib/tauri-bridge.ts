@@ -156,10 +156,22 @@ export async function ensureSurfaceToken(): Promise<string | null> {
     return fromUrl;
   }
   if (!surfaceTokenPromise) {
-    surfaceTokenPromise = fetchSurfaceToken().then((t) => {
-      cachedSurfaceToken = t;
-      return t;
-    });
+    surfaceTokenPromise = fetchSurfaceToken()
+      .then((t) => {
+        cachedSurfaceToken = t;
+        // Do NOT cache a failed fetch. If the token wasn't available yet (the
+        // Tauri IPC bridge can be unreachable during an early / headless pre-window
+        // load), clear the promise so the next caller retries instead of forever
+        // returning this poisoned null. HTTP masks the miss via the session cookie,
+        // but cross-origin WebSockets get no cookie and depend on this token — so a
+        // one-time early failure would otherwise wedge every WS for the whole session.
+        if (!t) surfaceTokenPromise = null;
+        return t;
+      })
+      .catch(() => {
+        surfaceTokenPromise = null;
+        return null;
+      });
   }
   return surfaceTokenPromise;
 }

@@ -90,19 +90,36 @@ export abstract class BaseWebSocketManager {
 
     this.manualClose = false;
     const newState = this.reconnectAttempts > 0 ? "reconnecting" : "connecting";
-    console.log(`[WS] Connecting to ${this.url} (attempt ${this.reconnectAttempts + 1})`);
     this.setState(newState);
 
-    try {
-      this.ws = new WebSocket(this.url);
-      // Enable binary message handling
-      this.ws.binaryType = "arraybuffer";
-      this.setupEventListeners();
-      this.startConnectTimeout();
-    } catch (error) {
-      console.error(`[WS] Connection error:`, error);
-      this.handleError(error as Error);
-    }
+    // Resolve the URL just-in-time. Subclasses may need to await an auth token
+    // (e.g. the desktop surface token) that wasn't ready at construct time, and
+    // rebuild the URL on every (re)connect rather than freezing a tokenless one.
+    void this.resolveUrl()
+      .then((url) => {
+        // A disconnect() during URL resolution must abort this connect.
+        if (this.manualClose) return;
+        console.log(`[WS] Connecting to ${url} (attempt ${this.reconnectAttempts + 1})`);
+        this.ws = new WebSocket(url);
+        // Enable binary message handling
+        this.ws.binaryType = "arraybuffer";
+        this.setupEventListeners();
+        this.startConnectTimeout();
+      })
+      .catch((error) => {
+        console.error(`[WS] Connection error:`, error);
+        this.handleError(error as Error);
+      });
+  }
+
+  /**
+   * Resolve the connection URL immediately before opening the socket. The base
+   * returns the static URL from the constructor; subclasses override this to await
+   * auth (surface token) and append it fresh on every connect/reconnect — so a
+   * token that resolves after construct is applied instead of being frozen out.
+   */
+  protected async resolveUrl(): Promise<string> {
+    return this.url;
   }
 
   /**

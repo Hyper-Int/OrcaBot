@@ -24,6 +24,7 @@ import { useTerminalOverlay } from "@/components/terminal";
 import { HelpButton } from "@/components/help/HelpDialog";
 import { browserDoc } from "@/docs/content/browser";
 import { API, DEV_MODE_ENABLED } from "@/config/env";
+import { ensureSurfaceToken, getCachedSurfaceToken } from "@/lib/tauri-bridge";
 import { ApiError } from "@/lib/api/client";
 import { perfStart, perfMark, perfEnd, perfCancel, perfActive } from "@/lib/perf";
 import { getDashboardBrowserStatus, openDashboardBrowser, startDashboardBrowser, stopDashboardBrowser } from "@/lib/api/cloudflare/dashboards";
@@ -89,6 +90,22 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const lastOpenedRef = React.useRef<string | null>(null);
   const user = useAuthStore((state) => state.user);
+  // Desktop surface token for the VNC WS. Resolve it async (the sync cache can be
+  // null on an early load); when it arrives the vncWsUrl memo recomputes and the
+  // RFB reconnects with `&surface=`. Cross-origin WS gets no session cookie, so
+  // this is the only dev-auth proof the control plane accepts.
+  const [surfaceToken, setSurfaceToken] = React.useState<string | null>(
+    getCachedSurfaceToken()
+  );
+  React.useEffect(() => {
+    let active = true;
+    void ensureSurfaceToken().then((t) => {
+      if (active) setSurfaceToken(t);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const isMinimized = data.metadata?.minimized === true;
   const overlay = useTerminalOverlay();
   // IMPORTANT: depend on the stable `bringToFront` callback, NOT the whole `overlay`
@@ -235,9 +252,14 @@ export function BrowserBlock({ id, data, selected }: NodeProps<BrowserNode>) {
       params.set("user_email", user.email);
       params.set("user_name", user.name);
     }
+    // Desktop gates dev-auth on the surface token; a WS can't send the header, so
+    // pass it as a query param (null on web / non-surface builds → omitted).
+    if (surfaceToken) {
+      params.set("surface", surfaceToken);
+    }
     const qs = params.toString();
     return qs ? `${wsUrl}?${qs}` : wsUrl;
-  }, [dashboardId, user]);
+  }, [dashboardId, user, surfaceToken]);
 
   // Times the VNC client phase (WS handshake → first frame), i.e. the part this
   // native-noVNC change actually targets — separate from chromium cold-boot.

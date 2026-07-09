@@ -613,7 +613,16 @@ pub fn quit_app(app: tauri::AppHandle) {
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).
 #[tauri::command]
 pub fn get_surface_token() -> String {
-    crate::surface_token().to_string()
+    // DIAGNOSTIC (surface-ws-diag): prove whether the webview actually invokes this
+    // IPC command. If this line never appears in headless.log after the GUI loads,
+    // the token isn't being delivered (IPC unreachable at the remote origin) and the
+    // WS-auth failure is a delivery bug, not a missing-await bug.
+    let t = crate::surface_token();
+    eprintln!(
+        "[surface-ws-diag] get_surface_token invoked by webview -> returning token len={}",
+        t.len()
+    );
+    t.to_string()
 }
 
 /// Open an http(s) URL in the OS default browser. OAuth connect flows use this
