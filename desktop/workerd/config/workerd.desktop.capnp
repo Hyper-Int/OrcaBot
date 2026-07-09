@@ -13,7 +13,16 @@ using Workerd = import "/workerd.capnp";
 const config :Workerd.Config = (
   services = [
     (name = "internet", network = (
-      allow = ["public", "private", "local"]
+      # public = internet APIs (OAuth token exchange, provider APIs); local =
+      # the loopback d1-shim (:9001) + sandbox (:8080). "private" is deliberately
+      # dropped so a control-plane SSRF can't reach private-LAN hosts
+      # (10.0.0.0/8, 192.168.0.0/16, …) — nothing here needs it.
+      allow = ["public", "local"],
+      # Enable outbound HTTPS from the control-plane worker (OAuth token
+      # exchange, provider APIs, Resend, etc.). Without tlsOptions, workerd's
+      # network service is HTTP-only and every server-side fetch to an https://
+      # URL fails with "this HttpClient doesn't support HTTPS".
+      tlsOptions = (trustBrowserCas = true)
     )),
     (name = "d1-shim", external = (
       address = "127.0.0.1:9001",
@@ -35,13 +44,20 @@ const config :Workerd.Config = (
         (name = "D1_SHIM", service = "d1-shim"),
         (name = "D1_SHIM_DEBUG", fromEnvironment = "D1_SHIM_DEBUG"),
         (name = "DEV_AUTH_ENABLED", fromEnvironment = "DEV_AUTH_ENABLED"),
+        # Per-boot token that gates dev-auth to the host frontend. The frontend
+        # sends it as X-Orcabot-Surface; the sandbox VM never has it, so a VM
+        # process reaching :8787 can't spoof user auth. Empty = not enforced.
+        (name = "SURFACE_TOKEN", fromEnvironment = "SURFACE_TOKEN"),
         (name = "ALLOWED_ORIGINS", fromEnvironment = "ALLOWED_ORIGINS"),
         (name = "FRONTEND_URL", fromEnvironment = "FRONTEND_URL"),
 
         # Secrets / crypto
         (name = "SECRETS_ENCRYPTION_KEY", fromEnvironment = "SECRETS_ENCRYPTION_KEY"),
 
-        # OAuth — pass through optionally; empty = feature disabled
+        # OAuth — pass through optionally; empty = feature disabled.
+        # Desktop is a PUBLIC OAuth client (embedded client_id, no protectable
+        # secret) so it uses the PKCE flow — always on here, unset in cloud.
+        (name = "OAUTH_PUBLIC_CLIENT", text = "true"),
         (name = "OAUTH_REDIRECT_BASE", fromEnvironment = "OAUTH_REDIRECT_BASE"),
         (name = "GOOGLE_CLIENT_ID", fromEnvironment = "GOOGLE_CLIENT_ID"),
         (name = "GOOGLE_CLIENT_SECRET", fromEnvironment = "GOOGLE_CLIENT_SECRET"),

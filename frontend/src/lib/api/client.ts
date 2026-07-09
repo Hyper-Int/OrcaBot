@@ -3,6 +3,7 @@
 // REVISION: api-client-v2-error-body-single-read
 
 import { getAuthHeaders } from "@/stores/auth-store";
+import { ensureSurfaceToken } from "@/lib/tauri-bridge";
 import { trackEvent } from "@/lib/analytics";
 
 const API_CLIENT_REVISION = "api-client-v2-error-body-single-read";
@@ -71,6 +72,10 @@ export async function apiFetch<T>(
     }
   }
 
+  // On desktop, ensure the surface token is loaded before we build auth headers,
+  // so the very first authed request already carries X-Orcabot-Surface (the
+  // control plane requires it to honor dev-auth).
+  await ensureSurfaceToken();
   const authHeaders = getAuthHeaders();
 
   const fetchPromise = (async (): Promise<T> => {

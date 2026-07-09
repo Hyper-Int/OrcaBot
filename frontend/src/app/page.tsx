@@ -628,6 +628,19 @@ export default function Home() {
             <a href="/terms">Terms of Service</a> and{" "}
             <a href="/privacy">Privacy Policy</a>
           </p>
+          <a
+            href="/download"
+            style={{
+              display: "inline-block",
+              marginTop: "1.9rem",
+              fontSize: "0.8rem",
+              fontWeight: 500,
+              color: "rgba(207,224,255,0.7)",
+              textDecoration: "none",
+            }}
+          >
+            Download the macOS app →
+          </a>
           <a href="#about" className="scroll-hint">
             <span>Explore</span>
             <svg

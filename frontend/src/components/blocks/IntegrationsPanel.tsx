@@ -49,7 +49,8 @@ import {
 } from "@/lib/api/cloudflare/integration-policies";
 import { PolicyEditorDialog } from "./PolicyEditorDialog";
 import { AuditLogViewer } from "./AuditLogViewer";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 
 // OAuth connect URLs by provider
 function getOAuthConnectUrl(provider: IntegrationProvider, dashboardId: string): string | null {
@@ -447,6 +448,25 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
   const handleConnect = (provider: IntegrationProvider) => {
     const connectUrl = getOAuthConnectUrl(provider, dashboardId);
     if (!connectUrl) return;
+
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll the panel's connection state (the available-integrations query's
+      // `connected` flag) instead of the popup-close handshake.
+      connectViaBrowser({
+        url: connectUrl.replace(/&mode=popup/, "").replace(/\?mode=popup&?/, "?"),
+        checkConnected: async () => {
+          const list = await listAvailableIntegrations(dashboardId, terminalId);
+          return Boolean(list.find((a) => a.provider === provider)?.connected);
+        },
+        onConnected: () => {
+          queryClient.invalidateQueries({
+            queryKey: ["available-integrations", dashboardId, terminalId],
+          });
+        },
+      });
+      return;
+    }
 
     const popup = window.open(connectUrl, `${provider}-connect`, "width=600,height=700");
     if (!popup) return;

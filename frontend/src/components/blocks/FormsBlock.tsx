@@ -45,7 +45,8 @@ import {
   type Form,
   type FormResponse,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -200,6 +201,21 @@ export function FormsBlock({ id, data, selected }: NodeProps<FormsNode>) {
   // Connect Forms
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/google/forms/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getFormsIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try { await setupFormsMirror(dashboardId); } catch { /* ignore */ }
+            await loadIntegration();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/google/forms/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "forms-connect", "width=600,height=700");
 

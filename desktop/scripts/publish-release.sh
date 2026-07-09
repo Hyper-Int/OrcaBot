@@ -25,17 +25,21 @@ VERSION=$(grep -m1 '"version"' "$SRC_TAURI/tauri.conf.json" | sed -E 's/.*"versi
 [ -n "$VERSION" ] || { echo "could not read version from tauri.conf.json"; exit 1; }
 TAG="v$VERSION"
 
-# Match THIS version's DMG explicitly. Tauri doesn't clean the bundle dir
-# between builds, so a bare *.dmg glob could pick up a stale previous-version
-# (or pre-rename "Orcabot Desktop_...") DMG while latest.json points at the
-# current tarball.
+# Fresh-install download for THIS version: a DMG if present, else a
+# signed+stapled .app zip (produced for salvaged builds that never reached the
+# DMG step). Match the version explicitly — Tauri doesn't clean the bundle dir,
+# so a bare glob could pick up a stale previous-version file while latest.json
+# points at the current tarball.
 set -- "$BUNDLE"/dmg/Orcabot_"$VERSION"_*.dmg
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-  echo "expected exactly one Orcabot_${VERSION}_*.dmg in $BUNDLE/dmg — found: $*"
-  echo "(clean the bundle dir, or rebuild this version's DMG)"
+if [ "$#" -eq 1 ] && [ -f "$1" ]; then
+  FRESH="$1"
+elif [ -f "$BUNDLE/macos/Orcabot_${VERSION}_aarch64.zip" ]; then
+  FRESH="$BUNDLE/macos/Orcabot_${VERSION}_aarch64.zip"
+else
+  echo "no Orcabot_${VERSION}_*.dmg or Orcabot_${VERSION}_aarch64.zip found in $BUNDLE"
+  echo "(build the DMG, or create the .app zip for a salvaged release)"
   exit 1
 fi
-DMG="$1"
 TARBALL="$BUNDLE/macos/Orcabot.app.tar.gz"
 SIG="$TARBALL.sig"
 for f in "$TARBALL" "$SIG"; do
@@ -63,22 +67,63 @@ cat > "$LATEST" <<JSON
 }
 JSON
 
+# Preflight gate: boot the built stack and verify the core user path (dashboards
+# load + dev-auth surface-token gate + CORS) before shipping — so a build that
+# can't load dashboards never gets published. Override with SKIP_PREFLIGHT=1.
+if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
+  echo "== release preflight (boots the built stack, ~1-2 min) =="
+  if ! "$SCRIPT_DIR/../tests/release-preflight.sh"; then
+    echo
+    echo "PREFLIGHT FAILED — not publishing $TAG."
+    echo "Fix the build, or re-run with SKIP_PREFLIGHT=1 to publish anyway."
+    exit 1
+  fi
+fi
+
 echo "Publishing $TAG to $REPO:"
-echo "  $(basename "$DMG")"
+echo "  $(basename "$FRESH")"
 echo "  Orcabot.app.tar.gz (+ .sig)"
 echo "  latest.json -> $URL"
 
+# Create the release (or reuse it), attaching only the small manifest files via
+# gh. The large assets (~1GB each) are uploaded separately below with a real
+# progress bar — gh's uploader only shows a spinner, useless for big files.
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-  echo "Release $TAG exists — uploading/replacing assets."
-  gh release upload "$TAG" --repo "$REPO" --clobber "$DMG" "$TARBALL" "$SIG" "$LATEST"
+  echo "Release $TAG exists — updating assets."
+  gh release upload "$TAG" --repo "$REPO" --clobber "$SIG" "$LATEST"
 else
   gh release create "$TAG" --repo "$REPO" \
     --title "Orcabot $TAG" \
     --notes "Orcabot desktop $TAG" \
-    "$DMG" "$TARBALL" "$SIG" "$LATEST"
+    "$SIG" "$LATEST"
 fi
+
+RELEASE_ID=$(gh release view "$TAG" --repo "$REPO" --json databaseId --jq .databaseId)
+TOKEN=$(gh auth token)
+
+# Upload one large asset with a curl progress bar. POST is create-only (422s on a
+# duplicate name), so clobber by deleting any same-named asset first. Falls back
+# to `gh` if curl fails, so a bad upload never leaves the release half-published.
+upload_big() {
+  _f="$1"; _name=$(basename "$_f")
+  echo "Uploading $_name ($(du -h "$_f" | awk '{print $1}'))..."
+  _old=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" \
+           --jq ".[] | select(.name==\"$_name\") | .id" 2>/dev/null || true)
+  [ -n "${_old:-}" ] && gh api -X DELETE "repos/$REPO/releases/assets/$_old" >/dev/null 2>&1 || true
+  if ! curl -fL --progress-bar -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/octet-stream" \
+        -T "$_f" \
+        "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$_name" \
+        -o /dev/null; then
+    echo "  curl upload failed — falling back to gh (spinner, no bar)."
+    gh release upload "$TAG" --repo "$REPO" --clobber "$_f"
+  fi
+}
+upload_big "$TARBALL"
+upload_big "$FRESH"
 
 echo
 echo "Done."
-echo "  Direct download: https://github.com/$REPO/releases/download/$TAG/$(basename "$DMG")"
+echo "  Direct download: https://github.com/$REPO/releases/download/$TAG/$(basename "$FRESH")"
 echo "  Updater manifest: https://github.com/$REPO/releases/latest/download/latest.json"

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v10-updater-prompt
-const MODULE_REVISION: &str = "main-v10-updater-prompt";
+// REVISION: main-v11-vm-image-ondemand
+const MODULE_REVISION: &str = "main-v11-vm-image-ondemand";
 
 mod commands;
 mod vm;
@@ -116,6 +116,43 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
   if let Ok(value) = std::env::var(key) {
     if !value.is_empty() {
       workerd_env.push((key, value));
+    }
+  }
+}
+
+/// Per-boot token that gates dev-auth to the trusted host frontend. Generated
+/// once at startup, passed to the control-plane worker (`SURFACE_TOKEN`) and
+/// handed to the GUI webview via the `get_surface_token` command. The sandbox VM
+/// can reach the control plane on :8787 but is never given this token — and it
+/// can't reach the frontend on :8788 to scrape it — so a process in the VM can't
+/// spoof dev-auth to impersonate the user. See desktop/CLAUDE.md (trust boundary).
+static SURFACE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn surface_token() -> &'static str {
+  SURFACE_TOKEN.get_or_init(|| {
+    let mut buf = [0u8; 32];
+    #[cfg(unix)]
+    {
+      use std::io::Read;
+      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+      }
+    }
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+  })
+}
+
+/// Persist the surface token to a host-only file (0600) so trusted host clients
+/// that use dev-auth — the `orcabot` CLI and scripts — can read it and send the
+/// X-Orcabot-Surface header. The app-data dir is NOT shared into the sandbox VM
+/// (only /workspace is), so a process in the VM can't read it.
+fn write_surface_token_file(data_dir: &std::path::Path) {
+  let path = data_dir.join("surface-token");
+  if std::fs::write(&path, surface_token()).is_ok() {
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
   }
 }
@@ -355,12 +392,18 @@ impl DesktopServices {
       }
     };
 
+    // Host-only token file for trusted dev-auth clients (the CLI / scripts).
+    write_surface_token_file(&data_dir);
+
     let mut workerd_env = vec![
       ("D1_HTTP_URL", "http://d1-shim".to_string()),
       ("SANDBOX_URL", sandbox_url),
       ("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token),
       ("INTERNAL_API_TOKEN", internal_api_token.clone()),
       ("DEV_AUTH_ENABLED", dev_auth_enabled),
+      // Gates dev-auth to the host frontend (which sends X-Orcabot-Surface with
+      // this value); the sandbox VM never gets it, so it can't spoof user auth.
+      ("SURFACE_TOKEN", surface_token().to_string()),
       ("SECRETS_ENCRYPTION_KEY", secrets_key),
       ("OAUTH_REDIRECT_BASE", std::env::var("OAUTH_REDIRECT_BASE")
         .unwrap_or_else(|_| format!("http://localhost:{}", controlplane_port))),
@@ -456,19 +499,25 @@ impl DesktopServices {
     // Check if VM resources exist
     let vm_resource_paths = vm::image::VMResourcePaths::from_resource_root(resource_root);
 
-    // VM resources are optional - if not present, skip VM startup
-    if !vm_resource_paths.image.exists() {
-      eprintln!(
-        "VM image not found at {}; sandbox VM disabled.",
-        vm_resource_paths.image.display()
-      );
-      return Ok(());
-    }
-
     eprintln!("Starting sandbox VM ({})...", vm::vm_backend_name());
 
-    // Stage VM resources to app data directory
-    let staged_paths = vm::image::stage_vm_resources(&vm_resource_paths, data_dir)?;
+    // Stage VM resources. The disk image isn't bundled (it would bloat every
+    // auto-update); ensure_vm_image downloads + verifies it on first use, or
+    // adopts an image an earlier install already staged. Log download progress.
+    let last_pct = std::cell::Cell::new(-1i64);
+    let progress = |done: u64, total: u64| {
+      if total > 0 {
+        let pct = (done.saturating_mul(100) / total) as i64;
+        if pct != last_pct.get() && pct % 5 == 0 {
+          last_pct.set(pct);
+          eprintln!(
+            "[vm-image] downloading sandbox image… {}% ({}/{} bytes)",
+            pct, done, total
+          );
+        }
+      }
+    };
+    let staged_paths = vm::image::stage_vm_resources(&vm_resource_paths, data_dir, &progress)?;
 
     // Create workspace directory
     let workspace_dir = data_dir.join("workspace");
@@ -768,6 +817,8 @@ fn main() {
       commands::import_folder,
       commands::switch_to_cli,
       commands::quit_app,
+      commands::get_surface_token,
+      commands::open_url,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

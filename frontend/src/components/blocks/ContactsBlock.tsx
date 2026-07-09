@@ -47,7 +47,8 @@ import {
   type ContactsStatus,
   type Contact,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -217,6 +218,22 @@ export function ContactsBlock({ id, data, selected }: NodeProps<ContactsNode>) {
   // Connect Contacts
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/google/contacts/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getContactsIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try { await setupContactsMirror(dashboardId); } catch { /* ignore */ }
+            await loadIntegration();
+            await loadContacts();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/google/contacts/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "contacts-connect", "width=600,height=700");
 

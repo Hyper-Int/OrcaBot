@@ -223,6 +223,38 @@ export async function getGithubIntegration(
   return apiGet<GithubIntegration>(url.toString());
 }
 
+export interface GithubDeviceStart {
+  state: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** Desktop public-client GitHub connect (device flow): start → returns a user
+ *  code to enter at github.com/login/device (no secret, no redirect). */
+export async function startGithubDevice(
+  dashboardId?: string
+): Promise<GithubDeviceStart> {
+  return apiPost<GithubDeviceStart>(
+    `${API.cloudflare.base}/integrations/github/device/start`,
+    { dashboard_id: dashboardId ?? null }
+  );
+}
+
+export interface GithubDevicePoll {
+  status: "pending" | "slow_down" | "complete" | "error";
+  error?: string;
+}
+
+/** Poll the GitHub device flow until it returns complete/error. */
+export async function pollGithubDevice(state: string): Promise<GithubDevicePoll> {
+  return apiPost<GithubDevicePoll>(
+    `${API.cloudflare.base}/integrations/github/device/poll`,
+    { state }
+  );
+}
+
 export async function listGithubRepos(): Promise<{ connected: boolean; repos: GithubRepo[]; error?: string }> {
   return apiGet<{ connected: boolean; repos: GithubRepo[]; error?: string }>(API.cloudflare.githubRepos);
 }

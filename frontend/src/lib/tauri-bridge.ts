@@ -102,6 +102,113 @@ export async function switchToCli(): Promise<boolean> {
   return true;
 }
 
+// ---- Desktop surface token ----
+// Per-boot token that gates dev-auth to the trusted host frontend. Fetched once
+// from the Tauri host and cached; the control plane requires the matching
+// X-Orcabot-Surface header on desktop, so a process in the sandbox VM (which
+// can't reach this command) can't spoof dev-auth. See desktop/CLAUDE.md.
+let cachedSurfaceToken: string | null = null;
+let surfaceTokenPromise: Promise<string | null> | null = null;
+
+async function fetchSurfaceToken(): Promise<string | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    const t = (await invoke("get_surface_token")) as string;
+    return typeof t === "string" && t ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The trusted loading screen (a local tauri:// page whose Tauri IPC always
+ * works) hands the surface token to the frontend via ?surface= on the redirect,
+ * because the remote-origin frontend can't rely on Tauri IPC in a packaged
+ * build. Read it once and strip it from the URL so it doesn't linger.
+ */
+function readSurfaceTokenFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("surface");
+    if (t) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("surface");
+      window.history.replaceState({}, "", url.toString());
+      return t;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Fetch + cache the surface token once. Await before making authed requests. */
+export async function ensureSurfaceToken(): Promise<string | null> {
+  if (cachedSurfaceToken) return cachedSurfaceToken;
+  if (!DESKTOP_MODE) return null;
+  // Prefer the token handed off in the URL by the loading screen (robust even
+  // when remote-origin Tauri IPC is unavailable); fall back to the IPC command.
+  const fromUrl = readSurfaceTokenFromUrl();
+  if (fromUrl) {
+    cachedSurfaceToken = fromUrl;
+    return fromUrl;
+  }
+  if (!surfaceTokenPromise) {
+    surfaceTokenPromise = fetchSurfaceToken().then((t) => {
+      cachedSurfaceToken = t;
+      return t;
+    });
+  }
+  return surfaceTokenPromise;
+}
+
+/** Synchronously read the cached surface token (null until ensureSurfaceToken resolves). */
+export function getCachedSurfaceToken(): string | null {
+  return cachedSurfaceToken;
+}
+
+/**
+ * Open an external URL. On desktop, opens the OS default browser (window.open is
+ * a no-op inside the Tauri webview); on web, falls back to window.open. Used for
+ * OAuth connect flows.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (invoke) {
+    try {
+      await invoke("open_url", { url });
+      return;
+    } catch {
+      /* fall through to window.open */
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+/**
+ * Subscribe to the Tauri window regaining focus (the app becoming active again
+ * after the OS browser). More reliable than the webview's own `focus` event
+ * across an OS app-switch. Returns an unsubscribe function; no-op off desktop.
+ */
+export async function onAppFocus(cb: () => void): Promise<() => void> {
+  if (!DESKTOP_MODE || typeof window === "undefined") return () => {};
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const listen = (window as any).__TAURI__?.event?.listen;
+    if (typeof listen === "function") {
+      const unlisten = await listen("tauri://focus", () => cb());
+      return typeof unlisten === "function" ? unlisten : () => {};
+    }
+  } catch {
+    /* fall through — the interval + window focus fallback still runs */
+  }
+  return () => {};
+}
+
 /** Open a native folder picker dialog. Returns the selected path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
   if (!DESKTOP_MODE) return null;

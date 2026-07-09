@@ -31,6 +31,9 @@ export interface Env {
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
+  /** Desktop per-boot token: when set, dev-auth is only honored for requests
+   *  carrying a matching X-Orcabot-Surface header (blocks VM-origin spoofing). */
+  SURFACE_TOKEN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   AUTH_ALLOWED_EMAILS?: string;
@@ -60,6 +63,8 @@ export interface Env {
   /** WhatsApp Business phone number in E.164 digits-only (e.g., "15551234567") for hybrid mode */
   WHATSAPP_BUSINESS_PHONE?: string;
   OAUTH_REDIRECT_BASE?: string;
+  /** "true" on the desktop build → OAuth uses the public-client (PKCE) flow. */
+  OAUTH_PUBLIC_CLIENT?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
   ALLOWED_ORIGINS?: string;
