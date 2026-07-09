@@ -1,6 +1,6 @@
 [package]
 name = "orcabot-desktop"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 description = "Orcabot Desktop shell"
 license = "UNLICENSED"
@@ -28,6 +28,8 @@ serde_json = "1"
 walkdir = "2"
 libc = "0.2"
 flate2 = "1"
+# Verify the on-demand VM image download against a hash baked into the binary.
+sha2 = "0.10"
 filetime = "0.2"
 ctrlc = "3"
 # SIGUSR1/SIGUSR2 surface toggle (show/hide the GUI window without restarting).
@@ -41,6 +43,10 @@ ratatui = "0.29"
 tungstenite = { version = "0.21", default-features = false, features = ["handshake"] }
 # VT/ANSI parser to render PTY output (agents draw full-screen TUIs).
 vt100 = "0.15"
+
+[dev-dependencies]
+# Used by the vm/image.rs unit tests (was referenced but never declared).
+tempfile = "3"
 
 # Note: virt-fwk for native Virtualization.framework on macOS is not yet
 # stable enough. The current implementation uses QEMU as a fallback.

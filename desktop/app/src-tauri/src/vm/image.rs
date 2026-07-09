@@ -1,10 +1,13 @@
-//! VM image staging and decompression utilities.
+//! VM image staging, download-on-demand, and decompression utilities.
 //!
-//! Handles extracting bundled VM images from app resources to
-//! the app data directory, with smart caching based on file
-//! modification times and sizes.
+//! The multi-GB disk image is NOT bundled in the app — it's fetched on demand
+//! per image version and verified against a SHA-256 baked into the binary. The
+//! small resources (kernel/initrd/vz-helper) are still staged from the bundle.
+//
+// REVISION: vm-image-ondemand-v1
 
 use super::VMError;
+use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -259,11 +262,15 @@ impl VMResourcePaths {
 pub fn stage_vm_resources(
     resource_paths: &VMResourcePaths,
     data_dir: &Path,
+    progress: &dyn Fn(u64, u64),
 ) -> Result<VMResourcePaths, VMError> {
     let vm_dir = data_dir.join("vm");
     fs::create_dir_all(&vm_dir)?;
 
-    let staged_image = stage_image(&resource_paths.image, &vm_dir)?;
+    // The disk image is NOT bundled in the app (it would bloat every
+    // auto-update), so fetch/adopt it on demand instead of staging from a
+    // bundled resource.
+    let staged_image = ensure_vm_image(&resource_paths.image, data_dir, progress)?;
 
     let staged_kernel = if let Some(ref kernel) = resource_paths.kernel {
         Some(stage_image(kernel, &vm_dir)?)
@@ -308,6 +315,170 @@ pub fn stage_vm_resources(
         initrd: staged_initrd,
         vz_helper: staged_vz_helper,
     })
+}
+
+// ---------------------------------------------------------------------------
+// VM image: fetched on demand, not bundled.
+//
+// The multi-GB disk image would bloat every auto-update if bundled in the .app,
+// so it's hosted once per image version and downloaded on first use, verified
+// against a SHA-256 baked into this (notarized) binary. Installs that already
+// have the image staged adopt it with no download. Source of truth for the
+// version + hash + URL is `vm-image.json`, embedded at build time.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct VmImageManifest {
+    /// Image version tag (e.g. "v1"); bumps only when the image content changes.
+    pub version: String,
+    /// SHA-256 (hex) of the gzipped download artifact.
+    pub sha256: String,
+    /// Download URL for the gzipped image (sandbox.img.gz).
+    pub url: String,
+}
+
+/// The image manifest baked into the binary. Updated by
+/// `desktop/scripts/publish-vm-image.sh` when a new image is published.
+pub fn vm_image_manifest() -> VmImageManifest {
+    const MANIFEST: &str = include_str!("../../vm-image.json");
+    serde_json::from_str(MANIFEST).expect("vm-image.json is valid JSON")
+}
+
+fn read_marker(marker: &Path) -> Option<String> {
+    fs::read_to_string(marker).ok().map(|s| s.trim().to_string())
+}
+
+fn write_marker(marker: &Path, version: &str) {
+    let _ = fs::write(marker, version);
+}
+
+/// The image version that pre-versioning installs (before this scheme existed)
+/// actually shipped. A marker-less staged image can ONLY be that version, so it
+/// may be adopted without a download only while it's still the required version.
+const LEGACY_IMAGE_VERSION: &str = "v1";
+
+/// Ensure the VM disk image is present in the data dir and matches the required
+/// version, downloading + verifying it on demand. Returns the staged image path.
+///
+/// Resolution order:
+///  1. a local resource image (dev build / anything bundled) → stage it (trusted,
+///     mtime-cached);
+///  2. the data-dir image already staged for THIS version → use (fast);
+///  3. a data-dir image from a PRIOR install with no version marker → adopt it as
+///     the current version (migration — this build ships the same image content);
+///  4. otherwise download the gz artifact, verify its SHA-256, decompress.
+pub fn ensure_vm_image(
+    resource_image: &Path,
+    data_dir: &Path,
+    progress: &dyn Fn(u64, u64),
+) -> Result<PathBuf, VMError> {
+    let manifest = vm_image_manifest();
+    let vm_dir = data_dir.join("vm");
+    fs::create_dir_all(&vm_dir)?;
+    let target = vm_dir.join("sandbox.img");
+    let marker = vm_dir.join("sandbox.img.version");
+
+    // 1. Dev / bundled: a local resource image is the source of truth. stage_image
+    //    is mtime-cached, so this is cheap when unchanged and re-stages on change.
+    if resource_image.exists() {
+        let staged = stage_image(resource_image, &vm_dir)?;
+        write_marker(&marker, &manifest.version);
+        return Ok(staged);
+    }
+
+    // Packaged: no bundled image.
+    let marker_ver = read_marker(&marker);
+    if target.exists() {
+        if marker_ver.as_deref() == Some(manifest.version.as_str()) {
+            return Ok(target); // 2. correct version already staged
+        }
+        if marker_ver.is_none() && manifest.version == LEGACY_IMAGE_VERSION {
+            // 3. Migration from a pre-versioning install. Those installs shipped
+            //    the LEGACY_IMAGE_VERSION image, so a marker-less image is only
+            //    safe to adopt while that's still the required version. Once the
+            //    image moves on (v2+), a marker-less image is the OLD one and
+            //    must be re-downloaded — fall through.
+            write_marker(&marker, &manifest.version);
+            return Ok(target);
+        }
+        // marker present but a different version (or a marker-less image on a
+        // newer required version) → the image genuinely differs → download.
+    }
+
+    // 4. Download + verify + decompress.
+    eprintln!(
+        "[vm-image] fetching sandbox image {} from {}",
+        manifest.version, manifest.url
+    );
+    download_and_stage_image(&manifest, &vm_dir, &target, progress)?;
+    write_marker(&marker, &manifest.version);
+    Ok(target)
+}
+
+fn download_and_stage_image(
+    manifest: &VmImageManifest,
+    vm_dir: &Path,
+    target: &Path,
+    progress: &dyn Fn(u64, u64),
+) -> Result<(), VMError> {
+    let tmp_gz = vm_dir.join("sandbox.img.gz.part");
+
+    let resp = ureq::get(&manifest.url)
+        .call()
+        .map_err(|e| VMError::Download(format!("request failed: {e}")))?;
+    let total: u64 = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // Stream to disk, hashing as we go.
+    let mut reader = resp.into_reader();
+    let mut writer = BufWriter::new(File::create(&tmp_gz)?);
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut downloaded: u64 = 0;
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        writer.write_all(&buf[..n])?;
+        downloaded += n as u64;
+        progress(downloaded, total);
+    }
+    writer.flush()?;
+
+    let digest = hasher.finalize();
+    let got = hex_encode(digest.as_slice());
+    if got.to_lowercase() != manifest.sha256.to_lowercase() {
+        let _ = fs::remove_file(&tmp_gz);
+        return Err(VMError::Download(format!(
+            "checksum mismatch: expected {}, got {}",
+            manifest.sha256, got
+        )));
+    }
+
+    // Verified — decompress to a temp file, then atomically rename into place.
+    // A crash / disk-full mid-decompress must NOT leave a partial sandbox.img,
+    // or a later launch could mistake it for a complete (adoptable) image.
+    let tmp_img = vm_dir.join("sandbox.img.part");
+    if let Err(e) = decompress_gzip(&tmp_gz, &tmp_img) {
+        let _ = fs::remove_file(&tmp_img);
+        let _ = fs::remove_file(&tmp_gz);
+        return Err(e);
+    }
+    fs::rename(&tmp_img, target)?;
+    let _ = fs::remove_file(&tmp_gz);
+    Ok(())
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 #[cfg(test)]
