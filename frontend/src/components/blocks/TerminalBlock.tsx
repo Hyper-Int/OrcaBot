@@ -629,7 +629,41 @@ export function TerminalBlock({
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
-  const { deleteElements } = useReactFlow();
+  const { deleteElements, getViewport, setViewport } = useReactFlow();
+
+  // Right-drag pans the canvas even while the pointer is over the terminal.
+  // xterm captures normal (left) drags, so a large PTY is otherwise a pan trap;
+  // this drives React Flow's viewport directly on a right-button drag and
+  // swallows the follow-up context menu only if we actually panned.
+  const termPan = React.useRef<
+    { x0: number; y0: number; vx: number; vy: number; zoom: number; moved: boolean } | null
+  >(null);
+  const handleTermPanStart = React.useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 2) return; // right button only; left/middle stay with xterm
+      const vp = getViewport();
+      termPan.current = { x0: e.clientX, y0: e.clientY, vx: vp.x, vy: vp.y, zoom: vp.zoom, moved: false };
+      const onMove = (ev: MouseEvent) => {
+        const p = termPan.current;
+        if (!p) return;
+        const dx = ev.clientX - p.x0;
+        const dy = ev.clientY - p.y0;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.moved = true;
+        if (p.moved) setViewport({ x: p.vx + dx, y: p.vy + dy, zoom: p.zoom });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [getViewport, setViewport]
+  );
+  const handleTermContextMenu = React.useCallback((e: React.MouseEvent) => {
+    if (termPan.current?.moved) e.preventDefault();
+    termPan.current = null;
+  }, []);
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
   const [activePanel, setActivePanel] = React.useState<ActivePanel>(null);
@@ -4337,6 +4371,8 @@ export function TerminalBlock({
       <div
         className="relative flex-1 min-h-0 nodrag"
         style={{ overflow: "visible", pointerEvents: "auto", backgroundColor: terminalTheme.background }}
+        onMouseDown={handleTermPanStart}
+        onContextMenu={handleTermContextMenu}
       >
         <div className="h-full w-full" style={{ contain: "layout", backgroundColor: terminalTheme.background }}>
           <TerminalEmulator

@@ -648,6 +648,29 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("failed to open URL: {e}"))
 }
 
+/// Reveal the host workspace directory in the OS file manager (Finder/Explorer).
+/// Desktop-only convenience so users can find where the app stores their files.
+/// Takes no path from the frontend — it opens the app's own workspace dir only.
+#[tauri::command]
+pub async fn reveal_workspace(
+    state: tauri::State<'_, WorkspaceState>,
+) -> Result<(), String> {
+    let path = state.workspace_path.clone();
+    if path.as_os_str().is_empty() || !path.exists() {
+        return Err("workspace directory is not available".into());
+    }
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    cmd.arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to open workspace: {e}"))
+}
+
 #[tauri::command]
 pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]

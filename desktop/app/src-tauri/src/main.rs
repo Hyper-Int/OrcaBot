@@ -866,6 +866,7 @@ fn main() {
       commands::quit_app,
       commands::get_surface_token,
       commands::open_url,
+      commands::reveal_workspace,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

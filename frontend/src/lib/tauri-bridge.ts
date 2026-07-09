@@ -77,6 +77,17 @@ export async function getWorkspacePath(): Promise<WorkspaceInfo | null> {
   return invoke("get_workspace_path") as Promise<WorkspaceInfo>;
 }
 
+/** Reveal the host workspace directory in Finder/Explorer (desktop only). */
+export async function revealWorkspace(): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  try {
+    await invoke("reveal_workspace");
+  } catch {
+    /* ignore — desktop-only convenience */
+  }
+}
+
 /** Import a folder (or file) from source_path into the workspace. */
 export async function importFolder(
   sourcePath: string,
