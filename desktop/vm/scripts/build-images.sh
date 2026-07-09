@@ -70,15 +70,24 @@ set -euo pipefail
 apt-get update -qq
 apt-get install -y -qq e2fsprogs tar gzip linux-image-cloud-arm64 kmod > /dev/null
 
+# Build the ext4 image on the CONTAINER filesystem (/build), NOT the host-shared
+# -v mount (/output). Docker Desktop for macOS file-sharing does not reliably
+# flush thousands of incremental loop-mount writes back to the host image, so
+# building directly on /output silently truncates/drops files (e.g. the 167MB
+# opencode binary) with no error. We build locally, then copy the finished image
+# to /output ONCE at the end — a single sequential copy survives file-sharing.
+mkdir -p /build
+BUILD_IMG=/build/sandbox.img
+
 echo "Creating disk image (${IMAGE_SIZE_MB}MB)..."
-dd if=/dev/zero of=/output/sandbox.img bs=1M count=${IMAGE_SIZE_MB} status=progress
+dd if=/dev/zero of=$BUILD_IMG bs=1M count=${IMAGE_SIZE_MB} status=progress
 
 echo "Creating ext4 filesystem..."
-mkfs.ext4 -F -L rootfs /output/sandbox.img
+mkfs.ext4 -F -L rootfs $BUILD_IMG
 
 echo "Mounting and populating..."
 mkdir -p /mnt/rootfs
-mount -o loop /output/sandbox.img /mnt/rootfs
+mount -o loop $BUILD_IMG /mnt/rootfs
 
 # Extract rootfs from tarball
 echo "Extracting rootfs..."
@@ -515,9 +524,17 @@ cat > /mnt/rootfs/etc/hosts << "HOSTS"
 ::1	ip6-localhost ip6-loopback
 HOSTS
 
-# Sync and unmount
+# Sync and unmount the container-local image, then copy it to the host-shared
+# /output ONCE. A single sequential copy flushes reliably through Docker Desktop
+# file-sharing, unlike the many incremental loop-mount writes above.
 sync
 umount /mnt/rootfs
+sync
+
+echo "Copying finished image to /output..."
+cp $BUILD_IMG /output/sandbox.img
+sync
+rm -f $BUILD_IMG
 
 echo "Disk image created successfully!"
 ls -lh /output/sandbox.img
