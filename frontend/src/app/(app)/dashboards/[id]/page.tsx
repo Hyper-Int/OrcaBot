@@ -804,9 +804,13 @@ export default function DashboardPage() {
 
   // Workspace sidebar session: pick the first active session from any terminal
   const workspaceSessionId = React.useMemo(() => {
+    // Only browse the workspace through a LIVE session — a stopped session's sandbox
+    // is gone, so proxying files to it 404s ("E79709: session not found") and the
+    // sidebar shows a raw "Request failed with status 404". Never fall back to a
+    // stopped sessions[0]; if none is live, return undefined so the sidebar renders
+    // its empty state instead of polling a dead session.
     const session = sessions.find((s) => s.status === "active")
-      ?? sessions.find((s) => s.status === "creating")
-      ?? sessions[0];
+      ?? sessions.find((s) => s.status === "creating");
     return session?.id;
   }, [sessions]);
   // Build mapping from real IDs to stable keys for nodes that have them

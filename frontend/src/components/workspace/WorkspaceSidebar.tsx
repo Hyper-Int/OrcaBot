@@ -349,6 +349,14 @@ export function WorkspaceSidebar({
         setFileError(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to load files";
+        // A 404 here means the session's sandbox is gone (stopped or a stale
+        // sandbox id after a VM restart). That's not a real error for the sidebar —
+        // render a calm empty tree instead of a raw "Request failed with status 404".
+        if (/\b404\b|session not found|E797(09|37)/i.test(message)) {
+          setFileEntries((prev) => ({ ...prev, [path]: [] }));
+          setFileError(null);
+          return;
+        }
         setFileError(message);
       }
     },
