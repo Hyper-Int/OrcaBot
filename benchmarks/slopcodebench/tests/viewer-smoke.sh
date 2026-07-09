@@ -34,6 +34,14 @@ CP="http://127.0.0.1:8787"
 SB="http://127.0.0.1:8080"
 U="X-User-ID: dev-desktop"
 VZ_LOG="/tmp/vz-console.log"
+
+# Per-boot surface token: the control plane only trusts dev-auth when the
+# X-Orcabot-Surface header matches (devAuthSurfaceTrusted). Read it from the same
+# file the desktop app / CLI use so these host-side curls authenticate like the CLI.
+# Empty on pre-enforcement stacks (harmless — dev-auth trusted headerless there).
+SURFACE_TOKEN_FILE="${ORCABOT_SURFACE_TOKEN_FILE:-$HOME/Library/Application Support/com.orcabot.desktop/surface-token}"
+ST="$(cat "$SURFACE_TOKEN_FILE" 2>/dev/null | tr -d '[:space:]')"
+AUTH=(-H "$U" -H "X-Orcabot-Surface: $ST")  # dev-auth headers for every control-plane call
 RUNDIR="/workspace/.scb-smoke"
 LOG="$RUNDIR/run1.log"
 MARKER="SMOKE_VIEWER_MARKER_OK"
@@ -64,14 +72,14 @@ HAVE="$(X "grep -c $MARKER $LOG 2>/dev/null")"
 [ "$HAVE" = "1" ] && ok "run logfile created with marker" || bad "logfile/marker not present (got '$HAVE')"
 
 echo "[2] spawn a read-only viewer terminal (tail -F the logfile)"
-DID="$(curl -s -X POST -H "$U" -H 'Content-Type: application/json' --data-raw '{"name":"viewer-smoke"}' "$CP/dashboards" | jq_py "import json,sys;print(json.load(sys.stdin)['dashboard']['id'])")"
+DID="$(curl -s -X POST "${AUTH[@]}" -H 'Content-Type: application/json' --data-raw '{"name":"viewer-smoke"}' "$CP/dashboards" | jq_py "import json,sys;print(json.load(sys.stdin)['dashboard']['id'])")"
 CONTENT="{\"name\":\"viewer\",\"bootCommand\":\"tail -n +1 -F $LOG\"}"
 # Build the request body with single-quoted python reading $CONTENT from the env,
 # so bash never brace-expands the JSON dict.
 BODY="$(CONTENT="$CONTENT" python3 -c 'import json,os;print(json.dumps({"type":"terminal","content":os.environ["CONTENT"]}))')"
-IT="$(curl -s -X POST -H "$U" -H 'Content-Type: application/json' --data-raw "$BODY" \
+IT="$(curl -s -X POST "${AUTH[@]}" -H 'Content-Type: application/json' --data-raw "$BODY" \
   "$CP/dashboards/$DID/items" | jq_py "import json,sys;print(json.load(sys.stdin)['item']['id'])")"
-curl -s -o /dev/null -X POST -H "$U" -H 'Content-Type: application/json' -d '{}' "$CP/dashboards/$DID/items/$IT/session"; sleep 3
+curl -s -o /dev/null -X POST "${AUTH[@]}" -H 'Content-Type: application/json' -d '{}' "$CP/dashboards/$DID/items/$IT/session"; sleep 3
 echo "  dashboard=$DID item=$IT"
 
 echo "[3] viewer shows the run (watching works)"
@@ -85,7 +93,7 @@ echo "$LOGTXT" | grep -q "$INJECT" && bad "INPUT LEAKED into run logfile (not re
 
 # ---- teardown ----
 X "pkill -f 'seq 1 120' 2>/dev/null; rm -rf $RUNDIR" >/dev/null
-curl -s -o /dev/null -X DELETE -H "$U" "$CP/dashboards/$DID"
+curl -s -o /dev/null -X DELETE "${AUTH[@]}" "$CP/dashboards/$DID"
 echo
 echo "================  $PASS passed, $FAIL failed  ================"
 [ "$FAIL" -eq 0 ]
