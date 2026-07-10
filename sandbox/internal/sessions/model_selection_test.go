@@ -24,7 +24,7 @@ func TestBuildCodexOpenRouterCommand(t *testing.T) {
 	for _, want := range []string{
 		"--model 'deepseek/deepseek-chat'",
 		`model_provider="openrouter"`,
-		`model_providers.openrouter.base_url="http://localhost:8082/broker/sess123/openrouter"`,
+		`model_providers.openrouter.base_url="http://127.0.0.1:8082/broker/sess123/openrouter"`,
 		`model_providers.openrouter.env_key="OPENAI_API_KEY"`,
 		`model_providers.openrouter.wire_api="responses"`,
 		"model_context_window=131072",
@@ -41,7 +41,7 @@ func TestApplyCustomEndpointEnv_OpenAINative(t *testing.T) {
 	for _, agent := range []mcp.AgentType{mcp.AgentTypeOpenCode, mcp.AgentTypeDroid} {
 		env := map[string]string{}
 		applyCustomEndpointEnv(env, agent, sel, "sess1", 8082, 8086)
-		if env["OPENAI_BASE_URL"] != "http://localhost:8082/broker/sess1/customprovider" {
+		if env["OPENAI_BASE_URL"] != "http://127.0.0.1:8082/broker/sess1/customprovider" {
 			t.Errorf("%s OPENAI_BASE_URL = %q", agent, env["OPENAI_BASE_URL"])
 		}
 		if env["OPENAI_MODEL"] != "llama3.3:70b" {

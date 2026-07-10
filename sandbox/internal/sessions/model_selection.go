@@ -74,7 +74,10 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 	if !sel.IsOpenRouter() {
 		return
 	}
-	brokerURL := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter", brokerPort, sessionID)
+	// 127.0.0.1, NOT localhost: the broker binds IPv4 only, and Node/undici
+	// (opencode, droid) resolves "localhost" to IPv6 ::1 first — which the broker
+	// never answers — hanging the request. Matches the custom-endpoint path below.
+	brokerURL := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/openrouter", brokerPort, sessionID)
 
 	switch agentType {
 	case mcp.AgentTypeCodex, mcp.AgentTypeOpenCode, mcp.AgentTypeDroid:
@@ -97,7 +100,7 @@ func applyOpenRouterEnv(envVars map[string]string, agentType mcp.AgentType, sel 
 		envVars["OPENAI_API_KEY"] = broker.GetDummyValue("openai")
 		log.Printf("[model-selection] agent=%s routing via OpenRouter model=%s broker=%s", agentType, sel.Model, brokerURL)
 	case mcp.AgentTypeClaude:
-		anthropicBroker := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter-anthropic", brokerPort, sessionID)
+		anthropicBroker := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/openrouter-anthropic", brokerPort, sessionID)
 		envVars["ANTHROPIC_BASE_URL"] = anthropicBroker
 		// Claude Code only enters API mode (honoring ANTHROPIC_BASE_URL) when
 		// ANTHROPIC_API_KEY looks like a real key — the human-readable "[BROKERED]"
@@ -238,7 +241,8 @@ func buildCodexOpenRouterCommand(command string, sel *ModelSelection, sessionID 
 	if loc == nil {
 		return command
 	}
-	brokerURL := fmt.Sprintf("http://localhost:%d/broker/%s/openrouter", brokerPort, sessionID)
+	// 127.0.0.1, NOT localhost — keep every broker URL IPv4-only (see applyOpenRouterEnv).
+	brokerURL := fmt.Sprintf("http://127.0.0.1:%d/broker/%s/openrouter", brokerPort, sessionID)
 	flags := []string{
 		"--model " + shellSingleQuote(sel.Model),
 		"-c " + shellSingleQuote(`model_provider="openrouter"`),
