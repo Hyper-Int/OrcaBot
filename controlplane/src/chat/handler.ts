@@ -379,6 +379,20 @@ const GUIDANCE_TOOLS: GeminiTool[] = [
     },
   },
   {
+    name: 'complete_setup_walkthrough',
+    description: 'Mark this dashboard\'s setup walkthrough as complete so it is no longer injected. Call ONLY after the user confirms setup is done (e.g. the first job ran successfully). Only relevant when an ACTIVE SETUP WALKTHROUGH is present.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: {
+          type: 'string',
+          description: 'The dashboard whose setup walkthrough is complete',
+        },
+      },
+      required: ['dashboard_id'],
+    },
+  },
+  {
     name: 'ui_highlight',
     description: 'Highlight a UI element to draw the user\'s attention. Use for onboarding and guidance.',
     inputSchema: {
@@ -599,6 +613,18 @@ async function executeTool(
       const response = await dashboards.getDashbоard(env, args.dashboard_id as string, userId);
       const data = await response.json();
       return { result: data as Record<string, unknown>, isError: !response.ok };
+    }
+
+    if (toolName === 'complete_setup_walkthrough') {
+      // Clear the dashboard's setup guide so streamMessage stops injecting it.
+      try {
+        await env.DB.prepare(`UPDATE dashboards SET setup_guide = NULL WHERE id = ?`)
+          .bind(args.dashboard_id as string)
+          .run();
+        return { result: { ok: true }, isError: false };
+      } catch {
+        return { result: { ok: false }, isError: false };
+      }
     }
 
     if (toolName === 'dashboard_rename') {
@@ -1327,6 +1353,31 @@ export async function streamMessage(
 
   // Build dynamic system prompt addendum so Orcabot knows which agent to use
   let systemPrompt = ORCABOT_SYSTEM_PROMPT + '\n\n' + HELP_DOCS_GROUNDING;
+
+  // Template-driven setup walkthrough: if the active dashboard was created from
+  // a template that carries a setup guide, inject it so Orcabot can walk the
+  // user through setup using its tools (terminal_input, secrets_create, etc.).
+  if (dashboardId) {
+    try {
+      const dashRow = await env.DB.prepare(
+        `SELECT setup_guide FROM dashboards WHERE id = ?`
+      ).bind(dashboardId).first<{ setup_guide: string | null }>();
+      const guide = dashRow?.setup_guide?.trim();
+      if (guide) {
+        systemPrompt += `\n\nACTIVE SETUP WALKTHROUGH (dashboard ${dashboardId}):
+Follow this guide to help the user get set up. Use your tools to do the work
+(terminal_input to run commands, secrets_create for keys, create_terminal/
+create_browser as needed) and confirm each step briefly before moving on. Ask
+the user to choose where a choice is offered; never paste or echo secret values.
+When the user confirms setup is finished (e.g. the first job ran successfully),
+call complete_setup_walkthrough with dashboard_id="${dashboardId}" so this guide
+stops being shown.
+
+${guide}`;
+      }
+    } catch { /* dashboards.setup_guide not migrated yet — skip */ }
+  }
+
   if (userKeyNames.length > 0 && bestProvider) {
     const available = userKeyNames.map(k => `${AI_PROVIDER_LABELS[k]?.agent ?? k} (${k})`).join(', ');
     systemPrompt += `\n\nUSER'S AI PROVIDER KEYS (already stored — do NOT ask for them again):

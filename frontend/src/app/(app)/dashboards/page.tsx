@@ -190,7 +190,7 @@ export default function DashboardsPage() {
   const createMutation = useMutation({
     mutationFn: ({ name, templateId }: { name: string; templateId?: string }) =>
       createDashboard(name, templateId),
-    onSuccess: ({ dashboard, viewport }) => {
+    onSuccess: ({ dashboard, viewport, hasSetupGuide }) => {
       queryClient.invalidateQueries({ queryKey: ["dashboards"] });
       toast.success("Dashboard created");
       setIsCreateOpen(false);
@@ -201,6 +201,16 @@ export default function DashboardsPage() {
         sessionStorage.setItem(
           `template-viewport-${dashboard.id}`,
           JSON.stringify(viewport)
+        );
+      }
+      // If the template carries a setup walkthrough, auto-kick off the Orcabot
+      // chat on the new dashboard. ChatPanel consumes orcabot_initial_prompt on
+      // mount (expands + auto-sends); the control plane injects the dashboard's
+      // setup_guide so the chat knows exactly what to walk through.
+      if (hasSetupGuide) {
+        localStorage.setItem(
+          "orcabot_initial_prompt",
+          "Walk me through setting up this dashboard."
         );
       }
       router.push(`/dashboards/${dashboard.id}`);

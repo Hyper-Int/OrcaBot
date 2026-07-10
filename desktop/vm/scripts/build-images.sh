@@ -20,7 +20,9 @@ SANDBOX_DIR="$REPO_ROOT/sandbox"
 OUTPUT_DIR="$VM_DIR/image"
 
 # Image settings
-IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-3072}"
+# 4GB: OpenCode (re-enabled for benchmark harnesses) plus the other agent CLIs
+# overflow the old 3GB rootfs. Override via IMAGE_SIZE_MB if a slimmer build is needed.
+IMAGE_SIZE_MB="${IMAGE_SIZE_MB:-4096}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,7 +41,23 @@ mkdir -p "$OUTPUT_DIR"
 # Step 1: Build sandbox Docker image
 # =============================================================================
 log "Building sandbox Docker image..."
-docker build -t orcabot-sandbox:local -f "$SANDBOX_DIR/docker/Dockerfile" "$SANDBOX_DIR"
+# CHROMIUM_CACHEBUST forces the Dockerfile's chromium-refresh layer to re-run every
+# build (Debian's cached apt layer can otherwise pin a stale/broken chromium — e.g.
+# 150.0.7871.46 SIGTRAPs on launch). A timestamp guarantees a fresh pull each time.
+docker build --build-arg "CHROMIUM_CACHEBUST=$(date +%s)" \
+  -t orcabot-sandbox:local -f "$SANDBOX_DIR/docker/Dockerfile" "$SANDBOX_DIR"
+
+# =============================================================================
+# Step 1b: Validate the image BEFORE assembling it (fail fast on regressions)
+# =============================================================================
+# Chromium/claude/agents are installed at "latest" (unpinnable — a Debian chromium
+# version pin vanishes on the next security bump), so a rebuild can silently inherit
+# an upstream regression and replace a working VM with a broken one. This launches
+# chromium and runs the agents as a no-home pty user; a failure exits non-zero and,
+# because of `set -e`, aborts the whole build instead of shipping the broken image.
+log "Validating sandbox image (chromium launches + agents run as a pty user)..."
+docker run --rm -v "$SANDBOX_DIR/docker/validate-image.sh:/validate-image.sh:ro" \
+  --entrypoint bash orcabot-sandbox:local /validate-image.sh
 
 # =============================================================================
 # Step 2: Export rootfs tarball (for WSL2)
@@ -68,15 +86,24 @@ set -euo pipefail
 apt-get update -qq
 apt-get install -y -qq e2fsprogs tar gzip linux-image-cloud-arm64 kmod > /dev/null
 
+# Build the ext4 image on the CONTAINER filesystem (/build), NOT the host-shared
+# -v mount (/output). Docker Desktop for macOS file-sharing does not reliably
+# flush thousands of incremental loop-mount writes back to the host image, so
+# building directly on /output silently truncates/drops files (e.g. the 167MB
+# opencode binary) with no error. We build locally, then copy the finished image
+# to /output ONCE at the end — a single sequential copy survives file-sharing.
+mkdir -p /build
+BUILD_IMG=/build/sandbox.img
+
 echo "Creating disk image (${IMAGE_SIZE_MB}MB)..."
-dd if=/dev/zero of=/output/sandbox.img bs=1M count=${IMAGE_SIZE_MB} status=progress
+dd if=/dev/zero of=$BUILD_IMG bs=1M count=${IMAGE_SIZE_MB} status=progress
 
 echo "Creating ext4 filesystem..."
-mkfs.ext4 -F -L rootfs /output/sandbox.img
+mkfs.ext4 -F -L rootfs $BUILD_IMG
 
 echo "Mounting and populating..."
 mkdir -p /mnt/rootfs
-mount -o loop /output/sandbox.img /mnt/rootfs
+mount -o loop $BUILD_IMG /mnt/rootfs
 
 # Extract rootfs from tarball
 echo "Extracting rootfs..."
@@ -500,9 +527,30 @@ NETCONF
 # Create hostname
 echo "orcabot-sandbox" > /mnt/rootfs/etc/hostname
 
-# Sync and unmount
+# Create /etc/hosts so "localhost" resolves. Docker supplies /etc/hosts as a
+# runtime bind-mount, so it is NOT in the image and docker export (how this
+# rootfs is built) drops it -- same as /etc/hostname and /etc/network/interfaces
+# recreated above. Without it, anything dialing "localhost:<port>" (e.g.
+# websockify to x11vnc for the browser noVNC stream) fails name resolution.
+# NOTE: no apostrophes in this comment -- the whole block runs inside a
+# single-quoted bash -c script, so a stray apostrophe would terminate it.
+# Mapped IPv4-only (not ::1) so IPv6-first clients do not stall on v4-only ports.
+cat > /mnt/rootfs/etc/hosts << "HOSTS"
+127.0.0.1	localhost orcabot-sandbox
+::1	ip6-localhost ip6-loopback
+HOSTS
+
+# Sync and unmount the container-local image, then copy it to the host-shared
+# /output ONCE. A single sequential copy flushes reliably through Docker Desktop
+# file-sharing, unlike the many incremental loop-mount writes above.
 sync
 umount /mnt/rootfs
+sync
+
+echo "Copying finished image to /output..."
+cp $BUILD_IMG /output/sandbox.img
+sync
+rm -f $BUILD_IMG
 
 echo "Disk image created successfully!"
 ls -lh /output/sandbox.img

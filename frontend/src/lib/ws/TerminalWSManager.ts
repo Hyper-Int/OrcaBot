@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: terminal-ws-v4-surface-token
-const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v4-surface-token";
+// REVISION: terminal-ws-v5-surface-connect-time
+const MODULE_REVISION_TERMINAL_WS = "terminal-ws-v5-surface-connect-time";
 console.log(`[TerminalWS] REVISION: ${MODULE_REVISION_TERMINAL_WS} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -30,7 +30,7 @@ import type {
 } from "@/types/terminal";
 import { API, DESKTOP_MODE, DEV_MODE_ENABLED } from "@/config/env";
 import { useAuthStore } from "@/stores/auth-store";
-import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
+import { ensureSurfaceToken, getCachedSurfaceToken } from "@/lib/tauri-bridge";
 
 
 export interface TerminalWSConfig extends WebSocketConfig {
@@ -91,18 +91,37 @@ export class TerminalWSManager extends BaseWebSocketManager {
         url += `&user_email=${encodeURIComponent(email)}`;
       }
     }
-    // Desktop gates dev-auth on the surface token; WebSockets can't send the
-    // header, so pass it as a query param (no-op on web, where it's null).
-    const surface = getCachedSurfaceToken();
-    if (surface) {
-      url += `&surface=${encodeURIComponent(surface)}`;
-    }
+    // NOTE: the surface token is appended in resolveUrl() at connect time, not
+    // here — so a token that resolves AFTER construct (or a reconnect after the
+    // token becomes available) is still applied, instead of freezing a tokenless
+    // URL that 401-loops forever.
     super(url, config);
 
     this.sessionId = sessionId;
     this.ptyId = ptyId;
     this.userId = config.userId;
     this.userName = config.userName;
+  }
+
+  /**
+   * Append the desktop surface token just before connecting. A cross-origin WS
+   * carries no session cookie, so this token is the only dev-auth proof the control
+   * plane accepts. `await ensureSurfaceToken()` guarantees it's fetched+cached
+   * first (the constructor's synchronous read could miss an async/late token).
+   * Null on web / non-surface builds → omitted, unchanged behavior.
+   */
+  protected async resolveUrl(): Promise<string> {
+    await ensureSurfaceToken();
+    const surface = getCachedSurfaceToken();
+    const url = surface
+      ? `${this.url}&surface=${encodeURIComponent(surface)}`
+      : this.url;
+    console.log(
+      `[TerminalWS] ${MODULE_REVISION_TERMINAL_WS} resolveUrl user_id=${this.url.includes(
+        "user_id="
+      )} surface=${surface ? `present(len=${surface.length})` : "MISSING"}`
+    );
+    return url;
   }
 
   /**

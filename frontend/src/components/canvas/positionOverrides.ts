@@ -1,11 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: position-overrides-v1-extract
+// REVISION: position-overrides-v2-size
 //
 // Optimistic post-drag position reconciliation, extracted as a pure function so it
 // can be unit-tested deterministically (the visual "blink back to start" it prevents
-// is only observable in manual UI testing).
+// is only observable in manual UI testing). v2 adds the analogous size override so a
+// resize doesn't "revert to the previous size ~1s later" during the debounced persist
+// (position had this protection; resize did not — a real asymmetry bug).
 //
 // Why this exists: when a node is dropped, the canvas persists its new position via a
 // DEBOUNCED (~500ms) mutation that then round-trips. In that window the item cache can
@@ -75,5 +77,64 @@ export function applyLocalPositionOverrides<T extends OverridableNode>(
       return n; // already at the dropped position — no need to clone
     }
     return { ...n, position: { x: ov.x, y: ov.y } };
+  });
+}
+
+export interface SizeOverride {
+  width: number;
+  height: number;
+  /** Epoch ms when the resize ended (used to expire the override). */
+  at: number;
+}
+
+export interface ResizableNode {
+  id: string;
+  width?: number;
+  height?: number;
+}
+
+/** Sizes within this many px are treated as equal (avoids needless clones). */
+const SIZE_EPSILON = 0.5;
+
+/**
+ * Size analogue of {@link applyLocalPositionOverrides}. Returns `nodes` with any
+ * active local size override forced onto each matching node's width/height, and
+ * prunes expired / no-longer-present overrides from `overrides` (mutated in place).
+ *
+ * Same rationale as the position variant: a resize is persisted via a DEBOUNCED
+ * mutation, so during the round-trip a collab echo or unrelated refetch can revert
+ * the item cache to the pre-resize size; a rebuild in that window would snap the
+ * node back to the old size until the cache catches up. Holding the new size for a
+ * fixed window (not releasing on first "match") masks that stale revert; after the
+ * window it expires so genuine remote resizes still apply. Pass `now` explicitly so
+ * tests don't depend on the clock.
+ */
+export function applyLocalSizeOverrides<T extends ResizableNode>(
+  nodes: T[],
+  overrides: Map<string, SizeOverride>,
+  now: number,
+  maxAgeMs: number,
+): T[] {
+  if (overrides.size === 0) return nodes;
+
+  const liveIds = new Set(nodes.map((n) => n.id));
+  for (const [nodeId, ov] of overrides) {
+    if (!liveIds.has(nodeId) || now - ov.at > maxAgeMs) {
+      overrides.delete(nodeId);
+    }
+  }
+
+  if (overrides.size === 0) return nodes;
+
+  return nodes.map((n) => {
+    const ov = overrides.get(n.id);
+    if (!ov) return n;
+    if (
+      Math.abs((n.width ?? 0) - ov.width) < SIZE_EPSILON &&
+      Math.abs((n.height ?? 0) - ov.height) < SIZE_EPSILON
+    ) {
+      return n; // already at the resized dimensions — no need to clone
+    }
+    return { ...n, width: ov.width, height: ov.height };
   });
 }

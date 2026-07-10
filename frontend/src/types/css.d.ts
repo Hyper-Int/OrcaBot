@@ -6,4 +6,4 @@ declare module "*.css" {
   export default content;
 }
 
-declare module "xterm/css/xterm.css";
+declare module "@xterm/xterm/css/xterm.css";

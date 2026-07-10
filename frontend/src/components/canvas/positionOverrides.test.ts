@@ -4,8 +4,11 @@
 import { describe, it, expect } from "vitest";
 import {
   applyLocalPositionOverrides,
+  applyLocalSizeOverrides,
   type PositionOverride,
   type OverridableNode,
+  type SizeOverride,
+  type ResizableNode,
 } from "./positionOverrides";
 
 const node = (id: string, x: number, y: number): OverridableNode => ({
@@ -107,5 +110,77 @@ describe("applyLocalPositionOverrides", () => {
     ]);
     const result = applyLocalPositionOverrides([styled], overrides, 1100, MAX_AGE);
     expect(result[0]).toMatchObject({ selected: true, data: { k: 1 }, position: { x: 200, y: 200 } });
+  });
+});
+
+const sized = (id: string, width: number, height: number): ResizableNode => ({
+  id,
+  width,
+  height,
+});
+
+describe("applyLocalSizeOverrides", () => {
+  it("returns nodes unchanged when there are no overrides", () => {
+    const nodes = [sized("a", 100, 60)];
+    const overrides = new Map<string, SizeOverride>();
+    const result = applyLocalSizeOverrides(nodes, overrides, 1000, MAX_AGE);
+    expect(result).toBe(nodes);
+  });
+
+  it("forces the new size when the node still reports its OLD size", () => {
+    // The core revert scenario: resize set the override to 400x300 but a stale
+    // refetch/echo rebuilt the node back at its pre-resize 100x60.
+    const nodes = [sized("a", 100, 60)];
+    const overrides = new Map<string, SizeOverride>([
+      ["a", { width: 400, height: 300, at: 1000 }],
+    ]);
+    const result = applyLocalSizeOverrides(nodes, overrides, 1100, MAX_AGE);
+    expect(result[0]).toMatchObject({ width: 400, height: 300 });
+    expect(overrides.has("a")).toBe(true);
+  });
+
+  it("keeps holding the override even after the cache matches (revert masked)", () => {
+    const overrides = new Map<string, SizeOverride>([
+      ["a", { width: 400, height: 300, at: 1000 }],
+    ]);
+    // Optimistic match — must NOT release the override.
+    const matched = applyLocalSizeOverrides([sized("a", 400, 300)], overrides, 1050, MAX_AGE);
+    expect(matched[0]).toMatchObject({ width: 400, height: 300 });
+    expect(overrides.has("a")).toBe(true);
+    // Stale revert lands shortly after, still within the window — masked.
+    const reverted = applyLocalSizeOverrides([sized("a", 100, 60)], overrides, 1400, MAX_AGE);
+    expect(reverted[0]).toMatchObject({ width: 400, height: 300 });
+  });
+
+  it("expires the override after maxAge so genuine remote resizes apply", () => {
+    const overrides = new Map<string, SizeOverride>([
+      ["a", { width: 400, height: 300, at: 1000 }],
+    ]);
+    const result = applyLocalSizeOverrides(
+      [sized("a", 250, 250)],
+      overrides,
+      1000 + MAX_AGE + 1,
+      MAX_AGE,
+    );
+    expect(result[0]).toMatchObject({ width: 250, height: 250 });
+    expect(overrides.has("a")).toBe(false);
+  });
+
+  it("does not clone a node already at the override size (within epsilon)", () => {
+    const a = sized("a", 400.2, 299.9);
+    const overrides = new Map<string, SizeOverride>([
+      ["a", { width: 400, height: 300, at: 1000 }],
+    ]);
+    const result = applyLocalSizeOverrides([a], overrides, 1100, MAX_AGE);
+    expect(result[0]).toBe(a);
+  });
+
+  it("preserves extra node fields when overriding size", () => {
+    const styled = { id: "a", width: 100, height: 60, selected: true, data: { k: 1 } };
+    const overrides = new Map<string, SizeOverride>([
+      ["a", { width: 400, height: 300, at: 1000 }],
+    ]);
+    const result = applyLocalSizeOverrides([styled], overrides, 1100, MAX_AGE);
+    expect(result[0]).toMatchObject({ selected: true, data: { k: 1 }, width: 400, height: 300 });
   });
 });

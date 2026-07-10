@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# REVISION: scb-viewers-v1-runs
+# List active slop-code-bench runs in the shared tmux session.
+#
+# Each agent run launched by the host-tmux executor appears as a tmux window
+# in the `scb` session. This prints one line per run with a read-only attach
+# command for SAME-UID INTERACTIVE use (a human in the executor's own shell).
+#
+# NOTE: cross-PTY Orcabot viewer *panes* must NOT attach this tmux socket —
+# a separate viewer PTY may run under a different uid, and bridging the tmux
+# control socket across uids needs world-accessibility (read+inject across
+# sessions, bypassing output redaction). Those panes tail the per-run logfile
+# instead (see orchestrator-runbook.md). `tmux attach -r` here is fine only
+# because it's the same uid as the executor.
+#
+# Usage: scb-runs
+# Env:   SCB_SESSION (default: scb)
+set -euo pipefail
+
+SESSION="${SCB_SESSION:-scb}"
+
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "tmux not found on PATH" >&2
+  exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "no slop-code runs yet (tmux session '$SESSION' not started)"
+  exit 0
+fi
+
+printf '%-28s %-10s %s\n' "RUN" "STATUS" "ATTACH (read-only)"
+tmux list-windows -t "$SESSION" \
+  -F '#{window_name}	#{?window_active,active,idle}	#{pane_dead}' \
+  | while IFS=$'\t' read -r name _active dead; do
+      # Skip the placeholder window that keeps the session alive.
+      [ "$name" = "_scb_runs" ] && continue
+      status="running"
+      [ "$dead" = "1" ] && status="finished"
+      printf '%-28s %-10s tmux attach -r -t %s:%s\n' "$name" "$status" "$SESSION" "$name"
+    done

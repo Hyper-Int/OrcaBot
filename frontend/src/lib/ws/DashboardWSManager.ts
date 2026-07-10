@@ -21,6 +21,7 @@ import type {
   UICommandResultMessage,
 } from "@/types/collaboration";
 import { getCollaborationWsUrl } from "@/lib/api/cloudflare";
+import { ensureSurfaceToken } from "@/lib/tauri-bridge";
 import { getUserColor } from "@/lib/utils";
 
 // Throttle cursor updates to 50ms
@@ -57,6 +58,18 @@ export class DashboardWSManager extends BaseWebSocketManager {
     this.dashboardId = dashboardId;
     this.userId = userId;
     this.userName = userName;
+  }
+
+  /**
+   * Rebuild the URL at connect time with the freshly-resolved surface token. A
+   * cross-origin WS carries no session cookie, so the surface token is the only
+   * dev-auth proof the control plane accepts; `await ensureSurfaceToken()` makes
+   * sure it's cached before `getCollaborationWsUrl` reads it (the constructor's
+   * synchronous build can miss an async/late token). Null on web → omitted.
+   */
+  protected async resolveUrl(): Promise<string> {
+    await ensureSurfaceToken();
+    return getCollaborationWsUrl(this.dashboardId, this.userId, this.userName);
   }
 
   /**

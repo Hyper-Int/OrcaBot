@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Insert (or refresh) the SlopCodeBench Runner dashboard template into D1.
+
+Thin wrapper around the generic seeder (`benchmarks/bin/seed-benchmark-templates`)
+scoped to just this benchmark, kept for backwards compatibility. To seed every
+benchmark template at once, run the generic seeder with no argument.
+
+Usage:
+  bin/scb-insert-template                        # desktop d1-shim on 127.0.0.1:9001
+  D1_URL=http://127.0.0.1:9001 AUTHOR_ID=dev-desktop bin/scb-insert-template
+"""
+import os
+import pathlib
+import sys
+
+# benchmarks/ root: this file is benchmarks/slopcodebench/bin/scb-insert-template.
+SEEDER = pathlib.Path(__file__).resolve().parents[2] / "bin" / "seed-benchmark-templates"
+
+os.execv(sys.executable, [sys.executable, str(SEEDER), "slopcodebench", *sys.argv[1:]])

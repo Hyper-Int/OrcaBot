@@ -271,6 +271,15 @@ VZ_CONSOLE_DIRECT=1 ./target/release/orcabot-desktop
 ### Env Vars
 - `ORCABOT_DESKTOP_AUTOSTART=0` — Skip service autostart
 - `ORCABOT_DESKTOP_ROOT` — Override resource root path
+- `ORCABOT_VM_IMAGE=/path/to/sandbox.img` — **Dev override for the VM disk image.**
+  Forces a specific local image (raw `.img` or `.gz`), bypassing the version check
+  and the published-release **download-on-demand** (`vm-image.json` → GitHub
+  releases). Use it to boot a locally-built `sandbox.img` (e.g. after
+  `BUILD_VM=force`) instead of the slim published image. Checked first in
+  `ensure_vm_image` (`vm/image.rs`); marks the staged image `dev-override` so
+  unsetting the var re-triggers the normal published download. The var is inherited
+  by the headless `orcabot-desktop` the CLI spawns, so `ORCABOT_VM_IMAGE=… orcabot up`
+  works.
 - `SANDBOX_PORT`, `CONTROLPLANE_PORT`, `FRONTEND_PORT` — Port overrides
 - `DEV_AUTH_ENABLED=true` — Enable dev auth (default in desktop mode)
 - `BUILD_VM=force|0` — Force or skip VM image rebuild

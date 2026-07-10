@@ -1,0 +1,34 @@
+{
+  "_comment": "Importable Orcabot dashboard template for Terminal-Bench 2.1 (Harbor). Shape matches DashboardTemplateWithData. Viewer panes are spawned by the orchestrator at runtime.",
+  "name": "Terminal-Bench 2.1 Runner",
+  "description": "Run Terminal-Bench 2.1 via the Harbor harness with a Claude Code orchestrator you drive in English. Docker-per-task; use the Daytona/Modal remote backend to avoid local Docker.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"Terminal-Bench Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"terminal-bench\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "# Terminal-Bench 2.1 Runner (Harbor)\n\nDrive the **Terminal-Bench Orchestrator** (Claude Code) in English:\n\n- *\"Validate the env with the oracle agent.\"* (no key)\n- *\"Run task hello-world with claude-code on opus.\"*\n- *\"Run the full 2.1 set on Daytona, 4 concurrent.\"*\n- *\"Show me the running job.\"* -> spawns a viewer pane\n\nUses **Harbor** (not legacy tb). Dataset slug: terminal-bench/terminal-bench-2-1. Docker-per-task; prefer --env daytona/Modal. Keys in the secrets broker. Guide: benchmarks/terminal-bench/orchestrator-runbook.md",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 400, "height": 340 }
+    },
+    {
+      "placeholderId": "leaderboard",
+      "type": "browser",
+      "content": "{\"name\":\"Terminal-Bench 2.1 Leaderboard\",\"url\":\"https://www.tbench.ai/leaderboard/terminal-bench/2.1\"}",
+      "position": { "x": 680, "y": 380 },
+      "size": { "width": 720, "height": 480 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "leaderboard" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "setupGuide": "# Terminal-Bench setup walkthrough\n\nGoal: get ready to run Terminal-Bench 2.1 (via the **Harbor** CLI), then smoke one\ntask. Be brief; do each step with your tools and confirm before the next.\n\n1. **Install Harbor** (skip if `harbor` is on PATH): `uv tool install harbor`. Use\n   Harbor, NOT the legacy `tb`.\n\n2. **Pick a backend.** Prefer the **remote** backend (`--env daytona`/Modal — no local\n   Docker). Use **local Docker** only on a Docker-capable (DinD) sandbox. Confirm with\n   the user.\n\n3. **Provider key.** Ensure the model key (`ANTHROPIC_API_KEY`, etc.) is a\n   broker-protected secret for this dashboard — Harbor passes it into the agent's task\n   container. Ask the user to add it if missing. Never display or echo a key.\n\n4. **Validate the environment FIRST** (no key; runs reference solutions):\n   `uv run harbor run --dataset terminal-bench/terminal-bench-2-1 --agent oracle --n-concurrent 4`.\n   Only proceed to a model run once oracle passes.\n\n5. **Smoke one task.**\n   `harbor run --dataset terminal-bench/terminal-bench-2-1 --agent <terminus-2|claude-code|codex|gemini-cli> --model <provider/model> --task-id <one-task> [--env daytona]`.\n   The CLI agents run headless inside the task container — Harbor drives them, you don't.\n\n6. **Watch + results.** Spawn a viewer terminal (create_terminal) tailing\n   `jobs/<job>/<trial>/result.json` (or the backend's log stream) and connect an edge\n   to it. Read `jobs/<job>/result.json` for the aggregate accuracy; report it and\n   point the user at the jobs dir.\n"
+}

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS dashboards (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_id TEXT NOT NULL REFERENCES users(id),
+  setup_guide TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -761,6 +762,7 @@ CREATE TABLE IF NOT EXISTS dashboard_templates (
   items_json TEXT NOT NULL DEFAULT '[]',
   edges_json TEXT NOT NULL DEFAULT '[]',
   viewport_json TEXT,
+  setup_guide TEXT,
   item_count INTEGER NOT NULL DEFAULT 0,
   is_featured INTEGER NOT NULL DEFAULT 0,
   use_count INTEGER NOT NULL DEFAULT 0,
@@ -1524,6 +1526,24 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN agent_type TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Template-driven setup walkthrough: a template can carry a guide script that
+  // the Orcabot chat runs as a guided setup; the resolved text is copied onto
+  // the dashboard at creation so the chat can inject it for that dashboard.
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboards ADD COLUMN setup_guide TEXT
     `).run();
   } catch {
     // Column already exists.

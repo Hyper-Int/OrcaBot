@@ -6,7 +6,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import type { TerminalHandle, TerminalProps, TerminalTheme } from "./types";
-import type { Terminal } from "xterm";
+import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 
 interface XtermTheme extends TerminalTheme {}
@@ -57,10 +57,10 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
 
         try {
           const [{ Terminal }, { FitAddon }] = await Promise.all([
-            import("xterm"),
+            import("@xterm/xterm"),
             import("@xterm/addon-fit"),
           ]);
-          await import("xterm/css/xterm.css");
+          await import("@xterm/xterm/css/xterm.css");
 
           if (!mounted || !containerRef.current) return;
 

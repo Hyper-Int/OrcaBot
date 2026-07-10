@@ -96,17 +96,24 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && node /tmp/package/bin/npm-cli.js install -g npm@latest \
     && rm -rf /tmp/package
 
-# Pre-warm npm cache with Claude Code dependencies (for fast user-initiated install)
-# We install then uninstall so the package is NOT distributed, but deps remain cached.
-# A lightweight wrapper script at /usr/local/bin/claude handles on-demand installation.
-RUN npm install -g @anthropic-ai/claude-code \
-    && npm uninstall -g @anthropic-ai/claude-code
-COPY docker/claude-wrapper.sh /usr/local/bin/claude
-RUN chmod +x /usr/local/bin/claude
-
-# Suppress Claude Code's "switched from npm to native installer" banner.
-# We use npm intentionally (1.3s pre-warmed vs 19s native installer).
+# Install Claude Code via the native installer.
+# WHY not npm: `npm install -g @anthropic-ai/claude-code` ships the real binary as a
+# platform-specific OPTIONAL dependency, which npm's `--omit=optional` (set in this
+# image) skips — leaving a shebang-less "native binary not installed" stub that fails
+# with "fork/exec /usr/bin/claude: exec format error".
+# WHY the symlink dance: the native installer is per-user — it drops a ~250MB
+# self-contained binary in $HOME/.local/share/claude and a launcher that resolves it
+# from $HOME. Our PTYs run as no-home `pty-NNN` users, so the launcher fails
+# ("Failed to install"). The versioned binary itself is HOME-independent, so we point
+# /usr/local/bin/claude straight at it in a shared path — works for every pty user.
 ENV DISABLE_INSTALLATION_CHECKS=1
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && CLAUDE_BIN="$(readlink -f /root/.local/bin/claude)" \
+    && install -D -m 0755 "$CLAUDE_BIN" /opt/claude/claude \
+    && rm -f /usr/bin/claude \
+    && ln -sf /opt/claude/claude /usr/local/bin/claude \
+    && rm -rf /root/.local/share/claude /root/.local/state/claude /root/.local/bin/claude \
+    && claude --version
 
 # Install Codex CLI (OpenAI)
 RUN npm cache clean --force && npm install -g @openai/codex@latest
@@ -114,13 +121,14 @@ RUN npm cache clean --force && npm install -g @openai/codex@latest
 # Install Gemini CLI (Google)
 RUN npm cache clean --force && npm install -g @google/gemini-cli@latest
 
-# --- Temporarily disabled agents (may re-enable later) ---
-# Keeping Claude Code, Gemini CLI, and Codex CLI for now.
-# OpenCode, Droid, and OpenClaw are commented out to reduce image size (~800MB savings).
+# --- Agents ---
+# Installed: Claude Code, Gemini CLI, Codex CLI, OpenCode.
+# OpenCode re-enabled for benchmark harnesses (slop-code-bench drives it for
+# OpenRouter models, e.g. Kimi). Droid and OpenClaw stay disabled to save space.
 
-# # Install OpenCode CLI and move to shared location
-# RUN curl -fsSL https://opencode.ai/install | bash \
-#     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
+# Install OpenCode CLI and move to shared location
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # # Install Droid CLI (Factory)
 # RUN curl -fsSL https://app.factory.ai/cli | sh \
@@ -221,6 +229,20 @@ ENV PATH="/home/sandbox/.local/bin:${PATH}"
 COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
 COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
 COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
+
+# Force the CURRENT chromium (placed late so this cache-bust only re-runs this cheap
+# layer, not the heavy npm/agent installs above). The base apt layer is Docker-cached
+# and pins whatever chromium was current when it was first built — and 150.0.7871.46
+# is BROKEN: it IMMEDIATE_CRASHes (SIGTRAP) on launch, so the browser block never
+# reaches ready ("Browser failed to start"). Fixed in 150.0.7871.100. This re-reads
+# the mirror and upgrades to the current build; CHROMIUM_CACHEBUST (a timestamp from
+# build-images.sh) makes the layer re-run every build instead of caching stale.
+ARG CHROMIUM_CACHEBUST=0
+RUN echo "chromium-refresh ${CHROMIUM_CACHEBUST}" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && (chromium.real --version 2>/dev/null || chromium --version)
 
 # Working directory
 WORKDIR /workspace

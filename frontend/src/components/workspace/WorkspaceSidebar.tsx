@@ -11,6 +11,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import {
   Folder,
+  FolderOpen,
   FolderInput,
   Cloud,
   Github,
@@ -89,6 +90,7 @@ import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
 import { useFolderImport } from "@/hooks/useFolderImport";
@@ -349,6 +351,14 @@ export function WorkspaceSidebar({
         setFileError(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to load files";
+        // A 404 here means the session's sandbox is gone (stopped or a stale
+        // sandbox id after a VM restart). That's not a real error for the sidebar —
+        // render a calm empty tree instead of a raw "Request failed with status 404".
+        if (/\b404\b|session not found|E797(09|37)/i.test(message)) {
+          setFileEntries((prev) => ({ ...prev, [path]: [] }));
+          setFileError(null);
+          return;
+        }
         setFileError(message);
       }
     },
@@ -1235,6 +1245,17 @@ export function WorkspaceSidebar({
           <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--foreground-muted)] flex-1">
             Workspace
           </span>
+          {DESKTOP_MODE && (
+            <button
+              type="button"
+              onClick={() => void revealWorkspace()}
+              title="Open workspace folder in Finder"
+              aria-label="Open workspace folder in Finder"
+              className="p-1 rounded hover:bg-[var(--background-elevated)] text-[var(--foreground-subtle)] hover:text-[var(--foreground)] shrink-0"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          )}
           <FolderImportButton
             onPickFolder={folderImport.handlePickFolder}
             isImporting={folderImport.isImporting}
