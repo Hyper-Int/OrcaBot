@@ -96,17 +96,24 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && node /tmp/package/bin/npm-cli.js install -g npm@latest \
     && rm -rf /tmp/package
 
-# Pre-warm npm cache with Claude Code dependencies (for fast user-initiated install)
-# We install then uninstall so the package is NOT distributed, but deps remain cached.
-# A lightweight wrapper script at /usr/local/bin/claude handles on-demand installation.
-RUN npm install -g @anthropic-ai/claude-code \
-    && npm uninstall -g @anthropic-ai/claude-code
-COPY docker/claude-wrapper.sh /usr/local/bin/claude
-RUN chmod +x /usr/local/bin/claude
-
-# Suppress Claude Code's "switched from npm to native installer" banner.
-# We use npm intentionally (1.3s pre-warmed vs 19s native installer).
+# Install Claude Code via the native installer.
+# WHY not npm: `npm install -g @anthropic-ai/claude-code` ships the real binary as a
+# platform-specific OPTIONAL dependency, which npm's `--omit=optional` (set in this
+# image) skips — leaving a shebang-less "native binary not installed" stub that fails
+# with "fork/exec /usr/bin/claude: exec format error".
+# WHY the symlink dance: the native installer is per-user — it drops a ~250MB
+# self-contained binary in $HOME/.local/share/claude and a launcher that resolves it
+# from $HOME. Our PTYs run as no-home `pty-NNN` users, so the launcher fails
+# ("Failed to install"). The versioned binary itself is HOME-independent, so we point
+# /usr/local/bin/claude straight at it in a shared path — works for every pty user.
 ENV DISABLE_INSTALLATION_CHECKS=1
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && CLAUDE_BIN="$(readlink -f /root/.local/bin/claude)" \
+    && install -D -m 0755 "$CLAUDE_BIN" /opt/claude/claude \
+    && rm -f /usr/bin/claude \
+    && ln -sf /opt/claude/claude /usr/local/bin/claude \
+    && rm -rf /root/.local/share/claude /root/.local/state/claude /root/.local/bin/claude \
+    && claude --version
 
 # Install Codex CLI (OpenAI)
 RUN npm cache clean --force && npm install -g @openai/codex@latest
