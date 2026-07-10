@@ -52,6 +52,24 @@ does. The predictions file is the clean handoff boundary.
    `tail -n +1 -F <run-logfile>` (slop-code), `docker logs -f <id>` / `tail -f logs/…`
    (SWE-bench family), `harbor`/Modal log streaming (Terminal-Bench).
 
+## Seeding the templates into D1
+
+These templates are curated, DB-only rows in `dashboard_templates` (there is no
+code seed). To make them selectable in the **New Dashboard** grid on a local
+desktop stack, seed them directly:
+
+```
+benchmarks/bin/seed-benchmark-templates            # all benchmark templates
+benchmarks/bin/seed-benchmark-templates swebench   # just one, by dir name
+```
+
+It upserts each `benchmarks/*/template.json` (delete-by-name then insert,
+`status='approved'`) against the desktop d1-shim (`D1_URL`, default
+`http://127.0.0.1:9001`). `slopcodebench/bin/scb-insert-template` is a thin
+wrapper that seeds only the SlopCodeBench template. For a **remote/cloud** control
+plane, export from an existing dashboard via the templates API (`POST /templates`)
+instead — direct INSERT is the local/curated path.
+
 ## Status
 
 All templates here are **prototypes**. slop-code-bench is validated end-to-end
