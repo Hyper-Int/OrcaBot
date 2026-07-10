@@ -23,7 +23,7 @@ Orcabot terminal, driven in English) running Terminal-Bench 2.1 via **Harbor**.
 > **Always validate the environment first** (no API key, runs reference
 > solutions):
 > ```
-> uv run harbor run --dataset terminal-bench@2.0 --agent oracle --n-concurrent 4
+> uv run harbor run --dataset terminal-bench/terminal-bench-2-1 --agent oracle --n-concurrent 4
 > ```
 > Only proceed to a real model run once oracle passes.
 >
