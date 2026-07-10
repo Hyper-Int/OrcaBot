@@ -223,12 +223,14 @@ const terminalTools: BlockTool[] = [
     icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "codex", agentic: true },
   },
-  {
-    type: "terminal",
-    label: "OpenCode",
-    icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
-    terminalPreset: { command: "opencode", agentic: true },
-  },
+  // OpenCode - temporarily hidden: its newer "opentui" TUI crashes/garbles in the
+  // xterm.js terminal and exits back to the shell. Re-enable in a later PR once fixed.
+  // {
+  //   type: "terminal",
+  //   label: "OpenCode",
+  //   icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
+  //   terminalPreset: { command: "opencode", agentic: true },
+  // },
   // Droid - temporarily hidden until stable release
   // {
   //   type: "terminal",
