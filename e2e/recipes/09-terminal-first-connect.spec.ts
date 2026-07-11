@@ -33,7 +33,7 @@ import { readTerminalText, SHELL_PROMPT_RE } from "../fixtures/terminal";
 const ITERATIONS = Number(process.env.FIRST_CONNECT_ITERATIONS || 10);
 const PROMPT_TIMEOUT = Number(process.env.FIRST_CONNECT_TIMEOUT_MS || 45_000);
 
-type Outcome = "ok" | "ok-after-enter" | "stuck" | "gone";
+type Outcome = "ok" | "ok-after-enter" | "stuck" | "gone" | "error";
 
 test.describe("Recipe: First-PTY connect (flake loop)", () => {
   test.beforeEach(async ({ page, auth }) => {
@@ -54,50 +54,69 @@ test.describe("Recipe: First-PTY connect (flake loop)", () => {
     const results: { i: number; outcome: Outcome; ms: number }[] = [];
 
     for (let i = 0; i < ITERATIONS; i++) {
-      const id = await dashboard.create(`E2E-FirstConnect-${i}-${Date.now()}`);
-      await terminal.add();
-
       const t0 = Date.now();
       let outcome: Outcome = "stuck";
+      let id = "";
 
-      // Poll for a real prompt WITHOUT sending any input.
-      while (Date.now() - t0 < PROMPT_TIMEOUT) {
-        if ((await page.locator(".xterm").count()) === 0) {
-          outcome = "gone"; // symptom B — the block unmounted mid-connect
-          break;
-        }
-        if (SHELL_PROMPT_RE.test(await readTerminalText(page))) {
-          outcome = "ok"; // symptom D — clean input-free connect
-          break;
-        }
-        await page.waitForTimeout(1_000);
-      }
+      try {
+        // Always return to the dashboards list first. After an API delete the
+        // browser is left on a stale /dashboards/<id> URL, and createDashboard's
+        // guard (`!url.includes("/dashboards")`) treats that as "already on the
+        // list" and never re-navigates to the template picker.
+        await page.goto("/dashboards");
+        id = await dashboard.create(`E2E-FirstConnect-${i}-${Date.now()}`);
+        await terminal.add();
 
-      // If still blank, probe whether a keypress reveals the prompt. Enter
-      // fixing it == symptom A (connected, initial prompt never rendered);
-      // Enter NOT fixing it == symptom C (never really connected).
-      if (outcome === "stuck" && (await page.locator(".xterm").count()) > 0) {
-        await page.locator(".xterm-screen").first().click();
-        await page.waitForTimeout(200);
-        await page.keyboard.press("Enter");
-        const t1 = Date.now();
-        while (Date.now() - t1 < 8_000) {
-          if (SHELL_PROMPT_RE.test(await readTerminalText(page))) {
-            outcome = "ok-after-enter";
+        // Poll for a real prompt WITHOUT sending any input.
+        while (Date.now() - t0 < PROMPT_TIMEOUT) {
+          if ((await page.locator(".xterm").count()) === 0) {
+            outcome = "gone"; // symptom B — the block unmounted mid-connect
             break;
           }
-          await page.waitForTimeout(500);
+          if (SHELL_PROMPT_RE.test(await readTerminalText(page))) {
+            outcome = "ok"; // symptom D — clean input-free connect
+            break;
+          }
+          await page.waitForTimeout(1_000);
+        }
+
+        // If still blank, probe whether a keypress reveals the prompt. Enter
+        // fixing it == symptom A (connected, initial prompt never rendered);
+        // Enter NOT fixing it == symptom C (never really connected).
+        if (outcome === "stuck" && (await page.locator(".xterm").count()) > 0) {
+          await page.locator(".xterm-screen").first().click();
+          await page.waitForTimeout(200);
+          await page.keyboard.press("Enter");
+          const t1 = Date.now();
+          while (Date.now() - t1 < 8_000) {
+            if (SHELL_PROMPT_RE.test(await readTerminalText(page))) {
+              outcome = "ok-after-enter";
+              break;
+            }
+            await page.waitForTimeout(500);
+          }
+        }
+      } catch (err) {
+        // One bad iteration must not abort the whole measurement.
+        outcome = "error";
+        // eslint-disable-next-line no-console
+        console.log(
+          `[first-connect] iter ${i} threw: ${
+            (err as Error).message.split("\n")[0]
+          }`
+        );
+      } finally {
+        // Release the VM/session before the next iteration so only one is live.
+        if (id) {
+          try {
+            await api.client.deleteDashboard(id);
+          } catch {
+            // dashboard-fixture auto-cleanup catches it at teardown
+          }
         }
       }
 
       results.push({ i, outcome, ms: Date.now() - t0 });
-
-      // Release the VM/session before the next iteration so only one is live.
-      try {
-        await api.client.deleteDashboard(id);
-      } catch {
-        // auto-cleanup in the dashboard fixture will catch it at teardown
-      }
     }
 
     // Report a rate — the whole point is to measure, not just pass/fail once.
