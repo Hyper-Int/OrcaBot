@@ -35,6 +35,7 @@ mod unix_cli {
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -223,6 +224,22 @@ fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
     }
 }
 
+/// Best-effort cross-process lock serializing the launch decision, so two
+/// simultaneous first-launches don't both spawn a backend (the app_pid() check
+/// and the spawn aren't otherwise atomic). Returns a guard whose flock releases
+/// when it drops (including on process exit — the kernel drops flocks on close).
+/// None if locking is unavailable; callers then just proceed as before.
+fn acquire_launch_lock() -> Option<File> {
+    let f = File::create(data_dir().join("up.lock")).ok()?;
+    // Blocking exclusive advisory lock. The critical section (app_pid check +
+    // spawn + pid-file write) is fast, so a concurrent `up` waits only briefly
+    // before it acquires and finds the now-present backend to attach to.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return None;
+    }
+    Some(f)
+}
+
 /// True only when OUR desktop backend is up: a live `orcabot-desktop` process
 /// (pid file or pgrep) AND a healthy control plane. A healthy listener alone is
 /// NOT enough — a foreign process on the default port (another Orcabot's
@@ -268,6 +285,12 @@ fn cmd_up(rest: &[String]) -> i32 {
             i += 1;
         }
     }
+
+    // Serialize the check-then-spawn against a concurrent `up`/`tui` so two
+    // first-launches can't both get past the app_pid() check and spawn rival
+    // backends. Held only across the fast critical section below (released before
+    // the long readiness poll). Best-effort: None just means we proceed unlocked.
+    let launch_lock = acquire_launch_lock();
 
     // Separate "a backend exists" from "services are ready". If a verified backend
     // process is already present — even one still staging binaries / starting
@@ -344,6 +367,11 @@ fn cmd_up(rest: &[String]) -> i32 {
     let pid = child.id();
     let _ = fs::write(pid_file(), pid.to_string());
     println!("orcabot: started (pid {pid}), logs at {}", log_path.display());
+
+    // Release the launch lock now that the backend exists and its pid is recorded
+    // (a concurrent `up` will now see it via app_pid() and attach); don't hold it
+    // across the long readiness poll.
+    drop(launch_lock);
 
     wait_for_ready(timeout_secs)
 }
