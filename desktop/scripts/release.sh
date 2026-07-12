@@ -11,7 +11,7 @@ set -eu
 #
 #   VERSION  optional (e.g. 0.5.0). If given and different from the current
 #            tauri.conf.json version, the three version files are bumped IN THE
-#            WORKING TREE (not committed — open a bump PR separately; we never
+#            WORKING TREE (not committed - open a bump PR separately; we never
 #            push to main). If omitted, the current version is released as-is.
 #
 # Env:
@@ -19,7 +19,7 @@ set -eu
 #                        notarization creds, the Tauri minisign key, and the
 #                        OAuth client IDs/secrets. Default: ~/.orcabot-release.env
 #   ALLOW_UNSIGNED=1     skip the signing-identity check (produces an UNSHIPPABLE
-#                        build — updater/notarization will be wrong; dev only).
+#                        build - updater/notarization will be wrong; dev only).
 #   SKIP_PREFLIGHT=1     passed through to publish-release.sh (not recommended).
 #   BUILD_VM=force       passed through to build-desktop-resources.sh (only when
 #                        the VM image actually changed; see RELEASE.md §6).
@@ -39,11 +39,11 @@ if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   . "$ENV_FILE"
 else
-  echo "== no env file at $ENV_FILE — assuming signing/OAuth vars are already exported"
+  echo "== no env file at $ENV_FILE - assuming signing/OAuth vars are already exported"
 fi
 
 if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${ALLOW_UNSIGNED:-0}" != "1" ]; then
-  echo "ERROR: APPLE_SIGNING_IDENTITY is not set — the build wouldn't be signable/notarizable." >&2
+  echo "ERROR: APPLE_SIGNING_IDENTITY is not set - the build wouldn't be signable/notarizable." >&2
   echo "       Point ORCABOT_RELEASE_ENV at your secrets file, or set ALLOW_UNSIGNED=1 for a throwaway build." >&2
   exit 1
 fi
@@ -52,7 +52,7 @@ fi
 CURRENT=$(read_version)
 WANT="${1:-$CURRENT}"
 if [ "$WANT" != "$CURRENT" ]; then
-  echo "== bumping version $CURRENT -> $WANT (working tree only; open a bump PR — do not push to main)"
+  echo "== bumping version $CURRENT -> $WANT (working tree only; open a bump PR - do not push to main)"
   # tauri.conf.json + Cargo.toml
   if [ "$(uname)" = "Darwin" ]; then
     sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$WANT\"/" "$CONF"
@@ -72,15 +72,15 @@ VERSION=$(read_version)
 echo "== target release: v$VERSION"
 
 # --- 3. Build bundled resources (frontend + workerd; bakes OAuth) ---------
-echo "== building desktop resources (frontend + control-plane workerd)…"
+echo "== building desktop resources (frontend + control-plane workerd)..."
 sh "$SCRIPT_DIR/build-desktop-resources.sh"
 
 # --- 4. Signed + notarized app build --------------------------------------
-echo "== cargo tauri build (signed + notarized; this takes a while)…"
+echo "== cargo tauri build (signed + notarized; this takes a while)..."
 ( cd "$SRC_TAURI" && cargo tauri build )
 
 # --- 5. Preflight gate + publish ------------------------------------------
-echo "== publishing v$VERSION…"
+echo "== publishing v$VERSION..."
 sh "$SCRIPT_DIR/publish-release.sh"
 
 echo
