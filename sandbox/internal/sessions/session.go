@@ -668,6 +668,12 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	// reconnect logic turns into a PTY restart loop.
 	if agentType == mcp.AgentTypeClaude {
 		envVars["IS_SANDBOX"] = "1"
+		// REVISION: claude-no-altscreen-v1
+		// Force Claude Code's classic inline renderer instead of the full-screen
+		// alternate-screen TUI (and skip its one-time "use full screen?" prompt).
+		// The alt-screen takeover is disruptive inside the xterm.js terminal block;
+		// this env forces classic mode regardless of any saved `tui` setting.
+		envVars["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] = "1"
 	}
 	// HOME resolves to a dedicated dir INSIDE the workspace, not the workspace root
 	// itself. Keeping ~ under the workspace keeps agent home-dir files self-contained
