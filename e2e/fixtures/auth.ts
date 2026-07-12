@@ -1,15 +1,9 @@
 import { type Page, type BrowserContext, expect } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
+import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
 const DEFAULT_NAME = process.env.E2E_USER_NAME || "E2E Test User";
 const DEFAULT_EMAIL = process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
-
-/**
- * Control plane URL for API calls.
- * Default: localhost:8787 (matches frontend/src/config/env.ts for localhost target).
- */
-const CONTROLPLANE_URL =
-  process.env.CONTROLPLANE_URL || "http://localhost:8787";
 
 /**
  * Log in by creating a server-side session directly via the control plane API,

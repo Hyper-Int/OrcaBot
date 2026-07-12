@@ -22,7 +22,7 @@ export async function addTerminal(
  * layer underneath (.xterm-rows) with span elements containing text.
  * Falls back to other selectors if .xterm-rows is not available.
  */
-async function readTerminalText(page: Page): Promise<string> {
+export async function readTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
     // Approach 1: .xterm-rows (xterm v4/v5 DOM layer)
     const rows = document.querySelector(".xterm-rows");
@@ -49,7 +49,20 @@ async function readTerminalText(page: Page): Promise<string> {
 }
 
 /**
- * Wait for the terminal to connect and show a shell prompt.
+ * A real shell prompt looks like `user@host:path#` (or `$`), e.g.
+ * `root@78451ddfd73298:/workspace#`.
+ *
+ * This deliberately does NOT match the terminal block's own status lines
+ * ("Connecting to sandbox...", "$ Connected to sandbox"). Those are exactly what
+ * a *stuck* first-PTY shows — connected but with no shell prompt rendered — and
+ * the old `content.trim().length > 0` check green-lit that stuck state, hiding
+ * the flaky-first-connect bug. Requiring the `user@host:…[#$]` shape is what
+ * makes the stuck state fail a test instead of passing it.
+ */
+export const SHELL_PROMPT_RE = /[\w.-]+@[\w.-]+:[^\n]*[#$]/;
+
+/**
+ * Wait for the terminal to connect and show a real shell prompt.
  * The sandbox needs to boot (Fly machine start), create a session,
  * and establish a WebSocket connection before the prompt appears.
  */
@@ -58,19 +71,21 @@ export async function waitForPrompt(
   timeoutMs = 90_000
 ): Promise<void> {
   const startTime = Date.now();
+  let last = "";
   while (Date.now() - startTime < timeoutMs) {
-    const content = await readTerminalText(page);
-
-    // A connected terminal will have some content — a prompt character
-    // like $, #, >, or a username/path in the prompt
-    if (content && content.trim().length > 0) {
-      return;
-    }
+    last = await readTerminalText(page);
+    if (SHELL_PROMPT_RE.test(last)) return;
     await page.waitForTimeout(1_000);
   }
+  const stuck = /Connecting to sandbox|Connected to sandbox/i.test(last);
   throw new Error(
-    `Terminal did not show a prompt within ${timeoutMs}ms. ` +
-      "Check that the sandbox boots and the WebSocket connects."
+    `Terminal did not show a shell prompt within ${timeoutMs}ms` +
+      (stuck
+        ? " — stuck on the connect banner with no prompt (first-PTY render race)"
+        : "") +
+      `. Last content (first 300 chars): ${last
+        .replace(/\n/g, "⏎")
+        .slice(0, 300)}`
   );
 }
 

@@ -12,6 +12,7 @@ import {
   waitForOutput,
 } from "./terminal";
 import { OrcabotAPI } from "../helpers/api";
+import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
 /** Bundled auth helpers available in every test */
 export interface AuthFixture {
@@ -77,7 +78,7 @@ export const test = base.extend<{
     });
 
     // Auto-cleanup: attempt API-based delete for all tracked dashboards
-    const cpUrl = process.env.CONTROLPLANE_URL || "http://localhost:8787";
+    const cpUrl = CONTROLPLANE_URL;
     if (trackedIds.length > 0) {
       const email =
         process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
@@ -105,8 +106,7 @@ export const test = base.extend<{
   api: async ({ page }, use) => {
     const email = process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
     const name = process.env.E2E_USER_NAME || "E2E Test User";
-    const cpUrl = process.env.CONTROLPLANE_URL || "http://localhost:8787";
-    const client = new OrcabotAPI(page.request, cpUrl, email, name);
+    const client = new OrcabotAPI(page.request, CONTROLPLANE_URL, email, name);
     await use({ client });
   },
 });

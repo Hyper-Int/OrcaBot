@@ -364,34 +364,42 @@ async function prоxySandbоxWebSоcket(
   const body = ['POST', 'PUT', 'PATCH'].includes(request.method)
     ? request.clone().body
     : undefined;
-  const proxyRequest = new Request(sandboxUrlValue.toString(), {
+  const makeRequest = () => new Request(sandboxUrlValue.toString(), {
     method: request.method,
     headers,
     body,
     redirect: 'manual',
   });
 
-  const response = await fetch(proxyRequest);
+  // REVISION: ws-proxy-v2-readiness-retry-no-premature-reconcile
+  // Readiness retry: right after createPty — or when an autostop:suspend machine
+  // is resuming — the PTY isn't registered on the sandbox yet, so the upstream
+  // upgrade 404s. That's a *timing* miss, not a dead PTY. Retry the upgrade for a
+  // few seconds so the client gets a clean 101 instead of a 404 that triggers a
+  // disruptive session recreate (the "stuck connecting" / "disappearing terminal"
+  // first-PTY flake). Only a bodyless (GET) upgrade is safe to replay.
+  let response = await fetch(makeRequest());
+  let attempts = 0;
+  const maxRetries = body ? 0 : 6; // ~3s total (6 × 500ms)
+  while (response.status === 404 && attempts < maxRetries) {
+    attempts++;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    response = await fetch(makeRequest());
+  }
+
   if (response.status !== 101) {
     console.warn(
-      `[ws-proxy] upstream PTY WS failed status=${response.status} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+      `[ws-proxy] upstream PTY WS failed status=${response.status} attempts=${attempts} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
     );
-    // Reconcile: the sandbox no longer has this PTY (process died, or the VM was
-    // restarted), but D1 may still show the session 'active' ("ghost" session →
-    // stale 'running' status + "stuck connecting"). Mark it stopped so the client
-    // recreates instead of hanging, and listings reflect reality. Best-effort.
-    if (response.status === 404) {
-      try {
-        await env.DB.prepare(
-          `UPDATE sessions SET status = 'stopped', stopped_at = ? WHERE pty_id = ? AND status != 'stopped'`
-        ).bind(new Date().toISOString(), ptyId).run();
-      } catch {
-        // ignore — reconciliation is best-effort
-      }
-    }
+    // Do NOT reconcile-to-stopped here. A 404 that's a genuinely dead PTY vs. one
+    // that's merely not-ready-yet is indistinguishable at this layer, and the sole
+    // caller already reconciles WITH a creation-age grace period. The previous
+    // unconditional UPDATE ran *before* that grace check and marked freshly-created
+    // sessions stopped during the provisioning race — defeating the grace period
+    // and causing the first-PTY disappear/stuck bug.
   } else {
     console.log(
-      `[ws-proxy] upstream PTY WS upgraded sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+      `[ws-proxy] upstream PTY WS upgraded attempts=${attempts} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
     );
   }
   return response;
