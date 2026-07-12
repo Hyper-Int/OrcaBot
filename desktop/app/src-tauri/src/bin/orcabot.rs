@@ -269,14 +269,23 @@ fn cmd_up(rest: &[String]) -> i32 {
         }
     }
 
-    if stack_running() {
-        println!("orcabot: stack already running (control plane healthy on :{})", cp_port());
-        if sandbox_health().is_some() {
-            println!("orcabot: sandbox healthy on :{}", sb_port());
-        } else {
-            println!("orcabot: sandbox still starting…");
+    // Separate "a backend exists" from "services are ready". If a verified backend
+    // process is already present — even one still staging binaries / starting
+    // workerd — attach to it and wait, NEVER launch a second orcabot-desktop. Two
+    // backends would pick overlapping ports, clobber the shared ports file, and
+    // race their service children.
+    if app_pid().is_some() {
+        if controlplane_healthy() {
+            println!("orcabot: stack already running (control plane healthy on :{})", cp_port());
+            if sandbox_health().is_some() {
+                println!("orcabot: sandbox healthy on :{}", sb_port());
+            } else {
+                println!("orcabot: sandbox still starting…");
+            }
+            return 0;
         }
-        return 0;
+        println!("orcabot: a backend is already starting — waiting for it (not launching another)…");
+        return wait_for_ready(timeout_secs);
     }
 
     let bin = match desktop_binary() {
@@ -303,11 +312,11 @@ fn cmd_up(rest: &[String]) -> i32 {
         }
     };
 
-    // Clear any stale ports file from a prior (now-dead) backend so the readiness
-    // poll below only trusts health once OUR freshly-launched backend rewrites it.
-    // Without this, a foreign listener on the default port could be mistaken for
-    // our control plane during the boot window. (A live stack was already ruled
-    // out by stack_running() above.)
+    // We only reach here when no backend process exists (the app_pid() guard
+    // above returned early otherwise). Clear any stale ports file from a prior
+    // now-dead backend so the readiness poll only trusts health once OUR freshly
+    // launched backend rewrites it — otherwise a foreign listener on the default
+    // port could be mistaken for our control plane during the boot window.
     let _ = fs::remove_file(data_dir().join("ports"));
 
     println!("orcabot: launching headless stack ({})…", bin.display());
@@ -336,13 +345,20 @@ fn cmd_up(rest: &[String]) -> i32 {
     let _ = fs::write(pid_file(), pid.to_string());
     println!("orcabot: started (pid {pid}), logs at {}", log_path.display());
 
-    // Wait for readiness.
+    wait_for_ready(timeout_secs)
+}
+
+/// Poll until the control plane + sandbox are ready (or timeout). Shared by the
+/// spawn path and the "attach to a backend that's still starting" path, so a
+/// second `up`/`tui` invoked mid-boot waits for the existing backend instead of
+/// launching a rival one.
+fn wait_for_ready(timeout_secs: u64) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let mut cp_ready = false;
     print!("orcabot: waiting for services");
     let _ = std::io::stdout().flush();
     while Instant::now() < deadline {
-        // Only trust a healthy control plane once our backend has written its
+        // Only trust a healthy control plane once the backend has written its
         // ports file — proves it's OUR stack (on whatever port it chose), not a
         // foreign listener still occupying the default port.
         if !cp_ready && data_dir().join("ports").exists() && controlplane_healthy() {
@@ -3229,13 +3245,19 @@ fn cmd_tui() -> i32 {
 fn run_tui(force_own: bool) -> i32 {
     let mut we_own = force_own;
     if !stack_running() {
-        println!("orcabot: starting the stack (it will stop when you quit)…");
+        // Own (and tear down on quit) the stack ONLY if we actually start it. If a
+        // backend is already coming up, cmd_up waits for it rather than launching a
+        // rival, and we just attach — so we must not claim ownership of it.
+        let started_it = app_pid().is_none();
+        if started_it {
+            println!("orcabot: starting the stack (it will stop when you quit)…");
+        }
         let rc = cmd_up(&[]);
         if rc != 0 || !controlplane_healthy() {
             eprintln!("orcabot: could not start the stack (see the log above); not opening the TUI.");
             return if rc != 0 { rc } else { 1 };
         }
-        we_own = true;
+        we_own = we_own || started_it;
     }
     // The TUI needs a real terminal. If stdout isn't a TTY (piped/redirected),
     // don't panic in ratatui::init. If we own the stack but can't open a TUI,
