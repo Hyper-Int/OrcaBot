@@ -105,6 +105,15 @@ export const CLOUDFLARE_API_URL = resolveApiUrl();
 export const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL || SITE_URL_BY_TARGET[FRONTEND_TARGET];
 
+// The PUBLIC cloud control plane + site, regardless of build target. On desktop
+// CLOUDFLARE_API_URL points at the LOCAL control plane, so these give the desktop
+// app a way to reach orcabot.com for optional "sign in with your account" — the
+// app itself keeps running on the local control plane.
+export const CLOUD_API_URL =
+  process.env.NEXT_PUBLIC_CLOUD_API_URL || API_URL_BY_TARGET.production;
+export const CLOUD_SITE_URL =
+  process.env.NEXT_PUBLIC_CLOUD_SITE_URL || SITE_URL_BY_TARGET.production;
+
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
 

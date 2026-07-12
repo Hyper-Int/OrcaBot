@@ -616,6 +616,57 @@ pub fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+#[derive(Serialize, Clone)]
+pub struct OrcabotAccount {
+    pub email: String,
+    pub name: String,
+}
+
+/// Verify an orcabot.com personal access token and return its account identity.
+/// Runs from the native layer (not the webview) so it isn't subject to browser
+/// CORS, and the token is only ever sent to the FIXED cloud control-plane URL —
+/// a compromised webview can't redirect it elsewhere. The desktop app keeps
+/// running on the LOCAL control plane; this only confirms the account and reads
+/// the email/name to use as the local identity.
+#[tauri::command]
+pub fn verify_orcabot_account(token: String) -> Result<OrcabotAccount, String> {
+    let token = token.trim();
+    if !token.starts_with("orca_pat_") {
+        return Err("That doesn't look like an Orcabot token (starts with orca_pat_).".into());
+    }
+    // Fixed to the public cloud control plane on purpose (token exfil guard).
+    let url = "https://orcabot-controlplane.orcabot.workers.dev/users/me";
+    match ureq::get(url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+    {
+        Ok(resp) => {
+            let body: serde_json::Value = resp
+                .into_json()
+                .map_err(|e| format!("unexpected response from orcabot.com: {e}"))?;
+            let email = body["user"]["email"].as_str().unwrap_or("").trim().to_string();
+            if email.is_empty() {
+                return Err("That account has no email — can't sign in.".into());
+            }
+            let name = body["user"]["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&email)
+                .to_string();
+            Ok(OrcabotAccount { email, name })
+        }
+        Err(ureq::Error::Status(401, _)) => {
+            Err("That token was rejected. Create a fresh one on orcabot.com and try again.".into())
+        }
+        Err(ureq::Error::Status(code, _)) => {
+            Err(format!("orcabot.com returned an error ({code})."))
+        }
+        Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+    }
+}
+
 /// Return the per-boot surface token. The host frontend sends it as the
 /// `X-Orcabot-Surface` header so the control plane knows the request is from the
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).

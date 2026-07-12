@@ -995,6 +995,7 @@ fn main() {
       commands::reveal_workspace,
       commands::get_ports,
       commands::get_app_version,
+      commands::verify_orcabot_account,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

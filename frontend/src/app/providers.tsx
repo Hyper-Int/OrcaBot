@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: providers-v6-analytics-init
-const MODULE_REVISION = "providers-v6-analytics-init";
+// REVISION: providers-v7-desktop-account-gate
+const MODULE_REVISION = "providers-v7-desktop-account-gate";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -15,6 +15,8 @@ import { Toaster } from "sonner";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { ensureSurfaceToken } from "@/lib/tauri-bridge";
 import { getAuthHeaders, useAuthStore } from "@/stores/auth-store";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
+import { DesktopWelcome } from "@/components/desktop/DesktopWelcome";
 import type { User, SubscriptionInfo } from "@/types";
 import { initAnalytics, stopAnalytics, resetQueue } from "@/lib/analytics";
 
@@ -49,9 +51,16 @@ interface ProvidersProps {
 function AuthBootstrapper() {
   const { isAuthenticated, setUser, setAuthResolved, loginDevMode } = useAuthStore();
   const userId = useAuthStore((s) => s.user?.id ?? null);
+  // Desktop first-run account choice (free / signed-in). Drives whether/who we
+  // auto-login as; until it's set on a fresh install, the welcome gate is shown.
+  const accountChoice = useDesktopAccountStore((s) => s.choice);
+  const accountEmail = useDesktopAccountStore((s) => s.email);
+  const accountName = useDesktopAccountStore((s) => s.name);
+  const chooseFree = useDesktopAccountStore((s) => s.chooseFree);
   // Track which user ID we last validated — re-runs on user switch, not just once per page
   const validatedUserRef = React.useRef<string | null>(null);
-  const unauthBootstrappedRef = React.useRef(false);
+  // Which (mode/choice) we last bootstrapped for, so a first-run choice re-runs it.
+  const bootstrappedForRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     // If already authenticated (from localStorage hydration), just mark as resolved.
@@ -62,6 +71,9 @@ function AuthBootstrapper() {
       if (validatedUserRef.current !== userId) {
         validatedUserRef.current = userId;
         if (DESKTOP_MODE) {
+          // Existing installs (already authed before the first-run choice existed)
+          // count as "free" so the welcome screen never appears for them.
+          if (!accountChoice) chooseFree();
           void ensureSurfaceToken()
             .then(() => {
               const authHeaders = getAuthHeaders();
@@ -104,11 +116,19 @@ function AuthBootstrapper() {
       return;
     }
 
-    if (unauthBootstrappedRef.current) {
+    // Desktop: nothing to log in as until the first-run choice is made (the
+    // DesktopWelcome gate is rendered instead). Re-bootstrap if the choice changes
+    // (null → free/signed-in, or account switch). Web bootstraps exactly once.
+    if (DESKTOP_MODE && !accountChoice) {
       return;
     }
-
-    unauthBootstrappedRef.current = true;
+    const bootstrapKey = DESKTOP_MODE
+      ? `${accountChoice}:${accountEmail ?? ""}`
+      : "web";
+    if (bootstrappedForRef.current === bootstrapKey) {
+      return;
+    }
+    bootstrappedForRef.current = bootstrapKey;
     // Reset validated user so post-login validation runs for the new session
     validatedUserRef.current = null;
     let isActive = true;
@@ -121,7 +141,14 @@ function AuthBootstrapper() {
         // below carry X-Orcabot-Surface — the control plane requires it to honor
         // dev-auth, or /auth/dev/session and the /me ID-sync 401 (wrong user →
         // empty dashboards).
-        loginDevMode("Desktop User", "desktop@localhost");
+        // "signed-in" uses the real account's email/name as the LOCAL dev-auth
+        // identity (data stays local; dev-auth resolves users by email). "free"
+        // uses the anonymous local identity. Either way we run on local control plane.
+        if (accountChoice === "signed-in" && accountEmail) {
+          loginDevMode(accountName || accountEmail, accountEmail);
+        } else {
+          loginDevMode("Desktop User", "desktop@localhost");
+        }
         await Promise.race([
           ensureSurfaceToken(),
           new Promise((resolve) => setTimeout(resolve, 3000)),
@@ -184,7 +211,17 @@ function AuthBootstrapper() {
     return () => {
       isActive = false;
     };
-  }, [isAuthenticated, userId, setUser, setAuthResolved, loginDevMode]);
+  }, [
+    isAuthenticated,
+    userId,
+    setUser,
+    setAuthResolved,
+    loginDevMode,
+    accountChoice,
+    accountEmail,
+    accountName,
+    chooseFree,
+  ]);
 
   return null;
 }
@@ -206,6 +243,22 @@ function AnalyticsBootstrapper() {
   return null;
 }
 
+/**
+ * On the desktop app's first run, show the welcome screen (Free Desktop Use vs.
+ * sign in) instead of the app until a choice is made. Web is unaffected, and
+ * returning/authenticated desktop users skip straight through.
+ */
+function DesktopAuthGate({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const choice = useDesktopAccountStore((s) => s.choice);
+  const hydrated = useDesktopAccountStore((s) => s.hydrated);
+
+  if (DESKTOP_MODE && hydrated && !isAuthenticated && choice === null) {
+    return <DesktopWelcome />;
+  }
+  return <>{children}</>;
+}
+
 export function Providers({ children }: ProvidersProps) {
   const queryClient = getQueryClient();
 
@@ -214,7 +267,7 @@ export function Providers({ children }: ProvidersProps) {
       <TooltipProvider delayDuration={200}>
         <AuthBootstrapper />
         <AnalyticsBootstrapper />
-        {children}
+        <DesktopAuthGate>{children}</DesktopAuthGate>
         <Toaster
           position="bottom-right"
           toastOptions={{

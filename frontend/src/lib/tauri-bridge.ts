@@ -96,6 +96,22 @@ export async function getAppVersion(): Promise<string | null> {
   }
 }
 
+export interface OrcabotAccount {
+  email: string;
+  name: string;
+}
+
+/**
+ * Verify an orcabot.com personal access token via the native layer (no browser
+ * CORS; the token is only sent to the fixed cloud URL). Resolves to the account
+ * identity, or throws with a user-facing message. Desktop-only.
+ */
+export async function verifyOrcabotAccount(token: string): Promise<OrcabotAccount> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Sign-in is only available in the desktop app.");
+  return invoke("verify_orcabot_account", { token }) as Promise<OrcabotAccount>;
+}
+
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
 export async function revealWorkspace(): Promise<void> {
   const invoke = await getTauriInvoke();
