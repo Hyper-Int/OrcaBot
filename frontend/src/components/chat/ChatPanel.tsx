@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v34-no-key-provider-card
+// REVISION: chat-v35-in-window-input
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v34-no-key-provider-card";
+const CHAT_PANEL_REVISION = "chat-v35-in-window-input";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -66,6 +66,10 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   const [inputValue, setInputValue] = React.useState("");
   const inputBarRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  // Separate ref for the dedicated compose input rendered inside the expanded
+  // window. Shares the single `inputValue` source of truth with the collapsed
+  // top-bar input; only the focus target differs.
+  const inWindowInputRef = React.useRef<HTMLInputElement>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const initialPromptConsumedRef = React.useRef(false);
   // Auto-minimize the chat the first time the user interacts with the page
@@ -373,28 +377,47 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
             borderBottom: isExpanded ? "1px solid rgba(0, 229, 255, 0.15)" : undefined,
           }}
         >
-          <input
-            ref={inputRef}
-            type="text"
-            name="orcabot-prompt-nofill"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onFocus={() => setIsExpanded(true)}
-            placeholder="Ask Orcabot..."
-            disabled={isStreaming}
-            autoComplete="one-time-code"
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore
-            className={cn(
-              "flex-1 border-0 outline-none chat-input-splash focus-visible:outline-none",
-              "text-sm",
-              "disabled:opacity-50",
-              "placeholder:text-[#5a7a9e]"
-            )}
-            style={{ color: "#e8edf5", caretColor: "#00e5ff", backgroundColor: "transparent", outline: "none" }}
-          />
+          {isExpanded ? (
+            /* Expanded: the top bar is a title/header, not an input. Clicking it
+               focuses the dedicated in-window compose input below. */
+            <button
+              type="button"
+              onClick={() => inWindowInputRef.current?.focus()}
+              className="flex-1 text-left text-sm font-medium truncate focus-visible:outline-none"
+              style={{ color: "#e8edf5" }}
+              title="Focus the message box"
+            >
+              Ask Orcabot
+            </button>
+          ) : (
+            <input
+              ref={inputRef}
+              type="text"
+              name="orcabot-prompt-nofill"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onFocus={() => {
+                setIsExpanded(true);
+                // The collapsed input unmounts on expand; hand focus to the
+                // in-window compose input once it has mounted.
+                requestAnimationFrame(() => inWindowInputRef.current?.focus());
+              }}
+              placeholder="Ask Orcabot..."
+              disabled={isStreaming}
+              autoComplete="one-time-code"
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore
+              className={cn(
+                "flex-1 border-0 outline-none chat-input-splash focus-visible:outline-none",
+                "text-sm",
+                "disabled:opacity-50",
+                "placeholder:text-[#5a7a9e]"
+              )}
+              style={{ color: "#e8edf5", caretColor: "#00e5ff", backgroundColor: "transparent", outline: "none" }}
+            />
+          )}
 
           {/* Trash button (when has messages) */}
           {hasMessages && (
@@ -429,21 +452,79 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
             )}
           </Button>
 
-          {/* Send Button */}
-          <Button
-            onClick={handleSend}
-            disabled={!inputValue.trim() || isStreaming}
-            size="sm"
-            className="h-7 w-7 p-0 rounded-full text-white"
-            style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
-          >
-            {isStreaming ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-          </Button>
+          {/* Send Button — collapsed only; expanded uses the in-window compose box */}
+          {!isExpanded && (
+            <Button
+              onClick={handleSend}
+              disabled={!inputValue.trim() || isStreaming}
+              size="sm"
+              className="h-7 w-7 p-0 rounded-full text-white"
+              style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
+            >
+              {isStreaming ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+            </Button>
+          )}
         </div>
+
+        {/* In-window compose box (expanded only). Pinned between the title bar and
+            the messages scroll area — since messages render newest-at-top, a new
+            message appears directly beneath this box. Right-aligned and styled to
+            echo the user's own message bubbles (rounded-2xl, primary accent) so it
+            reads as "your next message". White in light mode, elevated surface in
+            dark. */}
+        {isExpanded && (
+          <div
+            className="flex justify-end px-4 pt-3 pb-2"
+            style={{
+              background: "var(--chat-input-bg)",
+              backdropFilter: "blur(20px)",
+              WebkitBackdropFilter: "blur(20px)",
+              borderBottom: "1px solid rgba(0, 229, 255, 0.15)",
+            }}
+          >
+            <div
+              className="flex items-center gap-2 w-full max-w-[85%] rounded-2xl px-3 py-1.5 ring-1 ring-primary/40 shadow-sm"
+              style={{ background: "var(--background-elevated)" }}
+            >
+              <input
+                ref={inWindowInputRef}
+                type="text"
+                name="orcabot-prompt-inwindow-nofill"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask Orcabot..."
+                disabled={isStreaming}
+                autoComplete="one-time-code"
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore
+                className={cn(
+                  "flex-1 bg-transparent border-0 outline-none focus-visible:outline-none",
+                  "text-sm placeholder:text-muted-foreground disabled:opacity-50"
+                )}
+                style={{ color: "var(--foreground)", caretColor: "var(--accent-primary)", outline: "none" }}
+              />
+              <Button
+                onClick={handleSend}
+                disabled={!inputValue.trim() || isStreaming}
+                size="sm"
+                className="h-7 w-7 p-0 rounded-full text-white flex-shrink-0"
+                style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
+              >
+                {isStreaming ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Messages area (when expanded, below input) — newest at top */}
         {isExpanded && (
