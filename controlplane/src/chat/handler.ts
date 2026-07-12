@@ -1320,12 +1320,10 @@ export async function streamMessage(
   env: Env,
   userId: string
 ): Promise<Response> {
-  if (!env.GEMINI_ORCABOT_KEY) {
-    return Response.json(
-      { error: 'Orcabot Gemini API key not configured' },
-      { status: 500 }
-    );
-  }
+  // NOTE: don't hard-require GEMINI_ORCABOT_KEY here. On desktop no system key
+  // ships, but the user can bring their own GEMINI_API_KEY (used below). The key
+  // is resolved after we load the user's stored keys; if neither exists we return
+  // a distinct CHAT_NO_KEY error the client turns into an "add a key" prompt.
 
   let body: { message: string; dashboardId?: string };
   try {
@@ -1399,6 +1397,19 @@ If they explicitly name a different provider they have a key for, use that one i
     } catch {
       // Fall back to system key if decryption fails
     }
+  }
+
+  // Neither an Orcabot-provided key (cloud) nor the user's own GEMINI_API_KEY
+  // (desktop) is available — chat can't run. Return a distinct code so the client
+  // shows the "add a Gemini key" setup card instead of a generic error.
+  if (!apiKey) {
+    return Response.json(
+      {
+        error: 'E79230: Orcabot chat needs a Gemini API key. Add one to continue.',
+        code: 'CHAT_NO_KEY',
+      },
+      { status: 400 }
+    );
   }
 
   // Load conversation history

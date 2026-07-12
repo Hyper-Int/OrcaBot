@@ -58,6 +58,9 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   // - user needs AI provider setup (needsAiSetup)
   const [isExpanded, setIsExpanded] = React.useState(false);
   const [showSetupCard, setShowSetupCard] = React.useState(false);
+  // When chat fails for lack of an API key we render the setup card inline in the
+  // error slot; this hides it again once the user finishes (before they re-send).
+  const [keyErrorDismissed, setKeyErrorDismissed] = React.useState(false);
   // Persists the provider names saved via the setup card — shown as a permanent bubble in chat
   const [setupSavedKeys, setSetupSavedKeys] = React.useState<string[]>([]);
   const [inputValue, setInputValue] = React.useState("");
@@ -195,6 +198,12 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
       setIsExpanded(true);
     }
   }, [needsAiSetup, dashboardId]);
+
+  // Reset the inline key-setup dismissal whenever the chat error changes, so a
+  // fresh no-key error re-shows the setup card.
+  React.useEffect(() => {
+    setKeyErrorDismissed(false);
+  }, [error]);
 
   // First time the user interacts with the page *outside* the chat while it's
   // expanded, auto-minimize it so it's out of the way. Fires once per mount, and
@@ -452,11 +461,29 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               </div>
             )}
 
-            {/* Error message — show friendly text, log raw for debugging */}
+            {/* Error message. A missing-API-key error (CHAT_NO_KEY / E79230) shows
+                the provider setup card inline so the user can add a Gemini key and
+                retry; anything else falls back to the generic notice. */}
             {error && (
-              <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm mb-2">
-                Something went wrong — please try again.
-              </div>
+              error.includes("E79230") ? (
+                !keyErrorDismissed && (
+                  <div className="p-3 rounded-xl bg-muted text-sm mb-3 space-y-3">
+                    <p className="text-muted-foreground">
+                      Orcabot chat needs a Gemini API key to run. Add one below, then send your message again.
+                    </p>
+                    <AiProviderSetupCard
+                      onDone={(savedKeys) => {
+                        setKeyErrorDismissed(true);
+                        handleSetupCardDone(savedKeys);
+                      }}
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm mb-2">
+                  Something went wrong — please try again.
+                </div>
+              )
             )}
 
             {/* Streaming response — newest content, shown at top */}
