@@ -26,6 +26,19 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// Progress of an in-flight auto-update, emitted to the GUI as `update-progress`
+/// so the frontend can show a download bar (the native "Update available" dialog
+/// otherwise gives no feedback between "Update & restart" and the relaunch).
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+  /// "starting" | "downloading" | "installing" | "error"
+  phase: &'static str,
+  downloaded: u64,
+  total: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  message: Option<String>,
+}
+
 /// File recording the ports the stack actually bound to this boot (some may be
 /// dynamic when a default was busy). The `orcabot` CLI reads this so it connects
 /// to the right control plane / sandbox / frontend instead of the hardcoded
@@ -981,6 +994,7 @@ fn main() {
       commands::open_url,
       commands::reveal_workspace,
       commands::get_ports,
+      commands::get_app_version,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());
@@ -1085,6 +1099,7 @@ fn main() {
       // prompt, because restarting tears down any running VM/terminal/agent
       // session (RunEvent::Exit shuts the services down).
       if !headless {
+        use tauri::Emitter;
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
         use tauri_plugin_updater::UpdaterExt;
         let handle = app.handle().clone();
@@ -1115,9 +1130,49 @@ fn main() {
             eprintln!("[updater] update deferred by user");
             return;
           }
-          match update.download_and_install(|_chunk, _total| {}, || {}).await {
+
+          // Tell the GUI a download is starting so it can show a progress bar,
+          // then stream progress from the download closure. Emits are throttled
+          // to once per MB so a ~190MB download doesn't flood IPC.
+          let _ = handle.emit(
+            "update-progress",
+            UpdateProgress { phase: "starting", downloaded: 0, total: None, message: None },
+          );
+          let h_chunk = handle.clone();
+          let h_done = handle.clone();
+          let got = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+          let last_mb = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+          let got_c = got.clone();
+          let result = update
+            .download_and_install(
+              move |chunk, total| {
+                use std::sync::atomic::Ordering::Relaxed;
+                let so_far = got_c.fetch_add(chunk as u64, Relaxed) + chunk as u64;
+                let mb = so_far / (1024 * 1024);
+                if mb != last_mb.swap(mb, Relaxed) {
+                  let _ = h_chunk.emit(
+                    "update-progress",
+                    UpdateProgress { phase: "downloading", downloaded: so_far, total, message: None },
+                  );
+                }
+              },
+              move || {
+                let _ = h_done.emit(
+                  "update-progress",
+                  UpdateProgress { phase: "installing", downloaded: 0, total: None, message: None },
+                );
+              },
+            )
+            .await;
+          match result {
             Ok(_) => { eprintln!("[updater] installed; relaunching"); handle.restart(); }
-            Err(e) => eprintln!("[updater] install failed: {e}"),
+            Err(e) => {
+              eprintln!("[updater] install failed: {e}");
+              let _ = handle.emit(
+                "update-progress",
+                UpdateProgress { phase: "error", downloaded: 0, total: None, message: Some(e.to_string()) },
+              );
+            }
           }
         });
       }

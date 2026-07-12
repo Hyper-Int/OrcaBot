@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v5-global-invoke
-const MODULE_REVISION = "tauri-bridge-v5-global-invoke";
+// REVISION: tauri-bridge-v6-version-and-update-progress
+const MODULE_REVISION = "tauri-bridge-v6-version-and-update-progress";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -68,6 +68,13 @@ export interface ImportProgress {
   phase: "scanning" | "copying" | "done" | "error";
 }
 
+export interface UpdateProgress {
+  phase: "starting" | "downloading" | "installing" | "error";
+  downloaded: number;
+  total: number | null;
+  message?: string;
+}
+
 // ---- Commands ----
 
 /** Get the host workspace directory path. */
@@ -75,6 +82,18 @@ export async function getWorkspacePath(): Promise<WorkspaceInfo | null> {
   const invoke = await getTauriInvoke();
   if (!invoke) return null;
   return invoke("get_workspace_path") as Promise<WorkspaceInfo>;
+}
+
+/** The running app version (e.g. "0.5.0"); null on web/Cloudflare builds. */
+export async function getAppVersion(): Promise<string | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    const v = (await invoke("get_app_version")) as string;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
@@ -257,6 +276,27 @@ export async function onImportProgress(
     const unlisten = await mod.getCurrentWebview().listen(
       "folder-import-progress",
       (event: { payload: ImportProgress }) => callback(event.payload)
+    );
+    return unlisten;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Listen for auto-update progress emitted from Rust (`update-progress`). Fires
+ * once the user accepts the update (download start → per-MB progress → install),
+ * so the UI can show a download bar. No-op off desktop.
+ */
+export async function onUpdateProgress(
+  callback: (progress: UpdateProgress) => void
+): Promise<(() => void) | null> {
+  if (!DESKTOP_MODE) return null;
+  try {
+    const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
+    const unlisten = await mod.getCurrentWebview().listen(
+      "update-progress",
+      (event: { payload: UpdateProgress }) => callback(event.payload)
     );
     return unlisten;
   } catch {

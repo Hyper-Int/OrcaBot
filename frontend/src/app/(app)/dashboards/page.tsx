@@ -54,6 +54,7 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
+import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { switchToCli } from "@/lib/tauri-bridge";
 import {
@@ -370,6 +371,7 @@ export default function DashboardsPage() {
               className="w-7 h-7 object-contain"
             />
             <span className="text-lg font-bold text-[var(--foreground)]">OrcaBot</span>
+            <DesktopVersionBadge />
           </div>
             <div className="flex items-center gap-4">
               <TrialBanner />

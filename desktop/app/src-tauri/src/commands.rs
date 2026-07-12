@@ -608,6 +608,14 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// The running app's version (from tauri.conf.json / Cargo.toml), e.g. "0.5.0".
+/// Shown in the desktop header so users can see what they're running — the
+/// version is otherwise invisible in a packaged build.
+#[tauri::command]
+pub fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// Return the per-boot surface token. The host frontend sends it as the
 /// `X-Orcabot-Surface` header so the control plane knows the request is from the
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).

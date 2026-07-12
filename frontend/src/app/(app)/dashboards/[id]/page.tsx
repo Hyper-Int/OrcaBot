@@ -76,6 +76,7 @@ import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog"
 import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
 import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
+import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
@@ -3605,6 +3606,7 @@ export default function DashboardPage() {
             <span className="text-lg font-bold text-[var(--foreground)]">
               OrcaBot
             </span>
+            <DesktopVersionBadge />
           </div>
 
           <div className="flex items-center gap-2 justify-center min-w-0">
