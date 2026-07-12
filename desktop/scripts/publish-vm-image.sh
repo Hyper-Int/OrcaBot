@@ -48,7 +48,11 @@ echo "Publishing $GZ to release $TAG..."
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   gh release upload "$TAG" --repo "$REPO" --clobber "$GZ"
 else
+  # --latest=false: a VM-image release must NEVER become the repo's "latest"
+  # release, or it shadows the app release that the updater polls at
+  # /releases/latest/download/latest.json (breaking auto-update with "Not Found").
   gh release create "$TAG" --repo "$REPO" \
+    --latest=false \
     --title "VM image $VER" \
     --notes "Sandbox VM disk image ($VER). Downloaded on demand + checksum-verified by the desktop app; not bundled in the app itself." \
     "$GZ"
