@@ -97,9 +97,14 @@ export class OpenAIProvider implements ChatProvider {
     // Accumulate streamed tool calls by index: id + name arrive first, arguments stream in fragments.
     const pending: Record<number, { id: string; name: string; args: string }> = {};
 
+    // Emit accumulated tool calls exactly once. OpenAI streams send BOTH a
+    // `finish_reason` chunk and a `[DONE]` sentinel, so this can be called twice —
+    // delete each entry as it's yielded so the second call is a no-op (otherwise
+    // every tool runs twice and duplicate ids corrupt the next turn).
     const flushToolCalls = function* (): Generator<ChatChunk> {
       for (const idx of Object.keys(pending).map(Number).sort((a, b) => a - b)) {
         const tc = pending[idx];
+        delete pending[idx];
         let args: Record<string, unknown> = {};
         try {
           args = tc.args ? JSON.parse(tc.args) : {};

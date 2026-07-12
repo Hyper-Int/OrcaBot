@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v33-setup-race-fix
+// REVISION: chat-v34-no-key-provider-card
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v33-setup-race-fix";
+const CHAT_PANEL_REVISION = "chat-v34-no-key-provider-card";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 

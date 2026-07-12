@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v3-history-race-fix
+// REVISION: chat-v4-skip-user-echo
 
 /**
  * useChat hook for Orcabot conversational interface
@@ -19,7 +19,7 @@ import {
   type AnyUIGuidanceCommand,
 } from "@/lib/api/cloudflare/chat";
 
-const HOOK_REVISION = "chat-v3-history-race-fix";
+const HOOK_REVISION = "chat-v4-skip-user-echo";
 console.log(`[useChat] REVISION: ${HOOK_REVISION} loaded at ${new Date().toISOString()}`);
 
 export interface PendingToolCall {
