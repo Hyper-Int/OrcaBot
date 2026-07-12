@@ -495,6 +495,29 @@ function convertMcpToGeminiTools(mcpTools: typeof UI_TOOLS): GeminiTool[] {
 }
 
 // Get all available tools for Orcabot
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI' };
+
+/**
+ * Turn a raw provider error into a short, user-actionable message. Keeps the
+ * common self-serviceable cases (quota, bad key, rate limit) distinct from the
+ * generic fallback, without leaking the raw provider JSON.
+ */
+function friendlyProviderError(raw: string | undefined, providerId: string): string {
+  const label = PROVIDER_LABEL[providerId] || 'The model provider';
+  const s = (raw || '').toLowerCase();
+  if (s.includes('insufficient_quota') || s.includes('exceeded your current quota') || s.includes('quota')) {
+    return `${label}: quota exceeded — check your plan and billing.`;
+  }
+  if (s.includes('invalid_api_key') || s.includes('incorrect api key') || s.includes('invalid api key') ||
+      s.includes('authentication_error') || s.includes('invalid x-api-key')) {
+    return `${label}: API key rejected — check the key.`;
+  }
+  if (s.includes('rate_limit') || s.includes('rate limit')) {
+    return `${label}: rate-limited — try again in a moment.`;
+  }
+  return 'Something went wrong — please try again.';
+}
+
 function getOrcabotTools(): GeminiTool[] {
   return [
     ...DASHBOARD_TOOLS,
@@ -1499,7 +1522,7 @@ If they explicitly name a different provider they have a key for, use that one i
               turnToolResults.push({ id: tcId, name: chunk.name, result, isError });
             } else if (chunk.type === 'error') {
               console.error(`[chat] provider error (provider=${provider.id} dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
-              const errorEvent: ChatStreamEvent = { type: 'error', error: 'Something went wrong — please try again.' };
+              const errorEvent: ChatStreamEvent = { type: 'error', error: friendlyProviderError(chunk.error, provider.id) };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
             }
             // chunk.type === 'done' — end of this turn's stream

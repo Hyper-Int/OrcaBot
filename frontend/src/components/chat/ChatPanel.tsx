@@ -488,7 +488,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
                 )
               ) : (
                 <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm mb-2">
-                  Something went wrong — please try again.
+                  {error}
                 </div>
               )
             )}
