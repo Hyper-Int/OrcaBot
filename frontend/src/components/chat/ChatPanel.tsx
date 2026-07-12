@@ -469,7 +469,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
                 !keyErrorDismissed && (
                   <div className="p-3 rounded-xl bg-muted text-sm mb-3 space-y-3">
                     <p className="text-muted-foreground">
-                      Orcabot chat needs a Gemini API key to run. Add one below, then send your message again.
+                      Orcabot chat needs an API key to run. Add a provider key below (Claude, Gemini, or OpenAI), then send your message again.
                     </p>
                     <AiProviderSetupCard
                       onDone={(savedKeys) => {
