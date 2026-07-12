@@ -475,6 +475,13 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
                       onDone={(savedKeys) => {
                         setKeyErrorDismissed(true);
                         handleSetupCardDone(savedKeys);
+                        // Retry the message that hit the no-key error. Its bubble is
+                        // already shown from the failed attempt, so skip the echo to
+                        // avoid duplicating it.
+                        if (savedKeys && savedKeys.length > 0) {
+                          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+                          if (lastUser) sendMessage(lastUser.content, { skipUserEcho: true });
+                        }
                       }}
                     />
                   </div>
