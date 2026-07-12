@@ -285,7 +285,14 @@ fn cmd_up(rest: &[String]) -> i32 {
             i += 1;
         }
     }
+    ensure_stack_up(timeout_secs).0
+}
 
+/// Ensure the stack is up, returning `(exit_code, spawned)`. `spawned` is true
+/// iff THIS call launched the backend (vs. attaching to one already present) —
+/// decided inside the launch lock, so of two concurrent callers only the one that
+/// actually spawned is told so (and thus claims ownership).
+fn ensure_stack_up(timeout_secs: u64) -> (i32, bool) {
     // Serialize the check-then-spawn against a concurrent `up`/`tui` so two
     // first-launches can't both get past the app_pid() check and spawn rival
     // backends. Held only across the fast critical section below (released before
@@ -305,17 +312,20 @@ fn cmd_up(rest: &[String]) -> i32 {
             } else {
                 println!("orcabot: sandbox still starting…");
             }
-            return 0;
+            return (0, false);
         }
         println!("orcabot: a backend is already starting — waiting for it (not launching another)…");
-        return wait_for_ready(timeout_secs);
+        // Release the lock BEFORE the long wait: a backend already exists, so we
+        // don't need to hold off other launches while we poll for readiness.
+        drop(launch_lock);
+        return (wait_for_ready(timeout_secs), false);
     }
 
     let bin = match desktop_binary() {
         Some(b) => b,
         None => {
             eprintln!("orcabot: could not find the orcabot-desktop binary next to this CLI");
-            return 1;
+            return (1, false);
         }
     };
 
@@ -324,14 +334,14 @@ fn cmd_up(rest: &[String]) -> i32 {
         Ok(f) => f,
         Err(e) => {
             eprintln!("orcabot: cannot open log {}: {e}", log_path.display());
-            return 1;
+            return (1, false);
         }
     };
     let log_err = match log.try_clone() {
         Ok(f) => f,
         Err(e) => {
             eprintln!("orcabot: log clone failed: {e}");
-            return 1;
+            return (1, false);
         }
     };
 
@@ -361,7 +371,7 @@ fn cmd_up(rest: &[String]) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("orcabot: failed to launch desktop binary: {e}");
-            return 1;
+            return (1, false);
         }
     };
     let pid = child.id();
@@ -373,7 +383,7 @@ fn cmd_up(rest: &[String]) -> i32 {
     // across the long readiness poll.
     drop(launch_lock);
 
-    wait_for_ready(timeout_secs)
+    (wait_for_ready(timeout_secs), true)
 }
 
 /// Poll until the control plane + sandbox are ready (or timeout). Shared by the
@@ -3273,19 +3283,19 @@ fn cmd_tui() -> i32 {
 fn run_tui(force_own: bool) -> i32 {
     let mut we_own = force_own;
     if !stack_running() {
-        // Own (and tear down on quit) the stack ONLY if we actually start it. If a
-        // backend is already coming up, cmd_up waits for it rather than launching a
-        // rival, and we just attach — so we must not claim ownership of it.
-        let started_it = app_pid().is_none();
-        if started_it {
+        // The pre-check only drives the (cosmetic) message; ownership comes from
+        // ensure_stack_up's authoritative `spawned` flag, decided inside the launch
+        // lock — so of two concurrent bare `orcabot`s only the one that actually
+        // spawned the backend tears it down on quit.
+        if app_pid().is_none() {
             println!("orcabot: starting the stack (it will stop when you quit)…");
         }
-        let rc = cmd_up(&[]);
+        let (rc, spawned) = ensure_stack_up(150);
         if rc != 0 || !controlplane_healthy() {
             eprintln!("orcabot: could not start the stack (see the log above); not opening the TUI.");
             return if rc != 0 { rc } else { 1 };
         }
-        we_own = we_own || started_it;
+        we_own = we_own || spawned;
     }
     // The TUI needs a real terminal. If stdout isn't a TTY (piped/redirected),
     // don't panic in ratatui::init. If we own the stack but can't open a TUI,
