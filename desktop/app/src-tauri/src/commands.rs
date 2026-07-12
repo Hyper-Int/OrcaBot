@@ -625,6 +625,40 @@ pub fn get_surface_token() -> String {
     t.to_string()
 }
 
+#[derive(Serialize, Clone)]
+pub struct ServicePorts {
+    pub controlplane: u16,
+    pub frontend: u16,
+    pub sandbox: u16,
+    pub d1: u16,
+}
+
+fn port_from_env(var: &str, default: u16) -> u16 {
+    std::env::var(var)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// Return the ports the stack actually bound to this boot. The defaults (8787 /
+/// 8788 / …) may have been busy, in which case `main.rs` picked free ports and
+/// exported them via env. The loading screen reads this to build the redirect
+/// (and to hand the control-plane port to the frontend via `?cp=`, since the
+/// frontend bakes `:8787` at build time and can't otherwise learn it).
+#[tauri::command]
+pub fn get_ports() -> ServicePorts {
+    ServicePorts {
+        controlplane: port_from_env("CONTROLPLANE_PORT", 8787),
+        frontend: port_from_env("FRONTEND_PORT", 8788),
+        sandbox: port_from_env("SANDBOX_PORT", 8080),
+        // D1_SHIM_ADDR is a host:port; extract the port.
+        d1: std::env::var("D1_SHIM_ADDR")
+            .ok()
+            .and_then(|a| a.rsplit(':').next().and_then(|s| s.trim().parse().ok()))
+            .unwrap_or(9001),
+    }
+}
+
 /// Open an http(s) URL in the OS default browser. OAuth connect flows use this
 /// on desktop because `window.open` is a no-op inside the Tauri webview.
 #[tauri::command]

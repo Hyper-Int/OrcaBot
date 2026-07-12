@@ -61,21 +61,25 @@
     </div>
   </div>
   <script>
-    var REDIRECT = 'http://localhost:8788/dashboards?desktop=1';
+    // Ports the stack bound to this boot. Defaults match the DEFAULT PORTS, but
+    // if one was busy the Tauri host picked a free port and reports it via
+    // get_ports. The frontend bakes :8787 for the control plane at build time,
+    // so we hand the real control-plane port to it via ?cp= on the redirect.
+    var PORTS = { controlplane:8787, frontend:8788, sandbox:8080, d1:9001 };
+    var REDIRECT_PATH = '/dashboards?desktop=1';
     // The dev-auth surface token is only reliably fetchable from THIS trusted
-    // local (tauri://) origin — the remote frontend at :8788 can't count on
-    // Tauri IPC in a packaged build. Grab it here and hand it to the frontend
-    // via the redirect URL. The VM can't reach :8788, so it can't scrape it.
+    // local (tauri://) origin — the remote frontend can't count on Tauri IPC in
+    // a packaged build. Grab it here and hand it to the frontend via the
+    // redirect URL. The VM can't reach the frontend port, so it can't scrape it.
     var SURFACE = '';
-    try {
-      if (window.__TAURI__ && window.__TAURI__.core) {
-        window.__TAURI__.core.invoke('get_surface_token')
-          .then(function(t){ if (t) SURFACE = t; })
-          .catch(function(){});
-      }
-    } catch (e) {}
     function redirectUrl(){
-      return REDIRECT + (SURFACE ? '&surface=' + encodeURIComponent(SURFACE) : '');
+      var url = 'http://localhost:' + PORTS.frontend + REDIRECT_PATH;
+      // ALWAYS pass the current control-plane port (even the default 8787) so the
+      // frontend overwrites any port it cached from a previous non-default boot.
+      // Omitting it on a default boot would let a stale cached port win.
+      url += '&cp=' + PORTS.controlplane;
+      if (SURFACE) url += '&surface=' + encodeURIComponent(SURFACE);
+      return url;
     }
     var MANUAL_AFTER = 8;   // seconds -> offer "open anyway"
     var FAIL_AFTER   = 60;  // seconds with required services down -> error state
@@ -83,15 +87,17 @@
     // the background so the dashboard can load without it. Quips are lighthearted
     // (KSP-style) but the stage label always names the real step.
     var STEPS = [
-      { id:'db',  label:'Local database', url:'http://127.0.0.1:9001/', required:false, slow:8,
+      { id:'db',  label:'Local database', portKey:'d1', path:'/', required:false, slow:8,
         quips:['Convincing SQLite to hold still','Filing the bytes alphabetically','Spinning up the ledger'] },
-      { id:'web', label:'Web interface',  url:'http://127.0.0.1:8788/', required:true,  slow:12,
+      { id:'web', label:'Web interface',  portKey:'frontend', path:'/', required:true,  slow:12,
         quips:['Painting the cockpit dials','Reticulating splines','Hanging up the dashboards'] },
-      { id:'cp',  label:'Control plane',  url:'http://127.0.0.1:8787/health', required:true, slow:12,
+      { id:'cp',  label:'Control plane',  portKey:'controlplane', path:'/health', required:true, slow:12,
         quips:['Assembling mission control','Powering up the flight computer','Briefing the workers'] },
-      { id:'vm',  label:'Sandbox VM',     url:'http://127.0.0.1:8080/health', required:false, slow:20,
+      { id:'vm',  label:'Sandbox VM',     portKey:'sandbox', path:'/health', required:false, slow:20,
         quips:['Igniting the boosters 🚀','Spooling up a tiny Linux','Pressurizing the cabin','Waiting on the guidance computer (this can take a minute)'] }
     ];
+    // Built from the live PORTS map so a dynamically-chosen port is probed correctly.
+    function stepUrl(s){ return 'http://127.0.0.1:' + PORTS[s.portKey] + s.path; }
 
     var t0 = Date.now(), quipIdx = 0, quipStep = null, doneRedirect = false, failed = false, curStartedAt = {}, cur = null;
     var $ = function(id){ return document.getElementById(id); };
@@ -109,7 +115,7 @@
       return null;
     }
     function diagText(){
-      return STEPS.map(function(s){ return s.label+': '+(s.up?'up':'down'); }).join('\n')
+      return STEPS.map(function(s){ return s.label+' ('+PORTS[s.portKey]+'): '+(s.up?'up':'down'); }).join('\n')
         + '\nelapsed: '+elapsed()+'s';
     }
 
@@ -148,7 +154,7 @@
 
     function tick(){
       if (failed) return;
-      Promise.all(STEPS.map(function(s){ return s.up ? Promise.resolve(true) : probe(s.url).then(function(u){ s.up=u; return u; }); }))
+      Promise.all(STEPS.map(function(s){ return s.up ? Promise.resolve(true) : probe(stepUrl(s)).then(function(u){ s.up=u; return u; }); }))
         .then(function(){
           var ready = STEPS.every(function(s){ return !s.required || s.up; });
           if (ready && !doneRedirect){ doneRedirect = true; render(); setTimeout(function(){ window.location.replace(redirectUrl()); }, 500); return; }
@@ -163,7 +169,36 @@
       try { window.__TAURI__.core.invoke('quit_app'); } catch(e) { try { window.close(); } catch(_){} }
     });
     setInterval(function(){ if(!failed){ quipIdx++; render(); } }, 2600);
-    render(); tick(); setInterval(tick, 800);
+
+    function startProbing(){ render(); tick(); setInterval(tick, 800); }
+
+    // Learn the real ports (and surface token) from the Tauri host BEFORE we start
+    // probing, so a stack booted on non-default ports is reached correctly. Fall
+    // back to the defaults if IPC is slow/unavailable (never block boot on it).
+    (function init(){
+      var started = false;
+      function go(){ if (started) return; started = true; startProbing(); }
+      try {
+        if (window.__TAURI__ && window.__TAURI__.core) {
+          var invoke = window.__TAURI__.core.invoke;
+          invoke('get_surface_token').then(function(t){ if (t) SURFACE = t; }).catch(function(){});
+          invoke('get_ports')
+            .then(function(p){
+              if (p) {
+                if (p.controlplane) PORTS.controlplane = p.controlplane;
+                if (p.frontend)    PORTS.frontend = p.frontend;
+                if (p.sandbox)     PORTS.sandbox = p.sandbox;
+                if (p.d1)          PORTS.d1 = p.d1;
+              }
+            })
+            .catch(function(){})
+            .then(go);
+          setTimeout(go, 1500); // safety net: don't wait forever on IPC
+          return;
+        }
+      } catch (e) {}
+      go();
+    })();
   </script>
 </body>
 </html>

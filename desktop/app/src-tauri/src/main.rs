@@ -26,6 +26,25 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// File recording the ports the stack actually bound to this boot (some may be
+/// dynamic when a default was busy). The `orcabot` CLI reads this so it connects
+/// to the right control plane / sandbox / frontend instead of the hardcoded
+/// defaults. `key=value` per line; written early (before health) and removed on
+/// shutdown alongside the pid file.
+fn ports_file_path(data_dir: &Path) -> PathBuf {
+  data_dir.join("ports")
+}
+
+fn write_ports_file(data_dir: &Path, cp: u16, fe: u16, sandbox: u16, d1: u16) {
+  let body = format!(
+    "controlplane={}\nfrontend={}\nsandbox={}\nd1={}\n",
+    cp, fe, sandbox, d1
+  );
+  if let Err(e) = std::fs::write(ports_file_path(data_dir), body) {
+    eprintln!("[ports] failed to write ports file: {}", e);
+  }
+}
+
 /// Path to the persisted SECRETS_ENCRYPTION_KEY. Generated on first launch.
 /// Losing this file makes all stored user secrets unreadable.
 fn secrets_key_path(data_dir: &Path) -> PathBuf {
@@ -118,6 +137,38 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
       workerd_env.push((key, value));
     }
   }
+}
+
+/// First free TCP port at/after `preferred` on loopback, skipping `used`. Falls
+/// back to `preferred` if nothing is free in range (the later bind then fails
+/// loudly). Used so the app boots even when a default port is occupied (e.g. a
+/// stray `wrangler dev` on 8787) instead of silently failing to start.
+fn pick_free_port(preferred: u16, used: &[u16]) -> u16 {
+  let mut p = preferred;
+  for _ in 0..200 {
+    if !used.contains(&p) && std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+      return p;
+    }
+    p = match p.checked_add(1) {
+      Some(n) => n,
+      None => break,
+    };
+  }
+  preferred
+}
+
+/// Ensure `var` holds a usable port. If the user set it explicitly, honor it
+/// verbatim (their override). Otherwise pick a free port near `preferred`,
+/// avoiding `used`, and store it. Returns the chosen port.
+fn ensure_port_env(var: &str, preferred: u16, used: &[u16]) -> u16 {
+  if let Ok(v) = std::env::var(var) {
+    if let Ok(p) = v.trim().parse::<u16>() {
+      return p;
+    }
+  }
+  let port = pick_free_port(preferred, used);
+  std::env::set_var(var, port.to_string());
+  port
 }
 
 /// Per-boot token that gates dev-auth to the trusted host frontend. Generated
@@ -347,6 +398,50 @@ impl DesktopServices {
     }
 
     let d1_db = d1_dir.join("controlplane.sqlite");
+
+    // Pick free ports BEFORE anything binds, so a stray process on a default
+    // port (e.g. `wrangler dev` on 8787) doesn't stop the app from starting.
+    // An explicit CONTROLPLANE_PORT / FRONTEND_PORT / D1_SHIM_ADDR override is
+    // honored verbatim. The chosen control-plane port is handed to the frontend
+    // at runtime via the loading screen (?cp=), since it bakes :8787 at build.
+    let cp_port = ensure_port_env("CONTROLPLANE_PORT", 8787, &[]);
+    let fe_port = ensure_port_env("FRONTEND_PORT", 8788, &[cp_port]);
+    let d1_port = match std::env::var("D1_SHIM_ADDR") {
+      Ok(addr) => addr
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(9001),
+      Err(_) => {
+        let p = pick_free_port(9001, &[cp_port, fe_port]);
+        std::env::set_var("D1_SHIM_ADDR", format!("127.0.0.1:{}", p));
+        p
+      }
+    };
+    // Sandbox HOST port for the host→guest forward. The GUEST side stays baked at
+    // 8080 (config.env isn't delivered to the guest — it uses image defaults), so
+    // only this host TCP port follows a free port. Honors an explicit SANDBOX_PORT.
+    let sandbox_host_port = ensure_port_env("SANDBOX_PORT", 8080, &[cp_port, fe_port, d1_port]);
+    // The control plane reaches the sandbox at this host port; point SANDBOX_URL at
+    // it unless the user pinned one explicitly.
+    if std::env::var("SANDBOX_URL").is_err() {
+      std::env::set_var(
+        "SANDBOX_URL",
+        format!("http://127.0.0.1:{}", sandbox_host_port),
+      );
+    }
+
+    if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 || sandbox_host_port != 8080 {
+      eprintln!(
+        "[ports] a default port was busy — using control-plane={} frontend={} d1-shim={} sandbox={}",
+        cp_port, fe_port, d1_port, sandbox_host_port
+      );
+    }
+
+    // Persist the bound ports so the `orcabot` CLI (which would otherwise assume
+    // the hardcoded defaults) connects to this stack correctly.
+    write_ports_file(&data_dir, cp_port, fe_port, sandbox_host_port, d1_port);
+
     let d1_addr = std::env::var("D1_SHIM_ADDR").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
     let d1_shim_debug = std::env::var("D1_SHIM_DEBUG").ok();
 
@@ -508,6 +603,10 @@ impl DesktopServices {
         workerd_import_root.to_str().unwrap_or_default(),
         "--socket-addr",
         &format!("http=127.0.0.1:{}", controlplane_port),
+        // The d1-shim external service is hardcoded to 127.0.0.1:9001 in the
+        // capnp; override it at launch so a dynamically-chosen shim port works.
+        "--external-addr",
+        &format!("d1-shim={}", d1_addr),
         "--directory-path",
         &format!("do-storage={}", do_storage_dir.display()),
         workerd_config.to_str().unwrap_or_default(),
@@ -563,8 +662,10 @@ impl DesktopServices {
     let workspace_dir = data_dir.join("workspace");
     std::fs::create_dir_all(&workspace_dir)?;
 
-    // Build VM configuration
-    let sandbox_port: u16 = std::env::var("SANDBOX_PORT")
+    // Build VM configuration. This is the HOST-side sandbox port (the host→guest
+    // forward listens here); it may be dynamic. The guest sandbox always binds
+    // 8080 (baked default), which is the guest side of the forward.
+    let sandbox_host_port: u16 = std::env::var("SANDBOX_PORT")
       .ok()
       .and_then(|s| s.parse().ok())
       .unwrap_or(8080);
@@ -589,11 +690,22 @@ impl DesktopServices {
     let internal_api_token =
       std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());
 
+    // Host-side control-plane port for the guest→host reverse bridge. Matches the
+    // port the control-plane workerd actually bound to (possibly dynamic). The
+    // guest side of the bridge stays baked at 8787.
+    let controlplane_host_port: u16 = std::env::var("CONTROLPLANE_PORT")
+      .ok()
+      .and_then(|s| s.parse().ok())
+      .unwrap_or(8787);
+
     let mut config = VMConfig::new(staged_paths.image.clone(), workspace_dir)
       .with_cpus(2)
       .with_memory(2 * 1024 * 1024 * 1024) // 2GB
-      .with_port(sandbox_port)
-      .with_env("PORT", sandbox_port.to_string())
+      .with_port(sandbox_host_port)
+      .with_controlplane_host_port(controlplane_host_port)
+      // Guest binds 8080 (image default); the host→guest forward maps the dynamic
+      // host port to that. PORT here is the guest bind, not the host listen.
+      .with_env("PORT", vm::SANDBOX_GUEST_PORT.to_string())
       .with_env("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token)
       .with_env("ALLOWED_ORIGINS", allowed_origins)
       .with_env("WORKSPACE_BASE", "/workspace")
@@ -719,10 +831,11 @@ impl DesktopServices {
       }
     }
 
-    // Remove PID file since we've cleaned up
+    // Remove PID + ports files since we've cleaned up
     if let Ok(dd) = self.data_dir.lock() {
       if let Some(ref data_dir) = *dd {
         let _ = std::fs::remove_file(pid_file_path(data_dir));
+        let _ = std::fs::remove_file(ports_file_path(data_dir));
       }
     }
   }
@@ -867,6 +980,7 @@ fn main() {
       commands::get_surface_token,
       commands::open_url,
       commands::reveal_workspace,
+      commands::get_ports,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v21-pull-openat-walk
+// REVISION: orcabot-cli-v22-dynamic-ports
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -7,8 +7,10 @@
 // check status, and (incrementally) initiate agents and connections — i.e. the
 // same things the in-app chat does, from the outside.
 //
-// Transport: the desktop app exposes the control plane on 127.0.0.1:8787 and the
-// sandbox on 127.0.0.1:8080 (host loopback). `exec` uses the sandbox /debug/exec
+// Transport: the desktop app exposes the control plane and sandbox on host
+// loopback. Ports default to 8787 / 8080 / 8788 but may be dynamic if a default
+// was busy at boot — the backend records the bound ports in `<data>/ports` and
+// this CLI reads them (see resolved_port). `exec` uses the sandbox /debug/exec
 // endpoint, authenticated with the per-boot token the VM writes to its console.
 //
 // PLATFORM: this CLI is inherently unix (POSIX signals, setsid/pre_exec, vsock,
@@ -33,6 +35,7 @@ mod unix_cli {
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::io::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -50,11 +53,11 @@ use ratatui::{DefaultTerminal, Frame};
 
 use tungstenite::Message;
 
-const CONTROLPLANE_PORT: u16 = 8787;
-const SANDBOX_PORT: u16 = 8080;
-const FRONTEND_PORT: u16 = 8788;
+const DEFAULT_CONTROLPLANE_PORT: u16 = 8787;
+const DEFAULT_SANDBOX_PORT: u16 = 8080;
+const DEFAULT_FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v21-pull-openat-walk";
+const REVISION: &str = "orcabot-cli-v22-dynamic-ports";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -129,11 +132,23 @@ fn print_help() {
 // ---- paths / state -------------------------------------------------------
 
 fn data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    // Must match the backend's Tauri `app_data_dir()` exactly, else the CLI reads
+    // the wrong `<data>/ports` (and pid/token) files. macOS: ~/Library/Application
+    // Support/<id>. Linux: XDG data dir (honors an ABSOLUTE $XDG_DATA_HOME, same
+    // rule the `dirs` crate Tauri uses applies) then /<id>.
     let p = if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         PathBuf::from(home).join("Library/Application Support/com.orcabot.desktop")
     } else {
-        PathBuf::from(home).join(".local/share/com.orcabot.desktop")
+        let base = std::env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|s| std::path::Path::new(s).is_absolute())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(home).join(".local/share")
+            });
+        base.join("com.orcabot.desktop")
     };
     let _ = fs::create_dir_all(&p);
     p
@@ -145,6 +160,39 @@ fn pid_file() -> PathBuf {
 
 fn headless_log() -> PathBuf {
     data_dir().join("headless.log")
+}
+
+// ---- resolved ports ------------------------------------------------------
+// The backend writes the ports it actually bound to (some may be dynamic when a
+// default was busy) to `<data>/ports`. Read it FRESH each call — not cached —
+// because `up` spawns the backend and then polls: an early read (file absent)
+// must fall back to the default, and a later read (file written) must pick up
+// the real port so the poll converges. Missing file / key = the default.
+fn resolved_port(key: &str, default: u16) -> u16 {
+    let contents = match fs::read_to_string(data_dir().join("ports")) {
+        Ok(s) => s,
+        Err(_) => return default,
+    };
+    for line in contents.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == key {
+                if let Ok(p) = v.trim().parse::<u16>() {
+                    return p;
+                }
+            }
+        }
+    }
+    default
+}
+
+fn cp_port() -> u16 {
+    resolved_port("controlplane", DEFAULT_CONTROLPLANE_PORT)
+}
+fn sb_port() -> u16 {
+    resolved_port("sandbox", DEFAULT_SANDBOX_PORT)
+}
+fn fe_port() -> u16 {
+    resolved_port("frontend", DEFAULT_FRONTEND_PORT)
 }
 
 /// Resolve the desktop binary, which sits next to this CLI binary.
@@ -176,10 +224,36 @@ fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
     }
 }
 
+/// Best-effort cross-process lock serializing the launch decision, so two
+/// simultaneous first-launches don't both spawn a backend (the app_pid() check
+/// and the spawn aren't otherwise atomic). Returns a guard whose flock releases
+/// when it drops (including on process exit — the kernel drops flocks on close).
+/// None if locking is unavailable; callers then just proceed as before.
+fn acquire_launch_lock() -> Option<File> {
+    let f = File::create(data_dir().join("up.lock")).ok()?;
+    // Blocking exclusive advisory lock. The critical section (app_pid check +
+    // spawn + pid-file write) is fast, so a concurrent `up` waits only briefly
+    // before it acquires and finds the now-present backend to attach to.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return None;
+    }
+    Some(f)
+}
+
+/// True only when OUR desktop backend is up: a live `orcabot-desktop` process
+/// (pid file or pgrep) AND a healthy control plane. A healthy listener alone is
+/// NOT enough — a foreign process on the default port (another Orcabot's
+/// `wrangler dev`, an unrelated server answering 200 on /health) would otherwise
+/// be mistaken for a running stack, so `up`/`tui` would attach to it instead of
+/// launching our own backend (which picks a free port when the default is busy).
+fn stack_running() -> bool {
+    app_pid().is_some() && controlplane_healthy()
+}
+
 fn controlplane_healthy() -> bool {
     matches!(
         http_get(
-            &format!("http://127.0.0.1:{}/health", CONTROLPLANE_PORT),
+            &format!("http://127.0.0.1:{}/health", cp_port()),
             Duration::from_secs(2)
         ),
         Some((200, _))
@@ -188,7 +262,7 @@ fn controlplane_healthy() -> bool {
 
 fn sandbox_health() -> Option<String> {
     match http_get(
-        &format!("http://127.0.0.1:{}/health", SANDBOX_PORT),
+        &format!("http://127.0.0.1:{}/health", sb_port()),
         Duration::from_secs(2),
     ) {
         Some((200, body)) => Some(body),
@@ -211,22 +285,47 @@ fn cmd_up(rest: &[String]) -> i32 {
             i += 1;
         }
     }
+    ensure_stack_up(timeout_secs).0
+}
 
-    if controlplane_healthy() {
-        println!("orcabot: stack already running (control plane healthy on :{CONTROLPLANE_PORT})");
-        if sandbox_health().is_some() {
-            println!("orcabot: sandbox healthy on :{SANDBOX_PORT}");
-        } else {
-            println!("orcabot: sandbox still starting…");
+/// Ensure the stack is up, returning `(exit_code, spawned)`. `spawned` is true
+/// iff THIS call launched the backend (vs. attaching to one already present) —
+/// decided inside the launch lock, so of two concurrent callers only the one that
+/// actually spawned is told so (and thus claims ownership).
+fn ensure_stack_up(timeout_secs: u64) -> (i32, bool) {
+    // Serialize the check-then-spawn against a concurrent `up`/`tui` so two
+    // first-launches can't both get past the app_pid() check and spawn rival
+    // backends. Held only across the fast critical section below (released before
+    // the long readiness poll). Best-effort: None just means we proceed unlocked.
+    let launch_lock = acquire_launch_lock();
+
+    // Separate "a backend exists" from "services are ready". If a verified backend
+    // process is already present — even one still staging binaries / starting
+    // workerd — attach to it and wait, NEVER launch a second orcabot-desktop. Two
+    // backends would pick overlapping ports, clobber the shared ports file, and
+    // race their service children.
+    if app_pid().is_some() {
+        if controlplane_healthy() {
+            println!("orcabot: stack already running (control plane healthy on :{})", cp_port());
+            if sandbox_health().is_some() {
+                println!("orcabot: sandbox healthy on :{}", sb_port());
+            } else {
+                println!("orcabot: sandbox still starting…");
+            }
+            return (0, false);
         }
-        return 0;
+        println!("orcabot: a backend is already starting — waiting for it (not launching another)…");
+        // Release the lock BEFORE the long wait: a backend already exists, so we
+        // don't need to hold off other launches while we poll for readiness.
+        drop(launch_lock);
+        return (wait_for_ready(timeout_secs), false);
     }
 
     let bin = match desktop_binary() {
         Some(b) => b,
         None => {
             eprintln!("orcabot: could not find the orcabot-desktop binary next to this CLI");
-            return 1;
+            return (1, false);
         }
     };
 
@@ -235,16 +334,23 @@ fn cmd_up(rest: &[String]) -> i32 {
         Ok(f) => f,
         Err(e) => {
             eprintln!("orcabot: cannot open log {}: {e}", log_path.display());
-            return 1;
+            return (1, false);
         }
     };
     let log_err = match log.try_clone() {
         Ok(f) => f,
         Err(e) => {
             eprintln!("orcabot: log clone failed: {e}");
-            return 1;
+            return (1, false);
         }
     };
+
+    // We only reach here when no backend process exists (the app_pid() guard
+    // above returned early otherwise). Clear any stale ports file from a prior
+    // now-dead backend so the readiness poll only trusts health once OUR freshly
+    // launched backend rewrites it — otherwise a foreign listener on the default
+    // port could be mistaken for our control plane during the boot window.
+    let _ = fs::remove_file(data_dir().join("ports"));
 
     println!("orcabot: launching headless stack ({})…", bin.display());
     let mut command = Command::new(&bin);
@@ -265,22 +371,37 @@ fn cmd_up(rest: &[String]) -> i32 {
         Ok(c) => c,
         Err(e) => {
             eprintln!("orcabot: failed to launch desktop binary: {e}");
-            return 1;
+            return (1, false);
         }
     };
     let pid = child.id();
     let _ = fs::write(pid_file(), pid.to_string());
     println!("orcabot: started (pid {pid}), logs at {}", log_path.display());
 
-    // Wait for readiness.
+    // Release the launch lock now that the backend exists and its pid is recorded
+    // (a concurrent `up` will now see it via app_pid() and attach); don't hold it
+    // across the long readiness poll.
+    drop(launch_lock);
+
+    (wait_for_ready(timeout_secs), true)
+}
+
+/// Poll until the control plane + sandbox are ready (or timeout). Shared by the
+/// spawn path and the "attach to a backend that's still starting" path, so a
+/// second `up`/`tui` invoked mid-boot waits for the existing backend instead of
+/// launching a rival one.
+fn wait_for_ready(timeout_secs: u64) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let mut cp_ready = false;
     print!("orcabot: waiting for services");
     let _ = std::io::stdout().flush();
     while Instant::now() < deadline {
-        if !cp_ready && controlplane_healthy() {
+        // Only trust a healthy control plane once the backend has written its
+        // ports file — proves it's OUR stack (on whatever port it chose), not a
+        // foreign listener still occupying the default port.
+        if !cp_ready && data_dir().join("ports").exists() && controlplane_healthy() {
             cp_ready = true;
-            println!("\norcabot: control plane ready (:{CONTROLPLANE_PORT})");
+            println!("\norcabot: control plane ready (:{})", cp_port());
             print!("orcabot: waiting for sandbox VM");
             let _ = std::io::stdout().flush();
         }
@@ -606,7 +727,7 @@ fn read_surface_token() -> Option<String> {
 impl Remote {
     fn local() -> Remote {
         Remote {
-            base: format!("http://127.0.0.1:{}", CONTROLPLANE_PORT),
+            base: format!("http://127.0.0.1:{}", cp_port()),
             auth: RemoteAuth::Dev { user: DEV_USER.into() },
         }
     }
@@ -660,7 +781,7 @@ fn remote_from(rest: &[String]) -> Remote {
         i += 1;
     }
     let base = base
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", CONTROLPLANE_PORT))
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", cp_port()))
         .trim_end_matches('/')
         .to_string();
     match token {
@@ -1656,20 +1777,21 @@ fn cmd_status() -> i32 {
     let sb = sandbox_health();
     let fe = matches!(
         http_get(
-            &format!("http://127.0.0.1:{}/", FRONTEND_PORT),
+            &format!("http://127.0.0.1:{}/", fe_port()),
             Duration::from_secs(2)
         ),
         Some((code, _)) if code < 500
     );
-    println!("control plane (:{CONTROLPLANE_PORT}): {}", if cp { "ready" } else { "down" });
+    println!("control plane (:{}): {}", cp_port(), if cp { "ready" } else { "down" });
     println!(
-        "sandbox      (:{SANDBOX_PORT}): {}",
+        "sandbox      (:{}): {}",
+        sb_port(),
         match &sb {
             Some(h) => h.trim().to_string(),
             None => "down".to_string(),
         }
     );
-    println!("frontend     (:{FRONTEND_PORT}): {}", if fe { "ready" } else { "down" });
+    println!("frontend     (:{}): {}", fe_port(), if fe { "ready" } else { "down" });
     if cp && sb.is_some() {
         0
     } else {
@@ -1703,7 +1825,7 @@ fn cmd_exec(rest: &[String]) -> i32 {
         return 2;
     }
     if sandbox_health().is_none() {
-        eprintln!("orcabot: sandbox not reachable on :{SANDBOX_PORT} — run `orcabot up` first");
+        eprintln!("orcabot: sandbox not reachable on :{} — run `orcabot up` first", sb_port());
         return 1;
     }
     let token = match read_debug_token() {
@@ -1719,7 +1841,7 @@ fn cmd_exec(rest: &[String]) -> i32 {
     let command = rest.join(" ");
     let body = serde_json::json!({ "cmd": command, "timeout_ms": 60000 });
     let resp = agent(Duration::from_secs(65))
-        .post(&format!("http://127.0.0.1:{}/debug/exec", SANDBOX_PORT))
+        .post(&format!("http://127.0.0.1:{}/debug/exec", sb_port()))
         .set("X-Debug-Exec-Token", &token)
         .set("Content-Type", "application/json")
         .send_json(body);
@@ -1765,7 +1887,7 @@ const DEV_EMAIL: &str = "desktop@localhost";
 const DEV_NAME: &str = "Desktop User";
 
 fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
-    let url = format!("http://127.0.0.1:{}{}", CONTROLPLANE_PORT, path);
+    let url = format!("http://127.0.0.1:{}{}", cp_port(), path);
     let mut req = agent(Duration::from_secs(15))
         .request(method, &url)
         .set("X-User-ID", DEV_USER)
@@ -2060,7 +2182,7 @@ fn open_pty_ws(
     // Origin + the X-User-ID header as belt-and-suspenders.
     let url = format!(
         "ws://127.0.0.1:{}/sessions/{}/ptys/{}/ws?user_id={}",
-        CONTROLPLANE_PORT, session_id, pty_id, DEV_USER
+        cp_port(), session_id, pty_id, DEV_USER
     );
     let mut req = url.into_client_request().map_err(|e| e.to_string())?;
     // This tungstenite client (unlike a browser) CAN set headers on the handshake,
@@ -2085,10 +2207,13 @@ fn open_pty_ws(
             req.headers_mut().insert("X-Orcabot-Surface", v);
         }
     }
-    req.headers_mut().insert(
-        "Origin",
-        tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
-    );
+    // Origin must match the control plane's ALLOWED_ORIGINS, which is
+    // http://localhost:<frontend port> — follow the (possibly dynamic) port.
+    if let Ok(v) =
+        tungstenite::http::HeaderValue::from_str(&format!("http://localhost:{}", fe_port()))
+    {
+        req.headers_mut().insert("Origin", v);
+    }
     let (ws, _resp) = tungstenite::connect(req).map_err(|e| format!("ws connect: {e}"))?;
     if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
         let _ = s.set_read_timeout(Some(read_timeout));
@@ -2399,7 +2524,7 @@ fn provider_matches(a: &str, b: &str) -> bool {
 fn connect_url(provider: &str) -> Result<String, String> {
     let sub = connect_subpath(provider)
         .ok_or_else(|| format!("unknown provider '{provider}' (gmail|drive|calendar|github|twitter|box|onedrive)"))?;
-    let url = format!("http://127.0.0.1:{}/integrations/{}/connect", CONTROLPLANE_PORT, sub);
+    let url = format!("http://127.0.0.1:{}/integrations/{}/connect", cp_port(), sub);
     let ag = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(10))
         .redirects(0)
@@ -3114,7 +3239,7 @@ fn run_in_vm(command: &str) -> String {
     };
     let body = serde_json::json!({ "cmd": command, "timeout_ms": 60000 });
     match agent(Duration::from_secs(65))
-        .post(&format!("http://127.0.0.1:{}/debug/exec", SANDBOX_PORT))
+        .post(&format!("http://127.0.0.1:{}/debug/exec", sb_port()))
         .set("X-Debug-Exec-Token", &token)
         .set("Content-Type", "application/json")
         .send_json(body)
@@ -3157,14 +3282,20 @@ fn cmd_tui() -> i32 {
 /// (hand back to the GUI without tearing down).
 fn run_tui(force_own: bool) -> i32 {
     let mut we_own = force_own;
-    if !controlplane_healthy() {
-        println!("orcabot: starting the stack (it will stop when you quit)…");
-        let rc = cmd_up(&[]);
+    if !stack_running() {
+        // The pre-check only drives the (cosmetic) message; ownership comes from
+        // ensure_stack_up's authoritative `spawned` flag, decided inside the launch
+        // lock — so of two concurrent bare `orcabot`s only the one that actually
+        // spawned the backend tears it down on quit.
+        if app_pid().is_none() {
+            println!("orcabot: starting the stack (it will stop when you quit)…");
+        }
+        let (rc, spawned) = ensure_stack_up(150);
         if rc != 0 || !controlplane_healthy() {
             eprintln!("orcabot: could not start the stack (see the log above); not opening the TUI.");
             return if rc != 0 { rc } else { 1 };
         }
-        we_own = true;
+        we_own = we_own || spawned;
     }
     // The TUI needs a real terminal. If stdout isn't a TTY (piped/redirected),
     // don't panic in ratatui::init. If we own the stack but can't open a TUI,
