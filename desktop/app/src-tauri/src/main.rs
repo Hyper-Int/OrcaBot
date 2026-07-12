@@ -120,6 +120,38 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
   }
 }
 
+/// First free TCP port at/after `preferred` on loopback, skipping `used`. Falls
+/// back to `preferred` if nothing is free in range (the later bind then fails
+/// loudly). Used so the app boots even when a default port is occupied (e.g. a
+/// stray `wrangler dev` on 8787) instead of silently failing to start.
+fn pick_free_port(preferred: u16, used: &[u16]) -> u16 {
+  let mut p = preferred;
+  for _ in 0..200 {
+    if !used.contains(&p) && std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+      return p;
+    }
+    p = match p.checked_add(1) {
+      Some(n) => n,
+      None => break,
+    };
+  }
+  preferred
+}
+
+/// Ensure `var` holds a usable port. If the user set it explicitly, honor it
+/// verbatim (their override). Otherwise pick a free port near `preferred`,
+/// avoiding `used`, and store it. Returns the chosen port.
+fn ensure_port_env(var: &str, preferred: u16, used: &[u16]) -> u16 {
+  if let Ok(v) = std::env::var(var) {
+    if let Ok(p) = v.trim().parse::<u16>() {
+      return p;
+    }
+  }
+  let port = pick_free_port(preferred, used);
+  std::env::set_var(var, port.to_string());
+  port
+}
+
 /// Per-boot token that gates dev-auth to the trusted host frontend. Generated
 /// once at startup, passed to the control-plane worker (`SURFACE_TOKEN`) and
 /// handed to the GUI webview via the `get_surface_token` command. The sandbox VM
@@ -347,6 +379,33 @@ impl DesktopServices {
     }
 
     let d1_db = d1_dir.join("controlplane.sqlite");
+
+    // Pick free ports BEFORE anything binds, so a stray process on a default
+    // port (e.g. `wrangler dev` on 8787) doesn't stop the app from starting.
+    // An explicit CONTROLPLANE_PORT / FRONTEND_PORT / D1_SHIM_ADDR override is
+    // honored verbatim. The chosen control-plane port is handed to the frontend
+    // at runtime via the loading screen (?cp=), since it bakes :8787 at build.
+    let cp_port = ensure_port_env("CONTROLPLANE_PORT", 8787, &[]);
+    let fe_port = ensure_port_env("FRONTEND_PORT", 8788, &[cp_port]);
+    let d1_port = match std::env::var("D1_SHIM_ADDR") {
+      Ok(addr) => addr
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(9001),
+      Err(_) => {
+        let p = pick_free_port(9001, &[cp_port, fe_port]);
+        std::env::set_var("D1_SHIM_ADDR", format!("127.0.0.1:{}", p));
+        p
+      }
+    };
+    if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 {
+      eprintln!(
+        "[ports] a default port was busy — using control-plane={} frontend={} d1-shim={}",
+        cp_port, fe_port, d1_port
+      );
+    }
+
     let d1_addr = std::env::var("D1_SHIM_ADDR").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
     let d1_shim_debug = std::env::var("D1_SHIM_DEBUG").ok();
 
@@ -508,6 +567,10 @@ impl DesktopServices {
         workerd_import_root.to_str().unwrap_or_default(),
         "--socket-addr",
         &format!("http=127.0.0.1:{}", controlplane_port),
+        // The d1-shim external service is hardcoded to 127.0.0.1:9001 in the
+        // capnp; override it at launch so a dynamically-chosen shim port works.
+        "--external-addr",
+        &format!("d1-shim={}", d1_addr),
         "--directory-path",
         &format!("do-storage={}", do_storage_dir.display()),
         workerd_config.to_str().unwrap_or_default(),
@@ -589,10 +652,19 @@ impl DesktopServices {
     let internal_api_token =
       std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());
 
+    // Host-side control-plane port for the guest→host reverse bridge. Matches the
+    // port the control-plane workerd actually bound to (possibly dynamic). The
+    // guest side of the bridge stays baked at 8787.
+    let controlplane_host_port: u16 = std::env::var("CONTROLPLANE_PORT")
+      .ok()
+      .and_then(|s| s.parse().ok())
+      .unwrap_or(8787);
+
     let mut config = VMConfig::new(staged_paths.image.clone(), workspace_dir)
       .with_cpus(2)
       .with_memory(2 * 1024 * 1024 * 1024) // 2GB
       .with_port(sandbox_port)
+      .with_controlplane_host_port(controlplane_host_port)
       .with_env("PORT", sandbox_port.to_string())
       .with_env("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token)
       .with_env("ALLOWED_ORIGINS", allowed_origins)
@@ -867,6 +939,7 @@ fn main() {
       commands::get_surface_token,
       commands::open_url,
       commands::reveal_workspace,
+      commands::get_ports,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

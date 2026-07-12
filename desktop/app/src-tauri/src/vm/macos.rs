@@ -153,13 +153,15 @@ impl MacOSVM {
             // The guest runs socat to bridge vsock:port -> localhost:port
             "--port-forward",
             &format!("{}:{}", config.sandbox_port, config.sandbox_port),
-            // Reverse forward: guest vsock:8787 -> host 127.0.0.1:8787 (control plane).
-            // Gives the sandbox a guest->host route so it can call the control plane
-            // (integration gateway, egress/secret approvals, event callbacks). The
-            // guest init runs the matching socat + sets CONTROLPLANE_URL. Both sides
-            // are pinned to CONTROLPLANE_PORT (see the const for why it's fixed).
+            // Reverse forward: guest vsock:8787 -> host 127.0.0.1:{cp host port}
+            // (control plane). Gives the sandbox a guest->host route so it can call
+            // the control plane (integration gateway, egress/secret approvals, event
+            // callbacks). The guest init runs the matching socat + sets
+            // CONTROLPLANE_URL. The GUEST side is pinned to CONTROLPLANE_PORT (baked
+            // into the image; see the const), but the HOST target follows the real
+            // control-plane port so dynamic-port boots still reach it.
             "--reverse-port-forward",
-            &format!("{}:{}", CONTROLPLANE_PORT, CONTROLPLANE_PORT),
+            &format!("{}:{}", CONTROLPLANE_PORT, config.controlplane_host_port),
         ]);
 
         cmd.stdout(Stdio::inherit());
@@ -184,8 +186,8 @@ impl MacOSVM {
         // host loopback (nothing exposed on a network interface).
         eprintln!(
             "[vm] native VZ backend: inbound vsock (sandbox :{}), reverse vsock \
-             (guest→host control plane :8787) active.",
-            config.sandbox_port
+             (guest→host control plane :{}) active.",
+            config.sandbox_port, config.controlplane_host_port
         );
 
         Ok(())
