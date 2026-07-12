@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v35-in-window-input
+// REVISION: chat-v36-theme-input-bar
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v35-in-window-input";
+const CHAT_PANEL_REVISION = "chat-v36-theme-input-bar";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -371,10 +371,8 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
           ref={inputBarRef}
           className="flex items-center gap-2 px-4 py-2.5 rounded-t-2xl"
           style={{
-            background: "var(--chat-input-bg)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderBottom: isExpanded ? "1px solid rgba(0, 229, 255, 0.15)" : undefined,
+            background: "var(--background-elevated)",
+            borderBottom: isExpanded ? "1px solid var(--border)" : undefined,
           }}
         >
           {isExpanded ? (
@@ -384,7 +382,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               type="button"
               onClick={() => inWindowInputRef.current?.focus()}
               className="flex-1 text-left text-sm font-medium truncate focus-visible:outline-none"
-              style={{ color: "#e8edf5" }}
+              style={{ color: "var(--foreground)" }}
               title="Focus the message box"
             >
               Ask Orcabot
@@ -410,12 +408,12 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               data-lpignore="true"
               data-1p-ignore
               className={cn(
-                "flex-1 border-0 outline-none chat-input-splash focus-visible:outline-none",
+                "flex-1 border-0 outline-none focus-visible:outline-none",
                 "text-sm",
                 "disabled:opacity-50",
-                "placeholder:text-[#5a7a9e]"
+                "placeholder:text-muted-foreground"
               )}
-              style={{ color: "#e8edf5", caretColor: "#00e5ff", backgroundColor: "transparent", outline: "none" }}
+              style={{ color: "var(--foreground)", caretColor: "var(--accent-primary)", backgroundColor: "transparent", outline: "none" }}
             />
           )}
 
@@ -442,8 +440,8 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               if (isExpanded && isAtSplashPosition) setIsAtSplashPosition(false);
               setIsExpanded(!isExpanded);
             }}
-            className="h-7 w-7 p-0 rounded-full hover:bg-white/10"
-            style={{ color: "#8ba3c4" }}
+            className="h-7 w-7 p-0 rounded-full hover:bg-background-hover"
+            style={{ color: "var(--muted-foreground)" }}
           >
             {isExpanded ? (
               <ChevronDown className="w-4 h-4" />
@@ -480,15 +478,13 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
           <div
             className="flex justify-end px-4 pt-3 pb-2"
             style={{
-              background: "var(--chat-input-bg)",
-              backdropFilter: "blur(20px)",
-              WebkitBackdropFilter: "blur(20px)",
-              borderBottom: "1px solid rgba(0, 229, 255, 0.15)",
+              background: "var(--background-elevated)",
+              borderBottom: "1px solid var(--border)",
             }}
           >
             <div
               className="flex items-center gap-2 w-full max-w-[85%] rounded-2xl px-3 py-1.5 ring-1 ring-primary/40 shadow-sm"
-              style={{ background: "var(--background-elevated)" }}
+              style={{ background: "var(--background-surface)" }}
             >
               <input
                 ref={inWindowInputRef}
