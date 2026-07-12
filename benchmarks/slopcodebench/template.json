@@ -1,33 +1,20 @@
 {
-  "_comment": "Importable Orcabot dashboard template (DashboardTemplateWithData). Inserted into D1 via benchmarks/slopcodebench/bin/insert-template or the templates API. The orchestrator's bootCommand appends a briefing to CLAUDE.md so Claude Code boots knowing the validated slop-code commands. Manual one-time VM setup (fork + venv) still required.",
+  "_comment": "Importable Orcabot dashboard template. Orcabot chat is the orchestrator (no auto-opened agent terminal); it drives runs via its tools (create_terminal/read_file/secrets_create) and surfaces each agent-under-test as a live read-only component via bin/scb-visualize. One-time VM setup (fork + venv) still required. Seed with bin/seed-benchmark-templates.",
   "name": "SlopCodeBench Runner",
-  "description": "Run slop-code-bench arms with a Claude Code orchestrator you drive in English. One-time VM setup required (fork + venv).",
+  "description": "Run slop-code-bench arms driven by Orcabot chat in plain English; each agent-under-test opens as a live read-only terminal on the canvas. One-time VM setup required (fork + venv).",
   "category": "coding",
   "items": [
     {
-      "placeholderId": "orchestrator",
-      "type": "terminal",
-      "content": "{\"name\": \"Claude Code\", \"agentic\": true, \"bootCommand\": \"B='CjwhLS0gU0NCLU9SQ0ggLS0+CiMgU2xvcENvZGVCZW5jaCBPcmNoZXN0cmF0b3IKCllvdSBvcGVyYXRlIHNsb3AtY29kZS1iZW5jaCBpbiB0aGlzIE9yY2Fib3QgVk0uIFRoZSB1c2VyIGRpcmVjdHMgeW91IGluIEVuZ2xpc2g7CnlvdSB0cmFuc2xhdGUgdGhhdCBpbnRvIGBzbG9wLWNvZGVgIGNvbW1hbmRzIGFuZCByZXBvcnQgd2hhdCB5b3UgcmFuICsgb2JzZXJ2ZWQuCllvdSBkbyBOT1Qgc29sdmUgdGhlIGJlbmNobWFyayBwcm9ibGVtcyB5b3Vyc2VsZiAtLSB0aGUgYWdlbnQtdW5kZXItdGVzdCBkb2VzLgoKIyMgRW52aXJvbm1lbnQgKG1hbnVhbCBzZXR1cCAtLSBhc3N1bWUgZG9uZSBpZiAvd29ya3NwYWNlL3NjYi12ZW52IGV4aXN0cykKLSBGb3JrIGNoZWNrb3V0ID0gdGhpcyBkaXJlY3RvcnkgKGAvd29ya3NwYWNlL3Nsb3AtY29kZS1iZW5jaGApLgotIFJ1biB0aGUgQ0xJIHZpYSB0aGUgdmVudiBkaXJlY3RseTogYC93b3Jrc3BhY2Uvc2NiLXZlbnYvYmluL3Nsb3AtY29kZWAgKG5vIGB1dmApLgotIFRoZSBwcm9ibGVtIGNhdGFsb2cgYXV0by1kb3dubG9hZHMgdG8gYH4vLmNhY2hlL3NjYmVuY2gvcHJvYmxlbXNgIG9uIGZpcnN0IHJ1bi4KCiMjIFNlY3JldHMgLS0gTkVWRVIgZWNobywgY2F0LCBvciBwcmludCBhIGtleQpQcm92aWRlciBrZXlzIGFycml2ZSBmcm9tIHRoZSBPcmNhYm90IHNlY3JldHMgYnJva2VyIGFzIGVudiB2YXJzIChlLmcuCmBPUEVOUk9VVEVSX0FQSV9LRVlgIGhvbGRzIGEgYFtCUk9LRVJFRF1gIHBsYWNlaG9sZGVyOyB0aGUgYnJva2VyIGluamVjdHMgdGhlCnJlYWwga2V5IHNlcnZlci1zaWRlKS4gSWYgYSBuZWVkZWQga2V5IGlzIG1pc3NpbmcsIGFzayB0aGUgdXNlciB0byBhZGQgaXQgaW4gdGhlCnNlY3JldHMgcGFuZWwgLS0gbmV2ZXIgcmVxdWVzdCB0aGUgdmFsdWUgaW4gY2hhdC4KCiMjIEJyb2tlciBiYXNlIFVSTCAtLSB1c2UgMTI3LjAuMC4xLCBOT1QgbG9jYWxob3N0CkJlZm9yZSBlYWNoIHJ1biwgcG9pbnQgcHJvdmlkZXJzLnlhbWwncyBicm9rZXIgYGFwaV9iYXNlYCBhdCAxMjcuMC4wLjEuIG9wZW5jb2RlCihOb2RlL3VuZGljaSkgcmVzb2x2ZXMgYGxvY2FsaG9zdGAgdG8gSVB2NiBgOjoxYCwgd2hpY2ggdGhlIElQdjQtb25seSBicm9rZXIKbmV2ZXIgYW5zd2VycyAtPiBhIG11bHRpLW1pbnV0ZSAiaGFuZyIuIFBhdGNoIGl0OgpgYGAKY3AgY29uZmlncy9wcm92aWRlcnMueWFtbC5vcmlnIGNvbmZpZ3MvcHJvdmlkZXJzLnlhbWwgMj4vZGV2L251bGwKcHl0aG9uMyAtIDw8J1BZJwppbXBvcnQgb3M7IHA9ImNvbmZpZ3MvcHJvdmlkZXJzLnlhbWwiOyBzPW9wZW4ocCkucmVhZCgpCnVybD1vcy5lbnZpcm9uWyJPUEVOUk9VVEVSX0JBU0VfVVJMIl0ucmVwbGFjZSgibG9jYWxob3N0IiwiMTI3LjAuMC4xIikKb3BlbihwLCJ3Iikud3JpdGUocy5yZXBsYWNlKCJhcGlfYmFzZTogaHR0cHM6Ly9vcGVucm91dGVyLmFpL2FwaS92MSIsImFwaV9iYXNlOiAiK3VybCkpClBZCmBgYAoKIyMgUnVuIG9uZSBhcm0gKHZhbGlkYXRlZDogb3BlbmNvZGUgKyBLaW1pIEsyLjYgdmlhIE9wZW5Sb3V0ZXIpCmBgYAovd29ya3NwYWNlL3NjYi12ZW52L2Jpbi9zbG9wLWNvZGUgcnVuIC0tYWdlbnQgb3BlbmNvZGUgLS1tb2RlbCBvcGVucm91dGVyL2tpbWktazIuNiBcCiAgLS1lbnZpcm9ubWVudCBjb25maWdzL2Vudmlyb25tZW50cy9sb2NhbC10bXV4LXB5LnlhbWwgXAogIC0tcHJvbXB0IGNvbmZpZ3MvcHJvbXB0cy9qdXN0LXNvbHZlLmppbmphIFwKICAtLXByb2JsZW0gZmlsZV9iYWNrdXAgLS1uby1ldmFsdWF0ZSB0aGlua2luZz1sb3cKYGBgCkxhdW5jaCBkZXRhY2hlZCB0byBhIGxvZ2ZpbGUgc28gdGhlIHVzZXIgY2FuIHdhdGNoLCB0aGVuIHRhaWwgaXQ6CmBgYApzZXRzaWQgYmFzaCAtYyAnPHRoZSBydW4gY29tbWFuZCBhYm92ZT4nID4gL3dvcmtzcGFjZS8uc2NiLXJ1bi5sb2cgMj4mMSA8IC9kZXYvbnVsbCAmCnRhaWwgLWYgL3dvcmtzcGFjZS8uc2NiLXJ1bi5sb2cKYGBgClN1Y2Nlc3MgPSB0aGUgcnVuIGFkdmFuY2VzIHBhc3QgYGNoZWNrcG9pbnRfMWAgd2l0aCBgY29zdD4wYCBhbmQgYHN0ZXBzPjBgLgoKIyMgU2NvcmUKRHJvcCBgLS1uby1ldmFsdWF0ZWAgdG8gc2NvcmUgaW5saW5lLCBvciBydW4KYC93b3Jrc3BhY2Uvc2NiLXZlbnYvYmluL3Nsb3AtY29kZSBldmFsIG91dHB1dHMvPHJ1bi1kaXI+L2AgYWZ0ZXIuCgojIyBXYXRjaCAocmVhZC1vbmx5IG9ubHkpClBlci1ydW4gbG9nZmlsZXMgbGl2ZSB1bmRlciB0aGUgcnVuJ3Mgb3V0cHV0IGRpciAvIGAuc2NiX3RtdXgvcnVucy5qc29ubGAuIFRhaWwKdGhlbS4gRG8gTk9UIGJyaWRnZSBhIGNyb3NzLXNlc3Npb24gdG11eCBjb250cm9sIHNvY2tldCAtLSB0aGF0IGdyYW50cwpyZWFkK2luamVjdCBhY3Jvc3Mgc2Vzc2lvbnMgYW5kIGJ5cGFzc2VzIG91dHB1dCByZWRhY3Rpb24uCg=='; grep -q SCB-ORCH CLAUDE.md 2>/dev/null || echo \\\"$B\\\" | base64 -d >> CLAUDE.md; exec claude\", \"workingDir\": \"slop-code-bench\", \"skipApprovals\": true}",
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "# SlopCodeBench Runner\n\nRun slop-code-bench arms driven by **Orcabot chat** — just tell it what to run in\nplain English. Each agent-under-test opens as a **live, read-only terminal** on\nthe canvas, labelled with the problem it's solving.\n\n## One-time setup (per VM)\n1. Fork at `/workspace/slop-code-bench` with venv `/workspace/scb-venv`.\n2. Add your provider key in the **secrets panel**, broker-protected (e.g.\n   `OPENROUTER_API_KEY`).\n\n## Drive it from chat\n- \"Run `file_backup` with opencode on kimi-k2.6\"\n- \"How's the run going?\" (chat reads the progress log for you)\n- \"Score the finished run\"\n\nValidated arm: opencode + Kimi K2.6 via OpenRouter. Broker URL must be\n`127.0.0.1`, not `localhost`.",
       "position": {
         "x": 0,
         "y": 0
       },
       "size": {
-        "width": 640,
-        "height": 520
-      }
-    },
-    {
-      "placeholderId": "runbook",
-      "type": "note",
-      "content": "# SlopCodeBench Runner\n\nRun slop-code-bench arms with a **Claude Code orchestrator** you drive in plain English.\n\n## One-time setup (per VM)\n1. Fork at `/workspace/slop-code-bench` with venv `/workspace/scb-venv` (uv sync `--python 3.12`). On desktop this is the host-shared workspace.\n2. Add your provider key in the **secrets panel**, broker-protected (e.g. `OPENROUTER_API_KEY`).\n\n## Drive the Claude Code terminal (it already knows these from CLAUDE.md)\n- \"Run `file_backup` with opencode on kimi-k2.6\"\n- \"Show me the run log\" / \"is it past checkpoint_1 with cost>0?\"\n- \"Score the finished run\"\n\nValidated arm: opencode + Kimi K2.6 via OpenRouter. Broker URL must be `127.0.0.1`, not `localhost`. Full docs: `benchmarks/slopcodebench/RESUME-kimi-opencode.md`.",
-      "position": {
-        "x": 680,
-        "y": 0
-      },
-      "size": {
-        "width": 400,
-        "height": 320
+        "width": 420,
+        "height": 340
       }
     },
     {
@@ -35,7 +22,7 @@
       "type": "browser",
       "content": "{\"name\": \"SlopCodeBench Results\", \"url\": \"http://localhost:8050\"}",
       "position": {
-        "x": 680,
+        "x": 0,
         "y": 360
       },
       "size": {
@@ -44,16 +31,11 @@
       }
     }
   ],
-  "edges": [
-    {
-      "sourcePlaceholderId": "orchestrator",
-      "targetPlaceholderId": "results"
-    }
-  ],
+  "edges": [],
   "viewport": {
     "x": 0,
     "y": 0,
     "zoom": 1
   },
-  "setupGuide": "# SlopCodeBench setup walkthrough\n\nGoal: get this dashboard ready to run a slop-code-bench arm, then run one.\nBe brief; do each step with your tools and confirm before the next.\n\n1. **Choose the harness source.** Ask the user which to use:\n   - (a) **Our fork** `https://github.com/robdmac/slop-code-bench` (branch\n     `feat/host-tmux-executor`) \u2014 recommended; it has the no-Docker watchable\n     executor + the broker-compatible routing this needs. Default to this.\n   - (b) a **custom fork/branch URL** they paste.\n   - (c) **already present** at `/workspace/slop-code-bench` \u2014 skip the clone.\n\n2. **Clone it** (unless (c)) via terminal_input in a shell terminal:\n   `git clone --branch <branch> <url> /workspace/slop-code-bench`\n   (needs network; if a domain is held by the egress proxy, tell the user to approve it.)\n\n3. **Create the venv** (one-time, slow): in `/workspace/slop-code-bench` run\n   `UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12`\n   (Python 3.12 \u2014 3.14 has no wheels and the VM has no compiler.)\n\n4. **Provider key.** Ensure an `OPENROUTER_API_KEY` broker secret exists for this\n   dashboard. If not, ask the user to add it (secrets_create, broker-protected).\n   Never display or echo the value.\n\n5. **Point the broker URL at 127.0.0.1** (not localhost \u2014 Node/opencode can't\n   reach the IPv4-only broker via `localhost`). In the checkout:\n   `cp configs/providers.yaml.orig configs/providers.yaml` then replace the\n   openrouter `api_base` with `$OPENROUTER_BASE_URL` after swapping\n   `localhost`->`127.0.0.1`.\n\n6. **Run one arm** and watch it: launch detached to a logfile, then tail it:\n   `/workspace/scb-venv/bin/slop-code run --agent opencode --model openrouter/kimi-k2.6 --environment configs/environments/local-tmux-py.yaml --prompt configs/prompts/just-solve.jinja --problem file_backup --no-evaluate thinking=low`\n   Success = advances past `checkpoint_1` with `cost>0` and `steps>0`. Report when confirmed.\n"
+  "setupGuide": "# SlopCodeBench orchestrator (you are Orcabot chat)\n\nYou run slop-code-bench for the user in this dashboard's VM using your tools — you\nare the orchestrator; do NOT open a separate agent terminal to drive it. Translate\nplain English into slop-code commands, launch them, and report progress by reading\nfiles. You do NOT solve the benchmark problems — the agent-under-test does.\n\nBe brief. Do each step with a tool and confirm before the next.\n\n## Your tools\n- create_terminal(boot_command=…) — run setup/benchmark commands in the VM.\n- terminal_send_input — type follow-up commands into a terminal you created.\n- read_file — check progress/results; this is how you answer \"how's it going?\".\n- secrets_create — help the user add a broker-protected provider key.\n\n## 1. Ensure the harness is set up (skip if /workspace/scb-venv already exists)\nIf not set up, create a shell terminal and run:\n  git clone --branch feat/host-tmux-executor https://github.com/robdmac/slop-code-bench /workspace/slop-code-bench\n  cd /workspace/slop-code-bench && UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12\n(`uv sync` is slow and one-time — tell the user to expect a wait. If a domain is\nheld by the egress proxy, ask them to Allow it.)\n\n## 2. Provider key\nEnsure an OPENROUTER_API_KEY broker secret exists. If not, ask the user to add it\n(secrets_create, broker-protected). Never display or echo the value.\n\n## 3. Broker URL -> 127.0.0.1 (not localhost)\nPatch configs/providers.yaml so the openrouter api_base uses 127.0.0.1 (opencode /\nNode resolves localhost to IPv6 ::1, which the IPv4-only broker never answers).\n\n## 4. Run + visualize\nLaunch the run THROUGH the visualizer so each agent opens as a live read-only\ncomponent with a note naming its problem (scb-visualize watches\n.scb_tmux/runs.jsonl and surfaces each run):\n  create_terminal(name=\"benchmark runner\", boot_command=\"cd /workspace/slop-code-bench && scb-visualize run -- /workspace/scb-venv/bin/slop-code run --agent opencode --model openrouter/kimi-k2.6 --environment configs/environments/local-tmux-py.yaml --prompt configs/prompts/just-solve.jinja --problem file_backup --no-evaluate thinking=low\")\nIf `scb-visualize` isn't on PATH yet, run the slop-code command directly and tail\n/workspace/.scb-run.log instead (no per-agent components).\n\n## 5. Report progress\nAnswer \"how's it going?\" with read_file(\".scb-run.log\") or\nread_file(\".scb_tmux/runs.jsonl\"). Success = advances past checkpoint_1 with\ncost>0 and steps>0. To score: drop --no-evaluate or run\n`slop-code eval outputs/<run>/`."
 }
