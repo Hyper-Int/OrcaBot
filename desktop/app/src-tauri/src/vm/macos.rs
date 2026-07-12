@@ -149,10 +149,12 @@ impl MacOSVM {
                 "workspace:{}",
                 config.workspace_path.display()
             ),
-            // Port forward via vsock: host TCP port -> guest vsock port
-            // The guest runs socat to bridge vsock:port -> localhost:port
+            // Port forward via vsock: host TCP port -> guest vsock port. The guest
+            // runs socat to bridge vsock:8080 -> localhost:8080. The host side
+            // (config.sandbox_port) may be dynamic if 8080 was busy on the host;
+            // the guest side is fixed at SANDBOX_GUEST_PORT (baked image default).
             "--port-forward",
-            &format!("{}:{}", config.sandbox_port, config.sandbox_port),
+            &format!("{}:{}", config.sandbox_port, super::SANDBOX_GUEST_PORT),
             // Reverse forward: guest vsock:8787 -> host 127.0.0.1:{cp host port}
             // (control plane). Gives the sandbox a guest->host route so it can call
             // the control plane (integration gateway, egress/secret approvals, event
@@ -239,9 +241,10 @@ impl MacOSVM {
         // Network with port forwarding
         cmd.args([
             "-netdev",
+            // host TCP (config.sandbox_port, maybe dynamic) -> guest 8080 (fixed).
             &format!(
                 "user,id=net0,hostfwd=tcp::{}-:{}",
-                config.sandbox_port, config.sandbox_port
+                config.sandbox_port, super::SANDBOX_GUEST_PORT
             ),
         ]);
         cmd.args(["-device", "virtio-net-pci,netdev=net0"]);

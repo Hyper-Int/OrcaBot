@@ -418,22 +418,29 @@ impl DesktopServices {
         p
       }
     };
-    if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 {
-      eprintln!(
-        "[ports] a default port was busy — using control-plane={} frontend={} d1-shim={}",
-        cp_port, fe_port, d1_port
+    // Sandbox HOST port for the host→guest forward. The GUEST side stays baked at
+    // 8080 (config.env isn't delivered to the guest — it uses image defaults), so
+    // only this host TCP port follows a free port. Honors an explicit SANDBOX_PORT.
+    let sandbox_host_port = ensure_port_env("SANDBOX_PORT", 8080, &[cp_port, fe_port, d1_port]);
+    // The control plane reaches the sandbox at this host port; point SANDBOX_URL at
+    // it unless the user pinned one explicitly.
+    if std::env::var("SANDBOX_URL").is_err() {
+      std::env::set_var(
+        "SANDBOX_URL",
+        format!("http://127.0.0.1:{}", sandbox_host_port),
       );
     }
 
-    // Sandbox port stays fixed (guest side is baked at 8080), but record it too so
-    // the CLI reads a complete picture. Same env read as the VM config below.
-    let sandbox_port_for_file: u16 = std::env::var("SANDBOX_PORT")
-      .ok()
-      .and_then(|s| s.parse().ok())
-      .unwrap_or(8080);
+    if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 || sandbox_host_port != 8080 {
+      eprintln!(
+        "[ports] a default port was busy — using control-plane={} frontend={} d1-shim={} sandbox={}",
+        cp_port, fe_port, d1_port, sandbox_host_port
+      );
+    }
+
     // Persist the bound ports so the `orcabot` CLI (which would otherwise assume
     // the hardcoded defaults) connects to this stack correctly.
-    write_ports_file(&data_dir, cp_port, fe_port, sandbox_port_for_file, d1_port);
+    write_ports_file(&data_dir, cp_port, fe_port, sandbox_host_port, d1_port);
 
     let d1_addr = std::env::var("D1_SHIM_ADDR").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
     let d1_shim_debug = std::env::var("D1_SHIM_DEBUG").ok();
@@ -655,8 +662,10 @@ impl DesktopServices {
     let workspace_dir = data_dir.join("workspace");
     std::fs::create_dir_all(&workspace_dir)?;
 
-    // Build VM configuration
-    let sandbox_port: u16 = std::env::var("SANDBOX_PORT")
+    // Build VM configuration. This is the HOST-side sandbox port (the host→guest
+    // forward listens here); it may be dynamic. The guest sandbox always binds
+    // 8080 (baked default), which is the guest side of the forward.
+    let sandbox_host_port: u16 = std::env::var("SANDBOX_PORT")
       .ok()
       .and_then(|s| s.parse().ok())
       .unwrap_or(8080);
@@ -692,9 +701,11 @@ impl DesktopServices {
     let mut config = VMConfig::new(staged_paths.image.clone(), workspace_dir)
       .with_cpus(2)
       .with_memory(2 * 1024 * 1024 * 1024) // 2GB
-      .with_port(sandbox_port)
+      .with_port(sandbox_host_port)
       .with_controlplane_host_port(controlplane_host_port)
-      .with_env("PORT", sandbox_port.to_string())
+      // Guest binds 8080 (image default); the host→guest forward maps the dynamic
+      // host port to that. PORT here is the guest bind, not the host listen.
+      .with_env("PORT", vm::SANDBOX_GUEST_PORT.to_string())
       .with_env("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token)
       .with_env("ALLOWED_ORIGINS", allowed_origins)
       .with_env("WORKSPACE_BASE", "/workspace")

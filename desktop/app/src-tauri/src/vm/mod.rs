@@ -22,6 +22,12 @@ pub mod image;
 pub use config::VMConfig;
 pub use error::VMError;
 
+/// The port the guest sandbox always binds (baked into the image default; the
+/// guest never receives a per-boot override — `config.env` isn't delivered to
+/// it). It's the GUEST side of the host→guest port forward; the host side
+/// (`VMConfig.sandbox_port`) may be dynamic when 8080 is busy on the host.
+pub const SANDBOX_GUEST_PORT: u16 = 8080;
+
 use std::time::Duration;
 
 /// Trait for platform-specific VM implementations.

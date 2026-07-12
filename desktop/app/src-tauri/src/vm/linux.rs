@@ -138,12 +138,13 @@ impl QemuVM {
             ),
         ]);
 
-        // Network with port forwarding
+        // Network with port forwarding: host TCP (config.sandbox_port, maybe
+        // dynamic if 8080 was busy) -> guest 8080 (fixed image default).
         cmd.args([
             "-netdev",
             &format!(
                 "user,id=net0,hostfwd=tcp::{}-:{}",
-                config.sandbox_port, config.sandbox_port
+                config.sandbox_port, super::SANDBOX_GUEST_PORT
             ),
         ]);
         cmd.args(["-device", "virtio-net-pci,netdev=net0"]);
