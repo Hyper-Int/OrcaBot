@@ -533,6 +533,19 @@ const WORKSPACE_TOOLS: GeminiTool[] = [
       required: ['dashboard_id', 'path'],
     },
   },
+  {
+    name: 'run_command',
+    description: 'Run a shell command in the dashboard sandbox workspace and WAIT for it to finish, returning its exit code and output. Use this for finite setup/operational steps where you need the result before continuing (git clone, uv sync, installs, checks) — unlike terminal_send_input (fire-and-forget), this blocks until the command exits, so you can sequence dependent steps automatically. Do NOT use it to start long-running processes (a benchmark run, a server) — those will time out; launch those with create_terminal and check progress with read_file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox to run in' },
+        command: { type: 'string', description: 'The shell command to run (bash). Starts in /workspace; cd as needed.' },
+        timeout_s: { type: 'number', description: 'Max seconds to wait (default 120, max 300). Exceeding this returns timed_out=true.' },
+      },
+      required: ['dashboard_id', 'command'],
+    },
+  },
 ];
 
 function getOrcabotTools(): GeminiTool[] {
@@ -857,6 +870,99 @@ async function executeTool(
         return { result: { path: absPath, truncated, bytes: content.length, content }, isError: false };
       } catch (error) {
         return { result: { error: `Read failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
+
+    if (toolName === 'run_command') {
+      const dashboardId = args.dashboard_id as string;
+      const command = String(args.command || '');
+      const timeoutS = Math.min(
+        typeof args.timeout_s === 'number' && args.timeout_s > 0 ? args.timeout_s : 120,
+        300
+      );
+      if (!command.trim()) {
+        return { result: { error: 'command is required' }, isError: true };
+      }
+
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access) {
+        return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal first.' }, isError: true };
+      }
+
+      const sessionId = sb.sandbox_session_id;
+      const machineId = sb.sandbox_machine_id || undefined;
+      const runId = generateId();
+      const outPath = `/workspace/.orc-run-${runId}.out`;
+      const exitPath = `/workspace/.orc-run-${runId}.exit`;
+
+      // base64 the command so arbitrary quoting/metachars can't break the wrapper.
+      const bytes = new TextEncoder().encode(command);
+      let bin = '';
+      for (const b of bytes) bin += String.fromCharCode(b);
+      const b64 = btoa(bin);
+      // Run it, capture stdout+stderr to .out, then write the exit code to .exit
+      // last (so the marker never appears before the output is flushed).
+      const wrapped = `echo ${b64} | base64 -d | bash > ${outPath} 2>&1; echo $? > ${exitPath}`;
+
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const readMarker = async (p: string) => {
+        const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(p)}`, { machineId });
+        return res.ok ? await res.text() : null;
+      };
+
+      let pty: { id: string } | null = null;
+      try {
+        pty = await client.createPty(sessionId, '', wrapped, machineId);
+
+        // Poll the (internal-token) file API for the exit marker — no new sandbox
+        // endpoint needed. Interval kept at 2s to bound subrequest count.
+        const started = Date.now();
+        let exitRaw: string | null = null;
+        while (Date.now() - started < timeoutS * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          exitRaw = await readMarker(exitPath);
+          if (exitRaw !== null) break;
+        }
+
+        let output = (await readMarker(outPath)) || '';
+        const truncated = output.length > 8000;
+        if (truncated) output = output.slice(-8000);
+
+        // Best-effort cleanup: marker files + the headless PTY (it self-reaps when
+        // the wrapper exits, but delete to be tidy).
+        for (const p of [outPath, exitPath]) {
+          try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(p)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
+        }
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+
+        if (exitRaw === null) {
+          return {
+            result: {
+              timed_out: true,
+              message: `Command still running after ${timeoutS}s. For long-running processes use create_terminal instead and check progress with read_file.`,
+              output,
+              truncated,
+            },
+            isError: false,
+          };
+        }
+        const exitCode = Number.parseInt(exitRaw.trim(), 10);
+        return {
+          result: { exit_code: Number.isNaN(exitCode) ? null : exitCode, output, truncated },
+          isError: !Number.isNaN(exitCode) && exitCode !== 0,
+        };
+      } catch (error) {
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+        return { result: { error: `run_command failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
       }
     }
 
