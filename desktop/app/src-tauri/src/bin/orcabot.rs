@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v21-pull-openat-walk
+// REVISION: orcabot-cli-v22-dynamic-ports
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -7,8 +7,10 @@
 // check status, and (incrementally) initiate agents and connections — i.e. the
 // same things the in-app chat does, from the outside.
 //
-// Transport: the desktop app exposes the control plane on 127.0.0.1:8787 and the
-// sandbox on 127.0.0.1:8080 (host loopback). `exec` uses the sandbox /debug/exec
+// Transport: the desktop app exposes the control plane and sandbox on host
+// loopback. Ports default to 8787 / 8080 / 8788 but may be dynamic if a default
+// was busy at boot — the backend records the bound ports in `<data>/ports` and
+// this CLI reads them (see resolved_port). `exec` uses the sandbox /debug/exec
 // endpoint, authenticated with the per-boot token the VM writes to its console.
 //
 // PLATFORM: this CLI is inherently unix (POSIX signals, setsid/pre_exec, vsock,
@@ -50,11 +52,11 @@ use ratatui::{DefaultTerminal, Frame};
 
 use tungstenite::Message;
 
-const CONTROLPLANE_PORT: u16 = 8787;
-const SANDBOX_PORT: u16 = 8080;
-const FRONTEND_PORT: u16 = 8788;
+const DEFAULT_CONTROLPLANE_PORT: u16 = 8787;
+const DEFAULT_SANDBOX_PORT: u16 = 8080;
+const DEFAULT_FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v21-pull-openat-walk";
+const REVISION: &str = "orcabot-cli-v22-dynamic-ports";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -147,6 +149,39 @@ fn headless_log() -> PathBuf {
     data_dir().join("headless.log")
 }
 
+// ---- resolved ports ------------------------------------------------------
+// The backend writes the ports it actually bound to (some may be dynamic when a
+// default was busy) to `<data>/ports`. Read it FRESH each call — not cached —
+// because `up` spawns the backend and then polls: an early read (file absent)
+// must fall back to the default, and a later read (file written) must pick up
+// the real port so the poll converges. Missing file / key = the default.
+fn resolved_port(key: &str, default: u16) -> u16 {
+    let contents = match fs::read_to_string(data_dir().join("ports")) {
+        Ok(s) => s,
+        Err(_) => return default,
+    };
+    for line in contents.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == key {
+                if let Ok(p) = v.trim().parse::<u16>() {
+                    return p;
+                }
+            }
+        }
+    }
+    default
+}
+
+fn cp_port() -> u16 {
+    resolved_port("controlplane", DEFAULT_CONTROLPLANE_PORT)
+}
+fn sb_port() -> u16 {
+    resolved_port("sandbox", DEFAULT_SANDBOX_PORT)
+}
+fn fe_port() -> u16 {
+    resolved_port("frontend", DEFAULT_FRONTEND_PORT)
+}
+
 /// Resolve the desktop binary, which sits next to this CLI binary.
 fn desktop_binary() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
@@ -179,7 +214,7 @@ fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
 fn controlplane_healthy() -> bool {
     matches!(
         http_get(
-            &format!("http://127.0.0.1:{}/health", CONTROLPLANE_PORT),
+            &format!("http://127.0.0.1:{}/health", cp_port()),
             Duration::from_secs(2)
         ),
         Some((200, _))
@@ -188,7 +223,7 @@ fn controlplane_healthy() -> bool {
 
 fn sandbox_health() -> Option<String> {
     match http_get(
-        &format!("http://127.0.0.1:{}/health", SANDBOX_PORT),
+        &format!("http://127.0.0.1:{}/health", sb_port()),
         Duration::from_secs(2),
     ) {
         Some((200, body)) => Some(body),
@@ -213,9 +248,9 @@ fn cmd_up(rest: &[String]) -> i32 {
     }
 
     if controlplane_healthy() {
-        println!("orcabot: stack already running (control plane healthy on :{CONTROLPLANE_PORT})");
+        println!("orcabot: stack already running (control plane healthy on :{})", cp_port());
         if sandbox_health().is_some() {
-            println!("orcabot: sandbox healthy on :{SANDBOX_PORT}");
+            println!("orcabot: sandbox healthy on :{}", sb_port());
         } else {
             println!("orcabot: sandbox still starting…");
         }
@@ -280,7 +315,7 @@ fn cmd_up(rest: &[String]) -> i32 {
     while Instant::now() < deadline {
         if !cp_ready && controlplane_healthy() {
             cp_ready = true;
-            println!("\norcabot: control plane ready (:{CONTROLPLANE_PORT})");
+            println!("\norcabot: control plane ready (:{})", cp_port());
             print!("orcabot: waiting for sandbox VM");
             let _ = std::io::stdout().flush();
         }
@@ -606,7 +641,7 @@ fn read_surface_token() -> Option<String> {
 impl Remote {
     fn local() -> Remote {
         Remote {
-            base: format!("http://127.0.0.1:{}", CONTROLPLANE_PORT),
+            base: format!("http://127.0.0.1:{}", cp_port()),
             auth: RemoteAuth::Dev { user: DEV_USER.into() },
         }
     }
@@ -660,7 +695,7 @@ fn remote_from(rest: &[String]) -> Remote {
         i += 1;
     }
     let base = base
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", CONTROLPLANE_PORT))
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", cp_port()))
         .trim_end_matches('/')
         .to_string();
     match token {
@@ -1656,20 +1691,21 @@ fn cmd_status() -> i32 {
     let sb = sandbox_health();
     let fe = matches!(
         http_get(
-            &format!("http://127.0.0.1:{}/", FRONTEND_PORT),
+            &format!("http://127.0.0.1:{}/", fe_port()),
             Duration::from_secs(2)
         ),
         Some((code, _)) if code < 500
     );
-    println!("control plane (:{CONTROLPLANE_PORT}): {}", if cp { "ready" } else { "down" });
+    println!("control plane (:{}): {}", cp_port(), if cp { "ready" } else { "down" });
     println!(
-        "sandbox      (:{SANDBOX_PORT}): {}",
+        "sandbox      (:{}): {}",
+        sb_port(),
         match &sb {
             Some(h) => h.trim().to_string(),
             None => "down".to_string(),
         }
     );
-    println!("frontend     (:{FRONTEND_PORT}): {}", if fe { "ready" } else { "down" });
+    println!("frontend     (:{}): {}", fe_port(), if fe { "ready" } else { "down" });
     if cp && sb.is_some() {
         0
     } else {
@@ -1703,7 +1739,7 @@ fn cmd_exec(rest: &[String]) -> i32 {
         return 2;
     }
     if sandbox_health().is_none() {
-        eprintln!("orcabot: sandbox not reachable on :{SANDBOX_PORT} — run `orcabot up` first");
+        eprintln!("orcabot: sandbox not reachable on :{} — run `orcabot up` first", sb_port());
         return 1;
     }
     let token = match read_debug_token() {
@@ -1719,7 +1755,7 @@ fn cmd_exec(rest: &[String]) -> i32 {
     let command = rest.join(" ");
     let body = serde_json::json!({ "cmd": command, "timeout_ms": 60000 });
     let resp = agent(Duration::from_secs(65))
-        .post(&format!("http://127.0.0.1:{}/debug/exec", SANDBOX_PORT))
+        .post(&format!("http://127.0.0.1:{}/debug/exec", sb_port()))
         .set("X-Debug-Exec-Token", &token)
         .set("Content-Type", "application/json")
         .send_json(body);
@@ -1765,7 +1801,7 @@ const DEV_EMAIL: &str = "desktop@localhost";
 const DEV_NAME: &str = "Desktop User";
 
 fn cp_call(method: &str, path: &str, body: Option<serde_json::Value>) -> Result<serde_json::Value, String> {
-    let url = format!("http://127.0.0.1:{}{}", CONTROLPLANE_PORT, path);
+    let url = format!("http://127.0.0.1:{}{}", cp_port(), path);
     let mut req = agent(Duration::from_secs(15))
         .request(method, &url)
         .set("X-User-ID", DEV_USER)
@@ -2060,7 +2096,7 @@ fn open_pty_ws(
     // Origin + the X-User-ID header as belt-and-suspenders.
     let url = format!(
         "ws://127.0.0.1:{}/sessions/{}/ptys/{}/ws?user_id={}",
-        CONTROLPLANE_PORT, session_id, pty_id, DEV_USER
+        cp_port(), session_id, pty_id, DEV_USER
     );
     let mut req = url.into_client_request().map_err(|e| e.to_string())?;
     // This tungstenite client (unlike a browser) CAN set headers on the handshake,
@@ -2085,10 +2121,13 @@ fn open_pty_ws(
             req.headers_mut().insert("X-Orcabot-Surface", v);
         }
     }
-    req.headers_mut().insert(
-        "Origin",
-        tungstenite::http::HeaderValue::from_static("http://localhost:8788"),
-    );
+    // Origin must match the control plane's ALLOWED_ORIGINS, which is
+    // http://localhost:<frontend port> — follow the (possibly dynamic) port.
+    if let Ok(v) =
+        tungstenite::http::HeaderValue::from_str(&format!("http://localhost:{}", fe_port()))
+    {
+        req.headers_mut().insert("Origin", v);
+    }
     let (ws, _resp) = tungstenite::connect(req).map_err(|e| format!("ws connect: {e}"))?;
     if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_ref() {
         let _ = s.set_read_timeout(Some(read_timeout));
@@ -2399,7 +2438,7 @@ fn provider_matches(a: &str, b: &str) -> bool {
 fn connect_url(provider: &str) -> Result<String, String> {
     let sub = connect_subpath(provider)
         .ok_or_else(|| format!("unknown provider '{provider}' (gmail|drive|calendar|github|twitter|box|onedrive)"))?;
-    let url = format!("http://127.0.0.1:{}/integrations/{}/connect", CONTROLPLANE_PORT, sub);
+    let url = format!("http://127.0.0.1:{}/integrations/{}/connect", cp_port(), sub);
     let ag = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(10))
         .redirects(0)
@@ -3114,7 +3153,7 @@ fn run_in_vm(command: &str) -> String {
     };
     let body = serde_json::json!({ "cmd": command, "timeout_ms": 60000 });
     match agent(Duration::from_secs(65))
-        .post(&format!("http://127.0.0.1:{}/debug/exec", SANDBOX_PORT))
+        .post(&format!("http://127.0.0.1:{}/debug/exec", sb_port()))
         .set("X-Debug-Exec-Token", &token)
         .set("Content-Type", "application/json")
         .send_json(body)

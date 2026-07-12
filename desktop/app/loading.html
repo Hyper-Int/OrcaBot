@@ -74,9 +74,10 @@
     var SURFACE = '';
     function redirectUrl(){
       var url = 'http://localhost:' + PORTS.frontend + REDIRECT_PATH;
-      // Only pass ?cp= when the control plane isn't on its baked-in default —
-      // keeps the common case URL clean.
-      if (PORTS.controlplane !== 8787) url += '&cp=' + PORTS.controlplane;
+      // ALWAYS pass the current control-plane port (even the default 8787) so the
+      // frontend overwrites any port it cached from a previous non-default boot.
+      // Omitting it on a default boot would let a stale cached port win.
+      url += '&cp=' + PORTS.controlplane;
       if (SURFACE) url += '&surface=' + encodeURIComponent(SURFACE);
       return url;
     }

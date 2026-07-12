@@ -26,6 +26,25 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// File recording the ports the stack actually bound to this boot (some may be
+/// dynamic when a default was busy). The `orcabot` CLI reads this so it connects
+/// to the right control plane / sandbox / frontend instead of the hardcoded
+/// defaults. `key=value` per line; written early (before health) and removed on
+/// shutdown alongside the pid file.
+fn ports_file_path(data_dir: &Path) -> PathBuf {
+  data_dir.join("ports")
+}
+
+fn write_ports_file(data_dir: &Path, cp: u16, fe: u16, sandbox: u16, d1: u16) {
+  let body = format!(
+    "controlplane={}\nfrontend={}\nsandbox={}\nd1={}\n",
+    cp, fe, sandbox, d1
+  );
+  if let Err(e) = std::fs::write(ports_file_path(data_dir), body) {
+    eprintln!("[ports] failed to write ports file: {}", e);
+  }
+}
+
 /// Path to the persisted SECRETS_ENCRYPTION_KEY. Generated on first launch.
 /// Losing this file makes all stored user secrets unreadable.
 fn secrets_key_path(data_dir: &Path) -> PathBuf {
@@ -405,6 +424,16 @@ impl DesktopServices {
         cp_port, fe_port, d1_port
       );
     }
+
+    // Sandbox port stays fixed (guest side is baked at 8080), but record it too so
+    // the CLI reads a complete picture. Same env read as the VM config below.
+    let sandbox_port_for_file: u16 = std::env::var("SANDBOX_PORT")
+      .ok()
+      .and_then(|s| s.parse().ok())
+      .unwrap_or(8080);
+    // Persist the bound ports so the `orcabot` CLI (which would otherwise assume
+    // the hardcoded defaults) connects to this stack correctly.
+    write_ports_file(&data_dir, cp_port, fe_port, sandbox_port_for_file, d1_port);
 
     let d1_addr = std::env::var("D1_SHIM_ADDR").unwrap_or_else(|_| "127.0.0.1:9001".to_string());
     let d1_shim_debug = std::env::var("D1_SHIM_DEBUG").ok();
@@ -791,10 +820,11 @@ impl DesktopServices {
       }
     }
 
-    // Remove PID file since we've cleaned up
+    // Remove PID + ports files since we've cleaned up
     if let Ok(dd) = self.data_dir.lock() {
       if let Some(ref data_dir) = *dd {
         let _ = std::fs::remove_file(pid_file_path(data_dir));
+        let _ = std::fs::remove_file(ports_file_path(data_dir));
       }
     }
   }
