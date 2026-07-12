@@ -25,6 +25,7 @@ import * as dashboards from '../dashboards/handler';
 import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
+import { sandboxFetch } from '../sandbox/fetch';
 import { HELP_DOCS_GROUNDING } from './help-docs';
 
 // System prompt for Orcabot
@@ -518,6 +519,22 @@ function friendlyProviderError(raw: string | undefined, providerId: string): str
   return 'Something went wrong — please try again.';
 }
 
+const WORKSPACE_TOOLS: GeminiTool[] = [
+  {
+    name: 'read_file',
+    description: 'Read a text file from the dashboard sandbox workspace (read-only). Use this to check on running work — progress logs, results, or anything an agent/benchmark wrote (e.g. ".scb-run.log", ".scb_tmux/runs.jsonl", "outputs/<run>/result.json"). This is how you answer "how is it going?" with real data instead of guessing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox workspace to read from' },
+        path: { type: 'string', description: 'Workspace-relative path (e.g. ".scb-run.log"). Absolute "/workspace/..." is also accepted.' },
+        max_bytes: { type: 'number', description: 'Return only the LAST N bytes (tail) — useful for large/live logs. Default 8000.' },
+      },
+      required: ['dashboard_id', 'path'],
+    },
+  },
+];
+
 function getOrcabotTools(): GeminiTool[] {
   return [
     ...DASHBOARD_TOOLS,
@@ -525,6 +542,7 @@ function getOrcabotTools(): GeminiTool[] {
     ...TERMINAL_TOOLS,
     ...SECRETS_TOOLS,
     ...GUIDANCE_TOOLS,
+    ...WORKSPACE_TOOLS,
     ...convertMcpToGeminiTools(UI_TOOLS),
   ];
 }
@@ -791,6 +809,56 @@ async function executeTool(
     // ==========================================
     // Phase 4: Terminal Control Tools
     // ==========================================
+
+    if (toolName === 'read_file') {
+      const dashboardId = args.dashboard_id as string;
+      const rawPath = String(args.path || '').trim();
+      const maxBytes = typeof args.max_bytes === 'number' && args.max_bytes > 0
+        ? Math.min(args.max_bytes, 200_000)
+        : 8000;
+
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access) {
+        return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal or benchmark first.' }, isError: true };
+      }
+
+      // Workspace-scoped, no traversal.
+      if (!rawPath || rawPath.includes('..')) {
+        return { result: { error: 'Invalid path.' }, isError: true };
+      }
+      const absPath = rawPath.startsWith('/workspace/')
+        ? rawPath
+        : `/workspace/${rawPath.replace(/^\/+/, '')}`;
+
+      try {
+        const res = await sandboxFetch(
+          env,
+          `/sessions/${sb.sandbox_session_id}/file?path=${encodeURIComponent(absPath)}`,
+          { machineId: sb.sandbox_machine_id || undefined }
+        );
+        if (!res.ok) {
+          return { result: { error: `Could not read ${rawPath} (status ${res.status}). It may not exist yet.` }, isError: true };
+        }
+        let content = await res.text();
+        let truncated = false;
+        if (content.length > maxBytes) {
+          content = content.slice(-maxBytes);
+          truncated = true;
+        }
+        return { result: { path: absPath, truncated, bytes: content.length, content }, isError: false };
+      } catch (error) {
+        return { result: { error: `Read failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
 
     if (toolName === 'terminal_send_input') {
       const dashboardId = args.dashboard_id as string;
