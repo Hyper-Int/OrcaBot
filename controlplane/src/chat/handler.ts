@@ -17,20 +17,14 @@
 console.log(`[chat] REVISION: chat-v19-help-docs-grounding loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
-import {
-  streamChat,
-  buildTextMessage,
-  buildFunctionCallMessage,
-  buildFunctionResponse,
-  type GeminiMessage,
-  type GeminiTool,
-} from '../gemini/client';
+import { type GeminiTool } from '../gemini/client';
+import { selectChatProvider } from './providers/select';
+import type { CanonMsg, CanonToolCall, CanonToolResult, ChatToolDef } from './providers/types';
 import { UI_TOOLS, callTool as callUiTool } from '../mcp-ui/handler';
 import * as dashboards from '../dashboards/handler';
 import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
-import { decryptSecret, getEncryptionKey, hasEncryptionKey, isEncryptedValue } from '../crypto/secrets';
 import { HELP_DOCS_GROUNDING } from './help-docs';
 
 // System prompt for Orcabot
@@ -501,6 +495,29 @@ function convertMcpToGeminiTools(mcpTools: typeof UI_TOOLS): GeminiTool[] {
 }
 
 // Get all available tools for Orcabot
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI' };
+
+/**
+ * Turn a raw provider error into a short, user-actionable message. Keeps the
+ * common self-serviceable cases (quota, bad key, rate limit) distinct from the
+ * generic fallback, without leaking the raw provider JSON.
+ */
+function friendlyProviderError(raw: string | undefined, providerId: string): string {
+  const label = PROVIDER_LABEL[providerId] || 'The model provider';
+  const s = (raw || '').toLowerCase();
+  if (s.includes('insufficient_quota') || s.includes('exceeded your current quota') || s.includes('quota')) {
+    return `${label}: quota exceeded — check your plan and billing.`;
+  }
+  if (s.includes('invalid_api_key') || s.includes('incorrect api key') || s.includes('invalid api key') ||
+      s.includes('authentication_error') || s.includes('invalid x-api-key')) {
+    return `${label}: API key rejected — check the key.`;
+  }
+  if (s.includes('rate_limit') || s.includes('rate limit')) {
+    return `${label}: rate-limited — try again in a moment.`;
+  }
+  return 'Something went wrong — please try again.';
+}
+
 function getOrcabotTools(): GeminiTool[] {
   return [
     ...DASHBOARD_TOOLS,
@@ -1247,55 +1264,45 @@ async function loadHistory(
  * Note: Gemini 3 requires thoughtSignature for function calls.
  * We skip any function call/response pairs without thoughtSignature (legacy data).
  */
-function historyToGeminiMessages(history: ChatMessage[], dashboardId?: string, baseSystemPrompt?: string): GeminiMessage[] {
-  const messages: GeminiMessage[] = [];
+function historyToCanon(history: ChatMessage[]): CanonMsg[] {
+  const out: CanonMsg[] = [];
 
-  // Add system prompt as first user message (Gemini doesn't have system role)
-  let systemPrompt = baseSystemPrompt ?? ORCABOT_SYSTEM_PROMPT;
-  if (dashboardId) {
-    systemPrompt += `\n\nCURRENT CONTEXT:\n- The user is viewing dashboard_id: "${dashboardId}". Use this as the dashboard_id for all tool calls unless the user explicitly refers to a different dashboard.`;
-  }
-  messages.push(buildTextMessage('user', systemPrompt));
-  messages.push(buildTextMessage('model', 'Ready.'));
-
-  // Build a lookup of tool results from legacy 'tool' role rows,
-  // so we can fall back when assistant rows don't have toolResults (old data).
+  // Legacy 'tool' rows hold results for older data where assistant rows lacked
+  // toolResults; index them by toolCallId so we can pair them below.
   const legacyToolResults = new Map<string, ChatToolResult>();
   for (const msg of history) {
     if (msg.role === 'tool' && msg.toolResults) {
-      for (const tr of msg.toolResults) {
-        legacyToolResults.set(tr.toolCallId, tr);
-      }
+      for (const tr of msg.toolResults) legacyToolResults.set(tr.toolCallId, tr);
     }
   }
 
   for (const msg of history) {
     if (msg.role === 'user') {
-      messages.push(buildTextMessage('user', msg.content));
+      out.push({ role: 'user', text: msg.content });
     } else if (msg.role === 'assistant') {
-      // Add text content if present
-      if (msg.content) {
-        messages.push(buildTextMessage('model', msg.content));
+      const toolCalls: CanonToolCall[] = (msg.toolCalls || []).map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args,
+        // thoughtSignature is Gemini-only; carried as opaque meta and ignored by
+        // the other providers. The Gemini provider drops calls lacking it.
+        meta: tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : undefined,
+      }));
+      if (msg.content || toolCalls.length) {
+        out.push({ role: 'assistant', text: msg.content || undefined, toolCalls: toolCalls.length ? toolCalls : undefined });
       }
-      // Add tool calls with thoughtSignatures
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        for (const tc of msg.toolCalls) {
-          if (tc.thoughtSignature) {
-            messages.push(buildFunctionCallMessage(tc.name, tc.args, tc.thoughtSignature));
-            // Look for result on assistant row first, then fall back to legacy tool rows
-            const result = msg.toolResults?.find(tr => tr.toolCallId === tc.id)
-              || legacyToolResults.get(tc.id);
-            if (result) {
-              messages.push(buildFunctionResponse(tc.name, result.result));
-            }
-          }
-        }
+      // Pair each call with its result (assistant row first, then legacy rows).
+      const results: CanonToolResult[] = [];
+      for (const tc of msg.toolCalls || []) {
+        const r = msg.toolResults?.find(tr => tr.toolCallId === tc.id) || legacyToolResults.get(tc.id);
+        if (r) results.push({ id: tc.id, name: tc.name, result: r.result, isError: r.isError });
       }
+      if (results.length) out.push({ role: 'tool', toolResults: results });
     }
-    // Skip 'tool' role messages - results are consumed above via legacyToolResults fallback
+    // 'tool' rows consumed via legacyToolResults above
   }
 
-  return messages;
+  return out;
 }
 
 // ============================================
@@ -1320,12 +1327,10 @@ export async function streamMessage(
   env: Env,
   userId: string
 ): Promise<Response> {
-  if (!env.GEMINI_ORCABOT_KEY) {
-    return Response.json(
-      { error: 'Orcabot Gemini API key not configured' },
-      { status: 500 }
-    );
-  }
+  // NOTE: don't hard-require GEMINI_ORCABOT_KEY here. On desktop no system key
+  // ships, but the user can bring their own GEMINI_API_KEY (used below). The key
+  // is resolved after we load the user's stored keys; if neither exists we return
+  // a distinct CHAT_NO_KEY error the client turns into an "add a key" prompt.
 
   let body: { message: string; dashboardId?: string };
   try {
@@ -1386,19 +1391,18 @@ When they ask to set up a coding agent or terminal, automatically use ${bestProv
 If they explicitly name a different provider they have a key for, use that one instead.`;
   }
 
-  // ---- Use user's Gemini key for Orcabot chat if available (saves system quota) ----
-  let apiKey = env.GEMINI_ORCABOT_KEY;
-  const geminiKeyRow = (userKeyRows.results || []).find(r => r.name === 'GEMINI_API_KEY');
-  if (geminiKeyRow && hasEncryptionKey(env)) {
-    try {
-      const encKey = await getEncryptionKey(env);
-      const decrypted = isEncryptedValue(geminiKeyRow.value)
-        ? await decryptSecret(geminiKeyRow.value, encKey)
-        : geminiKeyRow.value;
-      if (decrypted) apiKey = decrypted;
-    } catch {
-      // Fall back to system key if decryption fails
-    }
+  // Pick the chat provider + key. Cloud stays on Gemini (system key, or the
+  // user's own Gemini key to save quota); desktop uses whichever provider key the
+  // user brought (Gemini → Anthropic → OpenAI). None → CHAT_NO_KEY prompt.
+  const provider = await selectChatProvider(env, (userKeyRows.results || []) as { name: string; value: string }[]);
+  if (!provider) {
+    return Response.json(
+      {
+        error: 'E79230: Orcabot chat needs an API key. Add a supported provider key (Claude, Gemini, or OpenAI) to continue.',
+        code: 'CHAT_NO_KEY',
+      },
+      { status: 400 }
+    );
   }
 
   // Load conversation history
@@ -1407,12 +1411,21 @@ If they explicitly name a different provider they have a key for, use that one i
   // Save user message
   await saveMessage(env, userId, dashboardId || null, 'user', message);
 
-  // Build Gemini messages (inject dashboardId as context so model knows the active dashboard)
-  const geminiMessages = historyToGeminiMessages(history, dashboardId, systemPrompt);
-  geminiMessages.push(buildTextMessage('user', message));
+  // Build canonical conversation + system prompt (each provider converts these to
+  // its own wire format). Inject the active dashboard as context.
+  let system = systemPrompt;
+  if (dashboardId) {
+    system += `\n\nCURRENT CONTEXT:\n- The user is viewing dashboard_id: "${dashboardId}". Use this as the dashboard_id for all tool calls unless the user explicitly refers to a different dashboard.`;
+  }
+  const convo: CanonMsg[] = historyToCanon(history);
+  convo.push({ role: 'user', text: message });
 
-  // Get available tools
-  const tools = getOrcabotTools();
+  // Get available tools (canonical form: name + description + JSON-schema params)
+  const tools: ChatToolDef[] = getOrcabotTools().map(t => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.inputSchema,
+  }));
 
   // Derive the control plane origin from the incoming request for OAuth URLs
   const requestOrigin = new URL(request.url).origin;
@@ -1424,55 +1437,54 @@ If they explicitly name a different provider they have a key for, use that one i
       try {
         let fullContent = '';
         const toolCalls: (ChatToolCall & { result?: Record<string, unknown>; isError?: boolean })[] = [];
-        let currentMessages = geminiMessages;
+        let convoState: CanonMsg[] = convo;
 
         // Loop to handle multi-turn tool calls
         let maxTurns = 10; // Increased for complex workflows
         while (maxTurns > 0) {
           maxTurns--;
           let hasToolCall = false;
+          let turnText = '';
+          const turnToolCalls: CanonToolCall[] = [];
+          const turnToolResults: CanonToolResult[] = [];
 
-          for await (const chunk of streamChat(apiKey, currentMessages, tools, {
-            model: 'gemini-3-flash',
-            thinkingLevel: 'low',
-            temperature: 1.0,
-            maxOutputTokens: 4096,
-          })) {
+          for await (const chunk of provider.streamTurn(system, convoState, tools)) {
             if (chunk.type === 'text' && chunk.text) {
               fullContent += chunk.text;
+              turnText += chunk.text;
               const event: ChatStreamEvent = { type: 'text', content: chunk.text };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-            } else if (chunk.type === 'function_call' && chunk.functionCall) {
+            } else if (chunk.type === 'tool_call') {
               hasToolCall = true;
-              const tcId = `tc_${generateId()}`;
-              const thoughtSignature = chunk.thoughtSignature || chunk.functionCall.thoughtSignature;
+              const tcId = chunk.id;
+              const sig = typeof chunk.meta?.thoughtSignature === 'string' ? chunk.meta.thoughtSignature : undefined;
 
               // Send tool call event
               const tcEvent: ChatStreamEvent = {
                 type: 'tool_call',
                 id: tcId,
-                name: chunk.functionCall.name,
-                args: chunk.functionCall.args,
+                name: chunk.name,
+                args: chunk.args,
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(tcEvent)}\n\n`));
 
               // Auto-fill dashboard_id from request context if the model omitted it
-              const toolArgs = { ...chunk.functionCall.args };
+              const toolArgs = { ...chunk.args };
               if (!toolArgs.dashboard_id && dashboardId) {
                 toolArgs.dashboard_id = dashboardId;
               }
 
               // Execute the tool
-              const { result, isError } = await executeTool(env, userId, chunk.functionCall.name, toolArgs, requestOrigin);
+              const { result, isError } = await executeTool(env, userId, chunk.name, toolArgs, requestOrigin);
 
               // Store the tool call with result for persistence (use toolArgs which includes auto-filled dashboard_id)
               const tc: ChatToolCall & { result?: Record<string, unknown>; isError?: boolean; thoughtSignature?: string } = {
                 id: tcId,
-                name: chunk.functionCall.name,
+                name: chunk.name,
                 args: toolArgs,
                 result,
                 isError,
-                thoughtSignature: thoughtSignature,
+                thoughtSignature: sig,
               };
               toolCalls.push(tc);
 
@@ -1505,24 +1517,28 @@ If they explicitly name a different provider they have a key for, use that one i
                 }
               }
 
-              // Add tool call and result to messages for next turn
-              // Include thoughtSignature as required by Gemini 3
-              currentMessages = [
-                ...currentMessages,
-                buildFunctionCallMessage(tc.name, tc.args, thoughtSignature),
-                buildFunctionResponse(tc.name, result),
-              ];
+              // Collect this call + result for the next turn's canonical messages
+              turnToolCalls.push({ id: tcId, name: chunk.name, args: toolArgs, meta: chunk.meta });
+              turnToolResults.push({ id: tcId, name: chunk.name, result, isError });
             } else if (chunk.type === 'error') {
-              console.error(`[chat] Gemini API error (raw) (dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
-              const errorEvent: ChatStreamEvent = { type: 'error', error: 'Something went wrong — please try again.' };
+              console.error(`[chat] provider error (provider=${provider.id} dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
+              const errorEvent: ChatStreamEvent = { type: 'error', error: friendlyProviderError(chunk.error, provider.id) };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
             }
+            // chunk.type === 'done' — end of this turn's stream
           }
 
           // If no tool call, we're done
           if (!hasToolCall) {
             break;
           }
+
+          // Append this turn's assistant tool calls + results for the next turn.
+          convoState = [
+            ...convoState,
+            { role: 'assistant', text: turnText || undefined, toolCalls: turnToolCalls },
+            { role: 'tool', toolResults: turnToolResults },
+          ];
         }
 
         // Save assistant message with tool calls AND results on the same row

@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v3-history-race-fix
+// REVISION: chat-v4-skip-user-echo
 
 /**
  * useChat hook for Orcabot conversational interface
@@ -19,7 +19,7 @@ import {
   type AnyUIGuidanceCommand,
 } from "@/lib/api/cloudflare/chat";
 
-const HOOK_REVISION = "chat-v3-history-race-fix";
+const HOOK_REVISION = "chat-v4-skip-user-echo";
 console.log(`[useChat] REVISION: ${HOOK_REVISION} loaded at ${new Date().toISOString()}`);
 
 export interface PendingToolCall {
@@ -40,7 +40,7 @@ export interface UseChatState {
 }
 
 export interface UseChatActions {
-  sendMessage: (message: string) => Promise<void>;
+  sendMessage: (message: string, opts?: { skipUserEcho?: boolean }) => Promise<void>;
   clearHistory: () => Promise<void>;
   loadHistory: () => Promise<void>;
 }
@@ -90,19 +90,23 @@ export function useChat(dashboardId?: string, options?: UseChatOptions): UseChat
   }, [loadHistory]);
 
   // Send a message
-  const sendMessage = React.useCallback(async (message: string) => {
+  const sendMessage = React.useCallback(async (message: string, opts?: { skipUserEcho?: boolean }) => {
     if (!message.trim()) return;
 
-    // Add user message to local state immediately
-    const userMessage: ChatMessage = {
-      id: `temp_${Date.now()}`,
-      userId: "",
-      dashboardId: dashboardId || null,
-      role: "user",
-      content: message,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages(prev => [...prev, userMessage]);
+    // Add user message to local state immediately — unless this is a retry (e.g.
+    // after adding an API key), where the bubble is already shown from the
+    // failed attempt and we'd otherwise duplicate it.
+    if (!opts?.skipUserEcho) {
+      const userMessage: ChatMessage = {
+        id: `temp_${Date.now()}`,
+        userId: "",
+        dashboardId: dashboardId || null,
+        role: "user",
+        content: message,
+        createdAt: new Date().toISOString(),
+      };
+      setMessages(prev => [...prev, userMessage]);
+    }
 
     sendingRef.current = true;
     setIsStreaming(true);

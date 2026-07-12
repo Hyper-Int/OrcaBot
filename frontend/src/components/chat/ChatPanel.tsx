@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v33-setup-race-fix
+// REVISION: chat-v34-no-key-provider-card
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v33-setup-race-fix";
+const CHAT_PANEL_REVISION = "chat-v34-no-key-provider-card";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -58,6 +58,9 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   // - user needs AI provider setup (needsAiSetup)
   const [isExpanded, setIsExpanded] = React.useState(false);
   const [showSetupCard, setShowSetupCard] = React.useState(false);
+  // When chat fails for lack of an API key we render the setup card inline in the
+  // error slot; this hides it again once the user finishes (before they re-send).
+  const [keyErrorDismissed, setKeyErrorDismissed] = React.useState(false);
   // Persists the provider names saved via the setup card — shown as a permanent bubble in chat
   const [setupSavedKeys, setSetupSavedKeys] = React.useState<string[]>([]);
   const [inputValue, setInputValue] = React.useState("");
@@ -195,6 +198,12 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
       setIsExpanded(true);
     }
   }, [needsAiSetup, dashboardId]);
+
+  // Reset the inline key-setup dismissal whenever the chat error changes, so a
+  // fresh no-key error re-shows the setup card.
+  React.useEffect(() => {
+    setKeyErrorDismissed(false);
+  }, [error]);
 
   // First time the user interacts with the page *outside* the chat while it's
   // expanded, auto-minimize it so it's out of the way. Fires once per mount, and
@@ -452,11 +461,36 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               </div>
             )}
 
-            {/* Error message — show friendly text, log raw for debugging */}
+            {/* Error message. A missing-API-key error (CHAT_NO_KEY / E79230) shows
+                the provider setup card inline so the user can add a Gemini key and
+                retry; anything else falls back to the generic notice. */}
             {error && (
-              <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm mb-2">
-                Something went wrong — please try again.
-              </div>
+              error.includes("E79230") ? (
+                !keyErrorDismissed && (
+                  <div className="p-3 rounded-xl bg-muted text-sm mb-3 space-y-3">
+                    <p className="text-muted-foreground">
+                      Orcabot chat needs an API key to run. Add a provider key below (Claude, Gemini, or OpenAI), then send your message again.
+                    </p>
+                    <AiProviderSetupCard
+                      onDone={(savedKeys) => {
+                        setKeyErrorDismissed(true);
+                        handleSetupCardDone(savedKeys);
+                        // Retry the message that hit the no-key error. Its bubble is
+                        // already shown from the failed attempt, so skip the echo to
+                        // avoid duplicating it.
+                        if (savedKeys && savedKeys.length > 0) {
+                          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+                          if (lastUser) sendMessage(lastUser.content, { skipUserEcho: true });
+                        }
+                      }}
+                    />
+                  </div>
+                )
+              ) : (
+                <div className="p-3 rounded-xl bg-destructive/10 text-destructive text-sm mb-2">
+                  {error}
+                </div>
+              )
             )}
 
             {/* Streaming response — newest content, shown at top */}
