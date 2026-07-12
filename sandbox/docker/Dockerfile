@@ -230,6 +230,13 @@ COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
 COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
 COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
 
+# uv (fast Python package manager) — baked in so benchmark harnesses
+# (e.g. slop-code-bench `uv sync`) can build a venv without a network install.
+# NOTE: :latest is unpinned — pin to a specific uv version once confirmed, per the
+# repo's unpinned-dependency guidance (an image rebuild can otherwise inherit an
+# upstream uv change).
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
 # Force the CURRENT chromium (placed late so this cache-bust only re-runs this cheap
 # layer, not the heavy npm/agent installs above). The base apt layer is Docker-cached
 # and pins whatever chromium was current when it was first built — and 150.0.7871.46
