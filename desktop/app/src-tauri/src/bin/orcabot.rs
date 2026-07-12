@@ -131,11 +131,23 @@ fn print_help() {
 // ---- paths / state -------------------------------------------------------
 
 fn data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    // Must match the backend's Tauri `app_data_dir()` exactly, else the CLI reads
+    // the wrong `<data>/ports` (and pid/token) files. macOS: ~/Library/Application
+    // Support/<id>. Linux: XDG data dir (honors an ABSOLUTE $XDG_DATA_HOME, same
+    // rule the `dirs` crate Tauri uses applies) then /<id>.
     let p = if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         PathBuf::from(home).join("Library/Application Support/com.orcabot.desktop")
     } else {
-        PathBuf::from(home).join(".local/share/com.orcabot.desktop")
+        let base = std::env::var("XDG_DATA_HOME")
+            .ok()
+            .filter(|s| std::path::Path::new(s).is_absolute())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(home).join(".local/share")
+            });
+        base.join("com.orcabot.desktop")
     };
     let _ = fs::create_dir_all(&p);
     p
@@ -211,6 +223,16 @@ fn http_get(url: &str, timeout: Duration) -> Option<(u16, String)> {
     }
 }
 
+/// True only when OUR desktop backend is up: a live `orcabot-desktop` process
+/// (pid file or pgrep) AND a healthy control plane. A healthy listener alone is
+/// NOT enough — a foreign process on the default port (another Orcabot's
+/// `wrangler dev`, an unrelated server answering 200 on /health) would otherwise
+/// be mistaken for a running stack, so `up`/`tui` would attach to it instead of
+/// launching our own backend (which picks a free port when the default is busy).
+fn stack_running() -> bool {
+    app_pid().is_some() && controlplane_healthy()
+}
+
 fn controlplane_healthy() -> bool {
     matches!(
         http_get(
@@ -247,7 +269,7 @@ fn cmd_up(rest: &[String]) -> i32 {
         }
     }
 
-    if controlplane_healthy() {
+    if stack_running() {
         println!("orcabot: stack already running (control plane healthy on :{})", cp_port());
         if sandbox_health().is_some() {
             println!("orcabot: sandbox healthy on :{}", sb_port());
@@ -281,6 +303,13 @@ fn cmd_up(rest: &[String]) -> i32 {
         }
     };
 
+    // Clear any stale ports file from a prior (now-dead) backend so the readiness
+    // poll below only trusts health once OUR freshly-launched backend rewrites it.
+    // Without this, a foreign listener on the default port could be mistaken for
+    // our control plane during the boot window. (A live stack was already ruled
+    // out by stack_running() above.)
+    let _ = fs::remove_file(data_dir().join("ports"));
+
     println!("orcabot: launching headless stack ({})…", bin.display());
     let mut command = Command::new(&bin);
     command
@@ -313,7 +342,10 @@ fn cmd_up(rest: &[String]) -> i32 {
     print!("orcabot: waiting for services");
     let _ = std::io::stdout().flush();
     while Instant::now() < deadline {
-        if !cp_ready && controlplane_healthy() {
+        // Only trust a healthy control plane once our backend has written its
+        // ports file — proves it's OUR stack (on whatever port it chose), not a
+        // foreign listener still occupying the default port.
+        if !cp_ready && data_dir().join("ports").exists() && controlplane_healthy() {
             cp_ready = true;
             println!("\norcabot: control plane ready (:{})", cp_port());
             print!("orcabot: waiting for sandbox VM");
@@ -3196,7 +3228,7 @@ fn cmd_tui() -> i32 {
 /// (hand back to the GUI without tearing down).
 fn run_tui(force_own: bool) -> i32 {
     let mut we_own = force_own;
-    if !controlplane_healthy() {
+    if !stack_running() {
         println!("orcabot: starting the stack (it will stop when you quit)…");
         let rc = cmd_up(&[]);
         if rc != 0 || !controlplane_healthy() {
