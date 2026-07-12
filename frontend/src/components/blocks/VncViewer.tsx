@@ -3,7 +3,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: vnc-viewer-v1-native-rfb
+// REVISION: vnc-viewer-v2-zoom-screensize-margin-fix
 //
 // Native noVNC (RFB) viewer — no iframe. Renders the remote framebuffer onto a
 // canvas inside a plain <div> that lives directly in the React Flow node, so the
@@ -20,7 +20,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "vnc-viewer-v1-native-rfb";
+const MODULE_REVISION = "vnc-viewer-v2-zoom-screensize-margin-fix";
 if (typeof console !== "undefined") {
   console.log(`[VncViewer] REVISION: ${MODULE_REVISION} loaded`);
 }
@@ -112,6 +112,32 @@ export function VncViewer({
       } catch {
         /* noVNC internals changed — leave input mapping as-is */
       }
+
+      // Fix the black margin that grows as the canvas is zoomed out. noVNC's
+      // `_screenSize()` measures the container with getBoundingClientRect, which
+      // INCLUDES React Flow's ancestor `transform: scale(zoom)`. Both the remote
+      // resize request and the autoscale use that value, so a browser opened while
+      // zoomed out asks for a framebuffer smaller than the block and paints the
+      // leftover with `background` (the black margin) — bigger the further you're
+      // zoomed out. clientWidth/Height are the true (untransformed) layout size and
+      // match noVNC's own `_currentClientSize()`, so the resize + scale target the
+      // real block at any zoom (no margin, no resize loop). Best-effort.
+      try {
+        const internals = r as unknown as {
+          _screen?: HTMLElement;
+          _screenSize?: () => { w: number; h: number };
+        };
+        const screenEl = internals._screen;
+        if (screenEl && typeof internals._screenSize === "function") {
+          internals._screenSize = () => ({
+            w: screenEl.clientWidth,
+            h: screenEl.clientHeight,
+          });
+        }
+      } catch {
+        /* noVNC internals changed — leave sizing as-is */
+      }
+
       const { viewOnly: vo, qualityLevel: q, compressionLevel: c } = optsRef.current;
       // Ask the server (x11vnc/Xvfb) to resize its framebuffer to the node so the
       // page FILLS the block. Falls back to scaleViewport (aspect-fit) when the
