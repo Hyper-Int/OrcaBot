@@ -76,8 +76,46 @@ def upsert(tpl):
     return tid
 
 
+def _sql_lit(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, int):
+        return str(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def emit_sql(tpl):
+    """Emit DELETE+INSERT SQL for a template (for `wrangler d1 execute --file`)."""
+    tid = str(uuid.uuid4())
+    now = datetime.datetime.utcnow().isoformat()
+    cols = ("id,name,description,category,author_id,author_name,items_json,edges_json,"
+            "viewport_json,setup_guide,item_count,is_featured,use_count,status,created_at,updated_at")
+    vals = [
+        tid, tpl["name"], tpl["description"], tpl.get("category", "coding"),
+        AUTHOR_ID, AUTHOR_NAME,
+        json.dumps(tpl["items"]), json.dumps(tpl["edges"]),
+        json.dumps(tpl.get("viewport")) if tpl.get("viewport") is not None else None,
+        tpl.get("setupGuide"), len(tpl["items"]), 1, 0, "approved", now, now,
+    ]
+    literals = ", ".join(_sql_lit(v) for v in vals)
+    return (f"DELETE FROM dashboard_templates WHERE name = {_sql_lit(tpl['name'])};\n"
+            f"INSERT INTO dashboard_templates ({cols}) VALUES ({literals});")
+
+
 def main():
-    paths = discover(sys.argv[1:])
+    args = sys.argv[1:]
+    sql_mode = "--sql" in args
+    args = [a for a in args if a != "--sql"]
+    paths = discover(args)
+
+    # --sql: print SQL to stdout for a direct D1 apply (e.g. local wrangler-dev):
+    #   benchmarks/bin/seed-benchmark-templates --sql slopcodebench > /tmp/seed.sql
+    #   (cd controlplane && npx wrangler d1 execute orcabot-db --local --file /tmp/seed.sql)
+    if sql_mode:
+        for path in paths:
+            print(emit_sql(json.loads(path.read_text())))
+        return
+
     # Ensure the setup_guide column exists (idempotent) so older DBs accept the insert.
     try:
         q("ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT", [])
