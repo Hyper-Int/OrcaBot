@@ -24,6 +24,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -704,8 +705,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
                 <p className="text-xs text-[var(--text-muted)] text-center mb-1">
                   Connect WhatsApp Business API
                 </p>
-                <input
-                  type="password"
+                <SecretInput
                   value={tokenInput}
                   onChange={(e) => setTokenInput(e.target.value)}
                   placeholder="Access token"

@@ -73,6 +73,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
+  SecretInput,
 } from "@/components/ui";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { ConnectionMarkers } from "./ConnectionMarkers";
@@ -2903,17 +2904,7 @@ export function TerminalBlock({
                       <div className="text-[10px] text-[var(--foreground-muted)]">
                         Secrets are brokered - the LLM cannot read them directly.
                       </div>
-                      <form
-                        autoComplete="off"
-                        data-form-type="other"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (newSecretName.trim() && newSecretValue.trim()) {
-                            handleAddSecret();
-                          }
-                        }}
-                        className="flex gap-1"
-                      >
+                      <div className="flex gap-1">
                         <Input
                           name="secret_key_name"
                           placeholder="NAME"
@@ -2923,29 +2914,37 @@ export function TerminalBlock({
                           autoComplete="off"
                           data-form-type="other"
                         />
-                        <Input
+                        <SecretInput
                           ref={secretValueInputRef}
                           name="secret_key_value"
-                          type="text"
                           placeholder="Value"
                           value={newSecretValue}
                           onChange={(e) => setNewSecretValue(e.target.value)}
                           className="h-6 text-xs flex-1 nodrag"
-                          autoComplete="off"
-                          data-form-type="other"
-                          data-lpignore="true"
-                          style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (newSecretName.trim() && newSecretValue.trim()) {
+                                handleAddSecret();
+                              }
+                            }
+                          }}
                         />
                         <Button
-                          type="submit"
+                          type="button"
                           variant="secondary"
                           size="sm"
                           disabled={!newSecretName.trim() || !newSecretValue.trim()}
+                          onClick={() => {
+                            if (newSecretName.trim() && newSecretValue.trim()) {
+                              handleAddSecret();
+                            }
+                          }}
                           className="h-6 px-2 nodrag"
                         >
                           <Plus className="w-3 h-3" />
                         </Button>
-                      </form>
+                      </div>
                       {/* Pending domain approvals */}
                       {pendingApprovalsQuery.data && pendingApprovalsQuery.data.length > 0 && (
                         <div className="space-y-1">
@@ -3058,17 +3057,7 @@ export function TerminalBlock({
                           </div>
                         </div>
                       )}
-                      <form
-                        autoComplete="off"
-                        data-form-type="other"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (newEnvVarName.trim() && newEnvVarValue.trim()) {
-                            handleAddEnvVar();
-                          }
-                        }}
-                        className="flex gap-1"
-                      >
+                      <div className="flex gap-1">
                         <Input
                           name="env_var_name"
                           placeholder="NAME"
@@ -3078,27 +3067,36 @@ export function TerminalBlock({
                           autoComplete="off"
                           data-form-type="other"
                         />
-                        <Input
+                        <SecretInput
                           name="env_var_value"
-                          type="text"
                           placeholder="Value"
                           value={newEnvVarValue}
                           onChange={(e) => setNewEnvVarValue(e.target.value)}
                           className="h-6 text-xs flex-1 nodrag"
-                          autoComplete="off"
-                          data-form-type="other"
-                          data-lpignore="true"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+                                handleAddEnvVar();
+                              }
+                            }
+                          }}
                         />
                         <Button
-                          type="submit"
+                          type="button"
                           variant="secondary"
                           size="sm"
                           disabled={!newEnvVarName.trim() || !newEnvVarValue.trim()}
+                          onClick={() => {
+                            if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+                              handleAddEnvVar();
+                            }
+                          }}
                           className="h-6 px-2 nodrag"
                         >
                           <Plus className="w-3 h-3" />
                         </Button>
-                      </form>
+                      </div>
                       {/* Env vars list */}
                       <div className="space-y-1">
                         {secretsQuery.isLoading && (
@@ -3612,10 +3610,9 @@ export function TerminalBlock({
                           <option value="openai">OpenAI-compatible</option>
                           <option value="anthropic">Anthropic-compatible</option>
                         </select>
-                        <input
+                        <SecretInput
                           value={cpApiKey}
                           onChange={(e) => setCpApiKey(e.target.value)}
-                          type="password"
                           placeholder="API key (optional)"
                           className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
                         />

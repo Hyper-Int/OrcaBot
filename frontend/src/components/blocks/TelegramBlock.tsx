@@ -24,6 +24,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -472,8 +473,7 @@ export function TelegramBlock({ id, data, selected }: NodeProps<TelegramNode>) {
               Connect Telegram to send and receive messages
             </p>
             <div className="w-full space-y-2 nodrag">
-              <input
-                type="password"
+              <SecretInput
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
                 placeholder="Paste your Telegram bot token"

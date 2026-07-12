@@ -25,6 +25,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -621,8 +622,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
                     placeholder="Bot App ID (from Azure Bot Service)"
                     className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
                   />
-                  <input
-                    type="password"
+                  <SecretInput
                     value={tokenInput}
                     onChange={(e) => setTokenInput(e.target.value)}
                     placeholder="Bot App Secret"

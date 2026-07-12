@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SecretInput } from "@/components/ui/SecretInput";
 import { cn } from "@/lib/utils";
 import {
   useASRSettingsStore,
@@ -219,8 +220,7 @@ export function ASRSettingsDialog({ trigger, open: controlledOpen, onOpenChange 
                           {keyConfig.label}
                         </label>
                         <div className="flex gap-2">
-                          <Input
-                            type="password"
+                          <SecretInput
                             value={keyInputs[keyConfig.key] || ""}
                             onChange={(e) =>
                               setKeyInputs((prev) => ({ ...prev, [keyConfig.key]: e.target.value }))
