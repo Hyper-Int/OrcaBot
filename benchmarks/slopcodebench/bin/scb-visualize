@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""scb-visualize — turn a slop-code-bench run into a live Orcabot canvas.
+
+Watches the host-tmux executor's run manifest and, for each agent-under-test that
+starts, surfaces a **read-only** Orcabot terminal tailing that run's logfile, with
+a note above it naming the problem. Orcabot becomes a live, per-problem view of
+the benchmark as it runs.
+
+Why this is safe (read-only by construction): each viewer only runs
+`tail -F <logfile>` on the run's output. It has no path to the agent CLI, so
+nothing typed into a viewer can steer or corrupt the run — the exact property the
+viewer-smoke test asserts. (This is why we tail the per-run logfile rather than
+attach a tmux control socket, which would grant cross-session inject.)
+
+Detection surface (from the `feat/host-tmux-executor` fork):
+  <workdir>/.scb_tmux/runs.jsonl — one JSON line per run:
+  {"target","session","window":"<problem>","logfile":"...","created":...}
+
+Runs inside an Orcabot PTY: it creates canvas components via the local sandbox
+MCP server using ORCABOT_MCP_SECRET; the dashboard is resolved server-side from
+the session, so no dashboard id is needed.
+
+Usage:
+  scb-visualize watch [--workdir DIR]        # watch an existing run's manifest
+  scb-visualize run [--workdir DIR] -- CMD…  # run the benchmark AND visualize
+"""
+import json
+import os
+import shlex
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+MCP_BASE = os.environ.get("ORCABOT_MCP_BASE", "http://127.0.0.1:8081")
+SID = os.environ.get("ORCABOT_SESSION_ID", "").strip()
+PTY = os.environ.get("ORCABOT_PTY_ID", "").strip()
+SECRET = os.environ.get("ORCABOT_MCP_SECRET", "").strip()
+
+# Canvas layout: a grid of columns; each run = a note stacked over its terminal.
+COL_W, NOTE_H, TERM_H, GAP, COLS = 380, 96, 300, 24, 3
+BASE_X, BASE_Y, COL_GAP, ROW_GAP = 40, 40, 40, 48
+
+
+def _log(msg):
+    sys.stderr.write(f"[scb-visualize] {msg}\n")
+    sys.stderr.flush()
+
+
+def mcp_ready():
+    return bool(SID and PTY and SECRET)
+
+
+def call_tool(name, arguments):
+    """Invoke an Orcabot MCP UI tool via the local sandbox MCP server."""
+    url = f"{MCP_BASE}/sessions/{SID}/mcp/tools/call?pty_id={PTY}"
+    body = json.dumps({"name": name, "arguments": arguments}).encode()
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Content-Type": "application/json", "X-MCP-Secret": SECRET},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        _log(f"MCP {name} failed: {e.code} {e.read()[:200]!r}")
+    except Exception as e:  # noqa: BLE001 — best-effort visualization
+        _log(f"MCP {name} error: {e}")
+    return None
+
+
+def slot(idx):
+    col, row = idx % COLS, idx // COLS
+    x = BASE_X + col * (COL_W + COL_GAP)
+    y = BASE_Y + row * (NOTE_H + TERM_H + GAP + ROW_GAP)
+    return x, y
+
+
+def surface_run(idx, problem, logfile):
+    x, y = slot(idx)
+    call_tool("create_note", {
+        "content": f"### Solving: {problem}\n\nAgent-under-test — live, read-only.",
+        "position": {"x": x, "y": y},
+        "size": {"width": COL_W, "height": NOTE_H},
+        "color": "blue",
+    })
+    call_tool("create_terminal", {
+        "name": f"agent: {problem}",
+        "boot_command": f"tail -n +1 -F {shlex.quote(logfile)}",
+        "agentic": False,
+        "position": {"x": x, "y": y + NOTE_H + GAP},
+        "size": {"width": COL_W, "height": TERM_H},
+    })
+    _log(f"surfaced run '{problem}' -> {logfile}")
+
+
+def watch(workdir, stop=None, skip_existing=False):
+    manifest = os.path.join(workdir, ".scb_tmux", "runs.jsonl")
+    _log(f"watching {manifest}")
+    if not mcp_ready():
+        _log("not in an Orcabot PTY (no ORCABOT_MCP_SECRET) — visualization disabled; still tailing manifest for logs")
+    seen, idx = set(), 0
+    # runs.jsonl is append-only across ALL runs. In `run` mode we launch a fresh
+    # watcher per benchmark run, so without this it would re-surface a note + a
+    # permanent `tail -F` terminal for every historical run on each launch.
+    # Snapshot the pre-existing records as already-seen so only runs THIS
+    # invocation appends get surfaced.
+    if skip_existing:
+        try:
+            with open(manifest) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    seen.add(rec.get("logfile") or line)
+        except FileNotFoundError:
+            pass
+        idx = len(seen)  # place new terminals past any from prior invocations
+        _log(f"skip_existing: snapshotted {len(seen)} prior run(s)")
+    while stop is None or not stop.is_set():
+        try:
+            with open(manifest) as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            time.sleep(1.0)
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            logfile = rec.get("logfile")
+            problem = rec.get("window") or rec.get("target") or "run"
+            key = logfile or line
+            if key in seen:
+                continue
+            seen.add(key)
+            if not logfile:
+                continue
+            if not os.path.isabs(logfile):
+                logfile = os.path.join(workdir, logfile)
+            if mcp_ready():
+                surface_run(idx, problem, logfile)
+            else:
+                _log(f"(disabled) would surface: {problem} -> {logfile}")
+            idx += 1
+        time.sleep(1.0)
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0 if argv else 2)
+
+    mode = argv[0]
+    rest = argv[1:]
+    workdir = os.getcwd()
+    if "--workdir" in rest:
+        i = rest.index("--workdir")
+        workdir = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
+
+    if mode == "watch":
+        watch(workdir)
+    elif mode == "run":
+        cmd = rest[1:] if rest[:1] == ["--"] else rest
+        if not cmd:
+            _log("usage: scb-visualize run [--workdir DIR] -- <command...>")
+            sys.exit(2)
+        t = threading.Thread(target=watch, args=(workdir,), kwargs={"skip_existing": True}, daemon=True)
+        t.start()
+        rc = subprocess.call(cmd, cwd=workdir)
+        time.sleep(2)  # let the watcher surface the final run
+        sys.exit(rc)
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

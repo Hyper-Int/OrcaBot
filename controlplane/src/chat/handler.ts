@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v19-help-docs-grounding
+// REVISION: chat-v22-viewer-rbac-timeout-report
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v19-help-docs-grounding loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v22-viewer-rbac-timeout-report loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -25,6 +25,7 @@ import * as dashboards from '../dashboards/handler';
 import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
+import { sandboxFetch } from '../sandbox/fetch';
 import { HELP_DOCS_GROUNDING } from './help-docs';
 
 // System prompt for Orcabot
@@ -518,6 +519,35 @@ function friendlyProviderError(raw: string | undefined, providerId: string): str
   return 'Something went wrong — please try again.';
 }
 
+const WORKSPACE_TOOLS: GeminiTool[] = [
+  {
+    name: 'read_file',
+    description: 'Read a text file from the dashboard sandbox workspace (read-only). Use this to check on running work — progress logs, results, or anything an agent/benchmark wrote (e.g. ".scb-run.log", ".scb_tmux/runs.jsonl", "outputs/<run>/result.json"). This is how you answer "how is it going?" with real data instead of guessing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox workspace to read from' },
+        path: { type: 'string', description: 'Workspace-relative path (e.g. ".scb-run.log"). Absolute "/workspace/..." is also accepted.' },
+        max_bytes: { type: 'number', description: 'Return only the LAST N bytes (tail) — useful for large/live logs. Default 8000.' },
+      },
+      required: ['dashboard_id', 'path'],
+    },
+  },
+  {
+    name: 'run_command',
+    description: 'Run a shell command in the dashboard sandbox workspace and WAIT for it to finish, returning its exit code and output. Use this for finite setup/operational steps where you need the result before continuing (git clone, uv sync, installs, checks) — unlike terminal_send_input (fire-and-forget), this blocks until the command exits, so you can sequence dependent steps automatically. Do NOT use it to start long-running processes (a benchmark run, a server) — those will time out; launch those with create_terminal and check progress with read_file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox to run in' },
+        command: { type: 'string', description: 'The shell command to run (bash). Starts in /workspace; cd as needed.' },
+        timeout_s: { type: 'number', description: 'Max seconds to wait (default 120, max 300). Exceeding this returns timed_out=true.' },
+      },
+      required: ['dashboard_id', 'command'],
+    },
+  },
+];
+
 function getOrcabotTools(): GeminiTool[] {
   return [
     ...DASHBOARD_TOOLS,
@@ -525,6 +555,7 @@ function getOrcabotTools(): GeminiTool[] {
     ...TERMINAL_TOOLS,
     ...SECRETS_TOOLS,
     ...GUIDANCE_TOOLS,
+    ...WORKSPACE_TOOLS,
     ...convertMcpToGeminiTools(UI_TOOLS),
   ];
 }
@@ -608,6 +639,7 @@ async function executeTool(
   requestOrigin?: string
 ): Promise<{ result: Record<string, unknown>; isError: boolean }> {
   try {
+    console.log(`[executeTool] tool=${toolName} argKeys=${JSON.stringify(Object.keys(args))} dashboard_id=${args.dashboard_id ?? '(none)'}`);
     // ==========================================
     // Phase 2: Dashboard Management Tools
     // ==========================================
@@ -792,20 +824,193 @@ async function executeTool(
     // Phase 4: Terminal Control Tools
     // ==========================================
 
+    if (toolName === 'read_file') {
+      const dashboardId = args.dashboard_id as string;
+      const rawPath = String(args.path || '').trim();
+      const maxBytes = typeof args.max_bytes === 'number' && args.max_bytes > 0
+        ? Math.min(args.max_bytes, 200_000)
+        : 8000;
+
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access) {
+        return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal or benchmark first.' }, isError: true };
+      }
+
+      // Workspace-scoped, no traversal.
+      if (!rawPath || rawPath.includes('..')) {
+        return { result: { error: 'Invalid path.' }, isError: true };
+      }
+      // The sandbox file API resolves `path` RELATIVE to the workspace root
+      // (/workspace): it does Join(root, TrimPrefix(path, "/")). Passing an
+      // absolute /workspace/... path therefore double-nests to
+      // /workspace/workspace/... and never resolves. Strip to a relative path.
+      const relPath = rawPath.replace(/^\/+workspace\/+/, '').replace(/^\/+/, '');
+
+      try {
+        const res = await sandboxFetch(
+          env,
+          `/sessions/${sb.sandbox_session_id}/file?path=${encodeURIComponent(relPath)}`,
+          { machineId: sb.sandbox_machine_id || undefined }
+        );
+        if (!res.ok) {
+          return { result: { error: `Could not read ${rawPath} (status ${res.status}). It may not exist yet.` }, isError: true };
+        }
+        let content = await res.text();
+        let truncated = false;
+        if (content.length > maxBytes) {
+          content = content.slice(-maxBytes);
+          truncated = true;
+        }
+        return { result: { path: `/workspace/${relPath}`, truncated, bytes: content.length, content }, isError: false };
+      } catch (error) {
+        return { result: { error: `Read failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
+
+    if (toolName === 'run_command') {
+      const dashboardId = args.dashboard_id as string;
+      const command = String(args.command || '');
+      const timeoutS = Math.min(
+        typeof args.timeout_s === 'number' && args.timeout_s > 0 ? args.timeout_s : 120,
+        300
+      );
+      console.log(`[run_command] enter dashboard=${dashboardId} timeoutS=${timeoutS} cmdLen=${command.length} cmd=${JSON.stringify(command.slice(0, 200))}`);
+      if (!command.trim()) {
+        return { result: { error: 'command is required' }, isError: true };
+      }
+
+      // Executing shell commands mutates the shared workspace, so require write
+      // access (owner/editor) — matching session creation. A viewer must not be
+      // able to run_command.
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+        console.log(`[run_command] DENIED role=${access?.role ?? 'none'} dashboard=${dashboardId} user=${userId}`);
+        return { result: { error: 'Access denied. run_command requires owner or editor access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        console.log(`[run_command] NO SANDBOX row in dashboard_sandboxes for dashboard=${dashboardId}`);
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal first.' }, isError: true };
+      }
+
+      const sessionId = sb.sandbox_session_id;
+      const machineId = sb.sandbox_machine_id || undefined;
+      const runId = generateId();
+      // Relative names for the file API (it resolves paths under /workspace — an
+      // absolute /workspace/... would double-nest to /workspace/workspace/...).
+      // The shell redirects still use the absolute path (correct inside the VM).
+      const outRel = `.orc-run-${runId}.out`;
+      const exitRel = `.orc-run-${runId}.exit`;
+      const outPath = `/workspace/${outRel}`;
+      const exitPath = `/workspace/${exitRel}`;
+
+      // base64 the command so arbitrary quoting/metachars can't break the wrapper.
+      const bytes = new TextEncoder().encode(command);
+      let bin = '';
+      for (const b of bytes) bin += String.fromCharCode(b);
+      const b64 = btoa(bin);
+      // Run it, capture stdout+stderr to .out, then write the exit code to .exit
+      // last (so the marker never appears before the output is flushed).
+      const wrapped = `echo ${b64} | base64 -d | bash > ${outPath} 2>&1; echo $? > ${exitPath}`;
+
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      // rel = path relative to the workspace root (/workspace).
+      const readMarker = async (rel: string) => {
+        const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { machineId });
+        return res.ok ? await res.text() : null;
+      };
+
+      let pty: { id: string } | null = null;
+      try {
+        pty = await client.createPty(sessionId, '', wrapped, machineId);
+        console.log(`[run_command] pty created id=${pty?.id} session=${sessionId} machine=${machineId ?? '(none)'} — polling ${exitPath}`);
+
+        // Poll the (internal-token) file API for the exit marker — no new sandbox
+        // endpoint needed. Interval kept at 2s to bound subrequest count.
+        const started = Date.now();
+        let exitRaw: string | null = null;
+        let polls = 0;
+        while (Date.now() - started < timeoutS * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          polls++;
+          exitRaw = await readMarker(exitRel);
+          if (exitRaw !== null) break;
+          // Heartbeat every ~10s so a slow command is visibly still alive in logs.
+          if (polls % 5 === 0) {
+            console.log(`[run_command] still polling elapsed=${Math.round((Date.now() - started) / 1000)}s (marker not yet present)`);
+          }
+        }
+        console.log(`[run_command] poll done polls=${polls} exitMarker=${exitRaw === null ? 'MISSING(timeout)' : JSON.stringify(exitRaw.trim())}`);
+
+        let output = (await readMarker(outRel)) || '';
+        console.log(`[run_command] output bytes=${output.length}`);
+        const truncated = output.length > 8000;
+        if (truncated) output = output.slice(-8000);
+
+        // Best-effort cleanup: marker files + the headless PTY (it self-reaps when
+        // the wrapper exits, but delete to be tidy).
+        for (const rel of [outRel, exitRel]) {
+          try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
+        }
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+
+        if (exitRaw === null) {
+          // The cleanup above deleted the PTY, which kills the process group — so
+          // the command was TERMINATED at the timeout, not left running. Report
+          // that accurately (and as an error, since it did not complete).
+          return {
+            result: {
+              timed_out: true,
+              terminated: true,
+              message: `Command exceeded the ${timeoutS}s limit and was terminated. For a long-running process, launch it with create_terminal instead and check progress with read_file.`,
+              output,
+              truncated,
+            },
+            isError: true,
+          };
+        }
+        const exitCode = Number.parseInt(exitRaw.trim(), 10);
+        return {
+          result: { exit_code: Number.isNaN(exitCode) ? null : exitCode, output, truncated },
+          isError: !Number.isNaN(exitCode) && exitCode !== 0,
+        };
+      } catch (error) {
+        console.error(`[run_command] THREW: ${error instanceof Error ? error.stack || error.message : String(error)}`);
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+        return { result: { error: `run_command failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
+
     if (toolName === 'terminal_send_input') {
       const dashboardId = args.dashboard_id as string;
       const terminalItemId = args.terminal_item_id as string;
       const input = args.input as string;
       const pressEnter = args.press_enter !== false;
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
@@ -866,14 +1071,16 @@ async function executeTool(
         };
       }
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
