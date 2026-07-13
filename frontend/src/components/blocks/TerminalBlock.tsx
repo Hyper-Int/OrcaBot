@@ -2381,6 +2381,14 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, actualItemId, stopSession, markSessionStopped, upsertDashboardSession]);
 
+  // Tracks whether this session has connected at least once, so we clear the
+  // terminal only on RE-connects (not the first attach, which would wipe replayed
+  // boot output). Reset when the session identity changes (a new PTY).
+  const hasConnectedOnceRef = React.useRef(false);
+  React.useEffect(() => {
+    hasConnectedOnceRef.current = false;
+  }, [session?.id]);
+
   // Show connected message when WebSocket connects
   React.useEffect(() => {
     if (isConnected && session && isReady) {
@@ -2391,7 +2399,15 @@ export function TerminalBlock({
         terminalRef.current?.fit();
       }, 120);
 
-      terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+      // Only clear on a RE-connect. On the first connect the sandbox replays the
+      // PTY's buffered output (a fast boot_command's output — e.g. setup's
+      // SETUP_OK — that already ran before we attached); clearing here would wipe
+      // it and leave a blank terminal. On reconnect we clear to avoid a duplicated
+      // scrollback replay.
+      if (hasConnectedOnceRef.current) {
+        terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+      }
+      hasConnectedOnceRef.current = true;
       terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n\r\n");
 
       // Control is requested separately once connected.
