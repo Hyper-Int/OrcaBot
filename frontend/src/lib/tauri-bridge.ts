@@ -118,10 +118,12 @@ export interface CloudAccount {
   email: string;
 }
 
-/** Persist the cloud PAT + email natively (host-only) for dashboard sync. */
+/** Persist the cloud PAT + email natively (host-only) for dashboard sync. Throws
+ *  (rather than silently no-op'ing) if the native bridge is unavailable, so a
+ *  sign-in can't appear to succeed without actually storing the credential. */
 export async function setCloudCredential(token: string, email: string): Promise<void> {
   const invoke = await getTauriInvoke();
-  if (!invoke) return;
+  if (!invoke) throw new Error("Couldn't reach the desktop app to store the sign-in.");
   await invoke("set_cloud_credential", { token, email });
 }
 
