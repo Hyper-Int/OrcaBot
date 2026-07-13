@@ -144,7 +144,6 @@ export function AiProviderSetupCard({ onDone }: AiProviderSetupCardProps) {
                   onChange={(e) => setValues((v) => ({ ...v, [p.keyName]: e.target.value }))}
                   disabled={saving}
                   style={{
-                    fontFamily: values[p.keyName] ? "monospace" : undefined,
                     fontSize: "12px",
                     height: "28px",
                   } as React.CSSProperties}

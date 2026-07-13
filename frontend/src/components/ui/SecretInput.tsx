@@ -1,34 +1,40 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secret-input-v2-unmasked-default
+// REVISION: secret-input-v3-disc-font-mask
 "use client";
 
 import * as React from "react";
 import { Input, type InputProps } from "./input";
+import { cn } from "@/lib/utils";
 
-const SECRET_INPUT_REVISION = "secret-input-v2-unmasked-default";
+const SECRET_INPUT_REVISION = "secret-input-v3-disc-font-mask";
 if (typeof window !== "undefined" && !(window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged) {
   (window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged = true;
   console.log(`[SecretInput] REVISION: ${SECRET_INPUT_REVISION} loaded at ${new Date().toISOString()}`);
 }
 
 /**
- * SecretInput — a text input for secrets/tokens/API keys that NEVER trips browser
- * password managers. BOTH `type="password"` AND the `-webkit-text-security` CSS
- * mask make browsers (notably Safari) classify the field as a password — popping
- * a "save password" prompt and offering to autofill saved site passwords (the
- * Touch-ID thumbprint) right on top of the field. So we render a plain text input
- * with every "ignore me" hint the managers respect, and leave it UNMASKED by
- * default: a key is pasted once, and saved secrets are shown masked in the list.
- * Pass `masked` to re-enable the CSS mask if you accept the manager popups.
+ * SecretInput — a text input for secrets/tokens/API keys that shows the value
+ * masked (••••) WITHOUT tripping browser password managers.
+ *
+ * The trick: masking is exactly what Safari/Chrome key on. BOTH `type="password"`
+ * AND the `-webkit-text-security` CSS mask make them classify the field as a
+ * password — popping a "save password" prompt and the saved-credential autofill
+ * thumbprint. So instead of masking via `type`/CSS, we keep an ordinary
+ * `type="text"` field and mask visually with the self-hosted `text-security-disc`
+ * font (see globals.css). The browser sees a normal text input → no popup, no
+ * thumbprint — but every glyph renders as a bullet. `input.value` is still the
+ * real secret. Every "ignore me" manager hint is also set as belt-and-braces.
+ *
+ * Pass `masked={false}` to show the value in plain text (e.g. a reveal toggle).
  */
 interface SecretInputProps extends InputProps {
   masked?: boolean;
 }
 
 const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
-  ({ style, masked = false, ...props }, ref) => {
+  ({ masked = true, className, ...props }, ref) => {
     return (
       <Input
         ref={ref}
@@ -41,7 +47,7 @@ const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
         data-1p-ignore="true"
         data-bwignore="true"
         data-form-type="other"
-        style={masked ? ({ WebkitTextSecurity: "disc", ...style } as React.CSSProperties) : style}
+        className={cn(masked && "secret-masked", className)}
         {...props}
       />
     );
