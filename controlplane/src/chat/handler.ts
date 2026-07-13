@@ -938,6 +938,10 @@ async function executeTool(
           polls++;
           exitRaw = await readMarker(exitPath);
           if (exitRaw !== null) break;
+          // Heartbeat every ~10s so a slow command is visibly still alive in logs.
+          if (polls % 5 === 0) {
+            console.log(`[run_command] still polling elapsed=${Math.round((Date.now() - started) / 1000)}s (marker not yet present)`);
+          }
         }
         console.log(`[run_command] poll done polls=${polls} exitMarker=${exitRaw === null ? 'MISSING(timeout)' : JSON.stringify(exitRaw.trim())}`);
 
