@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v20-run-command-logging
+// REVISION: chat-v21-file-api-relative-path
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v20-run-command-logging loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v21-file-api-relative-path loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -849,14 +849,16 @@ async function executeTool(
       if (!rawPath || rawPath.includes('..')) {
         return { result: { error: 'Invalid path.' }, isError: true };
       }
-      const absPath = rawPath.startsWith('/workspace/')
-        ? rawPath
-        : `/workspace/${rawPath.replace(/^\/+/, '')}`;
+      // The sandbox file API resolves `path` RELATIVE to the workspace root
+      // (/workspace): it does Join(root, TrimPrefix(path, "/")). Passing an
+      // absolute /workspace/... path therefore double-nests to
+      // /workspace/workspace/... and never resolves. Strip to a relative path.
+      const relPath = rawPath.replace(/^\/+workspace\/+/, '').replace(/^\/+/, '');
 
       try {
         const res = await sandboxFetch(
           env,
-          `/sessions/${sb.sandbox_session_id}/file?path=${encodeURIComponent(absPath)}`,
+          `/sessions/${sb.sandbox_session_id}/file?path=${encodeURIComponent(relPath)}`,
           { machineId: sb.sandbox_machine_id || undefined }
         );
         if (!res.ok) {
@@ -868,7 +870,7 @@ async function executeTool(
           content = content.slice(-maxBytes);
           truncated = true;
         }
-        return { result: { path: absPath, truncated, bytes: content.length, content }, isError: false };
+        return { result: { path: `/workspace/${relPath}`, truncated, bytes: content.length, content }, isError: false };
       } catch (error) {
         return { result: { error: `Read failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
       }
@@ -905,8 +907,13 @@ async function executeTool(
       const sessionId = sb.sandbox_session_id;
       const machineId = sb.sandbox_machine_id || undefined;
       const runId = generateId();
-      const outPath = `/workspace/.orc-run-${runId}.out`;
-      const exitPath = `/workspace/.orc-run-${runId}.exit`;
+      // Relative names for the file API (it resolves paths under /workspace — an
+      // absolute /workspace/... would double-nest to /workspace/workspace/...).
+      // The shell redirects still use the absolute path (correct inside the VM).
+      const outRel = `.orc-run-${runId}.out`;
+      const exitRel = `.orc-run-${runId}.exit`;
+      const outPath = `/workspace/${outRel}`;
+      const exitPath = `/workspace/${exitRel}`;
 
       // base64 the command so arbitrary quoting/metachars can't break the wrapper.
       const bytes = new TextEncoder().encode(command);
@@ -918,8 +925,9 @@ async function executeTool(
       const wrapped = `echo ${b64} | base64 -d | bash > ${outPath} 2>&1; echo $? > ${exitPath}`;
 
       const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
-      const readMarker = async (p: string) => {
-        const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(p)}`, { machineId });
+      // rel = path relative to the workspace root (/workspace).
+      const readMarker = async (rel: string) => {
+        const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { machineId });
         return res.ok ? await res.text() : null;
       };
 
@@ -936,7 +944,7 @@ async function executeTool(
         while (Date.now() - started < timeoutS * 1000) {
           await new Promise((r) => setTimeout(r, 2000));
           polls++;
-          exitRaw = await readMarker(exitPath);
+          exitRaw = await readMarker(exitRel);
           if (exitRaw !== null) break;
           // Heartbeat every ~10s so a slow command is visibly still alive in logs.
           if (polls % 5 === 0) {
@@ -945,15 +953,15 @@ async function executeTool(
         }
         console.log(`[run_command] poll done polls=${polls} exitMarker=${exitRaw === null ? 'MISSING(timeout)' : JSON.stringify(exitRaw.trim())}`);
 
-        let output = (await readMarker(outPath)) || '';
+        let output = (await readMarker(outRel)) || '';
         console.log(`[run_command] output bytes=${output.length}`);
         const truncated = output.length > 8000;
         if (truncated) output = output.slice(-8000);
 
         // Best-effort cleanup: marker files + the headless PTY (it self-reaps when
         // the wrapper exits, but delete to be tidy).
-        for (const p of [outPath, exitPath]) {
-          try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(p)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
+        for (const rel of [outRel, exitRel]) {
+          try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
         }
         if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
 
