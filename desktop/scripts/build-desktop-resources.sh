@@ -173,6 +173,16 @@ if [ -d "$FRONTEND_DIR" ]; then
 
   printf '%s\n' "Building frontend worker..."
 
+  # Step 0: clear stale build artifacts. Next.js's incremental cache (.next/cache)
+  # has silently served MONTHS-old compiled output before — a changed page didn't
+  # rebuild, shipping stale UI into the desktop app. This is a build step, not a
+  # hot dev loop, so correctness beats the incremental speedup: clean by default.
+  # Opt out with FRONTEND_CLEAN=0 when iterating and you trust the cache.
+  if [ "${FRONTEND_CLEAN:-1}" != "0" ]; then
+    printf '%s\n' "Clearing frontend build cache (.next, .open-next)..."
+    rm -rf "$FRONTEND_DIR/.next" "$FRONTEND_DIR/.open-next"
+  fi
+
   # Step 1: Build with OpenNext (creates .open-next/)
   (
     cd "$FRONTEND_DIR"
@@ -287,8 +297,11 @@ ${WASM_MODULES}      ],
 CAPNP_EOF
     printf '%s\n' "  Generated: workerd.frontend.capnp"
 
-    # Copy assets directory
+    # Copy assets directory. Wipe the staged copy first so orphaned chunks from
+    # previous builds don't pile up (content-hashed filenames mean stale chunks are
+    # never overwritten, just accumulate — confusing to debug and bloats the app).
     if [ -d "$FRONTEND_DIR/.open-next/assets" ]; then
+      rm -rf "$FRONTEND_RES_DIR/assets"
       cp -r "$FRONTEND_DIR/.open-next/assets" "$FRONTEND_RES_DIR/"
       printf '%s\n' "  Staged: frontend assets"
     fi
@@ -353,8 +366,10 @@ fi
 TARGET_RES_DIR="$ROOT_DIR/app/src-tauri/target/release/resources"
 if [ -d "$TARGET_RES_DIR" ]; then
   if command -v rsync >/dev/null 2>&1; then
-    rsync -a "$TAURI_RESOURCES_DIR/" "$TARGET_RES_DIR/"
+    # --delete mirrors exactly, so stale frontend chunks don't linger here either.
+    rsync -a --delete "$TAURI_RESOURCES_DIR/" "$TARGET_RES_DIR/"
   else
+    rm -rf "$TARGET_RES_DIR/frontend/assets"
     cp -R "$TAURI_RESOURCES_DIR/." "$TARGET_RES_DIR/"
   fi
   printf '%s\n' "  synced resources -> target/release/resources (dev binary picks these up)"
