@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: providers-v7-desktop-account-gate
-const MODULE_REVISION = "providers-v7-desktop-account-gate";
+// REVISION: providers-v8-machine-wide-local-identity
+const MODULE_REVISION = "providers-v8-machine-wide-local-identity";
 console.log(
   `[providers] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -55,7 +55,8 @@ function AuthBootstrapper() {
   // auto-login as; until it's set on a fresh install, the welcome gate is shown.
   const accountChoice = useDesktopAccountStore((s) => s.choice);
   const accountEmail = useDesktopAccountStore((s) => s.email);
-  const accountName = useDesktopAccountStore((s) => s.name);
+  // (account name/email are shown via the account store + CloudDashboardsSection;
+  //  the LOCAL identity no longer depends on them — see bootstrap below.)
   const chooseFree = useDesktopAccountStore((s) => s.chooseFree);
   // Track which user ID we last validated — re-runs on user switch, not just once per page
   const validatedUserRef = React.useRef<string | null>(null);
@@ -144,14 +145,15 @@ function AuthBootstrapper() {
         // below carry X-Orcabot-Surface — the control plane requires it to honor
         // dev-auth, or /auth/dev/session and the /me ID-sync 401 (wrong user →
         // empty dashboards).
-        // "signed-in" uses the real account's email/name as the LOCAL dev-auth
-        // identity (data stays local; dev-auth resolves users by email). "free"
-        // uses the anonymous local identity. Either way we run on local control plane.
-        if (accountChoice === "signed-in" && accountEmail) {
-          loginDevMode(accountName || accountEmail, accountEmail);
-        } else {
-          loginDevMode("Desktop User", "desktop@localhost");
-        }
+        //
+        // Machine-wide local dashboards: the LOCAL dev-auth identity is ALWAYS the
+        // single machine user (desktop@localhost), regardless of Free vs signed-in.
+        // Signing in is purely additive — it attaches the cloud credential and
+        // surfaces your email (desktop-account-store + CloudDashboardsSection) — it
+        // must NOT switch the local owner, or your local dashboards would fork per
+        // identity and "disappear" when you sign in. Downloaded cloud dashboards
+        // land under this same machine user, alongside everything made while Free.
+        loginDevMode("Desktop User", "desktop@localhost");
         await Promise.race([
           ensureSurfaceToken(),
           new Promise((resolve) => setTimeout(resolve, 3000)),
@@ -222,7 +224,6 @@ function AuthBootstrapper() {
     loginDevMode,
     accountChoice,
     accountEmail,
-    accountName,
     chooseFree,
   ]);
 
