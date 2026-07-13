@@ -75,6 +75,11 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   // Auto-minimize the chat the first time the user interacts with the page
   // *outside* the chat — fires once per mount.
   const autoMinimizedRef = React.useRef(false);
+  // When the chat IS the primary UI for this dashboard — arrived from the splash
+  // chat bar, or a template auto-kicked a setup walkthrough — we do NOT auto-minimize
+  // it on the first outside click (the user wants to read/drive the conversation).
+  // Manual collapse (the chevron) still works. Set once per mount.
+  const [chatIsPrimary, setChatIsPrimary] = React.useState(false);
   // Holds a splash-bar prompt that was deferred because needsAiSetup=true.
   // Sent after the user completes (or skips) AI provider setup.
   const deferredPromptRef = React.useRef<string | null>(null);
@@ -105,6 +110,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     if (!isTransitionTarget) return;
     setIsAtSplashPosition(true);  // also covers late transitions
     setIsExpanded(true);
+    setChatIsPrimary(true);       // splash-bar flow: chat is the primary UI
     setChatPanelReady();
   }, [isTransitionTarget, setChatPanelReady]);
 
@@ -169,6 +175,8 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     }
     localStorage.removeItem("orcabot_initial_prompt");
     initialPromptConsumedRef.current = true;
+    // An initial prompt (splash bar OR template walkthrough) means chat is primary.
+    setChatIsPrimary(true);
 
     // Special keyword: show the AI provider setup card instead of sending to AI
     if (prompt.toLowerCase().includes(AI_ONBOARD_KEYWORD)) {
@@ -217,6 +225,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     if (autoMinimizedRef.current) return;
     if (!isExpanded) return;
     if (needsAiSetup || showSetupCard) return;
+    if (chatIsPrimary) return; // splash-bar / template-walkthrough: chat stays open
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (target && panelRef.current?.contains(target)) return; // inside the chat
@@ -226,7 +235,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     };
     window.addEventListener("pointerdown", handlePointerDown, true);
     return () => window.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [isExpanded, needsAiSetup, showSetupCard]);
+  }, [isExpanded, needsAiSetup, showSetupCard, chatIsPrimary]);
 
   // Called when the setup card is dismissed or completed.
   // savedKeys is provided when keys were saved, omitted when user skipped.
