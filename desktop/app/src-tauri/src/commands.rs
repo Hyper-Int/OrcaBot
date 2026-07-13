@@ -882,7 +882,7 @@ fn cloud_dir_list(token: &str, sid: &str, dir: &str) -> Result<Vec<serde_json::V
     match ureq::get(&url)
         .set("Authorization", &format!("Bearer {token}"))
         .query("path", dir)
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(30))
         .call()
     {
         Ok(rp) => {
@@ -973,11 +973,13 @@ fn cloud_file_get_ready(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, St
     Err(last)
 }
 
-/// Get a live cloud session id for `dash` so the file API works: reuse an active
-/// session, else start one on an EXISTING terminal item (boots the cloud VM). We
-/// never CREATE a terminal item — a download shouldn't add phantom blocks to the
-/// user's cloud dashboard. Returns None when there is no terminal item at all.
-/// `on_boot` is called each poll iteration while waiting for a cold VM (progress).
+/// Get a live cloud session id for `dash` whose sandbox is actually running, so
+/// the file API works. We do NOT trust a bare "active" DB status — that can point
+/// at a reaped VM, and the file proxy then hangs forever trying to reach a dead
+/// machine. Instead we always POST /session, which runs ensureDashboardSandbox on
+/// the control plane: it restarts a stopped machine and reprovisions a dead
+/// session. We never CREATE a terminal item (no phantom blocks); returns None when
+/// the dashboard has no terminal item at all. `on_boot` fires each poll (progress).
 fn cloud_ensure_session(
     token: &str,
     dash: &str,
@@ -985,16 +987,6 @@ fn cloud_ensure_session(
 ) -> Result<Option<String>, String> {
     let dash_url = format!("{CLOUD_API_BASE}/dashboards/{dash}");
     let v = cloud_get_json(token, &dash_url)?;
-
-    if let Some(sessions) = v.get("sessions").and_then(|x| x.as_array()) {
-        for s in sessions {
-            if s.get("status").and_then(|x| x.as_str()) == Some("active") {
-                if let Some(id) = s.get("id").and_then(|x| x.as_str()) {
-                    return Ok(Some(id.to_string()));
-                }
-            }
-        }
-    }
 
     let item_id = v
         .get("items")
@@ -1010,8 +1002,11 @@ fn cloud_ensure_session(
         None => return Ok(None),
     };
 
-    // Starting a session cold-boots a Fly VM, and the control plane may hold the
-    // request open until it's provisioned — allow well past a cold boot (not 30s).
+    // Always POST — ensureDashboardSandbox restarts a stopped machine / reprovisions
+    // a dead session. It cold-boots a Fly VM and may hold the request open until
+    // provisioned, so allow well past a cold boot (not 30s). Idempotent when the
+    // sandbox is already healthy.
+    eprintln!("[cloud-dl] ensuring sandbox for terminal {item_id}");
     cloud_post_json(
         token,
         &format!("{CLOUD_API_BASE}/dashboards/{dash}/items/{item_id}/session"),
@@ -1243,7 +1238,7 @@ pub async fn download_cloud_workspace(
             // The root list is the readiness gate — the just-started sandbox may
             // still be booting its HTTP server (proxy 503s), so retry it for up to
             // ~90s. Deeper dirs only need a light retry once it's serving.
-            let entries = match cloud_dir_list_ready(&token, &sid, &query_path, if is_root { 30 } else { 4 }) {
+            let entries = match cloud_dir_list_ready(&token, &sid, &query_path, if is_root { 10 } else { 4 }) {
                 Ok(v) => v,
                 Err(e) if is_root => {
                     eprintln!("[cloud-dl] root list failed: {e}");
