@@ -1,12 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v2-local-tab-on-free
+// REVISION: dashboards-tabs-v3-cloud-link
 "use client";
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, HardDrive, Trash2, Link2, Plus, Loader2 } from "lucide-react";
+import { Download, HardDrive, Trash2, Link2, Plus, Loader2, Cloud } from "lucide-react";
 import {
   Button,
   Card,
@@ -15,13 +15,17 @@ import {
   CardTitle,
   Skeleton,
 } from "@/components/ui";
-import { DESKTOP_MODE } from "@/config/env";
-import { getCloudAccount, listCloudDashboards } from "@/lib/tauri-bridge";
+import { DESKTOP_MODE, CLOUD_SITE_URL } from "@/config/env";
+import {
+  getCloudAccount,
+  listCloudDashboards,
+  openExternalUrl,
+} from "@/lib/tauri-bridge";
 import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v2-local-tab-on-free";
+const MODULE_REVISION = "dashboards-tabs-v3-cloud-link";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -314,32 +318,46 @@ function CloudDashboardCard({
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2">
             <CardTitle className="truncate">{cd.name}</CardTitle>
-            {downloaded ? (
-              <span
-                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)] shrink-0"
-                title="Downloaded to this machine — click to open"
-              >
-                <HardDrive className="w-3.5 h-3.5" /> Local Storage
-              </span>
-            ) : (
+            <div className="flex flex-col items-end gap-1 shrink-0">
+              {/* Cloud link — opens this dashboard on orcabot.com in the browser. */}
               <button
                 type="button"
-                disabled={isDownloading}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDownload();
+                  void openExternalUrl(`${CLOUD_SITE_URL}/dashboards/${cd.id}`);
                 }}
-                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent,#5b8cff)] hover:underline disabled:opacity-50 shrink-0"
-                title="Download into this machine"
+                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:underline"
+                title="Open on orcabot.com"
               >
-                {isDownloading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Download className="w-3.5 h-3.5" />
-                )}
-                {isDownloading ? "Downloading…" : "Download"}
+                <Cloud className="w-3.5 h-3.5" /> Open online
               </button>
-            )}
+              {downloaded ? (
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)]"
+                  title="Downloaded to this machine — click the card to open"
+                >
+                  <HardDrive className="w-3.5 h-3.5" /> Local Storage
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isDownloading}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDownload();
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent,#5b8cff)] hover:underline disabled:opacity-50"
+                  title="Download into this machine"
+                >
+                  {isDownloading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  {isDownloading ? "Downloading…" : "Download"}
+                </button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
