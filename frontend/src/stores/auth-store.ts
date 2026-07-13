@@ -8,6 +8,7 @@ import { persist } from "zustand/middleware";
 import type { User, SubscriptionInfo } from "@/types";
 import { generateId } from "@/lib/utils";
 import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
 /** On desktop, the control plane only honors dev-auth for requests carrying the
  *  per-boot surface token, so include it when present (blocks VM-origin spoofing). */
@@ -105,6 +106,15 @@ export const useAuthStore = create<AuthStore>()(
           isAuthResolved: true,
           subscription: null,
         });
+        // Desktop: also clear the first-run account choice so logout returns to the
+        // welcome screen (Free / Google / token) instead of the auto-login
+        // re-signing the user straight back in. Centralized here so every logout
+        // path (dashboards header, PaywallDialog, …) behaves the same. No-op on web.
+        try {
+          useDesktopAccountStore.getState().reset();
+        } catch {
+          /* store unavailable (SSR / very early) — nothing to reset */
+        }
       },
 
       setLoading: (loading: boolean) => {

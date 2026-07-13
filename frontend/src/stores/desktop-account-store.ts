@@ -1,11 +1,18 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-account-store-v1
+// REVISION: desktop-account-store-v2-hydration-fix
 "use client";
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+
+const MODULE_REVISION = "desktop-account-store-v2-hydration-fix";
+if (typeof window !== "undefined") {
+  console.log(
+    `[desktop-account-store] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+  );
+}
 
 /**
  * First-run account choice for the DESKTOP app. The desktop stack always runs on

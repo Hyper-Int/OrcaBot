@@ -628,8 +628,17 @@ pub struct OrcabotAccount {
 /// a compromised webview can't redirect it elsewhere. The desktop app keeps
 /// running on the LOCAL control plane; this only confirms the account and reads
 /// the email/name to use as the local identity.
+///
+/// Async: the blocking HTTP call (up to 15s on a slow/offline network) runs on a
+/// blocking thread so it never freezes the native UI/IPC event loop during sign-in.
 #[tauri::command]
-pub fn verify_orcabot_account(token: String) -> Result<OrcabotAccount, String> {
+pub async fn verify_orcabot_account(token: String) -> Result<OrcabotAccount, String> {
+    tauri::async_runtime::spawn_blocking(move || verify_orcabot_account_blocking(&token))
+        .await
+        .map_err(|e| format!("sign-in task failed: {e}"))?
+}
+
+fn verify_orcabot_account_blocking(token: &str) -> Result<OrcabotAccount, String> {
     let token = token.trim();
     if !token.starts_with("orca_pat_") {
         return Err("That doesn't look like an Orcabot token (starts with orca_pat_).".into());

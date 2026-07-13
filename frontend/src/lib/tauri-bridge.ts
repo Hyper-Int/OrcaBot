@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v6-version-and-update-progress
-const MODULE_REVISION = "tauri-bridge-v6-version-and-update-progress";
+// REVISION: tauri-bridge-v7-global-event-listen
+const MODULE_REVISION = "tauri-bridge-v7-global-event-listen";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -282,21 +282,45 @@ export async function pickFolder(): Promise<string | null> {
 
 // ---- Events ----
 
-/** Listen for import progress events emitted from the Rust backend. */
-export async function onImportProgress(
-  callback: (progress: ImportProgress) => void
+/**
+ * Subscribe to a Rust-emitted (`app.emit`) event. Prefers the runtime-injected
+ * `window.__TAURI__.event.listen` (present via withGlobalTauri) — the same global
+ * onAppFocus uses — because the bare `import("@tauri-apps/api/webview")` specifier
+ * does NOT resolve from the remote-origin packaged webview (it throws, the error
+ * is swallowed, and the listener silently never fires). Falls back to the dynamic
+ * import for dev builds where the specifier does resolve. No-op off desktop.
+ */
+async function listenGlobal<T>(
+  event: string,
+  callback: (payload: T) => void
 ): Promise<(() => void) | null> {
-  if (!DESKTOP_MODE) return null;
+  if (!DESKTOP_MODE || typeof window === "undefined") return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const listen = (window as any).__TAURI__?.event?.listen;
+    if (typeof listen === "function") {
+      const unlisten = await listen(event, (e: { payload: T }) => callback(e.payload));
+      return typeof unlisten === "function" ? unlisten : null;
+    }
+  } catch {
+    /* fall through to the dynamic-import path */
+  }
   try {
     const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
-    const unlisten = await mod.getCurrentWebview().listen(
-      "folder-import-progress",
-      (event: { payload: ImportProgress }) => callback(event.payload)
-    );
+    const unlisten = await mod
+      .getCurrentWebview()
+      .listen(event, (e: { payload: T }) => callback(e.payload));
     return unlisten;
   } catch {
     return null;
   }
+}
+
+/** Listen for import progress events emitted from the Rust backend. */
+export async function onImportProgress(
+  callback: (progress: ImportProgress) => void
+): Promise<(() => void) | null> {
+  return listenGlobal<ImportProgress>("folder-import-progress", callback);
 }
 
 /**
@@ -307,17 +331,7 @@ export async function onImportProgress(
 export async function onUpdateProgress(
   callback: (progress: UpdateProgress) => void
 ): Promise<(() => void) | null> {
-  if (!DESKTOP_MODE) return null;
-  try {
-    const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
-    const unlisten = await mod.getCurrentWebview().listen(
-      "update-progress",
-      (event: { payload: UpdateProgress }) => callback(event.payload)
-    );
-    return unlisten;
-  } catch {
-    return null;
-  }
+  return listenGlobal<UpdateProgress>("update-progress", callback);
 }
 
 /** Listen for native drag-drop events on the Tauri webview. */

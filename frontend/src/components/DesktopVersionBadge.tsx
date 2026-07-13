@@ -5,6 +5,13 @@ import { useEffect, useState } from "react";
 import { DESKTOP_MODE } from "@/config/env";
 import { getAppVersion } from "@/lib/tauri-bridge";
 
+const MODULE_REVISION = "desktop-version-badge-v1";
+if (typeof window !== "undefined") {
+  console.log(
+    `[desktop-version-badge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+  );
+}
+
 /**
  * Small "v0.5.0" tag shown next to the Orcabot wordmark in the desktop app so
  * users can see which version they're running (invisible otherwise in a packaged
