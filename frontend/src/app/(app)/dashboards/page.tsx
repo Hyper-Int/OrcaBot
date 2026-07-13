@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: layout-v7-secret-input
-const MODULE_REVISION = "layout-v7-secret-input";
+// REVISION: layout-v8-dashboards-tabs
+const MODULE_REVISION = "layout-v8-dashboards-tabs";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -28,7 +28,6 @@ import {
   XCircle,
   Clock,
   BarChart3,
-  Link2,
   Terminal,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -36,10 +35,6 @@ import { toast } from "sonner";
 import {
   Button,
   Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Skeleton,
   Dialog,
   DialogContent,
   DialogHeader,
@@ -56,7 +51,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
-import { CloudDashboardsSection } from "@/components/desktop/CloudDashboardsSection";
+import { DashboardsTabs } from "@/components/desktop/DashboardsTabs";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { switchToCli } from "@/lib/tauri-bridge";
 import {
@@ -70,7 +65,7 @@ import {
   type UserSecret,
 } from "@/lib/api/cloudflare";
 import { listTemplates, deleteTemplate, approveTemplate } from "@/lib/api/cloudflare/templates";
-import { formatRelativeTime, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 
 export default function DashboardsPage() {
@@ -535,70 +530,23 @@ export default function DashboardsPage() {
           </div>
         </section>
 
-        {/* Desktop: your cloud dashboards (download into the local DB to run them) */}
-        <CloudDashboardsSection
-          localDashboards={dashboards || []}
-          onOpen={(id) => router.push(`/dashboards/${id}`)}
-          onDownloaded={() =>
-            queryClient.invalidateQueries({ queryKey: ["dashboards"] })
-          }
-        />
-
         {/* Two-column layout: Dashboards (left) + Environment Variables (right) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Your Dashboards Section */}
-          <section>
-            <h2 className="text-h2 text-[var(--foreground)] mb-4">
-              Your Dashboards
-            </h2>
-
-            {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <Skeleton key={i} className="h-24" />
-                ))}
-              </div>
-            ) : error ? (
-              <div className="text-center py-12">
-                <p className="text-body text-[var(--status-error)]">
-                  Failed to load dashboards. Please try again.
-                </p>
-                <Button
-                  variant="secondary"
-                  className="mt-4"
-                  onClick={() =>
-                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
-                  }
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : dashboards && dashboards.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {dashboards.map((dashboard) => (
-                  <DashboardCard
-                    key={dashboard.id}
-                    dashboard={dashboard}
-                    onClick={() => router.push(`/dashboards/${dashboard.id}`)}
-                    onDelete={() => setDeleteTarget(dashboard)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
-                <p className="text-body text-[var(--foreground-muted)] mb-4">
-                  No dashboards yet. Create your first one!
-                </p>
-                <Button
-                  variant="primary"
-                  onClick={() => setIsCreateOpen(true)}
-                  leftIcon={<Plus className="w-4 h-4" />}
-                >
-                  New Dashboard
-                </Button>
-              </div>
-            )}
-          </section>
+          {/* Your Dashboards — Online / Local Storage tabs (desktop); local grid on web */}
+          <DashboardsTabs
+            localDashboards={dashboards || []}
+            isLoading={isLoading}
+            error={error}
+            onRetry={() =>
+              queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+            }
+            onOpen={(id) => router.push(`/dashboards/${id}`)}
+            onDelete={(dashboard) => setDeleteTarget(dashboard)}
+            onCreateFirst={() => setIsCreateOpen(true)}
+            onDownloaded={() =>
+              queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+            }
+          />
 
           {/* Secrets & Environment Variables Section */}
           <section>
@@ -1032,45 +980,3 @@ function NewDashboardCard({
   );
 }
 
-interface DashboardCardProps {
-  dashboard: Dashboard;
-  onClick: () => void;
-  onDelete: () => void;
-}
-
-function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
-  const isLinked = (dashboard.linkedCount ?? 0) > 0;
-
-  return (
-    <Card className="group cursor-pointer hover:border-[var(--border-strong)] transition-colors">
-      <div onClick={onClick}>
-        <CardHeader className="pb-2">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <CardTitle className="truncate">{dashboard.name}</CardTitle>
-              {isLinked && (
-                <span title={`${dashboard.linkedCount} linked dashboard${dashboard.linkedCount !== 1 ? 's' : ''}`}>
-                  <Link2 className="w-3.5 h-3.5 flex-shrink-0 text-[var(--foreground-muted)]" />
-                </span>
-              )}
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
-            >
-              <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-caption text-[var(--foreground-subtle)]">
-            Updated {formatRelativeTime(dashboard.updatedAt)}
-          </p>
-        </CardContent>
-      </div>
-    </Card>
-  );
-}
