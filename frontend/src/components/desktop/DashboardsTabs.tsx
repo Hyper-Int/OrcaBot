@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v3-cloud-link
+// REVISION: dashboards-tabs-v4-action-bottom
 "use client";
 
 import * as React from "react";
@@ -25,7 +25,7 @@ import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v3-cloud-link";
+const MODULE_REVISION = "dashboards-tabs-v4-action-bottom";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -318,54 +318,56 @@ function CloudDashboardCard({
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2">
             <CardTitle className="truncate">{cd.name}</CardTitle>
-            <div className="flex flex-col items-end gap-1 shrink-0">
-              {/* Cloud link — opens this dashboard on orcabot.com in the browser. */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void openExternalUrl(`${CLOUD_SITE_URL}/dashboards/${cd.id}`);
-                }}
-                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:underline"
-                title="Open on orcabot.com"
-              >
-                <Cloud className="w-3.5 h-3.5" /> Open online
-              </button>
-              {downloaded ? (
-                <span
-                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)]"
-                  title="Downloaded to this machine — click the card to open"
-                >
-                  <HardDrive className="w-3.5 h-3.5" /> Local Storage
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isDownloading}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDownload();
-                  }}
-                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent,#5b8cff)] hover:underline disabled:opacity-50"
-                  title="Download into this machine"
-                >
-                  {isDownloading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Download className="w-3.5 h-3.5" />
-                  )}
-                  {isDownloading ? "Downloading…" : "Download"}
-                </button>
-              )}
-            </div>
+            {/* Cloud link (top) — opens this dashboard on orcabot.com in the browser. */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void openExternalUrl(`${CLOUD_SITE_URL}/dashboards/${cd.id}`);
+              }}
+              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--foreground-muted)] hover:text-[var(--foreground)] hover:underline shrink-0"
+              title="Open on orcabot.com"
+            >
+              <Cloud className="w-3.5 h-3.5" /> Open online
+            </button>
           </div>
         </CardHeader>
         <CardContent>
-          <p className="text-caption text-[var(--foreground-subtle)]">
-            {cd.updatedAt
-              ? `Updated ${formatRelativeTime(cd.updatedAt)}`
-              : "In your cloud account"}
-          </p>
+          {/* Updated time (left) + Download / Local Storage action pinned to the
+              bottom of the card (right). */}
+          <div className="flex items-end justify-between gap-2">
+            <p className="text-caption text-[var(--foreground-subtle)]">
+              {cd.updatedAt
+                ? `Updated ${formatRelativeTime(cd.updatedAt)}`
+                : "In your cloud account"}
+            </p>
+            {downloaded ? (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)] shrink-0"
+                title="Downloaded to this machine — click the card to open"
+              >
+                <HardDrive className="w-3.5 h-3.5" /> Local Storage
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={isDownloading}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownload();
+                }}
+                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent,#5b8cff)] hover:underline disabled:opacity-50 shrink-0"
+                title="Download into this machine"
+              >
+                {isDownloading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                {isDownloading ? "Downloading…" : "Download"}
+              </button>
+            )}
+          </div>
         </CardContent>
       </div>
     </Card>
