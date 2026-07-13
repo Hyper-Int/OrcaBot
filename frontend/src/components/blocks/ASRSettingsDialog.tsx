@@ -25,6 +25,9 @@ import {
 import { saveASRKey, deleteASRKey } from "@/lib/api/cloudflare/asr";
 import { useQueryClient } from "@tanstack/react-query";
 
+const ASR_SETTINGS_REVISION = "asr-settings-v4-secret-input";
+console.log(`[ASRSettingsDialog] REVISION: ${ASR_SETTINGS_REVISION} loaded at ${new Date().toISOString()}`);
+
 interface ASRSettingsDialogProps {
   trigger?: React.ReactNode;
   /** Controlled open state (optional — uses internal state if not provided) */
