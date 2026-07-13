@@ -1221,6 +1221,7 @@ pub async fn download_cloud_workspace(
             Err(e) => return Err(e),
         };
 
+        eprintln!("[cloud-dl] session ready ({sid}); listing workspace");
         emit("copying", 0);
         // Walk the workspace directory-by-directory, pruning excluded dirs so we
         // never descend into node_modules/.git. Each list is one (bounded) dir.
@@ -1245,13 +1246,18 @@ pub async fn download_cloud_workspace(
             let entries = match cloud_dir_list_ready(&token, &sid, &query_path, if is_root { 30 } else { 4 }) {
                 Ok(v) => v,
                 Err(e) if is_root => {
+                    eprintln!("[cloud-dl] root list failed: {e}");
                     return Err(format!(
                         "cloud workspace didn't become reachable ({}). Try again in a moment.",
                         e.trim()
                     ))
                 }
-                Err(_) => continue, // a deeper dir stayed unreachable — skip it
+                Err(e) => {
+                    eprintln!("[cloud-dl] skip dir {query_path}: {e}");
+                    continue; // a deeper dir stayed unreachable — skip it
+                }
             };
+            eprintln!("[cloud-dl] {} -> {} entries", query_path, entries.len());
             for e in &entries {
                 let rel = match e.get("path").and_then(|x| x.as_str()) {
                     Some(p) => p.trim_start_matches('/').to_string(),
@@ -1268,9 +1274,11 @@ pub async fn download_cloud_workspace(
                     skipped += 1;
                     continue;
                 }
+                eprintln!("[cloud-dl] get {rel}");
                 let data = match cloud_file_get_ready(&token, &sid, &rel) {
                     Ok(d) => d,
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("[cloud-dl] skip {rel}: {e}");
                         skipped += 1;
                         continue;
                     }
@@ -1278,14 +1286,18 @@ pub async fn download_cloud_workspace(
                 match safe_workspace_write(&ws_canon, &rel, &data) {
                     Ok(()) => {
                         written += 1;
-                        if written % 20 == 0 {
+                        if written % 5 == 0 {
                             emit("copying", written);
                         }
                     }
-                    Err(_) => skipped += 1,
+                    Err(e) => {
+                        eprintln!("[cloud-dl] write {rel} failed: {e}");
+                        skipped += 1;
+                    }
                 }
             }
         }
+        eprintln!("[cloud-dl] done: written={written} skipped={skipped}");
         Ok(WorkspaceDownloadResult { written, skipped, had_workspace: true })
     })
     .await
