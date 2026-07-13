@@ -907,6 +907,61 @@ fn cloud_file_get(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> 
     }
 }
 
+/// A transient/retryable failure: the cloud sandbox is provisioning (proxy 503/
+/// 502/504) or a connection blipped. The session can read "active" before the
+/// sandbox HTTP is actually serving, so the first file calls need to be retried.
+fn is_transient_err(e: &str) -> bool {
+    e.contains("HTTP 503")
+        || e.contains("HTTP 502")
+        || e.contains("HTTP 504")
+        || e.contains("Network Error")
+        || e.contains("reset")
+        || e.contains("timed out")
+}
+
+/// List a directory, retrying transient failures (sandbox warming up) with a 3s
+/// backoff. Use a large `attempts` for the first (root) list — that's the window
+/// where the just-started sandbox may still be booting its HTTP server.
+fn cloud_dir_list_ready(
+    token: &str,
+    sid: &str,
+    dir: &str,
+    attempts: u32,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut last = String::new();
+    for i in 0..attempts.max(1) {
+        match cloud_dir_list(token, sid, dir) {
+            Ok(v) => return Ok(v),
+            Err(e) if is_transient_err(&e) => {
+                last = e;
+                if i + 1 < attempts {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
+/// GET a file, retrying transient failures a few times (2s backoff).
+fn cloud_file_get_ready(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> {
+    let mut last = String::new();
+    for i in 0..4 {
+        match cloud_file_get(token, sid, rel) {
+            Ok(v) => return Ok(v),
+            Err(e) if is_transient_err(&e) => {
+                last = e;
+                if i < 3 {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
 /// Get a live cloud session id for `dash` so the file API works: reuse an active
 /// session, else start one on an EXISTING terminal item (boots the cloud VM). We
 /// never CREATE a terminal item — a download shouldn't add phantom blocks to the
@@ -1146,12 +1201,25 @@ pub async fn download_cloud_workspace(
             if listed > 50_000 {
                 break; // pathological-tree guard
             }
-            let query_path = if dir_rel.is_empty() {
+            let is_root = dir_rel.is_empty();
+            let query_path = if is_root {
                 "/".to_string()
             } else {
                 format!("/{dir_rel}")
             };
-            let entries = cloud_dir_list(&token, &sid, &query_path)?;
+            // The root list is the readiness gate — the just-started sandbox may
+            // still be booting its HTTP server (proxy 503s), so retry it for up to
+            // ~90s. Deeper dirs only need a light retry once it's serving.
+            let entries = match cloud_dir_list_ready(&token, &sid, &query_path, if is_root { 30 } else { 4 }) {
+                Ok(v) => v,
+                Err(e) if is_root => {
+                    return Err(format!(
+                        "cloud workspace didn't become reachable ({}). Try again in a moment.",
+                        e.trim()
+                    ))
+                }
+                Err(_) => continue, // a deeper dir stayed unreachable — skip it
+            };
             for e in &entries {
                 let rel = match e.get("path").and_then(|x| x.as_str()) {
                     Some(p) => p.trim_start_matches('/').to_string(),
@@ -1168,7 +1236,7 @@ pub async fn download_cloud_workspace(
                     skipped += 1;
                     continue;
                 }
-                let data = match cloud_file_get(&token, &sid, &rel) {
+                let data = match cloud_file_get_ready(&token, &sid, &rel) {
                     Ok(d) => d,
                     Err(_) => {
                         skipped += 1;
