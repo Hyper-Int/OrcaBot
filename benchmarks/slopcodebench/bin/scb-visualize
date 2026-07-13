@@ -96,12 +96,33 @@ def surface_run(idx, problem, logfile):
     _log(f"surfaced run '{problem}' -> {logfile}")
 
 
-def watch(workdir, stop=None):
+def watch(workdir, stop=None, skip_existing=False):
     manifest = os.path.join(workdir, ".scb_tmux", "runs.jsonl")
     _log(f"watching {manifest}")
     if not mcp_ready():
         _log("not in an Orcabot PTY (no ORCABOT_MCP_SECRET) — visualization disabled; still tailing manifest for logs")
     seen, idx = set(), 0
+    # runs.jsonl is append-only across ALL runs. In `run` mode we launch a fresh
+    # watcher per benchmark run, so without this it would re-surface a note + a
+    # permanent `tail -F` terminal for every historical run on each launch.
+    # Snapshot the pre-existing records as already-seen so only runs THIS
+    # invocation appends get surfaced.
+    if skip_existing:
+        try:
+            with open(manifest) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    seen.add(rec.get("logfile") or line)
+        except FileNotFoundError:
+            pass
+        idx = len(seen)  # place new terminals past any from prior invocations
+        _log(f"skip_existing: snapshotted {len(seen)} prior run(s)")
     while stop is None or not stop.is_set():
         try:
             with open(manifest) as f:
@@ -156,7 +177,7 @@ def main():
         if not cmd:
             _log("usage: scb-visualize run [--workdir DIR] -- <command...>")
             sys.exit(2)
-        t = threading.Thread(target=watch, args=(workdir,), daemon=True)
+        t = threading.Thread(target=watch, args=(workdir,), kwargs={"skip_existing": True}, daemon=True)
         t.start()
         rc = subprocess.call(cmd, cwd=workdir)
         time.sleep(2)  # let the watcher surface the final run
