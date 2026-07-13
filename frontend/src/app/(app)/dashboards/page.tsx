@@ -56,6 +56,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
+import { CloudDashboardsSection } from "@/components/desktop/CloudDashboardsSection";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { switchToCli } from "@/lib/tauri-bridge";
 import {
@@ -533,6 +534,15 @@ export default function DashboardsPage() {
             )}
           </div>
         </section>
+
+        {/* Desktop: your cloud dashboards (download into the local DB to run them) */}
+        <CloudDashboardsSection
+          localDashboards={dashboards || []}
+          onOpen={(id) => router.push(`/dashboards/${id}`)}
+          onDownloaded={() =>
+            queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+          }
+        />
 
         {/* Two-column layout: Dashboards (left) + Environment Variables (right) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

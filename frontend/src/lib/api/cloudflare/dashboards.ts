@@ -111,12 +111,15 @@ export async function getDashboard(id: string): Promise<{
  */
 export async function createDashboard(
   name: string,
-  templateId?: string
+  templateId?: string,
+  cloudId?: string
 ): Promise<{ dashboard: Dashboard; viewport?: { x: number; y: number; zoom: number }; hasSetupGuide?: boolean }> {
   const response = await apiPost<DashboardResponse>(API.cloudflare.dashboards, {
     name,
     templateId,
-  } as DashboardCreateRequest);
+    // Set when materializing a downloaded cloud dashboard (desktop sync).
+    cloudId,
+  } as DashboardCreateRequest & { cloudId?: string });
   return { dashboard: response.dashboard, viewport: response.viewport, hasSetupGuide: response.hasSetupGuide };
 }
 

@@ -1425,7 +1425,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name: string; templateId?: string };
+    const data = await request.json() as { name: string; templateId?: string; cloudId?: string };
     return dashboards.createDashbоard(env, auth.user!.id, data, ctx, preferredRegion);
   }
 

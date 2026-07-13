@@ -14,6 +14,9 @@ export interface Dashboard {
   secretsCount?: number;
   /** Number of active links to/from this dashboard */
   linkedCount?: number;
+  /** Desktop: the source cloud dashboard id if this was downloaded from a cloud
+   *  account (drives the "downloaded" state + sync); null/absent for local ones. */
+  cloudId?: string | null;
 }
 
 /**

@@ -154,6 +154,13 @@ export async function listCloudDashboards(): Promise<unknown> {
   return invoke("list_cloud_dashboards");
 }
 
+/** Fetch one cloud dashboard's full data (dashboard + items + edges) for download. */
+export async function getCloudDashboard(dashboardId: string): Promise<unknown> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("get_cloud_dashboard", { dashboardId });
+}
+
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
 export async function revealWorkspace(): Promise<void> {
   const invoke = await getTauriInvoke();

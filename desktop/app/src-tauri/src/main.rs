@@ -1017,6 +1017,7 @@ fn main() {
       commands::get_cloud_account,
       commands::clear_cloud_credential,
       commands::list_cloud_dashboards,
+      commands::get_cloud_dashboard,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

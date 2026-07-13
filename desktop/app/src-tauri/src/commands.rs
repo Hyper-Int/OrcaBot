@@ -768,6 +768,35 @@ pub async fn list_cloud_dashboards(app: tauri::AppHandle) -> Result<serde_json::
     .map_err(|e| format!("list task failed: {e}"))?
 }
 
+/// Fetch one cloud dashboard's full data (dashboard + items + edges) from
+/// api.orcabot.com using the stored PAT, so the frontend can materialize it into
+/// the local DB (the download). Native — no CORS, token stays in Rust.
+#[tauri::command]
+pub async fn get_cloud_dashboard(
+    app: tauri::AppHandle,
+    dashboard_id: String,
+) -> Result<serde_json::Value, String> {
+    let (token, _email) = read_cloud_credential(&app).ok_or("Not signed in to the cloud.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        match ureq::get(&format!("{CLOUD_API_BASE}/dashboards/{dashboard_id}"))
+            .set("Authorization", &format!("Bearer {token}"))
+            .timeout(std::time::Duration::from_secs(30))
+            .call()
+        {
+            Ok(resp) => resp
+                .into_json::<serde_json::Value>()
+                .map_err(|e| format!("unexpected response from orcabot.com: {e}")),
+            Err(ureq::Error::Status(401, _)) => {
+                Err("Cloud session expired — sign in again.".into())
+            }
+            Err(ureq::Error::Status(code, _)) => Err(format!("orcabot.com returned {code}.")),
+            Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("fetch task failed: {e}"))?
+}
+
 /// Return the per-boot surface token. The host frontend sends it as the
 /// `X-Orcabot-Surface` header so the control plane knows the request is from the
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).
