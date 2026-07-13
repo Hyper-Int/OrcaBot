@@ -14,7 +14,7 @@ import {
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v3-google-cloud-pkce";
+const MODULE_REVISION = "desktop-welcome-v4-local-copy";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -186,11 +186,11 @@ export function DesktopWelcome() {
           </div>
         ) : (
           <div className="mt-8 space-y-3">
-            {/* 1. Free / local */}
+            {/* 1. Local / no account */}
             <button type="button" onClick={chooseFree} className={optionClass}>
-              <div className="text-base font-semibold">Free Desktop Use</div>
+              <div className="text-base font-semibold">Local Desktop Use</div>
               <div className="text-sm opacity-70">
-                Start now — no account, runs entirely on your computer.
+                No account required. Uses local storage.
               </div>
             </button>
 
