@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: folder-import-v9-shell-quote-cli
-const MODULE_REVISION: &str = "folder-import-v9-shell-quote-cli";
+// REVISION: folder-import-v10-cloud-workspace-walk
+const MODULE_REVISION: &str = "folder-import-v10-cloud-workspace-walk";
 
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
@@ -856,10 +856,29 @@ fn cloud_post_json(token: &str, url: &str, body: serde_json::Value) -> Result<se
     }
 }
 
-fn cloud_file_list(token: &str, sid: &str) -> Result<Vec<serde_json::Value>, String> {
-    let url = format!("{CLOUD_API_BASE}/sessions/{sid}/files?path=/&recursive=true");
-    let v = cloud_get_json(token, &url)?;
-    Ok(v.get("files").and_then(|x| x.as_array()).cloned().unwrap_or_default())
+/// List ONE directory's immediate children (non-recursive). We walk the tree
+/// ourselves so we can prune excluded dirs (node_modules/.git/…) instead of a
+/// server-side recursive walk that enumerates every file first — that blew the
+/// request timeout (and the 100k-entry cap) on real projects. `dir` is a
+/// workspace path like "/" or "/src".
+fn cloud_dir_list(token: &str, sid: &str, dir: &str) -> Result<Vec<serde_json::Value>, String> {
+    let url = format!("{CLOUD_API_BASE}/sessions/{sid}/files");
+    match ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .query("path", dir)
+        .timeout(std::time::Duration::from_secs(60))
+        .call()
+    {
+        Ok(rp) => {
+            let v: serde_json::Value = rp.into_json().unwrap_or(serde_json::Value::Null);
+            Ok(v.get("files").and_then(|x| x.as_array()).cloned().unwrap_or_default())
+        }
+        Err(ureq::Error::Status(401, _)) => Err("Cloud session expired — sign in again.".into()),
+        Err(ureq::Error::Status(c, rp)) => {
+            Err(format!("HTTP {c}: {}", rp.into_string().unwrap_or_default().trim()))
+        }
+        Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+    }
 }
 
 fn cloud_file_get(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> {
@@ -1108,34 +1127,50 @@ pub async fn download_cloud_workspace(
             Err(e) => return Err(e),
         };
 
-        let files = cloud_file_list(&token, &sid)?;
+        // Walk the workspace directory-by-directory, pruning excluded dirs so we
+        // never descend into node_modules/.git. Each list is one (bounded) dir.
         let mut written = 0u64;
         let mut skipped = 0u64;
-        for f in &files {
-            if f.get("is_dir").and_then(|x| x.as_bool()).unwrap_or(false) {
-                continue;
+        let mut queue: Vec<String> = vec![String::new()]; // "" = workspace root
+        let mut listed = 0u32;
+        while let Some(dir_rel) = queue.pop() {
+            listed += 1;
+            if listed > 50_000 {
+                break; // pathological-tree guard
             }
-            let rel = match f.get("path").and_then(|x| x.as_str()) {
-                Some(p) => p.trim_start_matches('/').to_string(),
-                None => continue,
+            let query_path = if dir_rel.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{dir_rel}")
             };
-            if rel.is_empty() || ws_excluded(&rel) {
-                continue;
-            }
-            if safe_workspace_dest(&ws_canon, &rel).is_none() {
-                skipped += 1;
-                continue;
-            }
-            let data = match cloud_file_get(&token, &sid, &rel) {
-                Ok(d) => d,
-                Err(_) => {
+            let entries = cloud_dir_list(&token, &sid, &query_path)?;
+            for e in &entries {
+                let rel = match e.get("path").and_then(|x| x.as_str()) {
+                    Some(p) => p.trim_start_matches('/').to_string(),
+                    None => continue,
+                };
+                if rel.is_empty() || ws_excluded(&rel) {
+                    continue;
+                }
+                if e.get("is_dir").and_then(|x| x.as_bool()).unwrap_or(false) {
+                    queue.push(rel); // descend into non-excluded subdir
+                    continue;
+                }
+                if safe_workspace_dest(&ws_canon, &rel).is_none() {
                     skipped += 1;
                     continue;
                 }
-            };
-            match safe_workspace_write(&ws_canon, &rel, &data) {
-                Ok(()) => written += 1,
-                Err(_) => skipped += 1,
+                let data = match cloud_file_get(&token, &sid, &rel) {
+                    Ok(d) => d,
+                    Err(_) => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+                match safe_workspace_write(&ws_canon, &rel, &data) {
+                    Ok(()) => written += 1,
+                    Err(_) => skipped += 1,
+                }
             }
         }
         Ok(WorkspaceDownloadResult { written, skipped, had_workspace: true })
