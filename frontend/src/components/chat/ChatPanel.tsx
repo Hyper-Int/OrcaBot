@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v36-theme-input-bar
+// REVISION: chat-v37-white-input-no-panel
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v36-theme-input-bar";
+const CHAT_PANEL_REVISION = "chat-v37-white-input-no-panel";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -371,8 +371,9 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
           ref={inputBarRef}
           className="flex items-center gap-2 px-4 py-2.5 rounded-t-2xl"
           style={{
-            background: "var(--background-elevated)",
-            borderBottom: isExpanded ? "1px solid var(--border)" : undefined,
+            // Expanded: no panel — the bar is transparent so it reads as part of
+            // the chat window. Collapsed: a themed floating pill on the dashboard.
+            background: isExpanded ? "transparent" : "var(--background-elevated)",
           }}
         >
           {isExpanded ? (
@@ -477,14 +478,10 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
         {isExpanded && (
           <div
             className="flex justify-end px-4 pt-3 pb-2"
-            style={{
-              background: "var(--background-elevated)",
-              borderBottom: "1px solid var(--border)",
-            }}
           >
             <div
               className="flex items-center gap-2 w-full max-w-[85%] rounded-2xl px-3 py-1.5 ring-1 ring-primary/40 shadow-sm"
-              style={{ background: "var(--background-surface)" }}
+              style={{ background: "#ffffff" }}
             >
               <input
                 ref={inWindowInputRef}
@@ -501,9 +498,11 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
                 data-1p-ignore
                 className={cn(
                   "flex-1 bg-transparent border-0 outline-none focus-visible:outline-none",
-                  "text-sm placeholder:text-muted-foreground disabled:opacity-50"
+                  // White pill in every theme, so hardcode dark text + gray
+                  // placeholder (theme tokens would go invisible on white in dark mode).
+                  "text-sm placeholder:text-[#9ca3af] disabled:opacity-50"
                 )}
-                style={{ color: "var(--foreground)", caretColor: "var(--accent-primary)", outline: "none" }}
+                style={{ color: "#1a1a1a", caretColor: "#3b82f6", outline: "none" }}
               />
               <Button
                 onClick={handleSend}
