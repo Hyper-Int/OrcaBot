@@ -1018,6 +1018,7 @@ fn main() {
       commands::clear_cloud_credential,
       commands::list_cloud_dashboards,
       commands::get_cloud_dashboard,
+      commands::download_cloud_workspace,
       commands::poll_cloud_google_result,
     ])
     .setup(|app| {

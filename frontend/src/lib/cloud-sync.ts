@@ -1,16 +1,20 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cloud-sync-v1-download
+// REVISION: cloud-sync-v2-workspace-files
 "use client";
 
-import { getCloudDashboard } from "@/lib/tauri-bridge";
+import {
+  getCloudDashboard,
+  downloadCloudWorkspace,
+  type WorkspaceDownloadResult,
+} from "@/lib/tauri-bridge";
 import { createDashboard, createItem, createEdge } from "@/lib/api/cloudflare/dashboards";
 import type { Dashboard, DashboardItem, DashboardEdge } from "@/types";
 
 if (typeof window !== "undefined") {
   console.log(
-    `[cloud-sync] REVISION: cloud-sync-v1-download loaded at ${new Date().toISOString()}`
+    `[cloud-sync] REVISION: cloud-sync-v2-workspace-files loaded at ${new Date().toISOString()}`
   );
 }
 
@@ -20,30 +24,67 @@ interface CloudDashboardData {
   edges: DashboardEdge[];
 }
 
+export interface DownloadResult {
+  dashboard: Dashboard;
+  /** Workspace file-copy result, or null if it couldn't run. */
+  workspace: WorkspaceDownloadResult | null;
+  /** Set if the workspace file copy failed (the canvas still downloaded). */
+  workspaceError?: string;
+}
+
 /**
- * Download a cloud dashboard into the LOCAL control-plane DB. Fetches the cloud
- * dashboard's structure (items + edges) via the native layer (PAT), then
- * recreates it locally with `cloudId` set so it shows as downloaded and Phase-2
- * sync can map it back. The local copy then runs on the local VM.
+ * On the desktop there is ONE shared /workspace, so each downloaded dashboard's
+ * terminals are pinned to a per-dashboard subfolder (= the new local dashboard id)
+ * via `workingDir`. This keeps two downloads from colliding and matches where
+ * `download_cloud_workspace` writes the files. Any existing workingDir is preserved
+ * underneath the subfolder. Returns the content JSON string to store on the item.
+ */
+function pinTerminalToSubdir(content: string, subdir: string): string {
+  if (!content.trim().startsWith("{")) {
+    return content; // not JSON we understand — leave it (cwds to workspace root)
+  }
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return content;
+  }
+  const existing =
+    typeof obj.workingDir === "string" ? obj.workingDir.replace(/^\/+/, "").trim() : "";
+  obj.workingDir = existing ? `${subdir}/${existing}` : subdir;
+  return JSON.stringify(obj);
+}
+
+/**
+ * Download a cloud dashboard into the LOCAL control-plane DB and copy its
+ * workspace files. Fetches the cloud dashboard's structure (items + edges) via the
+ * native layer (PAT) and recreates it locally with `cloudId` set (so it shows as
+ * downloaded and Phase-2 sync can map it back), then pulls the cloud workspace
+ * files into a per-dashboard subfolder. The local copy runs on the local VM.
  *
- * Not yet copied: workspace files (terminals start fresh) and sessions — those
- * are follow-ups. Structure/notes/todos/layout come across.
+ * The workspace copy is best-effort: if it fails (cloud VM won't start, no
+ * subscription, timeout), the canvas is still downloaded and `workspaceError` is
+ * set so the caller can tell the user.
  */
 export async function downloadCloudDashboard(
   cloudId: string,
   fallbackName: string
-): Promise<Dashboard> {
+): Promise<DownloadResult> {
   const data = (await getCloudDashboard(cloudId)) as CloudDashboardData;
   const name = data.dashboard?.name || fallbackName;
 
   const { dashboard } = await createDashboard(name, undefined, cloudId);
+  const subdir = dashboard.id;
 
   // Recreate items, mapping each cloud item id → the new local id (edges use it).
+  // Terminal items are pinned to this dashboard's workspace subfolder.
   const idMap = new Map<string, string>();
   for (const item of data.items || []) {
+    const content =
+      item.type === "terminal" ? pinTerminalToSubdir(item.content, subdir) : item.content;
     const local = await createItem(dashboard.id, {
       type: item.type,
-      content: item.content,
+      content,
       position: item.position,
       size: item.size,
       metadata: item.metadata,
@@ -63,5 +104,15 @@ export async function downloadCloudDashboard(
     });
   }
 
-  return dashboard;
+  // Pull the workspace files into <workspace>/<subdir>. Best-effort — the canvas
+  // is already created, so a failure here doesn't undo the download.
+  let workspace: WorkspaceDownloadResult | null = null;
+  let workspaceError: string | undefined;
+  try {
+    workspace = await downloadCloudWorkspace(cloudId, subdir);
+  } catch (e) {
+    workspaceError = e instanceof Error ? e.message : String(e);
+  }
+
+  return { dashboard, workspace, workspaceError };
 }

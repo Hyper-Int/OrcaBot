@@ -163,6 +163,27 @@ export async function getCloudDashboard(dashboardId: string): Promise<unknown> {
   return invoke("get_cloud_dashboard", { dashboardId });
 }
 
+export interface WorkspaceDownloadResult {
+  written: number;
+  skipped: number;
+  /** false when the cloud dashboard has no terminal/session (no files to pull). */
+  had_workspace: boolean;
+}
+
+/**
+ * Copy a cloud dashboard's workspace files into the local per-dashboard subfolder
+ * (`<workspace>/<subdir>`). Starts/reuses a cloud session, so it can take a minute
+ * while the cloud VM boots. Native — the PAT never leaves Rust.
+ */
+export async function downloadCloudWorkspace(
+  cloudId: string,
+  subdir: string
+): Promise<WorkspaceDownloadResult> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("download_cloud_workspace", { cloudId, subdir }) as Promise<WorkspaceDownloadResult>;
+}
+
 export interface CloudGoogleResult {
   pending: boolean;
   token?: string;

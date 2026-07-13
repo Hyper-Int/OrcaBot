@@ -797,6 +797,353 @@ pub async fn get_cloud_dashboard(
     .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
+// ===== Cloud workspace download (per-dashboard file copy) =====
+//
+// Downloading a cloud dashboard copies its canvas (frontend) AND its workspace
+// files (this command). The desktop has ONE shared /workspace, so to keep two
+// downloaded dashboards from colliding we write each dashboard's files into a
+// per-dashboard subfolder `<app_data>/workspace/<subdir>` (subdir = the new local
+// dashboard id); the recreated terminals get `workingDir=<subdir>` so they open
+// there. Mirrors the CLI `pull`: start/reuse a cloud session, list the workspace
+// recursively, GET each file, write it locally with an O_NOFOLLOW-guarded walk.
+// Secret values are redacted server-side on read, so secrets never transfer.
+
+#[derive(Serialize, Clone)]
+pub struct WorkspaceDownloadResult {
+    pub written: u64,
+    pub skipped: u64,
+    /// false when the cloud dashboard has no terminal/session — nothing to pull
+    /// (not an error; a notes-only dashboard has no workspace files).
+    pub had_workspace: bool,
+}
+
+/// GET a JSON body from the cloud with the PAT. Maps the paywall to a sentinel.
+fn cloud_get_json(token: &str, url: &str) -> Result<serde_json::Value, String> {
+    match ureq::get(url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+    {
+        Ok(rp) => Ok(rp.into_json().unwrap_or(serde_json::Value::Null)),
+        Err(ureq::Error::Status(401, _)) => Err("Cloud session expired — sign in again.".into()),
+        Err(ureq::Error::Status(c, rp)) => {
+            let b = rp.into_string().unwrap_or_default();
+            if c == 403 && b.contains("SUBSCRIPTION_REQUIRED") {
+                return Err("SUBSCRIPTION_REQUIRED".into());
+            }
+            Err(format!("orcabot.com returned {c}."))
+        }
+        Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+    }
+}
+
+fn cloud_post_json(token: &str, url: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    match ureq::post(url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(30))
+        .send_json(body)
+    {
+        Ok(rp) => Ok(rp.into_json().unwrap_or(serde_json::Value::Null)),
+        Err(ureq::Error::Status(401, _)) => Err("Cloud session expired — sign in again.".into()),
+        Err(ureq::Error::Status(c, rp)) => {
+            let b = rp.into_string().unwrap_or_default();
+            if c == 403 && b.contains("SUBSCRIPTION_REQUIRED") {
+                return Err("SUBSCRIPTION_REQUIRED".into());
+            }
+            Err(format!("orcabot.com returned {c}."))
+        }
+        Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+    }
+}
+
+fn cloud_file_list(token: &str, sid: &str) -> Result<Vec<serde_json::Value>, String> {
+    let url = format!("{CLOUD_API_BASE}/sessions/{sid}/files?path=/&recursive=true");
+    let v = cloud_get_json(token, &url)?;
+    Ok(v.get("files").and_then(|x| x.as_array()).cloned().unwrap_or_default())
+}
+
+fn cloud_file_get(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let url = format!("{CLOUD_API_BASE}/sessions/{sid}/file");
+    match ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .query("path", rel)
+        .timeout(std::time::Duration::from_secs(120))
+        .call()
+    {
+        Ok(rp) => {
+            let mut buf = Vec::new();
+            rp.into_reader().read_to_end(&mut buf).map_err(|e| e.to_string())?;
+            Ok(buf)
+        }
+        Err(ureq::Error::Status(c, rp)) => {
+            Err(format!("HTTP {c}: {}", rp.into_string().unwrap_or_default().trim()))
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Get a live cloud session id for `dash` so the file API works: reuse an active
+/// session, else start one on an EXISTING terminal item (boots the cloud VM). We
+/// never CREATE a terminal item — a download shouldn't add phantom blocks to the
+/// user's cloud dashboard. Returns None when there is no terminal item at all.
+fn cloud_ensure_session(token: &str, dash: &str) -> Result<Option<String>, String> {
+    let dash_url = format!("{CLOUD_API_BASE}/dashboards/{dash}");
+    let v = cloud_get_json(token, &dash_url)?;
+
+    if let Some(sessions) = v.get("sessions").and_then(|x| x.as_array()) {
+        for s in sessions {
+            if s.get("status").and_then(|x| x.as_str()) == Some("active") {
+                if let Some(id) = s.get("id").and_then(|x| x.as_str()) {
+                    return Ok(Some(id.to_string()));
+                }
+            }
+        }
+    }
+
+    let item_id = v
+        .get("items")
+        .and_then(|x| x.as_array())
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|it| it.get("type").and_then(|x| x.as_str()) == Some("terminal"))
+                .and_then(|it| it.get("id").and_then(|x| x.as_str()).map(String::from))
+        });
+    let item_id = match item_id {
+        Some(i) => i,
+        None => return Ok(None),
+    };
+
+    cloud_post_json(
+        token,
+        &format!("{CLOUD_API_BASE}/dashboards/{dash}/items/{item_id}/session"),
+        serde_json::json!({}),
+    )?;
+
+    // Poll for the session to go active (cloud spins up a VM — allow generous time).
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let v = cloud_get_json(token, &dash_url)?;
+        if let Some(sessions) = v.get("sessions").and_then(|x| x.as_array()) {
+            for s in sessions {
+                if s.get("itemId").and_then(|x| x.as_str()) == Some(item_id.as_str())
+                    && s.get("status").and_then(|x| x.as_str()) == Some("active")
+                {
+                    if let Some(id) = s.get("id").and_then(|x| x.as_str()) {
+                        return Ok(Some(id.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    Err("timed out waiting for your cloud workspace to start".into())
+}
+
+/// Regenerable caches / transients / runtime state we never transfer (mirrors the
+/// CLI's `ws_excluded`).
+fn ws_excluded(rel: &str) -> bool {
+    let rel = rel.trim_start_matches('/');
+    rel.starts_with(".browser")
+        || rel.starts_with(".npm")
+        || rel == ".orcabot"
+        || rel.starts_with(".orcabot/")
+        || rel.starts_with(".claude/cache")
+        || rel == ".git"
+        || rel.starts_with(".git/")
+        || rel.split('/').any(|seg| seg == "node_modules")
+}
+
+/// Lexical/ancestor pre-filter for a remote-supplied workspace-relative path.
+/// Rejects `..`, absolute paths, and writes through an in-workspace symlink whose
+/// nearest existing ancestor escapes the root. The authoritative guard is the
+/// O_NOFOLLOW walk in `safe_workspace_write`. (Mirrors the CLI helper.)
+fn safe_workspace_dest(ws_canon: &Path, rel: &str) -> Option<PathBuf> {
+    let rel_path = Path::new(rel);
+    for c in rel_path.components() {
+        if !matches!(c, Component::Normal(_) | Component::CurDir) {
+            return None;
+        }
+    }
+    let dest = ws_canon.join(rel_path);
+    let mut anc = dest.parent();
+    while let Some(a) = anc {
+        if a.exists() {
+            match a.canonicalize() {
+                Ok(real) if real.starts_with(ws_canon) => break,
+                _ => return None,
+            }
+        }
+        anc = a.parent();
+    }
+    Some(dest)
+}
+
+/// Write `data` to `rel` under `ws_root`, walking every path component with
+/// openat + O_NOFOLLOW so no component can be a symlink (race-safe against a
+/// workspace-sharing process). (Mirrors the CLI helper.)
+#[cfg(unix)]
+fn safe_workspace_write(ws_root: &Path, rel: &str, data: &[u8]) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::io::{Error, ErrorKind, Write};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::FromRawFd;
+
+    fn cstr(bytes: &[u8]) -> std::io::Result<CString> {
+        CString::new(bytes).map_err(|_| Error::new(ErrorKind::InvalidInput, "NUL in path"))
+    }
+
+    let root_c = cstr(ws_root.as_os_str().as_bytes())?;
+    let mut dirfd = unsafe { libc::open(root_c.as_ptr(), libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    if dirfd < 0 {
+        return Err(Error::last_os_error());
+    }
+
+    let comps: Vec<&str> = rel.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    let (file_name, dirs) = match comps.split_last() {
+        Some(x) => x,
+        None => {
+            unsafe { libc::close(dirfd) };
+            return Err(Error::new(ErrorKind::InvalidInput, "empty path"));
+        }
+    };
+
+    for comp in dirs {
+        if *comp == ".." {
+            unsafe { libc::close(dirfd) };
+            return Err(Error::new(ErrorKind::InvalidInput, "'..' in path"));
+        }
+        let c = cstr(comp.as_bytes())?;
+        let mk = unsafe { libc::mkdirat(dirfd, c.as_ptr(), 0o755) };
+        if mk < 0 {
+            let err = Error::last_os_error();
+            if err.raw_os_error() != Some(libc::EEXIST) {
+                unsafe { libc::close(dirfd) };
+                return Err(err);
+            }
+        }
+        let next = unsafe {
+            libc::openat(
+                dirfd,
+                c.as_ptr(),
+                libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        unsafe { libc::close(dirfd) };
+        if next < 0 {
+            return Err(Error::last_os_error());
+        }
+        dirfd = next;
+    }
+
+    if *file_name == ".." {
+        unsafe { libc::close(dirfd) };
+        return Err(Error::new(ErrorKind::InvalidInput, "'..' in path"));
+    }
+    let fc = cstr(file_name.as_bytes())?;
+    let filefd = unsafe {
+        libc::openat(
+            dirfd,
+            fc.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644,
+        )
+    };
+    unsafe { libc::close(dirfd) };
+    if filefd < 0 {
+        return Err(Error::last_os_error());
+    }
+    let mut f = unsafe { std::fs::File::from_raw_fd(filefd) };
+    f.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn safe_workspace_write(ws_root: &Path, rel: &str, data: &[u8]) -> std::io::Result<()> {
+    let dest = ws_root.join(rel);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&dest, data)
+}
+
+/// Copy a cloud dashboard's workspace files into the local per-dashboard subfolder
+/// `<app_data>/workspace/<subdir>`. Best-effort per file; returns counts. Runs on a
+/// blocking thread (ureq + a session-start poll that can take a minute+).
+#[tauri::command]
+pub async fn download_cloud_workspace(
+    app: tauri::AppHandle,
+    cloud_id: String,
+    subdir: String,
+) -> Result<WorkspaceDownloadResult, String> {
+    use tauri::Manager;
+    let (token, _email) = read_cloud_credential(&app).ok_or("Not signed in to the cloud.")?;
+
+    // subdir is the local dashboard id — must be a single safe path component.
+    let subdir = subdir.trim().trim_matches('/').to_string();
+    if subdir.is_empty() || subdir.contains('/') || subdir.contains("..") {
+        return Err("invalid workspace subdir".into());
+    }
+    let ws_root = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("workspace")
+        .join(&subdir);
+    std::fs::create_dir_all(&ws_root).map_err(|e| format!("create workspace dir: {e}"))?;
+    let ws_canon = ws_root
+        .canonicalize()
+        .map_err(|e| format!("resolve workspace dir: {e}"))?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let sid = match cloud_ensure_session(&token, &cloud_id) {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                return Ok(WorkspaceDownloadResult { written: 0, skipped: 0, had_workspace: false })
+            }
+            Err(e) if e == "SUBSCRIPTION_REQUIRED" => {
+                return Err(
+                    "Starting your cloud workspace needs an active OrcaBot subscription.".into(),
+                )
+            }
+            Err(e) => return Err(e),
+        };
+
+        let files = cloud_file_list(&token, &sid)?;
+        let mut written = 0u64;
+        let mut skipped = 0u64;
+        for f in &files {
+            if f.get("is_dir").and_then(|x| x.as_bool()).unwrap_or(false) {
+                continue;
+            }
+            let rel = match f.get("path").and_then(|x| x.as_str()) {
+                Some(p) => p.trim_start_matches('/').to_string(),
+                None => continue,
+            };
+            if rel.is_empty() || ws_excluded(&rel) {
+                continue;
+            }
+            if safe_workspace_dest(&ws_canon, &rel).is_none() {
+                skipped += 1;
+                continue;
+            }
+            let data = match cloud_file_get(&token, &sid, &rel) {
+                Ok(d) => d,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+            match safe_workspace_write(&ws_canon, &rel, &data) {
+                Ok(()) => written += 1,
+                Err(_) => skipped += 1,
+            }
+        }
+        Ok(WorkspaceDownloadResult { written, skipped, had_workspace: true })
+    })
+    .await
+    .map_err(|e| format!("workspace download task failed: {e}"))?
+}
+
 #[derive(Serialize, Clone)]
 pub struct CloudGoogleResult {
     pub pending: bool,

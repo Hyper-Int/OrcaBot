@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v4-action-bottom
+// REVISION: dashboards-tabs-v5-workspace-download
 "use client";
 
 import * as React from "react";
@@ -25,7 +25,7 @@ import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v4-action-bottom";
+const MODULE_REVISION = "dashboards-tabs-v5-workspace-download";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -126,11 +126,20 @@ export function DashboardsTabs({
     setDownloadError(null);
     setDownloading((s) => new Set(s).add(cd.id));
     try {
-      await downloadCloudDashboard(cd.id, cd.name);
-      onDownloaded();
+      const res = await downloadCloudDashboard(cd.id, cd.name);
+      // Canvas downloaded; if the workspace file copy failed, say so (the dashboard
+      // is still usable, just without its files).
+      if (res.workspaceError) {
+        setDownloadError(
+          `“${cd.name}” downloaded, but its files couldn't be copied: ${res.workspaceError}`
+        );
+      }
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed.");
     } finally {
+      // Always refresh — the canvas may have been created even if files failed, so
+      // the card should flip to "Local Storage".
+      onDownloaded();
       setDownloading((s) => {
         const next = new Set(s);
         next.delete(cd.id);
