@@ -837,10 +837,15 @@ fn cloud_get_json(token: &str, url: &str) -> Result<serde_json::Value, String> {
     }
 }
 
-fn cloud_post_json(token: &str, url: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+fn cloud_post_json(
+    token: &str,
+    url: &str,
+    body: serde_json::Value,
+    timeout_secs: u64,
+) -> Result<serde_json::Value, String> {
     match ureq::post(url)
         .set("Authorization", &format!("Bearer {token}"))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send_json(body)
     {
         Ok(rp) => Ok(rp.into_json().unwrap_or(serde_json::Value::Null)),
@@ -934,10 +939,13 @@ fn cloud_ensure_session(token: &str, dash: &str) -> Result<Option<String>, Strin
         None => return Ok(None),
     };
 
+    // Starting a session cold-boots a Fly VM, and the control plane may hold the
+    // request open until it's provisioned — allow well past a cold boot (not 30s).
     cloud_post_json(
         token,
         &format!("{CLOUD_API_BASE}/dashboards/{dash}/items/{item_id}/session"),
         serde_json::json!({}),
+        180,
     )?;
 
     // Poll for the session to go active (cloud spins up a VM — allow generous time).
