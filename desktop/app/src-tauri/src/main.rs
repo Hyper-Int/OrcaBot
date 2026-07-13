@@ -156,10 +156,27 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
 /// back to `preferred` if nothing is free in range (the later bind then fails
 /// loudly). Used so the app boots even when a default port is occupied (e.g. a
 /// stray `wrangler dev` on 8787) instead of silently failing to start.
+fn port_is_free(port: u16) -> bool {
+  // Probe BOTH the IPv4 wildcard and the IPv6 wildcard, not just IPv4 loopback.
+  // Our consumers bind differently: workerd/d1-shim bind 127.0.0.1 (covered by
+  // 0.0.0.0, a superset), but the VM forwarder (vz-helper) binds the IPv6/IPv4
+  // wildcard `*:port`. A 127.0.0.1-only probe misses a leftover on `*:port`, so
+  // the port looked free and the VM then collided on it ("Address already in
+  // use"). Require both families bindable so nothing slips past.
+  let v4 = std::net::TcpListener::bind(("0.0.0.0", port)).is_ok();
+  let v6 = match std::net::TcpListener::bind(("::", port)) {
+    Ok(_) => true,
+    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => false,
+    // IPv6 unavailable/unsupported — don't treat as "in use" (avoids false skips).
+    Err(_) => true,
+  };
+  v4 && v6
+}
+
 fn pick_free_port(preferred: u16, used: &[u16]) -> u16 {
   let mut p = preferred;
   for _ in 0..200 {
-    if !used.contains(&p) && std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+    if !used.contains(&p) && port_is_free(p) {
       return p;
     }
     p = match p.checked_add(1) {

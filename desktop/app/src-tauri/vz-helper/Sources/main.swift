@@ -406,7 +406,15 @@ class TCPToVsockForwarder {
             throw NSError(domain: "TCPForwarder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid port: \(hostPort)"])
         }
 
-        listener = try NWListener(using: params, on: port)
+        // Bind LOOPBACK only. The forwarder is reached solely by host-local
+        // services (control plane, health checks), never the network, so exposing
+        // it on all interfaces (`*:port`) was needless attack surface. It also
+        // makes the bind match the Rust free-port probe (127.0.0.1): a busy port
+        // is now actually detected, so a dynamic one is chosen instead of the VM
+        // colliding on the wildcard.
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
+
+        listener = try NWListener(using: params)
 
         // Capture hostPort directly to avoid weak self issues in logging
         let capturedHostPort = hostPort
