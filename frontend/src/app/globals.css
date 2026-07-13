@@ -29,11 +29,13 @@ input.secret-masked::placeholder {
    yet, so render the value INVISIBLE without -webkit-text-security (which would
    trip password managers). Plain `color: transparent` is NOT enough — the global
    `::selection { color: white }` reveals the secret when selected — so also force
-   the fill transparent AND override selection (both -webkit and -moz). caret-color
-   is unaffected, so the caret still shows. */
+   the fill transparent AND override selection (both -webkit and -moz). Set an
+   explicit caret-color: with the text transparent, `caret-color: auto` would
+   resolve to transparent and hide the insertion point. */
 input.secret-pending {
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
+  caret-color: var(--foreground);
 }
 input.secret-pending::selection {
   color: transparent !important;
