@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User, SubscriptionInfo } from "@/types";
 import { generateId } from "@/lib/utils";
-import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
+import { getCachedSurfaceToken, clearCloudCredential } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
 /** On desktop, the control plane only honors dev-auth for requests carrying the
@@ -112,6 +112,10 @@ export const useAuthStore = create<AuthStore>()(
         // path (dashboards header, PaywallDialog, …) behaves the same. No-op on web.
         try {
           useDesktopAccountStore.getState().reset();
+          // Fully disconnect the cloud account: forget the stored PAT so a later
+          // sign-in re-establishes it cleanly (and a different account can't inherit
+          // the previous credential). Fire-and-forget; no-op on web.
+          void clearCloudCredential();
         } catch {
           /* store unavailable (SSR / very early) — nothing to reset */
         }
