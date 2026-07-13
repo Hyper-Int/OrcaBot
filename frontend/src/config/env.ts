@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v8-dynamic-cp-port
-const MODULE_REVISION = "desktop-env-v8-dynamic-cp-port";
+// REVISION: desktop-env-v9-prod-api-host
+const MODULE_REVISION = "desktop-env-v9-prod-api-host";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -29,7 +29,10 @@ const FRONTEND_TARGET = resolveFrontendTarget();
 const API_URL_BY_TARGET: Record<FrontendTarget, string> = {
   localhost: "http://localhost:8787",
   dev: "https://api.dev.orcabot.com",
-  production: "https://orcabot-controlplane.orcabot.workers.dev",
+  // The prod control plane is api.orcabot.com. (The old workers.dev subdomain is
+  // dead — the prod web build overrides this via NEXT_PUBLIC_API_URL, but
+  // CLOUD_API_URL reads this default directly, so it must be correct.)
+  production: "https://api.orcabot.com",
 };
 
 const SITE_URL_BY_TARGET: Record<FrontendTarget, string> = {

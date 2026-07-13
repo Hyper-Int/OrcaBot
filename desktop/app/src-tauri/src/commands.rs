@@ -644,7 +644,7 @@ fn verify_orcabot_account_blocking(token: &str) -> Result<OrcabotAccount, String
         return Err("That doesn't look like an Orcabot token (starts with orca_pat_).".into());
     }
     // Fixed to the public cloud control plane on purpose (token exfil guard).
-    let url = "https://orcabot-controlplane.orcabot.workers.dev/users/me";
+    let url = "https://api.orcabot.com/users/me";
     match ureq::get(url)
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(std::time::Duration::from_secs(15))
