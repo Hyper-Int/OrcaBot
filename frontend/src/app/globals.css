@@ -25,6 +25,27 @@ input.secret-masked::placeholder {
   letter-spacing: normal;
 }
 
+/* Pending/unknown state of <SecretInput>: the disc masking font isn't verified
+   yet, so render the value INVISIBLE without -webkit-text-security (which would
+   trip password managers). Plain `color: transparent` is NOT enough — the global
+   `::selection { color: white }` reveals the secret when selected — so also force
+   the fill transparent AND override selection (both -webkit and -moz). caret-color
+   is unaffected, so the caret still shows. */
+input.secret-pending {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+input.secret-pending::selection {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: var(--accent-primary);
+}
+input.secret-pending::-moz-selection {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: var(--accent-primary);
+}
+
 /* ===== CSS Variables (Light Theme Default) ===== */
 :root {
   /* Background layers (lightest to darker) */

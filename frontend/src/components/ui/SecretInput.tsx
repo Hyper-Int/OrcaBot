@@ -1,14 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secret-input-v5-fail-closed-initial
+// REVISION: secret-input-v6-mask-pending-selection
 "use client";
 
 import * as React from "react";
 import { Input, type InputProps } from "./input";
 import { cn } from "@/lib/utils";
 
-const SECRET_INPUT_REVISION = "secret-input-v5-fail-closed-initial";
+const SECRET_INPUT_REVISION = "secret-input-v6-mask-pending-selection";
 if (typeof window !== "undefined" && !(window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged) {
   (window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged = true;
   console.log(`[SecretInput] REVISION: ${SECRET_INPUT_REVISION} loaded at ${new Date().toISOString()}`);
@@ -33,9 +33,10 @@ if (typeof window !== "undefined" && !(window as unknown as { __secretInputLogge
  * font fails to decode (`font-display: block` then falls back to a READABLE font,
  * and the field is `type="text"`). We can only verify the font AFTER paint (in an
  * effect), so we must not START in a readable state. The three states:
- *   - `unknown` (initial, pre-verification): render the text INVISIBLE via
- *     `color: transparent` — font-independent (a corrupt/cached font can't flash
- *     the secret) and with NO `-webkit-text-security`, so no password-manager
+ *   - `unknown` (initial, pre-verification): render the text INVISIBLE via the
+ *     `secret-pending` class (transparent fill + a `::selection` override so a
+ *     selection can't reveal it) — font-independent (a corrupt/cached font can't
+ *     flash the secret) and with NO `-webkit-text-security`, so no password-manager
  *     prompt is triggered for normal users.
  *   - `ok` (font verified available via `document.fonts.check`): the disc font
  *     mask — dots, no prompt. The common steady state.
@@ -79,8 +80,10 @@ const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
       return () => { cancelled = true; };
     }, [masked]);
 
-    // Mask properties come AFTER `...style` so a caller can never override them
-    // (fail closed). The font-mask case relies on the `secret-masked` class.
+    // The mask for `failed` comes AFTER `...style` so a caller can't override it
+    // (fail closed). `ok` and `unknown` use classes (`::selection` can't be styled
+    // inline — a plain inline `color: transparent` is revealed by the global
+    // `::selection { color: white }` when text is selected).
     let maskClass: string | false = false;
     let maskStyle = style;
     if (masked) {
@@ -89,7 +92,7 @@ const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
       } else if (maskState === "failed") {
         maskStyle = { ...style, WebkitTextSecurity: "disc" } as React.CSSProperties;
       } else {
-        maskStyle = { ...style, color: "transparent" } as React.CSSProperties;
+        maskClass = "secret-pending";
       }
     }
 
