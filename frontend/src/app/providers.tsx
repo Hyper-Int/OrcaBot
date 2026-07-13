@@ -120,6 +120,9 @@ function AuthBootstrapper() {
     // DesktopWelcome gate is rendered instead). Re-bootstrap if the choice changes
     // (null → free/signed-in, or account switch). Web bootstraps exactly once.
     if (DESKTOP_MODE && !accountChoice) {
+      // Logged out / reset to the welcome screen — clear the guard so the NEXT
+      // choice (even the same one) triggers a fresh login instead of being skipped.
+      bootstrappedForRef.current = null;
       return;
     }
     const bootstrapKey = DESKTOP_MODE

@@ -56,6 +56,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { switchToCli } from "@/lib/tauri-bridge";
 import {
@@ -352,7 +353,15 @@ export default function DashboardsPage() {
       // Ignore logout errors and clear local state anyway.
     }
     logout();
-    router.push("/login");
+    if (DESKTOP_MODE) {
+      // Desktop: return to the first-run screen (Free vs sign in). Resetting the
+      // choice + the cleared auth makes the DesktopAuthGate render the welcome
+      // screen — no navigation needed (/login → "/" is the web-only marketing
+      // page, which shows as a dark screen in the app).
+      useDesktopAccountStore.getState().reset();
+    } else {
+      router.push("/login");
+    }
   };
 
   if (!isAuthResolved || !isAuthenticated) {
