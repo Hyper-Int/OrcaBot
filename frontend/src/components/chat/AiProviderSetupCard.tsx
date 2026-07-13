@@ -11,7 +11,7 @@ import * as React from "react";
 import Image from "next/image";
 import { Shield, Loader2, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SecretInput } from "@/components/ui/SecretInput";
 import { createGlobalSecret } from "@/lib/api/cloudflare/secrets";
 
 interface AiProviderSetupCardProps {
@@ -138,18 +138,12 @@ export function AiProviderSetupCard({ onDone }: AiProviderSetupCardProps) {
               <span className="w-14 text-xs flex-shrink-0 font-medium">{p.name}</span>
               {/* Key input */}
               <div className="relative flex-1">
-                <Input
-                  type="text"
+                <SecretInput
                   placeholder={p.placeholder}
                   value={values[p.keyName]}
                   onChange={(e) => setValues((v) => ({ ...v, [p.keyName]: e.target.value }))}
                   disabled={saving}
-                  autoComplete="off"
-                  data-form-type="other"
-                  data-lpignore="true"
-                  data-1p-ignore
                   style={{
-                    WebkitTextSecurity: values[p.keyName] ? "disc" : undefined,
                     fontFamily: values[p.keyName] ? "monospace" : undefined,
                     fontSize: "12px",
                     height: "28px",

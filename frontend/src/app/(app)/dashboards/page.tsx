@@ -47,6 +47,7 @@ import {
   DialogDescription,
   DialogFooter,
   Input,
+  SecretInput,
   Avatar,
   ThemeToggle,
   Tooltip,
@@ -627,17 +628,11 @@ export default function DashboardsPage() {
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <Input
-                            type="text"
+                          <SecretInput
                             placeholder="Value"
                             value={newSecretValue}
                             onChange={(e) => setNewSecretValue(e.target.value)}
                             className="w-full"
-                            autoComplete="off"
-                            data-1p-ignore
-                            data-lpignore="true"
-                            data-form-type="other"
-                            style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
                           />
                         </div>
                         <Button
