@@ -1,14 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secret-input-v4-fail-closed-font-fallback
+// REVISION: secret-input-v5-fail-closed-initial
 "use client";
 
 import * as React from "react";
 import { Input, type InputProps } from "./input";
 import { cn } from "@/lib/utils";
 
-const SECRET_INPUT_REVISION = "secret-input-v4-fail-closed-font-fallback";
+const SECRET_INPUT_REVISION = "secret-input-v5-fail-closed-initial";
 if (typeof window !== "undefined" && !(window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged) {
   (window as unknown as { __secretInputLogged?: boolean }).__secretInputLogged = true;
   console.log(`[SecretInput] REVISION: ${SECRET_INPUT_REVISION} loaded at ${new Date().toISOString()}`);
@@ -29,48 +29,69 @@ if (typeof window !== "undefined" && !(window as unknown as { __secretInputLogge
  *
  * Pass `masked={false}` to show the value in plain text (e.g. a reveal toggle).
  *
- * FAIL-CLOSED: the font approach masks nothing if the font fails to decode —
- * `font-display: block` then falls back to a READABLE font and, since the field
- * is `type="text"`, the secret would be exposed permanently. So we verify the
- * masking font is actually available (`document.fonts.check`, after
- * `document.fonts.ready`) and, if it is NOT, fall back to the `-webkit-text-security`
- * CSS mask — which hides the value independently of any font, at the cost of
- * possibly prompting a password manager (an acceptable degradation vs. leaking a
- * secret). The font is an inline data-URI so this fallback essentially never fires,
- * but the masking no longer depends on font availability.
+ * FAIL-CLOSED, even before verification. The font mask exposes the value if the
+ * font fails to decode (`font-display: block` then falls back to a READABLE font,
+ * and the field is `type="text"`). We can only verify the font AFTER paint (in an
+ * effect), so we must not START in a readable state. The three states:
+ *   - `unknown` (initial, pre-verification): render the text INVISIBLE via
+ *     `color: transparent` — font-independent (a corrupt/cached font can't flash
+ *     the secret) and with NO `-webkit-text-security`, so no password-manager
+ *     prompt is triggered for normal users.
+ *   - `ok` (font verified available via `document.fonts.check`): the disc font
+ *     mask — dots, no prompt. The common steady state.
+ *   - `failed` (font unavailable, or no Font Loading API): the
+ *     `-webkit-text-security` CSS mask — hides the value regardless of any font,
+ *     at the cost of possibly prompting a password manager (acceptable vs. leaking
+ *     a secret). Near-impossible for an inline data-URI font.
+ * So the value is never rendered readable in any state or timing window.
  */
 interface SecretInputProps extends InputProps {
   masked?: boolean;
 }
 
 const MASK_FONT = "16px 'text-security-disc'";
+type MaskState = "unknown" | "ok" | "failed";
 
 const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
   ({ masked = true, className, style, ...props }, ref) => {
-    // Optimistically assume the font is available; before this resolves the font
-    // class + font-display:block render the text invisible, which is itself
-    // fail-closed. Only after fonts settle do we know if we must fall back.
-    const [fontOk, setFontOk] = React.useState(true);
+    // Start `unknown` → rendered invisible (fail closed) until we can verify the
+    // masking font, which is only possible after paint.
+    const [maskState, setMaskState] = React.useState<MaskState>("unknown");
     React.useEffect(() => {
       if (!masked) return;
-      if (typeof document === "undefined" || !document.fonts) return;
+      if (typeof document === "undefined" || !document.fonts || !document.fonts.load) {
+        setMaskState("failed"); // no Font Loading API → fail closed to the CSS mask
+        return;
+      }
       let cancelled = false;
-      document.fonts.ready
-        .then(() => {
+      // `@font-face` fonts (including inline data-URIs) load LAZILY — only when
+      // used. Since the fail-closed 'unknown' state does NOT use the font,
+      // `document.fonts.check` would report it absent forever. Explicitly load it,
+      // then confirm: a corrupt/undecodable font makes load() reject (or return no
+      // face) → 'failed' → CSS mask.
+      document.fonts.load(MASK_FONT)
+        .then((faces) => {
           if (cancelled) return;
-          try {
-            setFontOk(document.fonts.check(MASK_FONT));
-          } catch {
-            // If we can't tell, fail closed to the CSS mask.
-            setFontOk(false);
-          }
+          const ok = faces.length > 0 && document.fonts.check(MASK_FONT);
+          setMaskState(ok ? "ok" : "failed");
         })
-        .catch(() => { if (!cancelled) setFontOk(false); });
+        .catch(() => { if (!cancelled) setMaskState("failed"); });
       return () => { cancelled = true; };
     }, [masked]);
 
-    const useFontMask = masked && fontOk;
-    const useCssMask = masked && !fontOk;
+    // Mask properties come AFTER `...style` so a caller can never override them
+    // (fail closed). The font-mask case relies on the `secret-masked` class.
+    let maskClass: string | false = false;
+    let maskStyle = style;
+    if (masked) {
+      if (maskState === "ok") {
+        maskClass = "secret-masked";
+      } else if (maskState === "failed") {
+        maskStyle = { ...style, WebkitTextSecurity: "disc" } as React.CSSProperties;
+      } else {
+        maskStyle = { ...style, color: "transparent" } as React.CSSProperties;
+      }
+    }
 
     return (
       <Input
@@ -84,8 +105,8 @@ const SecretInput = React.forwardRef<HTMLInputElement, SecretInputProps>(
         data-1p-ignore="true"
         data-bwignore="true"
         data-form-type="other"
-        className={cn(useFontMask && "secret-masked", className)}
-        style={useCssMask ? ({ WebkitTextSecurity: "disc", ...style } as React.CSSProperties) : style}
+        className={cn(maskClass, className)}
+        style={maskStyle}
         {...props}
       />
     );
