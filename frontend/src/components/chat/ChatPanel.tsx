@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v34-no-key-provider-card
+// REVISION: chat-v37-white-input-no-panel
 
 "use client";
 
@@ -12,7 +12,7 @@
  * Supports smooth handoff from splash page transition overlay.
  */
 
-const CHAT_PANEL_REVISION = "chat-v34-no-key-provider-card";
+const CHAT_PANEL_REVISION = "chat-v37-white-input-no-panel";
 const AI_ONBOARD_KEYWORD = "force_ai_onboard";
 console.log(`[ChatPanel] REVISION: ${CHAT_PANEL_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -66,11 +66,20 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
   const [inputValue, setInputValue] = React.useState("");
   const inputBarRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  // Separate ref for the dedicated compose input rendered inside the expanded
+  // window. Shares the single `inputValue` source of truth with the collapsed
+  // top-bar input; only the focus target differs.
+  const inWindowInputRef = React.useRef<HTMLInputElement>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const initialPromptConsumedRef = React.useRef(false);
   // Auto-minimize the chat the first time the user interacts with the page
   // *outside* the chat — fires once per mount.
   const autoMinimizedRef = React.useRef(false);
+  // When the chat IS the primary UI for this dashboard — arrived from the splash
+  // chat bar, or a template auto-kicked a setup walkthrough — we do NOT auto-minimize
+  // it on the first outside click (the user wants to read/drive the conversation).
+  // Manual collapse (the chevron) still works. Set once per mount.
+  const [chatIsPrimary, setChatIsPrimary] = React.useState(false);
   // Holds a splash-bar prompt that was deferred because needsAiSetup=true.
   // Sent after the user completes (or skips) AI provider setup.
   const deferredPromptRef = React.useRef<string | null>(null);
@@ -101,6 +110,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     if (!isTransitionTarget) return;
     setIsAtSplashPosition(true);  // also covers late transitions
     setIsExpanded(true);
+    setChatIsPrimary(true);       // splash-bar flow: chat is the primary UI
     setChatPanelReady();
   }, [isTransitionTarget, setChatPanelReady]);
 
@@ -165,6 +175,8 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     }
     localStorage.removeItem("orcabot_initial_prompt");
     initialPromptConsumedRef.current = true;
+    // An initial prompt (splash bar OR template walkthrough) means chat is primary.
+    setChatIsPrimary(true);
 
     // Special keyword: show the AI provider setup card instead of sending to AI
     if (prompt.toLowerCase().includes(AI_ONBOARD_KEYWORD)) {
@@ -213,6 +225,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     if (autoMinimizedRef.current) return;
     if (!isExpanded) return;
     if (needsAiSetup || showSetupCard) return;
+    if (chatIsPrimary) return; // splash-bar / template-walkthrough: chat stays open
     const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (target && panelRef.current?.contains(target)) return; // inside the chat
@@ -222,7 +235,7 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
     };
     window.addEventListener("pointerdown", handlePointerDown, true);
     return () => window.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [isExpanded, needsAiSetup, showSetupCard]);
+  }, [isExpanded, needsAiSetup, showSetupCard, chatIsPrimary]);
 
   // Called when the setup card is dismissed or completed.
   // savedKeys is provided when keys were saved, omitted when user skipped.
@@ -367,34 +380,52 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
           ref={inputBarRef}
           className="flex items-center gap-2 px-4 py-2.5 rounded-t-2xl"
           style={{
-            background: "var(--chat-input-bg)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderBottom: isExpanded ? "1px solid rgba(0, 229, 255, 0.15)" : undefined,
+            // Expanded: no panel — the bar is transparent so it reads as part of
+            // the chat window. Collapsed: a themed floating pill on the dashboard.
+            background: isExpanded ? "transparent" : "var(--background-elevated)",
           }}
         >
-          <input
-            ref={inputRef}
-            type="text"
-            name="orcabot-prompt-nofill"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onFocus={() => setIsExpanded(true)}
-            placeholder="Ask Orcabot..."
-            disabled={isStreaming}
-            autoComplete="one-time-code"
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore
-            className={cn(
-              "flex-1 border-0 outline-none chat-input-splash focus-visible:outline-none",
-              "text-sm",
-              "disabled:opacity-50",
-              "placeholder:text-[#5a7a9e]"
-            )}
-            style={{ color: "#e8edf5", caretColor: "#00e5ff", backgroundColor: "transparent", outline: "none" }}
-          />
+          {isExpanded ? (
+            /* Expanded: the top bar is a title/header, not an input. Clicking it
+               focuses the dedicated in-window compose input below. */
+            <button
+              type="button"
+              onClick={() => inWindowInputRef.current?.focus()}
+              className="flex-1 text-left text-sm font-medium truncate focus-visible:outline-none"
+              style={{ color: "var(--foreground)" }}
+              title="Focus the message box"
+            >
+              Ask Orcabot
+            </button>
+          ) : (
+            <input
+              ref={inputRef}
+              type="text"
+              name="orcabot-prompt-nofill"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onFocus={() => {
+                setIsExpanded(true);
+                // The collapsed input unmounts on expand; hand focus to the
+                // in-window compose input once it has mounted.
+                requestAnimationFrame(() => inWindowInputRef.current?.focus());
+              }}
+              placeholder="Ask Orcabot..."
+              disabled={isStreaming}
+              autoComplete="one-time-code"
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore
+              className={cn(
+                "flex-1 border-0 outline-none focus-visible:outline-none",
+                "text-sm",
+                "disabled:opacity-50",
+                "placeholder:text-muted-foreground"
+              )}
+              style={{ color: "var(--foreground)", caretColor: "var(--accent-primary)", backgroundColor: "transparent", outline: "none" }}
+            />
+          )}
 
           {/* Trash button (when has messages) */}
           {hasMessages && (
@@ -419,8 +450,8 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
               if (isExpanded && isAtSplashPosition) setIsAtSplashPosition(false);
               setIsExpanded(!isExpanded);
             }}
-            className="h-7 w-7 p-0 rounded-full hover:bg-white/10"
-            style={{ color: "#8ba3c4" }}
+            className="h-7 w-7 p-0 rounded-full hover:bg-background-hover"
+            style={{ color: "var(--muted-foreground)" }}
           >
             {isExpanded ? (
               <ChevronDown className="w-4 h-4" />
@@ -429,21 +460,75 @@ export function ChatPanel({ dashboardId, className, onUICommand, needsAiSetup, o
             )}
           </Button>
 
-          {/* Send Button */}
-          <Button
-            onClick={handleSend}
-            disabled={!inputValue.trim() || isStreaming}
-            size="sm"
-            className="h-7 w-7 p-0 rounded-full text-white"
-            style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
-          >
-            {isStreaming ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-          </Button>
+          {/* Send Button — collapsed only; expanded uses the in-window compose box */}
+          {!isExpanded && (
+            <Button
+              onClick={handleSend}
+              disabled={!inputValue.trim() || isStreaming}
+              size="sm"
+              className="h-7 w-7 p-0 rounded-full text-white"
+              style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
+            >
+              {isStreaming ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+            </Button>
+          )}
         </div>
+
+        {/* In-window compose box (expanded only). Pinned between the title bar and
+            the messages scroll area — since messages render newest-at-top, a new
+            message appears directly beneath this box. Right-aligned and styled to
+            echo the user's own message bubbles (rounded-2xl, primary accent) so it
+            reads as "your next message". White in light mode, elevated surface in
+            dark. */}
+        {isExpanded && (
+          <div
+            className="flex justify-end px-4 pt-3 pb-2"
+          >
+            <div
+              className="flex items-center gap-2 w-full max-w-[85%] rounded-2xl px-3 py-1.5 ring-1 ring-primary/40 shadow-sm"
+              style={{ background: "#ffffff" }}
+            >
+              <input
+                ref={inWindowInputRef}
+                type="text"
+                name="orcabot-prompt-inwindow-nofill"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask Orcabot..."
+                disabled={isStreaming}
+                autoComplete="one-time-code"
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore
+                className={cn(
+                  "flex-1 bg-transparent border-0 outline-none focus-visible:outline-none",
+                  // White pill in every theme, so hardcode dark text + gray
+                  // placeholder (theme tokens would go invisible on white in dark mode).
+                  "text-sm placeholder:text-[#9ca3af] disabled:opacity-50"
+                )}
+                style={{ color: "#1a1a1a", caretColor: "#3b82f6", outline: "none" }}
+              />
+              <Button
+                onClick={handleSend}
+                disabled={!inputValue.trim() || isStreaming}
+                size="sm"
+                className="h-7 w-7 p-0 rounded-full text-white flex-shrink-0"
+                style={{ background: "#3b82f6", boxShadow: "0 2px 8px rgba(59, 130, 246, 0.3)" }}
+              >
+                {isStreaming ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Messages area (when expanded, below input) — newest at top */}
         {isExpanded && (

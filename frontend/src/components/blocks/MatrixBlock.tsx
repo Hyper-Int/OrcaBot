@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: matrix-block-v3-help-button
+// REVISION: matrix-block-v4-secret-input
 
 "use client";
 
-const MODULE_REVISION = "matrix-block-v3-help-button";
+const MODULE_REVISION = "matrix-block-v4-secret-input";
 console.log(`[MatrixBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -24,6 +24,7 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -480,8 +481,7 @@ export function MatrixBlock({ id, data, selected }: NodeProps<MatrixNode>) {
                 placeholder="Homeserver URL"
                 className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#0DBD8B]"
               />
-              <input
-                type="password"
+              <SecretInput
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
                 placeholder="Paste your Matrix access token"

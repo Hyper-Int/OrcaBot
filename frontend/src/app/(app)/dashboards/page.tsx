@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: layout-v6-restore-desktop-order
-const MODULE_REVISION = "layout-v6-restore-desktop-order";
+// REVISION: layout-v7-secret-input
+const MODULE_REVISION = "layout-v7-secret-input";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -47,6 +47,7 @@ import {
   DialogDescription,
   DialogFooter,
   Input,
+  SecretInput,
   Avatar,
   ThemeToggle,
   Tooltip,
@@ -629,17 +630,11 @@ export default function DashboardsPage() {
                           />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <Input
-                            type="text"
+                          <SecretInput
                             placeholder="Value"
                             value={newSecretValue}
                             onChange={(e) => setNewSecretValue(e.target.value)}
                             className="w-full"
-                            autoComplete="off"
-                            data-1p-ignore
-                            data-lpignore="true"
-                            data-form-type="other"
-                            style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
                           />
                         </div>
                         <Button
