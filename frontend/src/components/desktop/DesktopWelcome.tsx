@@ -5,18 +5,16 @@
 "use client";
 
 import * as React from "react";
-import { CLOUDFLARE_API_URL, CLOUD_SITE_URL } from "@/config/env";
+import { CLOUD_API_URL, CLOUD_SITE_URL } from "@/config/env";
 import {
-  ensureSurfaceToken,
-  getCachedSurfaceToken,
-  onAppFocus,
   openExternalUrl,
+  pollCloudGoogleResult,
   setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v2-three-options-google";
+const MODULE_REVISION = "desktop-welcome-v3-google-cloud-pkce";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -26,6 +24,25 @@ if (typeof window !== "undefined") {
 function randomNonce(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** PKCE code_verifier: 32 random bytes, base64url. */
+function randomVerifier(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+/** PKCE S256 code_challenge = base64url(SHA-256(verifier)). */
+async function sha256Base64Url(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return base64UrlEncode(new Uint8Array(digest));
 }
 
 /**
@@ -78,54 +95,32 @@ export function DesktopWelcome() {
     googleCancelRef.current = false;
     setGoogleError(null);
     setPanel("google");
-    let unfocus: (() => void) | null = null;
     try {
+      // PKCE: the browser flow returns a real cloud PAT, so protect the poll with
+      // a verifier whose SHA-256 (the challenge) is sent to the CLOUD at login.
       const nonce = randomNonce();
-      await ensureSurfaceToken();
-      const surface = getCachedSurfaceToken();
-      const base = CLOUDFLARE_API_URL;
+      const verifier = randomVerifier();
+      const challenge = await sha256Base64Url(verifier);
 
-      // Open the OS browser to the LOCAL control plane's Google login. Google
-      // requires a real browser (it blocks OAuth in embedded webviews), so we
-      // poll for the result by nonce rather than getting a callback in-app.
+      // Google requires a REAL browser (it blocks OAuth in embedded webviews), and
+      // this authenticates against the CLOUD control plane (your real account) so
+      // we get a cloud credential for dashboard sync.
       await openExternalUrl(
-        `${base}/auth/google/login?mode=desktop&nonce=${encodeURIComponent(nonce)}`
+        `${CLOUD_API_URL}/auth/google/login?mode=desktop` +
+          `&nonce=${encodeURIComponent(nonce)}` +
+          `&challenge=${encodeURIComponent(challenge)}`
       );
 
-      const pollOnce = async (): Promise<boolean> => {
-        try {
-          const resp = await fetch(
-            `${base}/auth/desktop/google-result?nonce=${encodeURIComponent(nonce)}`,
-            {
-              headers: surface ? { "X-Orcabot-Surface": surface } : {},
-              cache: "no-store",
-            }
-          );
-          if (resp.ok) {
-            const data = (await resp.json()) as {
-              email?: string;
-              name?: string;
-            };
-            if (data.email) {
-              chooseSignedIn(data.email, data.name || data.email);
-              return true;
-            }
-          }
-        } catch {
-          /* keep polling */
-        }
-        return false;
-      };
-
-      // Poll immediately whenever the app regains focus (i.e. you switch back
-      // from the browser after signing in), plus a steady background poll.
-      unfocus = await onAppFocus(() => {
-        void pollOnce();
-      });
-
-      const deadline = Date.now() + 150_000; // 2.5 min
+      const deadline = Date.now() + 180_000; // 3 min
       while (!googleCancelRef.current && Date.now() < deadline) {
-        if (await pollOnce()) return; // success → chooseSignedIn unmounts this
+        const res = await pollCloudGoogleResult(nonce, verifier);
+        if (res && !res.pending && res.token && res.email) {
+          // Store the cloud PAT (for listing/syncing dashboards) + set the local
+          // signed-in identity. App still runs locally.
+          await setCloudCredential(res.token, res.email);
+          chooseSignedIn(res.email, res.name || res.email);
+          return; // chooseSignedIn unmounts this
+        }
         await new Promise((r) => setTimeout(r, 2000));
       }
       if (!googleCancelRef.current) {
@@ -137,8 +132,6 @@ export function DesktopWelcome() {
         e instanceof Error ? e.message : "Couldn't start Google sign-in."
       );
       setPanel(null);
-    } finally {
-      if (unfocus) unfocus();
     }
   };
 

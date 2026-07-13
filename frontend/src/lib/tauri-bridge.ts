@@ -161,6 +161,27 @@ export async function getCloudDashboard(dashboardId: string): Promise<unknown> {
   return invoke("get_cloud_dashboard", { dashboardId });
 }
 
+export interface CloudGoogleResult {
+  pending: boolean;
+  token?: string;
+  email?: string;
+  name?: string;
+}
+
+/**
+ * Poll the CLOUD control plane for the desktop Google sign-in result (a cloud PAT
+ * + identity), by nonce + PKCE verifier. Native (no browser CORS). Returns
+ * {pending:true} until the browser sign-in completes.
+ */
+export async function pollCloudGoogleResult(
+  nonce: string,
+  verifier: string
+): Promise<CloudGoogleResult> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Sign-in is only available in the desktop app.");
+  return invoke("poll_cloud_google_result", { nonce, verifier }) as Promise<CloudGoogleResult>;
+}
+
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
 export async function revealWorkspace(): Promise<void> {
   const invoke = await getTauriInvoke();

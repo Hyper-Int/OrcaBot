@@ -7,7 +7,7 @@ console.log(`[auth/google] REVISION: ${moduleRevision} loaded at ${new Date().to
 
 import type { Env } from '../types';
 import { buildSessionCookie, createUserSession } from './sessions';
-import { devAuthSurfaceTrusted } from './middleware';
+import { createApiToken } from './api-token';
 import { processPendingInvitations } from '../members/handler';
 
 const GOOGLE_LOGIN_SCOPE = [
@@ -206,9 +206,12 @@ export async function loginWithGoogle(
   const isPopupMode = mode === 'popup';
   // Desktop login: the app opens this in the OS browser and polls for the result
   // by a nonce (the OS browser can't hand a session back to the Tauri webview).
-  // Only on the desktop public client; ignored elsewhere so web login is untouched.
-  const isDesktopMode = mode === 'desktop' && env.OAUTH_PUBLIC_CLIENT === 'true';
+  // The result is a PAT (full credential), so it's protected with PKCE: the app
+  // sends the code_challenge here and the matching verifier when it polls. Works on
+  // any deployment; web popup/redirect login is untouched.
+  const isDesktopMode = mode === 'desktop';
   const desktopNonce = isDesktopMode ? requestUrl.searchParams.get('nonce') : null;
+  const desktopChallenge = isDesktopMode ? requestUrl.searchParams.get('challenge') : null;
 
   // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
   // Skip Turnstile in popup/desktop mode — Google's consent screen provides bot protection
@@ -227,21 +230,22 @@ export async function loginWithGoogle(
     }
   }
 
-  if (isDesktopMode && !desktopNonce) {
-    return renderErrorPage('Desktop sign-in is missing its nonce.');
+  if (isDesktopMode && (!desktopNonce || !desktopChallenge)) {
+    return renderErrorPage('Desktop sign-in is missing its nonce/challenge.');
   }
 
   const state = crypto.randomUUID();
   const redirectUri = `${getRedirectBase(request, env)}/auth/google/callback`;
   // Sentinel in the state's redirect slot tells the callback how to finish:
-  //  - "popup"          → postMessage completion page (web popup login)
-  //  - "desktop:<nonce>" → stash identity for the desktop app to poll, show a
-  //                        "return to Orcabot" page (no browser session is useful)
-  //  - a URL            → normal 302 redirect + session cookie
+  //  - "popup"                     → postMessage completion page (web popup login)
+  //  - "desktop:<nonce>:<challenge>" → mint a PAT, stash it for the desktop app to
+  //                                    poll (PKCE-guarded), show a "return" page
+  //  - a URL                       → normal 302 redirect + session cookie
+  // nonce is a UUID and challenge is base64url — neither contains ':'.
   const postLoginRedirect = isPopupMode
     ? 'popup'
     : isDesktopMode
-      ? `desktop:${desktopNonce}`
+      ? `desktop:${desktopNonce}:${desktopChallenge}`
       : resolvePostLoginRedirect(request, env);
 
   await createAuthState(env, state, postLoginRedirect);
@@ -339,17 +343,18 @@ export async function callbackGoogle(
   // Process any pending dashboard invitations for this email
   await processPendingInvitations(env, userId, userInfo.email);
 
-  // Desktop login: no browser session is useful (the desktop app authenticates to
-  // its LOCAL control plane via dev-auth, keyed by email — which findOrCreateUser
-  // above just ensured exists). Stash the identity keyed by the app's nonce so it
-  // can poll for it, then tell the user to return to Orcabot.
+  // Desktop login: mint a PAT so the desktop app gets a real cloud credential
+  // (for listing + syncing the user's cloud dashboards), and stash it — with the
+  // PKCE challenge — keyed by the app's nonce for it to poll. No browser session
+  // is useful (the app authenticates to its LOCAL control plane via dev-auth).
   if (postLoginRedirect.startsWith('desktop:')) {
-    const nonce = postLoginRedirect.slice('desktop:'.length);
+    const [, nonce, challenge] = postLoginRedirect.split(':');
     const name = userInfo.name || userInfo.email.split('@')[0];
+    const { token } = await createApiToken(env, userId, 'Orcabot Desktop');
     await createAuthState(
       env,
       `desktopresult:${nonce}`,
-      JSON.stringify({ email: userInfo.email, name })
+      JSON.stringify({ token, email: userInfo.email, name, challenge })
     );
     return renderDesktopReturnPage();
   }
@@ -403,12 +408,20 @@ function renderDesktopReturnPage(): Response {
   );
 }
 
+/** base64url(SHA-256(input)) — PKCE S256 code_challenge computation. */
+async function sha256Base64Url(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  let bin = '';
+  for (const b of new Uint8Array(digest)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 /**
- * Desktop app polls this (by the nonce it generated + started the browser flow
- * with) to learn the signed-in identity, since the OS browser can't hand a
- * session back to the Tauri webview. Desktop-only (OAUTH_PUBLIC_CLIENT) and gated
- * by the per-boot surface token, so a process inside the sandbox VM — which never
- * gets the token — can't harvest the identity even if it guessed the nonce.
+ * Desktop app polls this (by the nonce it started the browser flow with, plus the
+ * PKCE verifier) to collect its cloud PAT + identity — the OS browser can't hand a
+ * session back to the Tauri webview. Protected by PKCE: the result is only returned
+ * to whoever holds the verifier whose SHA-256 matches the challenge sent at login,
+ * so knowing the (browser-visible) nonce alone can't harvest the PAT.
  */
 export async function getDesktopGoogleResult(request: Request, env: Env): Promise<Response> {
   const json = (body: unknown, status = 200) =>
@@ -417,26 +430,35 @@ export async function getDesktopGoogleResult(request: Request, env: Env): Promis
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
 
-  if (env.OAUTH_PUBLIC_CLIENT !== 'true') {
-    return json({ error: 'not_available' }, 404);
+  const url = new URL(request.url);
+  const nonce = url.searchParams.get('nonce');
+  const verifier = url.searchParams.get('verifier');
+  if (!nonce || !verifier) {
+    return json({ error: 'missing_nonce_or_verifier' }, 400);
   }
-  if (!devAuthSurfaceTrusted(request, env)) {
-    return json({ error: 'forbidden' }, 403);
-  }
-  const nonce = new URL(request.url).searchParams.get('nonce');
-  if (!nonce) {
-    return json({ error: 'missing_nonce' }, 400);
-  }
-  const identity = await consumeAuthState(env, `desktopresult:${nonce}`);
-  if (!identity) {
+
+  const key = `desktopresult:${nonce}`;
+  // Peek (don't consume): a wrong verifier must NOT delete the result, or an
+  // attacker who guessed the nonce could deny the legit app its PAT.
+  const rec = await env.DB
+    .prepare('SELECT redirect_url as v FROM auth_states WHERE state = ?')
+    .bind(key)
+    .first<{ v: string }>();
+  if (!rec) {
     return json({ pending: true });
   }
+  let parsed: { token: string; email: string; name: string; challenge: string };
   try {
-    const parsed = JSON.parse(identity) as { email: string; name: string };
-    return json({ email: parsed.email, name: parsed.name });
+    parsed = JSON.parse(rec.v);
   } catch {
     return json({ error: 'corrupt' }, 500);
   }
+  if ((await sha256Base64Url(verifier)) !== parsed.challenge) {
+    return json({ error: 'forbidden' }, 403);
+  }
+  // Verified — consume it and hand back the PAT + identity.
+  await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
+  return json({ token: parsed.token, email: parsed.email, name: parsed.name });
 }
 
 function renderLoginCompletePage(

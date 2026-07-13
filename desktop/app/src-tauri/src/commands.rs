@@ -797,6 +797,63 @@ pub async fn get_cloud_dashboard(
     .map_err(|e| format!("fetch task failed: {e}"))?
 }
 
+#[derive(Serialize, Clone)]
+pub struct CloudGoogleResult {
+    pub pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Poll the CLOUD control plane for the desktop Google sign-in result (a PAT +
+/// identity), keyed by the app's nonce and PKCE verifier. Native so it isn't
+/// subject to browser CORS (the cloud only allows the orcabot.com origin). Returns
+/// {pending:true} until the browser sign-in completes.
+#[tauri::command]
+pub async fn poll_cloud_google_result(
+    nonce: String,
+    verifier: String,
+) -> Result<CloudGoogleResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        match ureq::get(&format!("{CLOUD_API_BASE}/auth/desktop/google-result"))
+            .query("nonce", &nonce)
+            .query("verifier", &verifier)
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+        {
+            Ok(resp) => {
+                let v: serde_json::Value = resp
+                    .into_json()
+                    .map_err(|e| format!("unexpected response from orcabot.com: {e}"))?;
+                if v["pending"].as_bool() == Some(true) {
+                    return Ok(CloudGoogleResult {
+                        pending: true,
+                        token: None,
+                        email: None,
+                        name: None,
+                    });
+                }
+                let token = v["token"].as_str().map(str::to_string);
+                let email = v["email"].as_str().map(str::to_string);
+                let name = v["name"].as_str().map(str::to_string);
+                if token.is_some() && email.is_some() {
+                    Ok(CloudGoogleResult { pending: false, token, email, name })
+                } else {
+                    Err("orcabot.com returned an unexpected sign-in result.".into())
+                }
+            }
+            Err(ureq::Error::Status(403, _)) => Err("Sign-in verification failed.".into()),
+            Err(ureq::Error::Status(code, _)) => Err(format!("orcabot.com returned {code}.")),
+            Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("poll task failed: {e}"))?
+}
+
 /// Return the per-boot surface token. The host frontend sends it as the
 /// `X-Orcabot-Surface` header so the control plane knows the request is from the
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).
