@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-welcome-v2-three-options-google
+// REVISION: desktop-welcome-v4-local-copy
 "use client";
 
 import * as React from "react";
