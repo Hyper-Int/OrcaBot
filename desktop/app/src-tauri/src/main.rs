@@ -1013,6 +1013,10 @@ fn main() {
       commands::get_ports,
       commands::get_app_version,
       commands::verify_orcabot_account,
+      commands::set_cloud_credential,
+      commands::get_cloud_account,
+      commands::clear_cloud_credential,
+      commands::list_cloud_dashboards,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

@@ -676,6 +676,98 @@ fn verify_orcabot_account_blocking(token: &str) -> Result<OrcabotAccount, String
     }
 }
 
+// ---- Cloud account credential (for dashboard sync) -------------------------
+// The signed-in cloud PAT + email, stored host-only (0600) so the app can list
+// and download the user's cloud dashboards. A PAT is full account access, so it
+// NEVER enters the sandbox VM or the webview beyond the initial sign-in. All
+// cloud calls go through the native layer (no browser CORS, token stays in Rust).
+
+const CLOUD_API_BASE: &str = "https://api.orcabot.com";
+
+fn cloud_credential_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path().app_data_dir().ok().map(|d| d.join("cloud-credential"))
+}
+
+fn read_cloud_credential(app: &tauri::AppHandle) -> Option<(String, String)> {
+    let path = cloud_credential_path(app)?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut lines = contents.lines();
+    let token = lines.next()?.trim().to_string();
+    let email = lines.next().unwrap_or("").trim().to_string();
+    if token.is_empty() {
+        return None;
+    }
+    Some((token, email))
+}
+
+#[derive(Serialize, Clone)]
+pub struct CloudAccount {
+    pub email: String,
+}
+
+/// Persist the cloud credential (PAT + email) host-only (0600) for dashboard sync.
+#[tauri::command]
+pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String) -> Result<(), String> {
+    let token = token.trim();
+    if !token.starts_with("orca_pat_") {
+        return Err("Not an Orcabot token.".into());
+    }
+    let path = cloud_credential_path(&app).ok_or("no app data dir")?;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&path, format!("{}\n{}\n", token, email.trim()))
+        .map_err(|e| format!("failed to store credential: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// The signed-in cloud account (email), or null if not signed in to the cloud.
+#[tauri::command]
+pub fn get_cloud_account(app: tauri::AppHandle) -> Option<CloudAccount> {
+    read_cloud_credential(&app).map(|(_, email)| CloudAccount { email })
+}
+
+/// Forget the stored cloud credential (sign out of cloud sync).
+#[tauri::command]
+pub fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(path) = cloud_credential_path(&app) {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(())
+}
+
+/// List the signed-in user's CLOUD dashboards from api.orcabot.com using the
+/// stored PAT. Native (no browser CORS; token never leaves Rust). Returns the raw
+/// JSON so the frontend can render the list + mark which are downloaded locally.
+#[tauri::command]
+pub async fn list_cloud_dashboards(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let (token, _email) = read_cloud_credential(&app).ok_or("Not signed in to the cloud.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        match ureq::get(&format!("{CLOUD_API_BASE}/dashboards"))
+            .set("Authorization", &format!("Bearer {token}"))
+            .timeout(std::time::Duration::from_secs(20))
+            .call()
+        {
+            Ok(resp) => resp
+                .into_json::<serde_json::Value>()
+                .map_err(|e| format!("unexpected response from orcabot.com: {e}")),
+            Err(ureq::Error::Status(401, _)) => {
+                Err("Cloud session expired — sign in again.".into())
+            }
+            Err(ureq::Error::Status(code, _)) => Err(format!("orcabot.com returned {code}.")),
+            Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
+        }
+    })
+    .await
+    .map_err(|e| format!("list task failed: {e}"))?
+}
+
 /// Return the per-boot surface token. The host frontend sends it as the
 /// `X-Orcabot-Surface` header so the control plane knows the request is from the
 /// trusted GUI (not a process inside the sandbox VM spoofing dev-auth).

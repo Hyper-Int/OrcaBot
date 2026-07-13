@@ -112,6 +112,48 @@ export async function verifyOrcabotAccount(token: string): Promise<OrcabotAccoun
   return invoke("verify_orcabot_account", { token }) as Promise<OrcabotAccount>;
 }
 
+// ---- Cloud account credential (dashboard sync) ----
+
+export interface CloudAccount {
+  email: string;
+}
+
+/** Persist the cloud PAT + email natively (host-only) for dashboard sync. */
+export async function setCloudCredential(token: string, email: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("set_cloud_credential", { token, email });
+}
+
+/** The signed-in cloud account, or null if not connected. */
+export async function getCloudAccount(): Promise<CloudAccount | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    return (await invoke("get_cloud_account")) as CloudAccount | null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget the stored cloud credential. */
+export async function clearCloudCredential(): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  try {
+    await invoke("clear_cloud_credential");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** List the signed-in user's cloud dashboards (raw JSON from api.orcabot.com). */
+export async function listCloudDashboards(): Promise<unknown> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("list_cloud_dashboards");
+}
+
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
 export async function revealWorkspace(): Promise<void> {
   const invoke = await getTauriInvoke();

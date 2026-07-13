@@ -11,6 +11,7 @@ import {
   getCachedSurfaceToken,
   onAppFocus,
   openExternalUrl,
+  setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
@@ -62,6 +63,9 @@ export function DesktopWelcome() {
     setTokenError(null);
     try {
       const account = await verifyOrcabotAccount(t);
+      // Keep the token as the cloud credential so we can list/download the user's
+      // cloud dashboards (the app still runs locally; this is only for sync).
+      await setCloudCredential(t, account.email);
       chooseSignedIn(account.email, account.name || account.email);
     } catch (e) {
       setTokenError(e instanceof Error ? e.message : String(e));
