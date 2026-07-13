@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: layout-v8-dashboards-tabs
-const MODULE_REVISION = "layout-v8-dashboards-tabs";
+// REVISION: layout-v9-free-signin-btn
+const MODULE_REVISION = "layout-v9-free-signin-btn";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -29,6 +29,7 @@ import {
   Clock,
   BarChart3,
   Terminal,
+  LogIn,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -48,6 +49,7 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
@@ -72,6 +74,11 @@ export default function DashboardsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user, logout, isAuthenticated, isAuthResolved, isAdmin, setUser } = useAuthStore();
+  // Desktop-only: a Free (local-only) account has nothing to "log out" of, so the
+  // header offers "Sign in" (→ welcome screen) instead of "Log out". A signed-in
+  // cloud account still gets a real "Log out".
+  const accountChoice = useDesktopAccountStore((s) => s.choice);
+  const isFreeDesktop = DESKTOP_MODE && accountChoice === "free";
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
@@ -440,11 +447,24 @@ export default function DashboardsPage() {
                 <Settings className="w-4 h-4" />
               </Button>
             </Tooltip>
-            <Tooltip content="Log out">
-              <Button variant="ghost" size="icon-sm" onClick={handleLogout}>
-                <LogOut className="w-4 h-4" />
-              </Button>
-            </Tooltip>
+            {isFreeDesktop ? (
+              <Tooltip content="Sign in to your Orcabot account">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLogout}
+                  leftIcon={<LogIn className="w-4 h-4" />}
+                >
+                  Sign in
+                </Button>
+              </Tooltip>
+            ) : (
+              <Tooltip content="Log out">
+                <Button variant="ghost" size="icon-sm" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+            )}
           </div>
         </div>
       </header>

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v1
+// REVISION: dashboards-tabs-v2-local-tab-on-free
 "use client";
 
 import * as React from "react";
@@ -21,7 +21,7 @@ import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v1";
+const MODULE_REVISION = "dashboards-tabs-v2-local-tab-on-free";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -228,14 +228,19 @@ export function DashboardsTabs({
     <section>
       <h2 className="text-h2 text-[var(--foreground)] mb-4">Your Dashboards</h2>
 
-      {hasCloud && (
+      {/* Desktop always shows the tab bar (Local Storage tab + count is always
+          present, even on Free); the Online tab only appears once signed in. Web
+          has no cloud/local split, so it renders just the grid below. */}
+      {DESKTOP_MODE && (
         <div className="flex items-center gap-1 mb-4 border-b border-[var(--border)]">
-          <TabButton
-            active={tab === "online"}
-            onClick={() => setTab("online")}
-            label="Online"
-            count={cloudList.length}
-          />
+          {hasCloud && (
+            <TabButton
+              active={tab === "online"}
+              onClick={() => setTab("online")}
+              label="Online"
+              count={cloudList.length}
+            />
+          )}
           <TabButton
             active={tab === "local"}
             onClick={() => setTab("local")}
