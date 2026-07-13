@@ -59,7 +59,14 @@ export function CloudDashboardsSection({
 
   const { data: cloudDashboards, isLoading } = useQuery({
     queryKey: ["cloud-dashboards"],
-    queryFn: async () => (await listCloudDashboards()) as CloudDashboard[],
+    queryFn: async (): Promise<CloudDashboard[]> => {
+      // The /dashboards API wraps the list as { dashboards: [...] }; tolerate a
+      // bare array too. Never return a non-array (guards the .map below).
+      const raw = await listCloudDashboards();
+      if (Array.isArray(raw)) return raw as CloudDashboard[];
+      const wrapped = (raw as { dashboards?: unknown })?.dashboards;
+      return Array.isArray(wrapped) ? (wrapped as CloudDashboard[]) : [];
+    },
     enabled: DESKTOP_MODE && !!cloudEmail,
     staleTime: 30_000,
   });
