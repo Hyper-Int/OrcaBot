@@ -185,11 +185,19 @@ export async function createDashbоard(
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Create dashboard (cloud_id set when downloading from a cloud account)
+  // Create dashboard. cloud_id (desktop downloads only) is set via a follow-up
+  // UPDATE rather than in this INSERT, so the INSERT never references the column —
+  // keeps working on a deployment whose schema migration hasn't added it yet, and
+  // the UPDATE only runs on desktop where the column exists.
   await env.DB.prepare(`
-    INSERT INTO dashboards (id, name, owner_id, cloud_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).bind(id, data.name, userId, data.cloudId ?? null, now, now).run();
+    INSERT INTO dashboards (id, name, owner_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(id, data.name, userId, now, now).run();
+  if (data.cloudId) {
+    await env.DB.prepare(`UPDATE dashboards SET cloud_id = ? WHERE id = ?`)
+      .bind(data.cloudId, id)
+      .run();
+  }
 
   // Add owner as member
   await env.DB.prepare(`
