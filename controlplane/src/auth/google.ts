@@ -1,12 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: popup-login-v1-oauth-popup
-const moduleRevision = "popup-login-v1-oauth-popup";
+// REVISION: desktop-login-v1-google-nonce-poll
+const moduleRevision = "desktop-login-v1-google-nonce-poll";
 console.log(`[auth/google] REVISION: ${moduleRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
 import { buildSessionCookie, createUserSession } from './sessions';
+import { devAuthSurfaceTrusted } from './middleware';
 import { processPendingInvitations } from '../members/handler';
 
 const GOOGLE_LOGIN_SCOPE = [
@@ -201,11 +202,17 @@ export async function loginWithGoogle(
   }
 
   const requestUrl = new URL(request.url);
-  const isPopupMode = requestUrl.searchParams.get('mode') === 'popup';
+  const mode = requestUrl.searchParams.get('mode');
+  const isPopupMode = mode === 'popup';
+  // Desktop login: the app opens this in the OS browser and polls for the result
+  // by a nonce (the OS browser can't hand a session back to the Tauri webview).
+  // Only on the desktop public client; ignored elsewhere so web login is untouched.
+  const isDesktopMode = mode === 'desktop' && env.OAUTH_PUBLIC_CLIENT === 'true';
+  const desktopNonce = isDesktopMode ? requestUrl.searchParams.get('nonce') : null;
 
   // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
-  // Skip Turnstile in popup mode — Google OAuth consent screen provides bot protection
-  if (env.TURNSTILE_SECRET_KEY && !isPopupMode) {
+  // Skip Turnstile in popup/desktop mode — Google's consent screen provides bot protection
+  if (env.TURNSTILE_SECRET_KEY && !isPopupMode && !isDesktopMode) {
     const turnstileToken = requestUrl.searchParams.get('turnstile_token');
     if (!turnstileToken) {
       return renderErrorPage('Bot verification required. Please try again.');
@@ -220,10 +227,22 @@ export async function loginWithGoogle(
     }
   }
 
+  if (isDesktopMode && !desktopNonce) {
+    return renderErrorPage('Desktop sign-in is missing its nonce.');
+  }
+
   const state = crypto.randomUUID();
   const redirectUri = `${getRedirectBase(request, env)}/auth/google/callback`;
-  // In popup mode, store sentinel "popup" so callback knows to render completion page
-  const postLoginRedirect = isPopupMode ? 'popup' : resolvePostLoginRedirect(request, env);
+  // Sentinel in the state's redirect slot tells the callback how to finish:
+  //  - "popup"          → postMessage completion page (web popup login)
+  //  - "desktop:<nonce>" → stash identity for the desktop app to poll, show a
+  //                        "return to Orcabot" page (no browser session is useful)
+  //  - a URL            → normal 302 redirect + session cookie
+  const postLoginRedirect = isPopupMode
+    ? 'popup'
+    : isDesktopMode
+      ? `desktop:${desktopNonce}`
+      : resolvePostLoginRedirect(request, env);
 
   await createAuthState(env, state, postLoginRedirect);
 
@@ -320,6 +339,21 @@ export async function callbackGoogle(
   // Process any pending dashboard invitations for this email
   await processPendingInvitations(env, userId, userInfo.email);
 
+  // Desktop login: no browser session is useful (the desktop app authenticates to
+  // its LOCAL control plane via dev-auth, keyed by email — which findOrCreateUser
+  // above just ensured exists). Stash the identity keyed by the app's nonce so it
+  // can poll for it, then tell the user to return to Orcabot.
+  if (postLoginRedirect.startsWith('desktop:')) {
+    const nonce = postLoginRedirect.slice('desktop:'.length);
+    const name = userInfo.name || userInfo.email.split('@')[0];
+    await createAuthState(
+      env,
+      `desktopresult:${nonce}`,
+      JSON.stringify({ email: userInfo.email, name })
+    );
+    return renderDesktopReturnPage();
+  }
+
   const session = await createUserSession(env, userId);
   const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
@@ -342,6 +376,67 @@ export async function callbackGoogle(
       'Set-Cookie': cookie,
     },
   });
+}
+
+function renderDesktopReturnPage(): Response {
+  return new Response(
+    `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Signed in</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 32px; background:#0d1117; color:#eef2f8; }
+      .card { max-width: 520px; margin: 40px auto 0; text-align: center; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 0 0 16px; color: #9aa4b2; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Signed in to Orcabot</h1>
+      <p>You can close this tab and return to the Orcabot app.</p>
+    </div>
+  </body>
+</html>`,
+    { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
+  );
+}
+
+/**
+ * Desktop app polls this (by the nonce it generated + started the browser flow
+ * with) to learn the signed-in identity, since the OS browser can't hand a
+ * session back to the Tauri webview. Desktop-only (OAUTH_PUBLIC_CLIENT) and gated
+ * by the per-boot surface token, so a process inside the sandbox VM — which never
+ * gets the token — can't harvest the identity even if it guessed the nonce.
+ */
+export async function getDesktopGoogleResult(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+
+  if (env.OAUTH_PUBLIC_CLIENT !== 'true') {
+    return json({ error: 'not_available' }, 404);
+  }
+  if (!devAuthSurfaceTrusted(request, env)) {
+    return json({ error: 'forbidden' }, 403);
+  }
+  const nonce = new URL(request.url).searchParams.get('nonce');
+  if (!nonce) {
+    return json({ error: 'missing_nonce' }, 400);
+  }
+  const identity = await consumeAuthState(env, `desktopresult:${nonce}`);
+  if (!identity) {
+    return json({ pending: true });
+  }
+  try {
+    const parsed = JSON.parse(identity) as { email: string; name: string };
+    return json({ email: parsed.email, name: parsed.name });
+  } catch {
+    return json({ error: 'corrupt' }, 500);
+  }
 }
 
 function renderLoginCompletePage(

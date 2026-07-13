@@ -922,6 +922,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const skipIpRateLimit =
       path === '/auth/google/callback'
       || path === '/auth/google/login'
+      || path === '/auth/desktop/google-result'
       || path === '/auth/config'
       || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)
@@ -1007,6 +1008,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // GET /auth/google/callback - Google OAuth callback
   if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'callback' && method === 'GET') {
     return googleAuth.callbackGoogle(request, env);
+  }
+
+  // GET /auth/desktop/google-result - desktop app polls for the Google sign-in
+  // result by nonce (desktop-only, surface-token gated inside the handler).
+  if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'google-result' && method === 'GET') {
+    return googleAuth.getDesktopGoogleResult(request, env);
   }
 
   // POST /register-interest - Register interest (no auth required)

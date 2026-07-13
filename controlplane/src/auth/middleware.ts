@@ -77,7 +77,7 @@ export async function authenticate(
  * the host frontend (which sends the matching X-Orcabot-Surface header) may use
  * dev-auth. When unset (cloud / local dev / older builds), enforcement is off.
  */
-function devAuthSurfaceTrusted(request: Request, env: Env): boolean {
+export function devAuthSurfaceTrusted(request: Request, env: Env): boolean {
   const expected = env.SURFACE_TOKEN;
   if (!expected) return true;
   // Header for fetch/XHR; query param for top-level browser navigations (OAuth
