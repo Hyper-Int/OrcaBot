@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v9-openrouter-key-warning
-const TERMINAL_BLOCK_REVISION = "terminal-block-v9-openrouter-key-warning";
+// REVISION: terminal-block-v10-first-connect-no-clear
+const TERMINAL_BLOCK_REVISION = "terminal-block-v10-first-connect-no-clear";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 

@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: ai-setup-card-v3-skip-onclick-fix
+// REVISION: ai-setup-card-v4-secret-input
 
 "use client";
 
-const REVISION = "ai-setup-card-v3-skip-onclick-fix";
+const REVISION = "ai-setup-card-v4-secret-input";
 console.log(`[AiProviderSetupCard] REVISION: ${REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";

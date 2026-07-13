@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v9-title-and-account-menu
+// REVISION: teams-block-v10-secret-input
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v9-title-and-account-menu";
+const MODULE_REVISION = "teams-block-v10-secret-input";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: layout-v6-restore-desktop-order
-const MODULE_REVISION = "layout-v6-restore-desktop-order";
+// REVISION: layout-v7-secret-input
+const MODULE_REVISION = "layout-v7-secret-input";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );

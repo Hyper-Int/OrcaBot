@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: asr-settings-v3-unified-secrets
+// REVISION: asr-settings-v4-secret-input
 
 "use client";
 

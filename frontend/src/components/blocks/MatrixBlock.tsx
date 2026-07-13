@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: matrix-block-v3-help-button
+// REVISION: matrix-block-v4-secret-input
 
 "use client";
 
-const MODULE_REVISION = "matrix-block-v3-help-button";
+const MODULE_REVISION = "matrix-block-v4-secret-input";
 console.log(`[MatrixBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";

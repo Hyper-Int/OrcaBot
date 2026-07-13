@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v18-title-and-account-menu
+// REVISION: whatsapp-block-v19-secret-input
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v18-title-and-account-menu";
+const MODULE_REVISION = "whatsapp-block-v19-secret-input";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";

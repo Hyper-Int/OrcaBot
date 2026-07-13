@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: google-chat-block-v3-help-button
+// REVISION: google-chat-block-v4-secret-input
 
 "use client";
 
-const MODULE_REVISION = "google-chat-block-v3-help-button";
+const MODULE_REVISION = "google-chat-block-v4-secret-input";
 console.log(`[GoogleChatBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
