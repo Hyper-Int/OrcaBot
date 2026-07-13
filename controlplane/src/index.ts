@@ -11,7 +11,7 @@ console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded 
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, devAuthSurfaceTrusted, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -1169,21 +1169,50 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return authLogout.logout(request, env);
   }
 
-  // POST /auth/dev/session - create session cookie in dev mode
+  // POST /auth/dev/session - mint a session cookie for the DEV-AUTH-HEADER identity.
+  // Deliberately does NOT use the cookie-first `auth`: the desktop app calls this
+  // to say "I'm now this user" (via X-User-* headers), and if we minted from an
+  // existing (stale) cookie instead, switching identity — Free ↔ Google ↔ token —
+  // would re-mint the OLD user and the session would get stuck. Gated by the same
+  // surface token as dev-auth so a VM process can't spoof it.
   if (segments[0] === 'auth' && segments[1] === 'dev' && segments[2] === 'session' && method === 'POST') {
     if (env.DEV_AUTH_ENABLED !== 'true') {
       return Response.json({ error: 'E79406: Dev auth disabled' }, { status: 403 });
     }
+    if (!devAuthSurfaceTrusted(request, env)) {
+      return Response.json({ error: 'E79407: Untrusted surface' }, { status: 403 });
+    }
 
-    const authError = requireAuth(auth);
-    if (authError) return authError;
+    const headerUserId = request.headers.get('X-User-ID');
+    const userEmail = request.headers.get('X-User-Email');
+    const userName = request.headers.get('X-User-Name') || 'Anonymous';
+    if (!headerUserId || !userEmail) {
+      return Response.json({ error: 'E79408: Missing dev-auth identity' }, { status: 400 });
+    }
 
-    const session = await createUserSession(env, auth.user!.id);
+    // Dev-auth is email-keyed: resolve an existing user by email (reconciling a
+    // client-generated id), else create one — same rule as authenticateDevMode.
+    const existing = await env.DB
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .bind(userEmail)
+      .first<{ id: string }>();
+    let resolvedId = existing?.id;
+    if (!resolvedId) {
+      const now = new Date().toISOString();
+      await env.DB
+        .prepare('INSERT INTO users (id, email, name, created_at, trial_started_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(headerUserId, userEmail, userName, now, now)
+        .run();
+      resolvedId = headerUserId;
+    }
+
+    const session = await createUserSession(env, resolvedId);
     const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
-    return new Response(null, {
-      status: 204,
+    return new Response(JSON.stringify({ id: resolvedId, email: userEmail }), {
+      status: 200,
       headers: {
+        'Content-Type': 'application/json',
         'Set-Cookie': cookie,
       },
     });
