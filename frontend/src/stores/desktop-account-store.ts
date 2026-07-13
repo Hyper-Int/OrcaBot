@@ -52,11 +52,21 @@ export const useDesktopAccountStore = create<DesktopAccountState>()(
       name: "orcabot-desktop-account",
       // Persist only the choice + identity, never a transient flag.
       partialize: (s) => ({ choice: s.choice, email: s.email, name: s.name }),
-      onRehydrateStorage: () => () => {
-        // Runs after the persisted value is applied — flip the flag so the gate
-        // renders once we actually know the choice (avoids a first-run flash).
-        useDesktopAccountStore.setState({ hydrated: true });
-      },
     }
   )
 );
+
+// Flip `hydrated` once the persisted value has loaded, so the gate doesn't flash
+// the welcome screen before we know the choice. This MUST be done after the store
+// is created — referencing `useDesktopAccountStore` inside persist's
+// onRehydrateStorage hits the const's temporal dead zone (sync localStorage
+// hydrates during create()), which threw a ReferenceError and crashed the app.
+if (typeof window !== "undefined") {
+  const markHydrated = () =>
+    useDesktopAccountStore.setState({ hydrated: true });
+  if (useDesktopAccountStore.persist.hasHydrated()) {
+    markHydrated();
+  } else {
+    useDesktopAccountStore.persist.onFinishHydration(markHydrated);
+  }
+}
