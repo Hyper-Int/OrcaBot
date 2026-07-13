@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v21-file-api-relative-path
+// REVISION: chat-v22-viewer-rbac-timeout-report
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v21-file-api-relative-path loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v22-viewer-rbac-timeout-report loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -888,12 +888,15 @@ async function executeTool(
         return { result: { error: 'command is required' }, isError: true };
       }
 
+      // Executing shell commands mutates the shared workspace, so require write
+      // access (owner/editor) — matching session creation. A viewer must not be
+      // able to run_command.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
-      if (!access) {
-        console.log(`[run_command] DENIED no dashboard_members row dashboard=${dashboardId} user=${userId}`);
-        return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+        console.log(`[run_command] DENIED role=${access?.role ?? 'none'} dashboard=${dashboardId} user=${userId}`);
+        return { result: { error: 'Access denied. run_command requires owner or editor access to this dashboard.' }, isError: true };
       }
 
       const sb = await env.DB.prepare(`
@@ -966,14 +969,18 @@ async function executeTool(
         if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
 
         if (exitRaw === null) {
+          // The cleanup above deleted the PTY, which kills the process group — so
+          // the command was TERMINATED at the timeout, not left running. Report
+          // that accurately (and as an error, since it did not complete).
           return {
             result: {
               timed_out: true,
-              message: `Command still running after ${timeoutS}s. For long-running processes use create_terminal instead and check progress with read_file.`,
+              terminated: true,
+              message: `Command exceeded the ${timeoutS}s limit and was terminated. For a long-running process, launch it with create_terminal instead and check progress with read_file.`,
               output,
               truncated,
             },
-            isError: false,
+            isError: true,
           };
         }
         const exitCode = Number.parseInt(exitRaw.trim(), 10);
@@ -994,14 +1001,16 @@ async function executeTool(
       const input = args.input as string;
       const pressEnter = args.press_enter !== false;
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
@@ -1062,14 +1071,16 @@ async function executeTool(
         };
       }
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
