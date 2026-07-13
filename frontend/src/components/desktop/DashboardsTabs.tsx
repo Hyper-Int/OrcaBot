@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v5-workspace-download
+// REVISION: dashboards-tabs-v6-download-progress
 "use client";
 
 import * as React from "react";
@@ -20,12 +20,14 @@ import {
   getCloudAccount,
   listCloudDashboards,
   openExternalUrl,
+  onCloudWorkspaceProgress,
+  type CloudWorkspaceProgress,
 } from "@/lib/tauri-bridge";
 import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v5-workspace-download";
+const MODULE_REVISION = "dashboards-tabs-v6-download-progress";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -70,8 +72,26 @@ export function DashboardsTabs({
   const [cloudEmail, setCloudEmail] = React.useState<string | null>(null);
   const [downloading, setDownloading] = React.useState<Set<string>>(new Set());
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
+  const [progress, setProgress] = React.useState<Record<string, CloudWorkspaceProgress>>({});
   const [tab, setTab] = React.useState<"online" | "local">("local");
   const defaultedToOnline = React.useRef(false);
+
+  // Live progress for in-flight downloads (so a slow cold cloud-VM boot doesn't
+  // look like a hang), keyed by cloud dashboard id.
+  React.useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let alive = true;
+    onCloudWorkspaceProgress((p) => {
+      setProgress((prev) => ({ ...prev, [p.cloud_id]: p }));
+    }).then((u) => {
+      if (alive) unlisten = u;
+      else u?.();
+    });
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
 
   React.useEffect(() => {
     if (!DESKTOP_MODE) return;
@@ -143,6 +163,11 @@ export function DashboardsTabs({
       setDownloading((s) => {
         const next = new Set(s);
         next.delete(cd.id);
+        return next;
+      });
+      setProgress((prev) => {
+        const next = { ...prev };
+        delete next[cd.id];
         return next;
       });
     }
@@ -229,6 +254,7 @@ export function DashboardsTabs({
             cd={cd}
             local={localByCloudId.get(cd.id)}
             isDownloading={downloading.has(cd.id)}
+            downloadingLabel={downloadLabel(progress[cd.id])}
             onDownload={() => void download(cd)}
             onOpen={onOpen}
           />
@@ -302,16 +328,32 @@ function TabButton({
   );
 }
 
+/** Map download progress to a short status label shown on the card. */
+function downloadLabel(p?: CloudWorkspaceProgress): string {
+  switch (p?.phase) {
+    case "starting":
+      return "Starting…";
+    case "booting":
+      return "Starting cloud workspace…";
+    case "copying":
+      return p.written > 0 ? `Copying files… (${p.written})` : "Copying files…";
+    default:
+      return "Downloading…";
+  }
+}
+
 function CloudDashboardCard({
   cd,
   local,
   isDownloading,
+  downloadingLabel,
   onDownload,
   onOpen,
 }: {
   cd: CloudDashboard;
   local: Dashboard | undefined;
   isDownloading: boolean;
+  downloadingLabel: string;
   onDownload: () => void;
   onOpen: (localDashboardId: string) => void;
 }) {
@@ -373,7 +415,7 @@ function CloudDashboardCard({
                 ) : (
                   <Download className="w-3.5 h-3.5" />
                 )}
-                {isDownloading ? "Downloading…" : "Download"}
+                {isDownloading ? downloadingLabel : "Download"}
               </button>
             )}
           </div>

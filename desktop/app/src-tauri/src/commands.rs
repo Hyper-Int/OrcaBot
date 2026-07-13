@@ -817,6 +817,17 @@ pub struct WorkspaceDownloadResult {
     pub had_workspace: bool,
 }
 
+/// Progress for a workspace download, emitted as `cloud-workspace-progress` so the
+/// UI can show what's happening during a slow cold cloud-VM boot (otherwise a
+/// legitimately slow pull looks like a hang). Keyed by `cloud_id`.
+#[derive(Serialize, Clone)]
+pub struct CloudWorkspaceProgress {
+    pub cloud_id: String,
+    /// "starting" | "booting" | "copying"
+    pub phase: String,
+    pub written: u64,
+}
+
 /// GET a JSON body from the cloud with the PAT. Maps the paywall to a sentinel.
 fn cloud_get_json(token: &str, url: &str) -> Result<serde_json::Value, String> {
     match ureq::get(url)
@@ -966,7 +977,12 @@ fn cloud_file_get_ready(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, St
 /// session, else start one on an EXISTING terminal item (boots the cloud VM). We
 /// never CREATE a terminal item — a download shouldn't add phantom blocks to the
 /// user's cloud dashboard. Returns None when there is no terminal item at all.
-fn cloud_ensure_session(token: &str, dash: &str) -> Result<Option<String>, String> {
+/// `on_boot` is called each poll iteration while waiting for a cold VM (progress).
+fn cloud_ensure_session(
+    token: &str,
+    dash: &str,
+    on_boot: &dyn Fn(),
+) -> Result<Option<String>, String> {
     let dash_url = format!("{CLOUD_API_BASE}/dashboards/{dash}");
     let v = cloud_get_json(token, &dash_url)?;
 
@@ -1004,7 +1020,8 @@ fn cloud_ensure_session(token: &str, dash: &str) -> Result<Option<String>, Strin
     )?;
 
     // Poll for the session to go active (cloud spins up a VM — allow generous time).
-    for _ in 0..60 {
+    for _ in 0..120 {
+        on_boot();
         std::thread::sleep(std::time::Duration::from_secs(2));
         let v = cloud_get_json(token, &dash_url)?;
         if let Some(sessions) = v.get("sessions").and_then(|x| x.as_array()) {
@@ -1176,8 +1193,22 @@ pub async fn download_cloud_workspace(
         .canonicalize()
         .map_err(|e| format!("resolve workspace dir: {e}"))?;
 
+    let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let sid = match cloud_ensure_session(&token, &cloud_id) {
+        // Emit progress so a slow cold cloud-VM boot doesn't look like a hang.
+        let emit = |phase: &str, written: u64| {
+            let _ = app2.emit(
+                "cloud-workspace-progress",
+                CloudWorkspaceProgress {
+                    cloud_id: cloud_id.clone(),
+                    phase: phase.to_string(),
+                    written,
+                },
+            );
+        };
+
+        emit("starting", 0);
+        let sid = match cloud_ensure_session(&token, &cloud_id, &|| emit("booting", 0)) {
             Ok(Some(s)) => s,
             Ok(None) => {
                 return Ok(WorkspaceDownloadResult { written: 0, skipped: 0, had_workspace: false })
@@ -1190,6 +1221,7 @@ pub async fn download_cloud_workspace(
             Err(e) => return Err(e),
         };
 
+        emit("copying", 0);
         // Walk the workspace directory-by-directory, pruning excluded dirs so we
         // never descend into node_modules/.git. Each list is one (bounded) dir.
         let mut written = 0u64;
@@ -1244,7 +1276,12 @@ pub async fn download_cloud_workspace(
                     }
                 };
                 match safe_workspace_write(&ws_canon, &rel, &data) {
-                    Ok(()) => written += 1,
+                    Ok(()) => {
+                        written += 1;
+                        if written % 20 == 0 {
+                            emit("copying", written);
+                        }
+                    }
                     Err(_) => skipped += 1,
                 }
             }

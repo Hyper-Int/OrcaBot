@@ -416,6 +416,23 @@ export async function onImportProgress(
   return listenGlobal<ImportProgress>("folder-import-progress", callback);
 }
 
+export interface CloudWorkspaceProgress {
+  cloud_id: string;
+  /** "starting" | "booting" | "copying" */
+  phase: string;
+  written: number;
+}
+
+/**
+ * Listen for cloud workspace-download progress (`cloud-workspace-progress`) so the
+ * UI can show "Starting…/Booting…/Copying files" during a slow cold cloud-VM boot.
+ */
+export async function onCloudWorkspaceProgress(
+  callback: (progress: CloudWorkspaceProgress) => void
+): Promise<(() => void) | null> {
+  return listenGlobal<CloudWorkspaceProgress>("cloud-workspace-progress", callback);
+}
+
 /**
  * Listen for auto-update progress emitted from Rust (`update-progress`). Fires
  * once the user accepts the update (download start → per-MB progress → install),
