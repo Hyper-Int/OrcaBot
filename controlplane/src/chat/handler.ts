@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v19-help-docs-grounding
+// REVISION: chat-v20-run-command-logging
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v19-help-docs-grounding loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v20-run-command-logging loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -639,6 +639,7 @@ async function executeTool(
   requestOrigin?: string
 ): Promise<{ result: Record<string, unknown>; isError: boolean }> {
   try {
+    console.log(`[executeTool] tool=${toolName} argKeys=${JSON.stringify(Object.keys(args))} dashboard_id=${args.dashboard_id ?? '(none)'}`);
     // ==========================================
     // Phase 2: Dashboard Management Tools
     // ==========================================
@@ -880,6 +881,7 @@ async function executeTool(
         typeof args.timeout_s === 'number' && args.timeout_s > 0 ? args.timeout_s : 120,
         300
       );
+      console.log(`[run_command] enter dashboard=${dashboardId} timeoutS=${timeoutS} cmdLen=${command.length} cmd=${JSON.stringify(command.slice(0, 200))}`);
       if (!command.trim()) {
         return { result: { error: 'command is required' }, isError: true };
       }
@@ -888,6 +890,7 @@ async function executeTool(
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
       if (!access) {
+        console.log(`[run_command] DENIED no dashboard_members row dashboard=${dashboardId} user=${userId}`);
         return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
       }
 
@@ -895,6 +898,7 @@ async function executeTool(
         SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
       `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
       if (!sb) {
+        console.log(`[run_command] NO SANDBOX row in dashboard_sandboxes for dashboard=${dashboardId}`);
         return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal first.' }, isError: true };
       }
 
@@ -922,18 +926,23 @@ async function executeTool(
       let pty: { id: string } | null = null;
       try {
         pty = await client.createPty(sessionId, '', wrapped, machineId);
+        console.log(`[run_command] pty created id=${pty?.id} session=${sessionId} machine=${machineId ?? '(none)'} — polling ${exitPath}`);
 
         // Poll the (internal-token) file API for the exit marker — no new sandbox
         // endpoint needed. Interval kept at 2s to bound subrequest count.
         const started = Date.now();
         let exitRaw: string | null = null;
+        let polls = 0;
         while (Date.now() - started < timeoutS * 1000) {
           await new Promise((r) => setTimeout(r, 2000));
+          polls++;
           exitRaw = await readMarker(exitPath);
           if (exitRaw !== null) break;
         }
+        console.log(`[run_command] poll done polls=${polls} exitMarker=${exitRaw === null ? 'MISSING(timeout)' : JSON.stringify(exitRaw.trim())}`);
 
         let output = (await readMarker(outPath)) || '';
+        console.log(`[run_command] output bytes=${output.length}`);
         const truncated = output.length > 8000;
         if (truncated) output = output.slice(-8000);
 
@@ -961,6 +970,7 @@ async function executeTool(
           isError: !Number.isNaN(exitCode) && exitCode !== 0,
         };
       } catch (error) {
+        console.error(`[run_command] THREW: ${error instanceof Error ? error.stack || error.message : String(error)}`);
         if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
         return { result: { error: `run_command failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
       }
