@@ -8,43 +8,65 @@ import (
 	"testing"
 )
 
-// Regression guard: `notify` is a TOP-LEVEL Codex key and MUST precede every [table]
-// header, and trust must accumulate across dashboards with exactly one notify line.
+// Regression guard for the OrcaBot-managed Codex system config:
+//   - `notify` is a TOP-LEVEL key and MUST precede every [table] header
+//   - existing [mcp_servers.*] (written by GenerateSettingsForAgent) is PRESERVED
+//   - per-dashboard trust accumulates, with exactly one notify line
 func TestBuildCodexSystemConfig(t *testing.T) {
 	const script = "/etc/codex/orcabot-codex-stop.sh"
 
-	cfg := buildCodexSystemConfig("", "/workspace/aaa", script)
-	nIdx := strings.Index(cfg, "notify = [")
-	tIdx := strings.Index(cfg, "[projects.")
-	if nIdx < 0 {
-		t.Fatalf("notify missing:\n%s", cfg)
-	}
-	if tIdx < 0 || nIdx > tIdx {
-		t.Fatalf("notify must appear before the first [table] header:\n%s", cfg)
-	}
-	if !strings.Contains(cfg, `[projects."/workspace/aaa"]`) {
-		t.Fatalf("first dashboard root not trusted:\n%s", cfg)
-	}
+	// A config as GenerateSettingsForAgent leaves it: an MCP server table (+ a stray
+	// notify that a prior bug nested inside a project table, which must be cleaned up).
+	existing := `check_for_updates = false
+notify = ["/old/script"]
 
-	// Second dashboard: preserve the first's trust, add its own, keep ONE notify.
-	cfg2 := buildCodexSystemConfig(cfg, "/workspace/bbb", script)
-	if got := strings.Count(cfg2, "notify = ["); got != 1 {
-		t.Fatalf("expected exactly one notify line, got %d:\n%s", got, cfg2)
+[mcp_servers.orcabot]
+command = "/opt/orcabot/mcp-bridge"
+args = ["--session", "s1"]
+env = { ORCABOT_MCP_SECRET = "x" }
+
+[projects."/workspace/aaa"]
+trust_level = "trusted"
+notify = ["/stray/should/be/removed"]
+`
+
+	cfg := buildCodexSystemConfig(existing, "/workspace/bbb", script)
+
+	// notify present, single, and references only the global script.
+	if got := strings.Count(cfg, "notify = ["); got != 1 {
+		t.Fatalf("expected exactly one notify line, got %d:\n%s", got, cfg)
 	}
-	if strings.Count(cfg2, script) != 1 {
-		t.Fatalf("notify should reference the single global script once:\n%s", cfg2)
+	if !strings.Contains(cfg, script) || strings.Contains(cfg, "/old/script") || strings.Contains(cfg, "/stray/should/be/removed") {
+		t.Fatalf("notify must be the single global script, no strays:\n%s", cfg)
 	}
+	// notify is top-level: before EVERY table header (mcp_servers and projects).
+	nIdx := strings.Index(cfg, "notify = [")
+	firstTable := strings.Index(cfg, "[")
+	if nIdx < 0 || firstTable < 0 || nIdx > firstTable {
+		t.Fatalf("notify must precede the first [table]:\n%s", cfg)
+	}
+	// MCP server section preserved verbatim.
+	if !strings.Contains(cfg, "[mcp_servers.orcabot]") ||
+		!strings.Contains(cfg, `command = "/opt/orcabot/mcp-bridge"`) ||
+		!strings.Contains(cfg, `ORCABOT_MCP_SECRET = "x"`) {
+		t.Fatalf("mcp_servers section must be preserved:\n%s", cfg)
+	}
+	// Both dashboard roots trusted; the stray nested notify is gone.
 	for _, root := range []string{`[projects."/workspace/aaa"]`, `[projects."/workspace/bbb"]`} {
-		if !strings.Contains(cfg2, root) {
-			t.Fatalf("missing trust table %s:\n%s", root, cfg2)
+		if !strings.Contains(cfg, root) {
+			t.Fatalf("missing trust table %s:\n%s", root, cfg)
 		}
 	}
-	if strings.Index(cfg2, "notify = [") > strings.Index(cfg2, "[projects.") {
-		t.Fatalf("notify must stay top-level after accumulation:\n%s", cfg2)
+
+	// Idempotent + still preserves MCP when re-fed its own output for an existing root.
+	cfg2 := buildCodexSystemConfig(cfg, "/workspace/aaa", script)
+	if strings.Count(cfg2, `[projects."/workspace/aaa"]`) != 1 {
+		t.Fatalf("trust table /workspace/aaa duplicated:\n%s", cfg2)
 	}
-	// Idempotent: re-running with an already-trusted root doesn't duplicate it.
-	cfg3 := buildCodexSystemConfig(cfg2, "/workspace/aaa", script)
-	if got := strings.Count(cfg3, `[projects."/workspace/aaa"]`); got != 1 {
-		t.Fatalf("trust table for /workspace/aaa duplicated (%d):\n%s", got, cfg3)
+	if !strings.Contains(cfg2, "[mcp_servers.orcabot]") {
+		t.Fatalf("mcp_servers lost on regeneration:\n%s", cfg2)
+	}
+	if strings.Count(cfg2, "notify = [") != 1 {
+		t.Fatalf("notify duplicated on regeneration:\n%s", cfg2)
 	}
 }

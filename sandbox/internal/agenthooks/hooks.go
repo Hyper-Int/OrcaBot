@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -1143,32 +1142,82 @@ fi
 // added, so trust accumulates across dashboards while notify stays a single top-level
 // command. Pure (no filesystem) so it can be unit-tested.
 func buildCodexSystemConfig(existingConfig, workspaceRoot, scriptPath string) string {
-	trustedRoots := map[string]bool{workspaceRoot: true}
+	// Parse the existing config into a top-level preamble (before the first [header]) and
+	// its [table] sections. We MANAGE only two things: the top-level check_for_updates /
+	// notify keys, and the [projects."<root>"] trust tables. EVERYTHING else — notably
+	// [mcp_servers.*] written by mcp.GenerateSettingsForAgent into this same file — is
+	// preserved verbatim, so regenerating hooks doesn't clobber MCP tools.
+	var preamble []string
+	type section struct {
+		header string
+		body   []string
+	}
+	var sections []section
 	for _, line := range strings.Split(existingConfig, "\n") {
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, `[projects."`) && strings.HasSuffix(t, `"]`) {
-			if root := t[len(`[projects."`) : len(t)-len(`"]`)]; root != "" {
-				trustedRoots[root] = true
-			}
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			sections = append(sections, section{header: strings.TrimSpace(line)})
+		} else if len(sections) == 0 {
+			preamble = append(preamble, line)
+		} else {
+			sections[len(sections)-1].body = append(sections[len(sections)-1].body, line)
 		}
 	}
-	roots := make([]string, 0, len(trustedRoots))
-	for r := range trustedRoots {
-		roots = append(roots, r)
+
+	isManaged := func(line string) bool {
+		t := strings.TrimSpace(line)
+		return strings.HasPrefix(t, "check_for_updates") || strings.HasPrefix(t, "notify")
 	}
-	sort.Strings(roots) // stable, deterministic output
+	isTrustTable := func(header string) bool {
+		return strings.HasPrefix(header, `[projects."`) && strings.HasSuffix(header, `"]`)
+	}
 
 	var b strings.Builder
-	b.WriteString("# OrcaBot-managed Codex system config — regenerated per session.\n")
-	b.WriteString("# Update check disabled — updates ship via image rebuilds.\n")
+	// (1) Managed top-level keys FIRST — they MUST precede any [table] or TOML scopes
+	//     them under it (that was the earlier notify-under-[projects] bug).
+	b.WriteString("# OrcaBot-managed Codex system config.\n")
 	b.WriteString("check_for_updates = false\n")
-	// Agent stop notification → one global script; it derives session/pty/secret from
-	// per-PTY env vars at runtime, so a single top-level notify works for all dashboards.
+	// One global notify script; it derives session/pty/secret from per-PTY env at runtime.
 	b.WriteString(fmt.Sprintf("notify = [\"%s\"]\n", scriptPath))
-	// Per-project trust tables LAST. Pre-trust each dashboard's session workspace root
-	// so Codex doesn't prompt (the sandbox is already isolated).
-	for _, r := range roots {
-		b.WriteString(fmt.Sprintf("\n[projects.%q]\ntrust_level = \"trusted\"\n", r))
+	// (2) Preserve any OTHER top-level keys a tool set (drop our managed ones + our own
+	//     comment lines so they don't accumulate across regenerations).
+	for _, line := range preamble {
+		t := strings.TrimSpace(line)
+		if isManaged(line) || t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		b.WriteString(line + "\n")
+	}
+
+	// (3) Re-emit preserved sections (e.g. [mcp_servers.*]); normalize [projects] trust
+	//     tables and note whether this session's root is already present.
+	trustHeader := fmt.Sprintf(`[projects.%q]`, workspaceRoot)
+	haveCurrentTrust := false
+	for _, s := range sections {
+		if isTrustTable(s.header) {
+			if s.header == trustHeader {
+				haveCurrentTrust = true
+			}
+			b.WriteString("\n" + s.header + "\ntrust_level = \"trusted\"\n")
+			continue
+		}
+		// Non-managed section — preserve verbatim, minus any stray managed key a prior
+		// bug may have nested inside it, and minus trailing blank lines (idempotency).
+		kept := make([]string, 0, len(s.body))
+		for _, line := range s.body {
+			if isManaged(line) {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+		b.WriteString("\n" + s.header + "\n")
+		if body != "" {
+			b.WriteString(body + "\n")
+		}
+	}
+	// (4) Ensure this dashboard's session root is trusted.
+	if !haveCurrentTrust {
+		b.WriteString("\n" + trustHeader + "\ntrust_level = \"trusted\"\n")
 	}
 	return b.String()
 }
