@@ -1056,7 +1056,19 @@ fi
 
 // generateCodexHooks creates notify hook for Codex CLI
 func generateCodexHooks(workspaceRoot, hooksDir string) error {
-	scriptPath := filepath.Join(hooksDir, "codex-stop.sh")
+	_ = hooksDir // Codex uses ONE global script (below), not the per-session hooks dir.
+	// One GLOBAL, workspace-independent notify script shared by every dashboard's Codex
+	// session. Codex's notify lives in the system-wide /etc/codex/config.toml (a single
+	// notify for ALL projects), so a per-workspace script path gets appended as a second
+	// array element and corrupts the command — Codex would treat the first script as the
+	// executable and pass the second path as $1 instead of the event JSON. The script
+	// derives its session/pty/secret context from per-PTY env vars at runtime, so one
+	// global copy works for every dashboard.
+	systemCodexDir := "/etc/codex"
+	if err := os.MkdirAll(systemCodexDir, 0755); err != nil {
+		return err
+	}
+	scriptPath := filepath.Join(systemCodexDir, "orcabot-codex-stop.sh")
 	// Codex passes JSON as first argument, not stdin
 	// Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
 	script := `#!/bin/bash
@@ -1097,15 +1109,9 @@ fi
 		return fmt.Errorf("failed to write codex hook script: %w", err)
 	}
 
-	// Write notify to /etc/codex/config.toml (system config).
-	// Codex CLI overwrites ~/.codex/config.toml on startup, stripping our additions.
-	// System config is read but not overwritten by Codex.
-	systemCodexDir := "/etc/codex"
-	if err := os.MkdirAll(systemCodexDir, 0755); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] generateCodexHooks: systemCodexDir=%s\n", systemCodexDir)
-
+	// Write notify to /etc/codex/config.toml (system config). Codex CLI overwrites
+	// ~/.codex/config.toml on startup, stripping our additions; the system config is
+	// read but not overwritten by Codex.
 	configPath := filepath.Join(systemCodexDir, "config.toml")
 
 	// Read existing system config or create new
@@ -1140,42 +1146,25 @@ fi
 		existingConfig += fmt.Sprintf("\n# Pre-trust the session workspace — sandbox is already isolated\n[%s]\ntrust_level = \"trusted\"\n", trustKey)
 	}
 
-	// Check if our script is already in the config
-	if strings.Contains(existingConfig, scriptPath) {
-		// Already configured, write config (may have added check_for_updates above)
-		if err := os.WriteFile(configPath, []byte(existingConfig), 0644); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// Check if notify is already set
+	// Point notify at EXACTLY our one global script — REPLACE any existing notify line
+	// rather than appending. Codex treats the notify array as command+args, so a second
+	// element would be passed as $1 instead of the event JSON and break completions.
+	// Because the script path is fixed and global, this is idempotent across dashboards.
+	notifyLine := fmt.Sprintf(`notify = ["%s"]`, scriptPath)
 	if strings.Contains(existingConfig, "notify") {
-		// Parse existing notify array and append our script
 		lines := strings.Split(existingConfig, "\n")
 		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "notify") {
-				start := strings.Index(line, "[")
-				end := strings.LastIndex(line, "]")
-				if start != -1 && end != -1 && end > start {
-					existing := strings.TrimSpace(line[start+1 : end])
-					if existing == "" {
-						lines[i] = fmt.Sprintf(`notify = ["%s"]`, scriptPath)
-					} else {
-						lines[i] = fmt.Sprintf(`notify = [%s, "%s"]`, existing, scriptPath)
-					}
-				}
+			if strings.HasPrefix(strings.TrimSpace(line), "notify") {
+				lines[i] = notifyLine
 				break
 			}
 		}
 		existingConfig = strings.Join(lines, "\n")
 	} else {
-		// Add notify line
 		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
 			existingConfig += "\n"
 		}
-		existingConfig += fmt.Sprintf("\n# OrcaBot agent stop notification\nnotify = [\"%s\"]\n", scriptPath)
+		existingConfig += "\n# OrcaBot agent stop notification\n" + notifyLine + "\n"
 	}
 
 	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Codex system config to %s:\n%s\n", configPath, existingConfig)

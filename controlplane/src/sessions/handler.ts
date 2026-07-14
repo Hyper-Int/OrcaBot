@@ -528,21 +528,29 @@ async function ensureDashbоardSandbоxCreate(
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
   // On desktop this is the local VM, which may still be booting on a cold app launch
   // (the window loads immediately and fires session-create before the VM is up). Retry
-  // the connection for ~30s instead of failing the first terminal.
+  // for up to ~30s — but ONLY connection/transient failures ("fetch error:" from the
+  // client, i.e. the VM isn't listening yet), never deterministic HTTP errors like a
+  // 4xx auth mismatch. Bounded by an overall deadline so a hung connection can't stack
+  // up 12×15s of client timeouts.
   let sandboxSession: { id: string; machineId?: string } | undefined;
   let lastCreateErr: unknown;
-  for (let attempt = 0; attempt < 12; attempt++) {
+  const retryDeadline = Date.now() + 30_000;
+  while (Date.now() < retryDeadline) {
     try {
       sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
       break;
     } catch (createErr) {
       lastCreateErr = createErr;
-      if (attempt < 11) {
-        console.warn(
-          `[ensureDashboardSandboxCreate] createSession attempt ${attempt + 1}/12 failed (sandbox may still be booting): ${createErr instanceof Error ? createErr.message : createErr}. Retrying in 3s...`
-        );
-        await new Promise((r) => setTimeout(r, 3000));
+      const msg = createErr instanceof Error ? createErr.message : String(createErr);
+      // Only "fetch error:" (connection refused/reset/timeout) is transient; an HTTP
+      // status error (createSession throws "<status> <statusText>") is deterministic.
+      if (!msg.includes('fetch error:') || Date.now() + 3000 >= retryDeadline) {
+        throw createErr;
       }
+      console.warn(
+        `[ensureDashboardSandboxCreate] createSession failed (sandbox may still be booting), retrying in 3s: ${msg}`
+      );
+      await new Promise((r) => setTimeout(r, 3000));
     }
   }
   if (!sandboxSession) {
