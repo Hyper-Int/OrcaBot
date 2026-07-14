@@ -10,6 +10,7 @@ import {
   openExternalUrl,
   signInGoogleLoopback,
   cancelGoogleSignIn,
+  clearCloudCredential,
   setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
@@ -79,7 +80,13 @@ export function DesktopWelcome() {
       // identity once done. Google needs a real browser (blocks embedded webviews),
       // and this authenticates against the CLOUD so we get a credential for sync.
       const account = await signInGoogleLoopback();
-      if (googleCancelRef.current) return;
+      if (googleCancelRef.current) {
+        // The native flow may have committed the credential in the instant the user
+        // cancelled — remove it (and revoke the token) so a cancelled sign-in can't
+        // leave the account behind.
+        void clearCloudCredential();
+        return;
+      }
       chooseSignedIn(account.email, account.name || account.email);
       // chooseSignedIn unmounts this component.
     } catch (e) {

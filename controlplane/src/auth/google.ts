@@ -381,15 +381,15 @@ export async function callbackGoogle(
     if (!isLoopbackRedirect(uri)) {
       return renderErrorPage('Invalid desktop redirect target.');
     }
-    const name = userInfo.name || userInfo.email.split('@')[0];
     const code = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, '');
+    // Store ONLY the opaque userId (+ PKCE challenge + expiry) — no email/name — so
+    // an abandoned/never-swept row on an inactive install holds no PII. The identity
+    // is fetched from the users table at exchange time.
     await createAuthState(
       env,
       `desktopcode:${code}`,
       JSON.stringify({
         userId,
-        email: userInfo.email,
-        name,
         challenge: ch, // PKCE S256 — exchanged only with the matching verifier
         expiresAt: Date.now() + 5 * 60 * 1000, // 5 min to exchange
       })
@@ -503,7 +503,7 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
   if (!rec) {
     return json({ error: 'not_found' }, 404);
   }
-  let parsed: { userId: string; email: string; name: string; challenge?: string; expiresAt?: number };
+  let parsed: { userId: string; challenge?: string; expiresAt?: number };
   try {
     parsed = JSON.parse(rec.v);
   } catch {
@@ -528,7 +528,16 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
     return json({ error: 'not_found' }, 404);
   }
   const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop', DESKTOP_PAT_TTL_DAYS);
-  return json({ token, email: parsed.email, name: parsed.name });
+  // Fetch the identity now (it wasn't stored in the temporary record).
+  const user = await env.DB
+    .prepare('SELECT email, name FROM users WHERE id = ?')
+    .bind(parsed.userId)
+    .first<{ email: string; name: string }>();
+  return json({
+    token,
+    email: user?.email ?? '',
+    name: user?.name || user?.email?.split('@')[0] || '',
+  });
 }
 
 function renderLoginCompletePage(

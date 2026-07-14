@@ -990,9 +990,13 @@ fn exchange_desktop_code(code: &str, verifier: &str) -> Result<(String, String, 
 /// host-only. The token never enters the webview. Returns {email,name} for the UI.
 #[tauri::command]
 pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignIn, String> {
-    // Claim a fresh attempt generation; any later cancel / sign-in / PAT paste bumps
-    // it, so this flow will refuse to exchange or store once superseded.
-    let my_gen = SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    // Claim a fresh attempt generation (under the lock, so it's part of the same
+    // serialized state machine as cancel/write). Any later cancel / sign-in / PAT
+    // paste bumps it, so this flow refuses to exchange or store once superseded.
+    let my_gen = {
+        let _guard = cred_lock();
+        SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    };
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("could not start local sign-in listener: {e}"))?;
@@ -1041,6 +1045,10 @@ pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignI
 /// flow stops before exchanging the code or writing the credential.
 #[tauri::command]
 pub fn cancel_google_sign_in() {
+    // Under the lock so it's serialized with the sign-in's check+write. A cancel that
+    // still races an already-committed write is cleaned up by the frontend (it calls
+    // clear_cloud_credential when the resolved sign-in was cancelled).
+    let _guard = cred_lock();
     SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
@@ -1066,11 +1074,29 @@ pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String>
         let creds = read_cloud_credential_full(&app);
         if let Some(path) = cloud_credential_path(&app) {
             // Only NotFound is fine; any other failure means the credential may still
-            // be on disk (it would sign the user back in on restart) — report it.
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(format!("failed to remove stored credential: {e}")),
+            // be on disk (it would sign the user back in on restart) — retry a few
+            // times for a transient lock, then report so the UI can surface it.
+            let mut last_err: Option<std::io::Error> = None;
+            for attempt in 0..3 {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        if attempt < 2 {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                    }
+                }
+            }
+            if let Some(e) = last_err {
+                return Err(format!("failed to remove stored credential: {e}"));
             }
         }
         creds

@@ -114,10 +114,16 @@ export const useAuthStore = create<AuthStore>()(
           useDesktopAccountStore.getState().reset();
           // Fully disconnect the cloud account: forget the stored PAT (and revoke it
           // server-side if it was desktop-minted) so a later sign-in re-establishes
-          // it cleanly. Surface a failure — if the credential file couldn't be
-          // removed it may sign the user back in on restart. No-op on web.
+          // it cleanly. If the credential file couldn't be removed it may sign the
+          // user back in on restart — surface that as a user-visible error (not just
+          // a console log). No-op on web.
           clearCloudCredential().catch((e) => {
             console.error("[auth] failed to clear cloud credential on logout:", e);
+            void import("sonner").then(({ toast }) => {
+              toast.error(
+                "Signed out, but the stored cloud credential couldn't be removed from this device. Restart the app and sign out again to fully disconnect."
+              );
+            });
           });
         } catch {
           /* store unavailable (SSR / very early) — nothing to reset */
