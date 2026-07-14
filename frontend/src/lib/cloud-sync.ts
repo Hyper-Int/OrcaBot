@@ -38,13 +38,6 @@ export interface DownloadResult {
 }
 
 /**
- * On the desktop there is ONE shared /workspace, so each downloaded dashboard's
- * terminals are pinned to a per-dashboard subfolder (= the new local dashboard id)
- * via `workingDir`. This keeps two downloads from colliding and matches where
- * `download_cloud_workspace` writes the files. Any existing workingDir is preserved
- * underneath the subfolder. Returns the content JSON string to store on the item.
- */
-/**
  * Sanitize a workspace-relative path to plain segments: strip leading slashes and
  * `.`/empty segments, and REJECT any `..` (returns "" so the caller falls back to
  * the bare subfolder). Without this, a terminal whose content has
