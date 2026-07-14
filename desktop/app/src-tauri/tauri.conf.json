@@ -48,7 +48,7 @@
     "macOS": {
       "entitlements": "entitlements.plist",
       "signingIdentity": "Developer ID Application: Robert Macrae (3927MKQNPA)",
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.5"
     }
   },
   "plugins": {
