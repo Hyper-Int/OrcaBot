@@ -149,10 +149,16 @@ heredoc, not MININIT.** rc.local:
   read it. This is the primitive the `orcabot` CLI uses to run guest shell commands.
 
 ### Image staging
-`vm/image.rs` stages `resources/vm/sandbox.img` → the data dir on launch, keyed by
-a `.stamp` of the **source's nanosecond mtime + size** (not the dest's — the VM
-mounts the image rw and bumps its mtime). Forcing a clean re-stage: delete
-`<data>/vm/sandbox.img` + `.stamp`.
+`vm/image.rs` stages `resources/vm/sandbox.img` → the **cache dir**
+(`~/Library/Caches/com.orcabot.desktop/vm/`, resolved via `app_cache_dir()` in
+`start_sandbox_vm`) on launch, keyed by a `.stamp` of the **source's nanosecond
+mtime + size** (not the dest's — the VM mounts the image rw and bumps its mtime).
+The image + staged runtime binaries live in the cache dir, **not** Application
+Support, because they're large (~1GB) and fully regenerable; `migrate_vm_dir`
+does a one-time move of an older install's `<app-data>/vm/` on first launch.
+Forcing a clean re-stage: delete `<cache>/vm/sandbox*.img` + `.stamp` (the
+packaged image is content-named `sandbox-<version>.img`). Note macOS may purge
+the cache under disk pressure → a one-off re-download on next launch.
 
 ---
 
