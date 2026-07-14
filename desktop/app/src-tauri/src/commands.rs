@@ -764,12 +764,15 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
     if !token.starts_with("orca_pat_") {
         return Err("Not an Orcabot token.".into());
     }
-    // "pat" origin — a user-pasted token, possibly shared with the CLI/automation,
-    // so logout must NOT revoke it server-side (only forget it locally).
-    write_cloud_credential(&app, token, &email, "pat")?;
-    // A deliberate credential set (PAT paste, or the loopback flow) supersedes any
-    // in-flight Google sign-in so it can't later overwrite this one.
-    SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    // Under the lock: write, then bump the generation, so an in-flight Google flow
+    // that is between its own check and write can't overwrite this pasted token.
+    {
+        let _guard = cred_lock();
+        // "pat" origin — a user-pasted token, possibly shared with the CLI/automation,
+        // so logout must NOT revoke it server-side (only forget it locally).
+        write_cloud_credential(&app, token, &email, "pat")?;
+        SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
     Ok(())
 }
 
@@ -783,6 +786,16 @@ pub struct CloudSignIn {
 /// starts another sign-in, or pastes a PAT — so an in-flight loopback sign-in can
 /// tell it's been superseded and must NOT exchange or overwrite the credential.
 static SIGN_IN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Serializes every credential mutation (write / gen-check+write / clear) so the
+/// generation check and the file write happen atomically — otherwise a cancel,
+/// logout, or PAT paste could interleave between the check and the write and a
+/// stale sign-in could restore or clobber a credential. No await is held across it.
+static CRED_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn cred_lock() -> std::sync::MutexGuard<'static, ()> {
+    CRED_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn sign_in_current(my_gen: u64) -> bool {
     SIGN_IN_GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen
@@ -1011,11 +1024,16 @@ pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignI
 
     // Final guard: don't overwrite the credential if the attempt was cancelled or
     // superseded (e.g. the user pasted a PAT for a different account meanwhile).
-    if !sign_in_current(my_gen) {
-        return Err("sign-in cancelled".into());
+    // Atomic gen-check + write: hold the lock across both so a cancel / PAT paste
+    // can't slip between them (it would bump the gen or write a different account).
+    {
+        let _guard = cred_lock();
+        if !sign_in_current(my_gen) {
+            return Err("sign-in cancelled".into());
+        }
+        // "google" origin — desktop-minted, so logout revokes it server-side.
+        write_cloud_credential(&app, &token, &email, "google")?;
     }
-    // "google" origin — desktop-minted, so logout revokes it server-side.
-    write_cloud_credential(&app, &token, &email, "google")?;
     Ok(CloudSignIn { email, name })
 }
 
@@ -1040,11 +1058,23 @@ pub fn get_cloud_account(app: tauri::AppHandle) -> Option<CloudAccount> {
 /// shared with the CLI/automation, so we must not revoke it globally.
 #[tauri::command]
 pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String> {
-    SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let creds = read_cloud_credential_full(&app);
-    if let Some(path) = cloud_credential_path(&app) {
-        let _ = std::fs::remove_file(path);
-    }
+    // Under the lock: supersede in-flight sign-ins, capture the token, and delete the
+    // file — all before any await, so a concurrent re-sign-in can't be clobbered.
+    let creds = {
+        let _guard = cred_lock();
+        SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let creds = read_cloud_credential_full(&app);
+        if let Some(path) = cloud_credential_path(&app) {
+            // Only NotFound is fine; any other failure means the credential may still
+            // be on disk (it would sign the user back in on restart) — report it.
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("failed to remove stored credential: {e}")),
+            }
+        }
+        creds
+    };
     if let Some((token, _email, origin)) = creds {
         if origin == "google" {
             let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -1555,7 +1585,11 @@ pub async fn download_cloud_workspace(
         while let Some(dir_rel) = queue.pop() {
             listed += 1;
             if listed > 50_000 {
-                break; // pathological-tree guard
+                // Pathological tree — stop, but count the unvisited dirs as skipped
+                // so the result reports the workspace as incomplete (not complete).
+                eprintln!("[cloud-dl] dir limit hit; {} dirs left unvisited", queue.len() + 1);
+                skipped += queue.len() as u64 + 1;
+                break;
             }
             let is_root = dir_rel.is_empty();
             let query_path = if is_root {

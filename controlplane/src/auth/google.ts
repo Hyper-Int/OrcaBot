@@ -257,6 +257,10 @@ export async function loginWithGoogle(
       ? `desktoplb:${btoa(JSON.stringify({ uri: desktopLoopback, st: desktopState, ch: desktopChallenge }))}`
       : resolvePostLoginRedirect(request, env);
 
+  // Sweep abandoned desktop codes on every sign-in start (no scheduler needed).
+  if (isDesktopMode) {
+    await cleanupStaleDesktopCodes(env);
+  }
   await createAuthState(env, state, postLoginRedirect);
 
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -438,6 +442,20 @@ function isLoopbackRedirect(uri: string): boolean {
  *  on its own even if logout's server-side revoke never runs (offline logout). */
 const DESKTOP_PAT_TTL_DAYS = 90;
 
+/** Best-effort sweep of abandoned desktop auth codes (cancelled sign-in / loopback
+ *  timeout), which hold userId/email/name. The code TTL is 5 min; delete rows older
+ *  than 15 min by created_at so PII doesn't linger indefinitely. Called on the hot
+ *  paths (login start, exchange) so no scheduler is needed. */
+async function cleanupStaleDesktopCodes(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(
+      "DELETE FROM auth_states WHERE state LIKE 'desktopcode:%' AND created_at < datetime('now','-15 minutes')"
+    ).run();
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** base64url(SHA-256(input)) — PKCE S256 challenge computation. */
 async function sha256Base64Url(input: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
@@ -471,6 +489,7 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
   if (!code || !verifier) {
     return json({ error: 'missing_code_or_verifier' }, 400);
   }
+  await cleanupStaleDesktopCodes(env);
 
   const key = `desktopcode:${code}`;
   // Peek first — do NOT consume on a bad verifier, or a local observer who saw the
