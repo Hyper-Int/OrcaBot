@@ -7,7 +7,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User, SubscriptionInfo } from "@/types";
 import { generateId } from "@/lib/utils";
-import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
+import { getCachedSurfaceToken, clearCloudCredential } from "@/lib/tauri-bridge";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
 /** On desktop, the control plane only honors dev-auth for requests carrying the
  *  per-boot surface token, so include it when present (blocks VM-origin spoofing). */
@@ -105,6 +106,28 @@ export const useAuthStore = create<AuthStore>()(
           isAuthResolved: true,
           subscription: null,
         });
+        // Desktop: also clear the first-run account choice so logout returns to the
+        // welcome screen (Free / Google / token) instead of the auto-login
+        // re-signing the user straight back in. Centralized here so every logout
+        // path (dashboards header, PaywallDialog, …) behaves the same. No-op on web.
+        try {
+          useDesktopAccountStore.getState().reset();
+          // Fully disconnect the cloud account: forget the stored PAT (and revoke it
+          // server-side if it was desktop-minted) so a later sign-in re-establishes
+          // it cleanly. If the credential file couldn't be removed it may sign the
+          // user back in on restart — surface that as a user-visible error (not just
+          // a console log). No-op on web.
+          clearCloudCredential().catch((e) => {
+            console.error("[auth] failed to clear cloud credential on logout:", e);
+            void import("sonner").then(({ toast }) => {
+              toast.error(
+                "Signed out, but the stored cloud credential couldn't be removed from this device. Restart the app and sign out again to fully disconnect."
+              );
+            });
+          });
+        } catch {
+          /* store unavailable (SSR / very early) — nothing to reset */
+        }
       },
 
       setLoading: (loading: boolean) => {

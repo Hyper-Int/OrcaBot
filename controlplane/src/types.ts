@@ -166,6 +166,9 @@ export interface Dashboard {
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+  /** Desktop: source cloud dashboard id when this was downloaded from a cloud
+   *  account; null/absent for cloud-native and purely-local dashboards. */
+  cloudId?: string | null;
 }
 
 export interface DashboardItem {

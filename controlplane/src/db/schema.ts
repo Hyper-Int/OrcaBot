@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS dashboards (
   name TEXT NOT NULL,
   owner_id TEXT NOT NULL REFERENCES users(id),
   setup_guide TEXT,
+  -- Desktop: when this dashboard was downloaded from a cloud account, the id of
+  -- the source cloud dashboard (for the downloaded ✓ state + two-way sync). NULL
+  -- for purely-local dashboards.
+  cloud_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1145,7 +1149,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v15-api-tokens";
+const SCHEMA_REVISION = "schema-v16-dashboard-cloud-id";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1184,6 +1188,14 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboards ADD COLUMN cloud_id TEXT
     `).run();
   } catch {
     // Column already exists.

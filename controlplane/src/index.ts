@@ -11,7 +11,7 @@ console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded 
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, devAuthSurfaceTrusted, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -48,7 +48,7 @@ import { isAdminEmail } from './auth/admin';
 import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
-import { createApiToken, listApiTokens, revokeApiToken } from './auth/api-token';
+import { createApiToken, listApiTokens, revokeApiToken, revokeSelfApiToken } from './auth/api-token';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
@@ -1009,6 +1009,18 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return googleAuth.callbackGoogle(request, env);
   }
 
+  // POST /auth/desktop/exchange - desktop app exchanges the one-time code it
+  // received on its loopback listener (from the OAuth callback redirect) for a PAT.
+  if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'exchange' && method === 'POST') {
+    return googleAuth.exchangeDesktopCode(request, env);
+  }
+
+  // POST /auth/api-token/revoke-self - a PAT revokes ITSELF (desktop logout). Self-
+  // authorized by the presented bearer; can only revoke the token it presents.
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments[2] === 'revoke-self' && method === 'POST') {
+    return revokeSelfApiToken(request, env);
+  }
+
   // POST /register-interest - Register interest (no auth required)
   if (segments[0] === 'register-interest' && segments.length === 1 && method === 'POST') {
     // Rate limit by IP for this unauthenticated endpoint
@@ -1162,21 +1174,50 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return authLogout.logout(request, env);
   }
 
-  // POST /auth/dev/session - create session cookie in dev mode
+  // POST /auth/dev/session - mint a session cookie for the DEV-AUTH-HEADER identity.
+  // Deliberately does NOT use the cookie-first `auth`: the desktop app calls this
+  // to say "I'm now this user" (via X-User-* headers), and if we minted from an
+  // existing (stale) cookie instead, switching identity — Free ↔ Google ↔ token —
+  // would re-mint the OLD user and the session would get stuck. Gated by the same
+  // surface token as dev-auth so a VM process can't spoof it.
   if (segments[0] === 'auth' && segments[1] === 'dev' && segments[2] === 'session' && method === 'POST') {
     if (env.DEV_AUTH_ENABLED !== 'true') {
       return Response.json({ error: 'E79406: Dev auth disabled' }, { status: 403 });
     }
+    if (!devAuthSurfaceTrusted(request, env)) {
+      return Response.json({ error: 'E79407: Untrusted surface' }, { status: 403 });
+    }
 
-    const authError = requireAuth(auth);
-    if (authError) return authError;
+    const headerUserId = request.headers.get('X-User-ID');
+    const userEmail = request.headers.get('X-User-Email');
+    const userName = request.headers.get('X-User-Name') || 'Anonymous';
+    if (!headerUserId || !userEmail) {
+      return Response.json({ error: 'E79408: Missing dev-auth identity' }, { status: 400 });
+    }
 
-    const session = await createUserSession(env, auth.user!.id);
+    // Dev-auth is email-keyed: resolve an existing user by email (reconciling a
+    // client-generated id), else create one — same rule as authenticateDevMode.
+    const existing = await env.DB
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .bind(userEmail)
+      .first<{ id: string }>();
+    let resolvedId = existing?.id;
+    if (!resolvedId) {
+      const now = new Date().toISOString();
+      await env.DB
+        .prepare('INSERT INTO users (id, email, name, created_at, trial_started_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(headerUserId, userEmail, userName, now, now)
+        .run();
+      resolvedId = headerUserId;
+    }
+
+    const session = await createUserSession(env, resolvedId);
     const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
-    return new Response(null, {
-      status: 204,
+    return new Response(JSON.stringify({ id: resolvedId, email: userEmail }), {
+      status: 200,
       headers: {
+        'Content-Type': 'application/json',
         'Set-Cookie': cookie,
       },
     });
@@ -1389,7 +1430,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name: string; templateId?: string };
+    const data = await request.json() as { name: string; templateId?: string; cloudId?: string };
     return dashboards.createDashbоard(env, auth.user!.id, data, ctx, preferredRegion);
   }
 

@@ -26,6 +26,19 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// Progress of an in-flight auto-update, emitted to the GUI as `update-progress`
+/// so the frontend can show a download bar (the native "Update available" dialog
+/// otherwise gives no feedback between "Update & restart" and the relaunch).
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+  /// "starting" | "downloading" | "installing" | "error"
+  phase: &'static str,
+  downloaded: u64,
+  total: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  message: Option<String>,
+}
+
 /// File recording the ports the stack actually bound to this boot (some may be
 /// dynamic when a default was busy). The `orcabot` CLI reads this so it connects
 /// to the right control plane / sandbox / frontend instead of the hardcoded
@@ -143,10 +156,27 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
 /// back to `preferred` if nothing is free in range (the later bind then fails
 /// loudly). Used so the app boots even when a default port is occupied (e.g. a
 /// stray `wrangler dev` on 8787) instead of silently failing to start.
+fn port_is_free(port: u16) -> bool {
+  // Probe BOTH the IPv4 wildcard and the IPv6 wildcard, not just IPv4 loopback.
+  // Our consumers bind differently: workerd/d1-shim bind 127.0.0.1 (covered by
+  // 0.0.0.0, a superset), but the VM forwarder (vz-helper) binds the IPv6/IPv4
+  // wildcard `*:port`. A 127.0.0.1-only probe misses a leftover on `*:port`, so
+  // the port looked free and the VM then collided on it ("Address already in
+  // use"). Require both families bindable so nothing slips past.
+  let v4 = std::net::TcpListener::bind(("0.0.0.0", port)).is_ok();
+  let v6 = match std::net::TcpListener::bind(("::", port)) {
+    Ok(_) => true,
+    Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => false,
+    // IPv6 unavailable/unsupported — don't treat as "in use" (avoids false skips).
+    Err(_) => true,
+  };
+  v4 && v6
+}
+
 fn pick_free_port(preferred: u16, used: &[u16]) -> u16 {
   let mut p = preferred;
   for _ in 0..200 {
-    if !used.contains(&p) && std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
+    if !used.contains(&p) && port_is_free(p) {
       return p;
     }
     p = match p.checked_add(1) {
@@ -981,6 +1011,17 @@ fn main() {
       commands::open_url,
       commands::reveal_workspace,
       commands::get_ports,
+      commands::get_app_version,
+      commands::verify_orcabot_account,
+      commands::set_cloud_credential,
+      commands::sign_in_google_loopback,
+      commands::cancel_google_sign_in,
+      commands::rollback_sign_in,
+      commands::get_cloud_account,
+      commands::clear_cloud_credential,
+      commands::list_cloud_dashboards,
+      commands::get_cloud_dashboard,
+      commands::download_cloud_workspace,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());
@@ -1085,6 +1126,7 @@ fn main() {
       // prompt, because restarting tears down any running VM/terminal/agent
       // session (RunEvent::Exit shuts the services down).
       if !headless {
+        use tauri::Emitter;
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
         use tauri_plugin_updater::UpdaterExt;
         let handle = app.handle().clone();
@@ -1115,9 +1157,49 @@ fn main() {
             eprintln!("[updater] update deferred by user");
             return;
           }
-          match update.download_and_install(|_chunk, _total| {}, || {}).await {
+
+          // Tell the GUI a download is starting so it can show a progress bar,
+          // then stream progress from the download closure. Emits are throttled
+          // to once per MB so a ~190MB download doesn't flood IPC.
+          let _ = handle.emit(
+            "update-progress",
+            UpdateProgress { phase: "starting", downloaded: 0, total: None, message: None },
+          );
+          let h_chunk = handle.clone();
+          let h_done = handle.clone();
+          let got = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+          let last_mb = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+          let got_c = got.clone();
+          let result = update
+            .download_and_install(
+              move |chunk, total| {
+                use std::sync::atomic::Ordering::Relaxed;
+                let so_far = got_c.fetch_add(chunk as u64, Relaxed) + chunk as u64;
+                let mb = so_far / (1024 * 1024);
+                if mb != last_mb.swap(mb, Relaxed) {
+                  let _ = h_chunk.emit(
+                    "update-progress",
+                    UpdateProgress { phase: "downloading", downloaded: so_far, total, message: None },
+                  );
+                }
+              },
+              move || {
+                let _ = h_done.emit(
+                  "update-progress",
+                  UpdateProgress { phase: "installing", downloaded: 0, total: None, message: None },
+                );
+              },
+            )
+            .await;
+          match result {
             Ok(_) => { eprintln!("[updater] installed; relaunching"); handle.restart(); }
-            Err(e) => eprintln!("[updater] install failed: {e}"),
+            Err(e) => {
+              eprintln!("[updater] install failed: {e}");
+              let _ = handle.emit(
+                "update-progress",
+                UpdateProgress { phase: "error", downloaded: 0, total: None, message: Some(e.to_string()) },
+              );
+            }
           }
         });
       }

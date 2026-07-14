@@ -28,6 +28,7 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
     updatedAt: row.updated_at as string,
     secretsCount: row.secrets_count !== undefined ? Number(row.secrets_count) : undefined,
     linkedCount: row.linked_count !== undefined ? Number(row.linked_count) : undefined,
+    cloudId: (row.cloud_id as string | null) ?? null,
   };
 }
 
@@ -177,18 +178,26 @@ export async function getDashbоard(
 export async function createDashbоard(
   env: Env,
   userId: string,
-  data: { name: string; templateId?: string },
+  data: { name: string; templateId?: string; cloudId?: string },
   ctx?: Pick<ExecutionContext, 'waitUntil'>,
   preferredRegion?: string,
 ): Promise<Response> {
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Create dashboard
+  // Create dashboard. cloud_id (desktop downloads only) is set via a follow-up
+  // UPDATE rather than in this INSERT, so the INSERT never references the column —
+  // keeps working on a deployment whose schema migration hasn't added it yet, and
+  // the UPDATE only runs on desktop where the column exists.
   await env.DB.prepare(`
     INSERT INTO dashboards (id, name, owner_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
   `).bind(id, data.name, userId, now, now).run();
+  if (data.cloudId) {
+    await env.DB.prepare(`UPDATE dashboards SET cloud_id = ? WHERE id = ?`)
+      .bind(data.cloudId, id)
+      .run();
+  }
 
   // Add owner as member
   await env.DB.prepare(`

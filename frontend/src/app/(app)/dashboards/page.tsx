@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 "use client";
 
-// REVISION: layout-v7-secret-input
-const MODULE_REVISION = "layout-v7-secret-input";
+// REVISION: layout-v9-free-signin-btn
+const MODULE_REVISION = "layout-v9-free-signin-btn";
 console.log(
   `[dashboards] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -28,18 +28,14 @@ import {
   XCircle,
   Clock,
   BarChart3,
-  Link2,
   Terminal,
+  LogIn,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
   Button,
   Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Skeleton,
   Dialog,
   DialogContent,
   DialogHeader,
@@ -53,8 +49,11 @@ import {
   Tooltip,
 } from "@/components/ui";
 import { useAuthStore } from "@/stores/auth-store";
+import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
 import { TrialBanner } from "@/components/subscription/TrialBanner";
+import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
+import { DashboardsTabs } from "@/components/desktop/DashboardsTabs";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { switchToCli } from "@/lib/tauri-bridge";
 import {
@@ -68,13 +67,18 @@ import {
   type UserSecret,
 } from "@/lib/api/cloudflare";
 import { listTemplates, deleteTemplate, approveTemplate } from "@/lib/api/cloudflare/templates";
-import { formatRelativeTime, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import type { Dashboard, TemplateCategory } from "@/types/dashboard";
 
 export default function DashboardsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user, logout, isAuthenticated, isAuthResolved, isAdmin, setUser } = useAuthStore();
+  // Desktop-only: a Free (local-only) account has nothing to "log out" of, so the
+  // header offers "Sign in" (→ welcome screen) instead of "Log out". A signed-in
+  // cloud account still gets a real "Log out".
+  const accountChoice = useDesktopAccountStore((s) => s.choice);
+  const isFreeDesktop = DESKTOP_MODE && accountChoice === "free";
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [newDashboardName, setNewDashboardName] = React.useState("");
@@ -350,8 +354,14 @@ export default function DashboardsPage() {
     } catch {
       // Ignore logout errors and clear local state anyway.
     }
+    // logout() also resets the desktop account choice (centralized in the store),
+    // so the DesktopAuthGate shows the welcome screen. On desktop we therefore skip
+    // navigating to /login → "/" (the web-only marketing page, which is a dark
+    // screen in the app); the gate overlays the welcome screen in place.
     logout();
-    router.push("/login");
+    if (!DESKTOP_MODE) {
+      router.push("/login");
+    }
   };
 
   if (!isAuthResolved || !isAuthenticated) {
@@ -371,6 +381,7 @@ export default function DashboardsPage() {
               className="w-7 h-7 object-contain"
             />
             <span className="text-lg font-bold text-[var(--foreground)]">OrcaBot</span>
+            <DesktopVersionBadge />
           </div>
             <div className="flex items-center gap-4">
               <TrialBanner />
@@ -436,11 +447,24 @@ export default function DashboardsPage() {
                 <Settings className="w-4 h-4" />
               </Button>
             </Tooltip>
-            <Tooltip content="Log out">
-              <Button variant="ghost" size="icon-sm" onClick={handleLogout}>
-                <LogOut className="w-4 h-4" />
-              </Button>
-            </Tooltip>
+            {isFreeDesktop ? (
+              <Tooltip content="Sign in to your Orcabot account">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLogout}
+                  leftIcon={<LogIn className="w-4 h-4" />}
+                >
+                  Sign in
+                </Button>
+              </Tooltip>
+            ) : (
+              <Tooltip content="Log out">
+                <Button variant="ghost" size="icon-sm" onClick={handleLogout}>
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </Tooltip>
+            )}
           </div>
         </div>
       </header>
@@ -528,59 +552,21 @@ export default function DashboardsPage() {
 
         {/* Two-column layout: Dashboards (left) + Environment Variables (right) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Your Dashboards Section */}
-          <section>
-            <h2 className="text-h2 text-[var(--foreground)] mb-4">
-              Your Dashboards
-            </h2>
-
-            {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <Skeleton key={i} className="h-24" />
-                ))}
-              </div>
-            ) : error ? (
-              <div className="text-center py-12">
-                <p className="text-body text-[var(--status-error)]">
-                  Failed to load dashboards. Please try again.
-                </p>
-                <Button
-                  variant="secondary"
-                  className="mt-4"
-                  onClick={() =>
-                    queryClient.invalidateQueries({ queryKey: ["dashboards"] })
-                  }
-                >
-                  Retry
-                </Button>
-              </div>
-            ) : dashboards && dashboards.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {dashboards.map((dashboard) => (
-                  <DashboardCard
-                    key={dashboard.id}
-                    dashboard={dashboard}
-                    onClick={() => router.push(`/dashboards/${dashboard.id}`)}
-                    onDelete={() => setDeleteTarget(dashboard)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-12 border border-dashed border-[var(--border)] rounded-lg">
-                <p className="text-body text-[var(--foreground-muted)] mb-4">
-                  No dashboards yet. Create your first one!
-                </p>
-                <Button
-                  variant="primary"
-                  onClick={() => setIsCreateOpen(true)}
-                  leftIcon={<Plus className="w-4 h-4" />}
-                >
-                  New Dashboard
-                </Button>
-              </div>
-            )}
-          </section>
+          {/* Your Dashboards — Online / Local Storage tabs (desktop); local grid on web */}
+          <DashboardsTabs
+            localDashboards={dashboards || []}
+            isLoading={isLoading}
+            error={error}
+            onRetry={() =>
+              queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+            }
+            onOpen={(id) => router.push(`/dashboards/${id}`)}
+            onDelete={(dashboard) => setDeleteTarget(dashboard)}
+            onCreateFirst={() => setIsCreateOpen(true)}
+            onDownloaded={() =>
+              queryClient.invalidateQueries({ queryKey: ["dashboards"] })
+            }
+          />
 
           {/* Secrets & Environment Variables Section */}
           <section>
@@ -1014,45 +1000,3 @@ function NewDashboardCard({
   );
 }
 
-interface DashboardCardProps {
-  dashboard: Dashboard;
-  onClick: () => void;
-  onDelete: () => void;
-}
-
-function DashboardCard({ dashboard, onClick, onDelete }: DashboardCardProps) {
-  const isLinked = (dashboard.linkedCount ?? 0) > 0;
-
-  return (
-    <Card className="group cursor-pointer hover:border-[var(--border-strong)] transition-colors">
-      <div onClick={onClick}>
-        <CardHeader className="pb-2">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <CardTitle className="truncate">{dashboard.name}</CardTitle>
-              {isLinked && (
-                <span title={`${dashboard.linkedCount} linked dashboard${dashboard.linkedCount !== 1 ? 's' : ''}`}>
-                  <Link2 className="w-3.5 h-3.5 flex-shrink-0 text-[var(--foreground-muted)]" />
-                </span>
-              )}
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-[var(--background-hover)] rounded transition-all"
-            >
-              <Trash2 className="w-4 h-4 text-[var(--foreground-subtle)] hover:text-[var(--status-error)]" />
-            </button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-caption text-[var(--foreground-subtle)]">
-            Updated {formatRelativeTime(dashboard.updatedAt)}
-          </p>
-        </CardContent>
-      </div>
-    </Card>
-  );
-}

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v5-global-invoke
-const MODULE_REVISION = "tauri-bridge-v5-global-invoke";
+// REVISION: tauri-bridge-v7-global-event-listen
+const MODULE_REVISION = "tauri-bridge-v7-global-event-listen";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -68,6 +68,13 @@ export interface ImportProgress {
   phase: "scanning" | "copying" | "done" | "error";
 }
 
+export interface UpdateProgress {
+  phase: "starting" | "downloading" | "installing" | "error";
+  downloaded: number;
+  total: number | null;
+  message?: string;
+}
+
 // ---- Commands ----
 
 /** Get the host workspace directory path. */
@@ -75,6 +82,142 @@ export async function getWorkspacePath(): Promise<WorkspaceInfo | null> {
   const invoke = await getTauriInvoke();
   if (!invoke) return null;
   return invoke("get_workspace_path") as Promise<WorkspaceInfo>;
+}
+
+/** The running app version (e.g. "0.5.0"); null on web/Cloudflare builds. */
+export async function getAppVersion(): Promise<string | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    const v = (await invoke("get_app_version")) as string;
+    return typeof v === "string" && v ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface OrcabotAccount {
+  email: string;
+  name: string;
+}
+
+/**
+ * Verify an orcabot.com personal access token via the native layer (no browser
+ * CORS; the token is only sent to the fixed cloud URL). Resolves to the account
+ * identity, or throws with a user-facing message. Desktop-only.
+ */
+export async function verifyOrcabotAccount(token: string): Promise<OrcabotAccount> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Sign-in is only available in the desktop app.");
+  return invoke("verify_orcabot_account", { token }) as Promise<OrcabotAccount>;
+}
+
+// ---- Cloud account credential (dashboard sync) ----
+
+export interface CloudAccount {
+  email: string;
+}
+
+/** Persist the cloud PAT + email natively (host-only) for dashboard sync. Throws
+ *  (rather than silently no-op'ing) if the native bridge is unavailable, so a
+ *  sign-in can't appear to succeed without actually storing the credential. */
+export async function setCloudCredential(token: string, email: string): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Couldn't reach the desktop app to store the sign-in.");
+  await invoke("set_cloud_credential", { token, email });
+}
+
+/** The signed-in cloud account, or null if not connected. */
+export async function getCloudAccount(): Promise<CloudAccount | null> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return null;
+  try {
+    return (await invoke("get_cloud_account")) as CloudAccount | null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget the stored cloud credential (and revoke it if desktop-minted). Rejects if
+ *  the native command fails (e.g. the file couldn't be removed) so callers can
+ *  surface it — a swallowed error would leave the credential able to sign the user
+ *  back in. No-op off desktop. */
+export async function clearCloudCredential(): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("clear_cloud_credential");
+}
+
+/** List the signed-in user's cloud dashboards (raw JSON from api.orcabot.com). */
+export async function listCloudDashboards(): Promise<unknown> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("list_cloud_dashboards");
+}
+
+/** Fetch one cloud dashboard's full data (dashboard + items + edges) for download. */
+export async function getCloudDashboard(dashboardId: string): Promise<unknown> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("get_cloud_dashboard", { dashboardId });
+}
+
+export interface WorkspaceDownloadResult {
+  written: number;
+  skipped: number;
+  /** false when the cloud dashboard has no terminal/session (no files to pull). */
+  had_workspace: boolean;
+}
+
+/**
+ * Copy a cloud dashboard's workspace files into the local per-dashboard subfolder
+ * (`<workspace>/<subdir>`). Starts/reuses a cloud session, so it can take a minute
+ * while the cloud VM boots. Native — the PAT never leaves Rust.
+ */
+export async function downloadCloudWorkspace(
+  cloudId: string,
+  subdir: string
+): Promise<WorkspaceDownloadResult> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Cloud dashboards are only available in the desktop app.");
+  return invoke("download_cloud_workspace", { cloudId, subdir }) as Promise<WorkspaceDownloadResult>;
+}
+
+export interface CloudSignIn {
+  email: string;
+  name: string;
+  /** Attempt id — pass to rollbackSignIn if this resolved sign-in was superseded. */
+  attempt: number;
+}
+
+/**
+ * Sign in to the cloud with Google via a LOOPBACK redirect (RFC 8252). The native
+ * layer runs a temporary 127.0.0.1 listener, opens the browser to the cloud login
+ * pointing back at it, receives a one-time code there, exchanges it for a PAT, and
+ * stores the PAT host-only — the token never enters the webview. Resolves with
+ * {email,name} once sign-in completes (rejects on timeout/cancel). Desktop only.
+ */
+export async function signInGoogleLoopback(): Promise<CloudSignIn> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) throw new Error("Sign-in is only available in the desktop app.");
+  return invoke("sign_in_google_loopback") as Promise<CloudSignIn>;
+}
+
+/** Cancel an in-flight loopback Google sign-in so the native flow stops before it
+ *  exchanges the code or writes the credential. No-op off desktop. */
+export async function cancelGoogleSignIn(): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("cancel_google_sign_in");
+}
+
+/** Roll back a specific sign-in attempt's credential (only if that attempt still
+ *  owns the stored credential — a no-op otherwise, so it can't delete a newer
+ *  sign-in or a pasted PAT). No-op off desktop. */
+export async function rollbackSignIn(attempt: number): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("rollback_sign_in", { attempt });
 }
 
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
@@ -247,21 +390,73 @@ export async function pickFolder(): Promise<string | null> {
 
 // ---- Events ----
 
-/** Listen for import progress events emitted from the Rust backend. */
-export async function onImportProgress(
-  callback: (progress: ImportProgress) => void
+/**
+ * Subscribe to a Rust-emitted (`app.emit`) event. Prefers the runtime-injected
+ * `window.__TAURI__.event.listen` (present via withGlobalTauri) — the same global
+ * onAppFocus uses — because the bare `import("@tauri-apps/api/webview")` specifier
+ * does NOT resolve from the remote-origin packaged webview (it throws, the error
+ * is swallowed, and the listener silently never fires). Falls back to the dynamic
+ * import for dev builds where the specifier does resolve. No-op off desktop.
+ */
+async function listenGlobal<T>(
+  event: string,
+  callback: (payload: T) => void
 ): Promise<(() => void) | null> {
-  if (!DESKTOP_MODE) return null;
+  if (!DESKTOP_MODE || typeof window === "undefined") return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const listen = (window as any).__TAURI__?.event?.listen;
+    if (typeof listen === "function") {
+      const unlisten = await listen(event, (e: { payload: T }) => callback(e.payload));
+      return typeof unlisten === "function" ? unlisten : null;
+    }
+  } catch {
+    /* fall through to the dynamic-import path */
+  }
   try {
     const mod = await import(/* webpackIgnore: true */ TAURI_WEBVIEW);
-    const unlisten = await mod.getCurrentWebview().listen(
-      "folder-import-progress",
-      (event: { payload: ImportProgress }) => callback(event.payload)
-    );
+    const unlisten = await mod
+      .getCurrentWebview()
+      .listen(event, (e: { payload: T }) => callback(e.payload));
     return unlisten;
   } catch {
     return null;
   }
+}
+
+/** Listen for import progress events emitted from the Rust backend. */
+export async function onImportProgress(
+  callback: (progress: ImportProgress) => void
+): Promise<(() => void) | null> {
+  return listenGlobal<ImportProgress>("folder-import-progress", callback);
+}
+
+export interface CloudWorkspaceProgress {
+  cloud_id: string;
+  /** "starting" | "booting" | "copying" */
+  phase: string;
+  written: number;
+}
+
+/**
+ * Listen for cloud workspace-download progress (`cloud-workspace-progress`) so the
+ * UI can show "Starting…/Booting…/Copying files" during a slow cold cloud-VM boot.
+ */
+export async function onCloudWorkspaceProgress(
+  callback: (progress: CloudWorkspaceProgress) => void
+): Promise<(() => void) | null> {
+  return listenGlobal<CloudWorkspaceProgress>("cloud-workspace-progress", callback);
+}
+
+/**
+ * Listen for auto-update progress emitted from Rust (`update-progress`). Fires
+ * once the user accepts the update (download start → per-MB progress → install),
+ * so the UI can show a download bar. No-op off desktop.
+ */
+export async function onUpdateProgress(
+  callback: (progress: UpdateProgress) => void
+): Promise<(() => void) | null> {
+  return listenGlobal<UpdateProgress>("update-progress", callback);
 }
 
 /** Listen for native drag-drop events on the Tauri webview. */
