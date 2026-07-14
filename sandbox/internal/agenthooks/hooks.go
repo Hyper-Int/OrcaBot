@@ -1125,15 +1125,19 @@ fi
 		existingConfig += "\n# Disable update check — updates managed via Docker image rebuilds\ncheck_for_updates = false\n"
 	}
 
-	// REVISION: codex-foldertrust-v1-pretrust
-	// Pre-trust /workspace so Codex doesn't show "Do you trust this directory?" on every
-	// reconnection. Trust is stored per-project in config.toml under [projects."/workspace"].
-	// Since the sandbox is already an isolated environment, this is safe.
-	if !strings.Contains(existingConfig, `projects."/workspace"`) {
+	// REVISION: codex-foldertrust-v2-session-root
+	// Pre-trust the SESSION workspace root so Codex doesn't show "Do you trust this
+	// directory?" on every reconnection. On desktop each dashboard's session is rooted
+	// at /workspace/<dashboardId>, so trusting the fixed /workspace no longer covers the
+	// terminal's cwd and the prompt would reappear (blocking unattended startup). Trust
+	// is stored per-project in config.toml under [projects."<workspaceRoot>"]. Safe
+	// because the sandbox is already isolated.
+	trustKey := fmt.Sprintf(`projects."%s"`, workspaceRoot)
+	if !strings.Contains(existingConfig, trustKey) {
 		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
 			existingConfig += "\n"
 		}
-		existingConfig += "\n# Pre-trust /workspace — sandbox is already isolated\n[projects.\"/workspace\"]\ntrust_level = \"trusted\"\n"
+		existingConfig += fmt.Sprintf("\n# Pre-trust the session workspace — sandbox is already isolated\n[%s]\ntrust_level = \"trusted\"\n", trustKey)
 	}
 
 	// Check if our script is already in the config
