@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-welcome-v6-attempt-ids
+// REVISION: desktop-welcome-v7-rollback-catch
 "use client";
 
 import * as React from "react";
@@ -16,7 +16,7 @@ import {
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v6-attempt-ids";
+const MODULE_REVISION = "desktop-welcome-v7-rollback-catch";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -90,8 +90,17 @@ export function DesktopWelcome() {
       const account = await signInGoogleLoopback();
       if (currentAttemptRef.current !== myAttempt) {
         // Superseded (cancelled / another attempt / PAT pasted): roll back ONLY this
-        // attempt's credential — a no-op natively if something newer now owns it.
-        void rollbackSignIn(account.attempt);
+        // attempt's credential — a no-op natively if something newer now owns it. If
+        // the rollback fails, the cancelled credential is still on disk, so warn the
+        // user (don't leave it as a silent unhandled rejection).
+        rollbackSignIn(account.attempt).catch((e) => {
+          console.error("[welcome] failed to roll back cancelled sign-in:", e);
+          void import("sonner").then(({ toast }) => {
+            toast.error(
+              "A cancelled sign-in left a credential on this device that couldn't be removed. Restart the app to clear it."
+            );
+          });
+        });
         return;
       }
       chooseSignedIn(account.email, account.name || account.email);
