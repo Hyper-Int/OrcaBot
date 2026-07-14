@@ -1382,15 +1382,10 @@ async function createSessionImpl(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir, modelSelection } = terminalConfig;
-    // Shared-sandbox deployments (desktop) put EVERY dashboard in one VM's /workspace,
-    // so default each dashboard's terminals into their own subdir (/workspace/<dashboardId>)
-    // for isolation — unless the terminal already set a workingDir (downloaded dashboards
-    // set their own via cloud-sync). Fly gives each dashboard its own VM, so no default
-    // there. The desktop sandbox auto-creates the subdir; cloud-dev without the subdir
-    // just falls back to root (unchanged).
-    const sharedSandbox = !(env.FLY_PROVISIONING_ENABLED === 'true'
-      && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME));
-    const effectiveWorkingDir = workingDir ?? (sharedSandbox ? dashboardId : undefined);
+    // NOTE: per-dashboard workspace isolation on desktop is handled in the SANDBOX
+    // (manager.Create roots each session at /workspace/<dashboardID>), so it applies
+    // uniformly to every dashboard-scoped execution path, not just this UI-terminal
+    // one. `workingDir` here is only the terminal's own relative sub-path (if any).
     let appliedSecretNames: string[] = [];
 
     const applyDashboardSecretsBeforePtyStart = async (
@@ -1461,12 +1456,12 @@ async function createSessionImpl(
         pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
           ptyId,
           integrationToken,
-          workingDir: effectiveWorkingDir,
+          workingDir,
           modelSelection,
         });
       } catch (wdErr) {
-        if (effectiveWorkingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
-          console.log(`[createSession] Working dir "${effectiveWorkingDir}" not found, falling back to workspace root`);
+        if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
+          console.log(`[createSession] Working dir "${workingDir}" not found, falling back to workspace root`);
           pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
             ptyId,
             integrationToken,
@@ -1901,9 +1896,17 @@ export async function getDashbоardSandbоxStatus(
   const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
     && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
   if (!flyProvisioningEnabled) {
-    // Can't query Fly (e.g. local/desktop). A recorded session means the local VM is
-    // up (machine id is empty locally), so report ready.
-    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id || null });
+    // Can't query Fly (e.g. local/desktop). The dashboard_sandboxes row PERSISTS across
+    // app restarts / sandbox crashes, but the actual sandbox session is in-memory — so
+    // trusting the row alone shows green while the VM is still booting or has crashed.
+    // Probe the local sandbox /health instead; not-yet-serving reads as "starting".
+    const localSandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const healthy = await localSandbox.health(undefined, 3000);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState: null,
+      machineId: sandbox.sandbox_machine_id || null,
+    });
   }
 
   // Fly path needs a machine id to query; if we somehow have a session without one,

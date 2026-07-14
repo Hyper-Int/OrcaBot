@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -127,7 +128,22 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort, m.egressProxyPort)
+	// Desktop shares ONE VM across ALL dashboards, so root each dashboard's session at
+	// /workspace/<dashboardID>. Because the whole Session/Workspace (PTY cwd, file APIs)
+	// is built from this root, EVERY dashboard-scoped execution path — UI terminals,
+	// chat run_command, schedules, messaging — is isolated to it with no per-call
+	// working-dir plumbing. Cloud has one VM per dashboard (ORCABOT_DEBUG_EXEC unset),
+	// so it keeps the shared base and is unchanged.
+	// REVISION: workspace-per-dashboard-v1-session-root
+	workspaceRoot := m.workspaceBase
+	if dashboardID != "" && os.Getenv("ORCABOT_DEBUG_EXEC") == "1" && isSafeDirComponent(dashboardID) {
+		workspaceRoot = filepath.Join(m.workspaceBase, dashboardID)
+		if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+			return nil, err
+		}
+	}
+
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspaceRoot, m.broker, m.brokerPort, m.egressProxyPort)
 	session.geminiShimPort = m.geminiShimPort
 
 	m.mu.Lock()
@@ -159,6 +175,13 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 	}
 
 	return session, nil
+}
+
+// isSafeDirComponent reports whether s is a single safe path component (no
+// separators or traversal) usable as a per-dashboard workspace subdir.
+func isSafeDirComponent(s string) bool {
+	return s != "" && s != "." && s != ".." &&
+		!strings.ContainsAny(s, "/\\") && !strings.Contains(s, "..")
 }
 
 // browserPrewarmEnabled reports whether chromium should be pre-warmed at session
