@@ -717,13 +717,36 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(&path, format!("{}\n{}\n", token, email.trim()))
-        .map_err(|e| format!("failed to store credential: {e}"))?;
+    // Write to a temp file created 0600, then atomically rename over the target —
+    // so the credential is never briefly world-readable (umask race) and any
+    // pre-existing loose-permission file is replaced by a 0600 one. Permission
+    // failures are fatal (we must not leave a readable token on disk).
+    let contents = format!("{}\n{}\n", token, email.trim());
+    let tmp = path.with_extension("tmp");
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("failed to store credential: {e}"))?;
+        f.write_all(contents.as_bytes())
+            .map_err(|e| format!("failed to store credential: {e}"))?;
+        let _ = f.sync_all();
     }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp, &contents)
+            .map_err(|e| format!("failed to store credential: {e}"))?;
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("failed to store credential: {e}")
+    })?;
     Ok(())
 }
 
@@ -897,6 +920,11 @@ fn cloud_dir_list(token: &str, sid: &str, dir: &str) -> Result<Vec<serde_json::V
     }
 }
 
+/// Cap on a single downloaded file held in memory. The control plane already 413s
+/// file reads over 50 MB; this is a defensive client-side bound so one huge
+/// artifact can't exhaust desktop memory even if that cap changes.
+const MAX_DOWNLOAD_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
 fn cloud_file_get(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let url = format!("{CLOUD_API_BASE}/sessions/{sid}/file");
@@ -908,7 +936,13 @@ fn cloud_file_get(token: &str, sid: &str, rel: &str) -> Result<Vec<u8>, String> 
     {
         Ok(rp) => {
             let mut buf = Vec::new();
-            rp.into_reader().read_to_end(&mut buf).map_err(|e| e.to_string())?;
+            rp.into_reader()
+                .take(MAX_DOWNLOAD_FILE_BYTES + 1)
+                .read_to_end(&mut buf)
+                .map_err(|e| e.to_string())?;
+            if buf.len() as u64 > MAX_DOWNLOAD_FILE_BYTES {
+                return Err("file exceeds size limit".into());
+            }
             Ok(buf)
         }
         Err(ureq::Error::Status(c, rp)) => {

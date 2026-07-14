@@ -9,7 +9,12 @@ import {
   downloadCloudWorkspace,
   type WorkspaceDownloadResult,
 } from "@/lib/tauri-bridge";
-import { createDashboard, createItem, createEdge } from "@/lib/api/cloudflare/dashboards";
+import {
+  createDashboard,
+  createItem,
+  createEdge,
+  deleteDashboard,
+} from "@/lib/api/cloudflare/dashboards";
 import type { Dashboard, DashboardItem, DashboardEdge } from "@/types";
 
 if (typeof window !== "undefined") {
@@ -39,6 +44,22 @@ export interface DownloadResult {
  * `download_cloud_workspace` writes the files. Any existing workingDir is preserved
  * underneath the subfolder. Returns the content JSON string to store on the item.
  */
+/**
+ * Sanitize a workspace-relative path to plain segments: strip leading slashes and
+ * `.`/empty segments, and REJECT any `..` (returns "" so the caller falls back to
+ * the bare subfolder). Without this, a terminal whose content has
+ * `workingDir: "../other"` would become `<subdir>/../other` and the sandbox would
+ * normalize it OUT of the dashboard's isolated subfolder.
+ */
+function sanitizeRel(p: string): string {
+  const parts = p
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter((seg) => seg !== "" && seg !== ".");
+  if (parts.some((seg) => seg === "..")) return "";
+  return parts.join("/");
+}
+
 function pinTerminalToSubdir(content: string, subdir: string): string {
   if (!content.trim().startsWith("{")) {
     return content; // not JSON we understand — leave it (cwds to workspace root)
@@ -50,7 +71,7 @@ function pinTerminalToSubdir(content: string, subdir: string): string {
     return content;
   }
   const existing =
-    typeof obj.workingDir === "string" ? obj.workingDir.replace(/^\/+/, "").trim() : "";
+    typeof obj.workingDir === "string" ? sanitizeRel(obj.workingDir) : "";
   obj.workingDir = existing ? `${subdir}/${existing}` : subdir;
   return JSON.stringify(obj);
 }
@@ -76,32 +97,44 @@ export async function downloadCloudDashboard(
   const { dashboard } = await createDashboard(name, undefined, cloudId);
   const subdir = dashboard.id;
 
-  // Recreate items, mapping each cloud item id → the new local id (edges use it).
-  // Terminal items are pinned to this dashboard's workspace subfolder.
-  const idMap = new Map<string, string>();
-  for (const item of data.items || []) {
-    const content =
-      item.type === "terminal" ? pinTerminalToSubdir(item.content, subdir) : item.content;
-    const local = await createItem(dashboard.id, {
-      type: item.type,
-      content,
-      position: item.position,
-      size: item.size,
-      metadata: item.metadata,
-    });
-    idMap.set(item.id, local.id);
-  }
+  // Recreate the canvas atomically: if any item/edge fails, delete the partial
+  // dashboard so it doesn't linger marked "downloaded" (with a cloudId) but broken.
+  try {
+    // Recreate items, mapping each cloud item id → the new local id (edges use it).
+    // Terminal items are pinned to this dashboard's workspace subfolder.
+    const idMap = new Map<string, string>();
+    for (const item of data.items || []) {
+      const content =
+        item.type === "terminal" ? pinTerminalToSubdir(item.content, subdir) : item.content;
+      const local = await createItem(dashboard.id, {
+        type: item.type,
+        content,
+        position: item.position,
+        size: item.size,
+        metadata: item.metadata,
+      });
+      idMap.set(item.id, local.id);
+    }
 
-  for (const edge of data.edges || []) {
-    const sourceItemId = idMap.get(edge.sourceItemId);
-    const targetItemId = idMap.get(edge.targetItemId);
-    if (!sourceItemId || !targetItemId) continue; // endpoint didn't survive (e.g. filtered item)
-    await createEdge(dashboard.id, {
-      sourceItemId,
-      targetItemId,
-      sourceHandle: edge.sourceHandle,
-      targetHandle: edge.targetHandle,
-    });
+    for (const edge of data.edges || []) {
+      const sourceItemId = idMap.get(edge.sourceItemId);
+      const targetItemId = idMap.get(edge.targetItemId);
+      if (!sourceItemId || !targetItemId) continue; // endpoint didn't survive (e.g. filtered item)
+      await createEdge(dashboard.id, {
+        sourceItemId,
+        targetItemId,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+      });
+    }
+  } catch (e) {
+    // Roll back the partial dashboard (best-effort) and surface the failure.
+    try {
+      await deleteDashboard(dashboard.id);
+    } catch {
+      /* leave it; the canvas error below is the real signal */
+    }
+    throw e;
   }
 
   // Pull the workspace files into <workspace>/<subdir>. Best-effort — the canvas

@@ -343,18 +343,26 @@ export async function callbackGoogle(
   // Process any pending dashboard invitations for this email
   await processPendingInvitations(env, userId, userInfo.email);
 
-  // Desktop login: mint a PAT so the desktop app gets a real cloud credential
-  // (for listing + syncing the user's cloud dashboards), and stash it — with the
-  // PKCE challenge — keyed by the app's nonce for it to poll. No browser session
-  // is useful (the app authenticates to its LOCAL control plane via dev-auth).
+  // Desktop login: stash the identity (+ PKCE challenge + short expiry) keyed by
+  // the app's nonce for it to poll. We do NOT mint the PAT here — a flow the user
+  // abandons (closes the app after the browser step) would otherwise leave a
+  // usable, plaintext, non-expiring token in D1 forever. The PAT is minted only
+  // when the desktop app COLLECTS the result with the matching verifier
+  // (getDesktopGoogleResult). No browser session is useful (the app authenticates
+  // to its LOCAL control plane via dev-auth).
   if (postLoginRedirect.startsWith('desktop:')) {
     const [, nonce, challenge] = postLoginRedirect.split(':');
     const name = userInfo.name || userInfo.email.split('@')[0];
-    const { token } = await createApiToken(env, userId, 'Orcabot Desktop');
     await createAuthState(
       env,
       `desktopresult:${nonce}`,
-      JSON.stringify({ token, email: userInfo.email, name, challenge })
+      JSON.stringify({
+        userId,
+        email: userInfo.email,
+        name,
+        challenge,
+        expiresAt: Date.now() + 10 * 60 * 1000, // 10 min to collect
+      })
     );
     return renderDesktopReturnPage();
   }
@@ -447,18 +455,31 @@ export async function getDesktopGoogleResult(request: Request, env: Env): Promis
   if (!rec) {
     return json({ pending: true });
   }
-  let parsed: { token: string; email: string; name: string; challenge: string };
+  let parsed: {
+    userId: string;
+    email: string;
+    name: string;
+    challenge: string;
+    expiresAt?: number;
+  };
   try {
     parsed = JSON.parse(rec.v);
   } catch {
     return json({ error: 'corrupt' }, 500);
   }
+  // Expired abandoned result — clean it up and report nothing outstanding.
+  if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
+    await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
+    return json({ pending: true });
+  }
   if ((await sha256Base64Url(verifier)) !== parsed.challenge) {
     return json({ error: 'forbidden' }, 403);
   }
-  // Verified — consume it and hand back the PAT + identity.
+  // Verified — mint the PAT NOW (only for the collector holding the verifier),
+  // then consume the stash and hand back the token + identity.
+  const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop');
   await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
-  return json({ token: parsed.token, email: parsed.email, name: parsed.name });
+  return json({ token, email: parsed.email, name: parsed.name });
 }
 
 function renderLoginCompletePage(
