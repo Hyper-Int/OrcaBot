@@ -47,6 +47,11 @@
   margin-bottom: 1rem;
 }
 
+.dl-req {
+  margin: -0.5rem 0 1rem;
+  font-size: 0.85rem;
+}
+
 .dl-btn {
   display: inline-flex;
   flex-direction: column;

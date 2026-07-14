@@ -34,7 +34,8 @@
     .foot .warn { color:var(--warn); }
     .diag { margin-top:10px; font-size:.72rem; color:var(--muted); font-family: ui-monospace, Menlo, monospace;
       background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px;
-      padding:8px 10px; user-select:text; display:none; white-space:pre-wrap; text-align:left; }
+      padding:8px 10px; user-select:text; display:none; white-space:pre-wrap; text-align:left;
+      max-height:260px; overflow:auto; }
     .actions { margin-top:18px; display:flex; gap:12px; align-items:center; justify-content:center; min-height:34px; }
     .btn { font: inherit; font-size:.85rem; font-weight:600; padding:7px 16px; border-radius:9px; cursor:pointer;
       border:1px solid rgba(255,255,255,.16); background:rgba(255,255,255,.05); color:var(--fg); }
@@ -56,7 +57,6 @@
     <div class="diag" id="diag"></div>
     <div class="actions">
       <button class="btn hidden" id="retryBtn">Retry</button>
-      <a class="link hidden" id="openAnyway">Open anyway →</a>
       <button class="btn hidden" id="quitBtn">Quit</button>
     </div>
   </div>
@@ -100,6 +100,20 @@
     function stepUrl(s){ return 'http://127.0.0.1:' + PORTS[s.portKey] + s.path; }
 
     var t0 = Date.now(), quipIdx = 0, quipStep = null, doneRedirect = false, failed = false, curStartedAt = {}, cur = null;
+    var STARTUP_LOG = '';
+    // Pull the teed backend logs (<app_data>/startup.log) from the Tauri host so the
+    // failure screen can show WHY the services didn't come up.
+    function fetchStartupLog(){
+      try {
+        if (window.__TAURI__ && window.__TAURI__.core) {
+          window.__TAURI__.core.invoke('read_startup_log')
+            .then(function(t){ STARTUP_LOG = (t && t.trim()) ? t : '(startup log is empty)'; render(); })
+            .catch(function(){ STARTUP_LOG = '(could not read startup log)'; render(); });
+          return;
+        }
+      } catch (e) {}
+      STARTUP_LOG = '(startup log unavailable)';
+    }
     var $ = function(id){ return document.getElementById(id); };
     STEPS.forEach(function(s){
       var li = document.createElement('li'); li.id = 'li-'+s.id;
@@ -136,10 +150,15 @@
         $('stage').textContent = "Orcabot couldn't finish starting up";
         $('quip').textContent = 'The background services didn’t come up. A previous instance may still be running, or a port is in use.';
         $('hint').textContent = '';
-        $('diag').style.display = 'block'; $('diag').textContent = diagText();
+        $('diag').style.display = 'block';
+        // Show the port/health summary plus the actual backend logs (workerd/D1),
+        // which explain WHY startup failed (e.g. a port bind error) — otherwise
+        // invisible in a Finder-launched .app.
+        $('diag').textContent = diagText()
+          + '\n\n─── background server logs ───\n'
+          + (STARTUP_LOG || '(fetching…)');
         $('retryBtn').classList.remove('hidden');
         $('quitBtn').classList.remove('hidden');
-        $('openAnyway').classList.remove('hidden');
         return;
       }
       cur = current();
@@ -149,7 +168,6 @@
       $('quip').textContent = cur.quips[quipIdx % cur.quips.length];
       var waited = (Date.now() - (curStartedAt[cur.id]||t0))/1000;
       $('hint').innerHTML = waited > (cur.slow||12) ? ' · <span class="warn">'+cur.label+' is taking longer than usual…</span>' : '';
-      if (elapsed() > MANUAL_AFTER){ $('openAnyway').classList.remove('hidden'); }
     }
 
     function tick(){
@@ -158,12 +176,11 @@
         .then(function(){
           var ready = STEPS.every(function(s){ return !s.required || s.up; });
           if (ready && !doneRedirect){ doneRedirect = true; render(); setTimeout(function(){ window.location.replace(redirectUrl()); }, 500); return; }
-          if (!ready && elapsed() >= FAIL_AFTER){ failed = true; }
+          if (!ready && elapsed() >= FAIL_AFTER){ failed = true; fetchStartupLog(); }
           render();
         });
     }
 
-    $('openAnyway').addEventListener('click', function(){ window.location.replace(redirectUrl()); });
     $('retryBtn').addEventListener('click', function(){ window.location.reload(); });
     $('quitBtn').addEventListener('click', function(){
       try { window.__TAURI__.core.invoke('quit_app'); } catch(e) { try { window.close(); } catch(_){} }

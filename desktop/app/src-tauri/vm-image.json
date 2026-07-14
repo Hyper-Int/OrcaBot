@@ -1,5 +1,5 @@
 {
-  "version": "v2",
-  "sha256": "eba0a9e5c17778f5de08371dd9bcb46aa3697a827d8c0ed7c801a465c907f633",
-  "url": "https://github.com/Hyper-Int/OrcaBot/releases/download/vm-image-v2/sandbox.img.gz"
+  "version": "v3",
+  "sha256": "a040638617597b660ea8baef915d4de70267fa48632f910fc892d9115313daa4",
+  "url": "https://github.com/Hyper-Int/OrcaBot/releases/download/vm-image-v3/sandbox.img.gz"
 }

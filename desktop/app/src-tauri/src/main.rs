@@ -26,6 +26,16 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// Set once the user accepts an auto-update ("Update & restart"). The whole stack is
+/// about to be torn down and relaunched, so we must NOT keep spinning up heavy
+/// processes (especially the sandbox VM boot / image download) during the ~minutes
+/// download — `start_sandbox_vm` checks this and bails.
+static UPDATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn is_updating() -> bool {
+  UPDATING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Progress of an in-flight auto-update, emitted to the GUI as `update-progress`
 /// so the frontend can show a download bar (the native "Update available" dialog
 /// otherwise gives no feedback between "Update & restart" and the relaunch).
@@ -199,6 +209,34 @@ fn ensure_port_env(var: &str, preferred: u16, used: &[u16]) -> u16 {
   let port = pick_free_port(preferred, used);
   std::env::set_var(var, port.to_string());
   port
+}
+
+/// Tee a child process stream line-by-line to the console AND (if available) the
+/// per-boot startup log, each line prefixed with the service label. Runs on its own
+/// thread so it drains the pipe continuously (never blocking the child on a full buffer).
+fn tee_child_stream<R: std::io::Read + Send + 'static>(
+  stream: R,
+  label: String,
+  log_path: Option<PathBuf>,
+  is_err: bool,
+) {
+  use std::io::{BufRead, BufReader, Write};
+  std::thread::spawn(move || {
+    let mut logf =
+      log_path.and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+    for line in BufReader::new(stream).lines() {
+      let Ok(line) = line else { break };
+      let out = format!("[{}] {}", label, line);
+      if is_err {
+        eprintln!("{}", out);
+      } else {
+        println!("{}", out);
+      }
+      if let Some(ref mut f) = logf {
+        let _ = writeln!(f, "{}", out);
+      }
+    }
+  });
 }
 
 /// Per-boot token that gates dev-auth to the trusted host frontend. Generated
@@ -461,6 +499,13 @@ impl DesktopServices {
       );
     }
 
+    // Start the per-boot startup log with the chosen ports — the first thing to check
+    // when startup fails (was a default busy? did allocation move a service?).
+    self.reset_startup_log(&format!(
+      "ports: control-plane={} frontend={} d1-shim={} sandbox={}",
+      cp_port, fe_port, d1_port, sandbox_host_port
+    ));
+
     if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 || sandbox_host_port != 8080 {
       eprintln!(
         "[ports] a default port was busy — using control-plane={} frontend={} d1-shim={} sandbox={}",
@@ -665,6 +710,13 @@ impl DesktopServices {
     data_dir: &Path,
     resource_root: &Path,
   ) -> Result<(), vm::VMError> {
+    // The user accepted an app update → don't spin the VM up (or download its image)
+    // just to tear it all down on the imminent relaunch.
+    if is_updating() {
+      eprintln!("[vm] app update accepted — skipping sandbox VM startup");
+      return Ok(());
+    }
+
     // Check if VM resources exist
     let vm_resource_paths = vm::image::VMResourcePaths::from_resource_root(resource_root);
 
@@ -775,9 +827,20 @@ impl DesktopServices {
     };
     config = config.with_cmdline(cmdline);
 
-    // Create and start VM
+    // Create and start VM — unless an update was accepted while we were staging.
+    if is_updating() {
+      eprintln!("[vm] app update accepted — not booting sandbox VM");
+      return Ok(());
+    }
     let mut vm = create_platform_vm();
     vm.start(&config)?;
+    // If the update landed during boot, stop the VM we just started rather than
+    // waiting 120s for health only to tear it down on relaunch.
+    if is_updating() {
+      eprintln!("[vm] app update accepted mid-boot — stopping sandbox VM");
+      let _ = vm.stop();
+      return Ok(());
+    }
 
     // Wait for sandbox to be healthy
     eprintln!("Waiting for sandbox VM to become healthy...");
@@ -818,21 +881,73 @@ impl DesktopServices {
 
     let mut command = Command::new(binary_path);
     command.args(args);
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
+    // Tee stdout+stderr to the console AND <data_dir>/startup.log. A Finder-launched
+    // .app has no attached terminal, so inherited output vanishes — this keeps a
+    // per-boot record of WHY a service failed (surfaced in the loading screen and
+    // recoverable as a file).
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
     for (key, value) in envs {
       command.env(key, value);
     }
 
     match command.spawn() {
-      Ok(child) => {
+      Ok(mut child) => {
+        let log_path = self.startup_log_path();
+        if let Some(out) = child.stdout.take() {
+          tee_child_stream(out, label.to_string(), log_path.clone(), false);
+        }
+        if let Some(err) = child.stderr.take() {
+          tee_child_stream(err, label.to_string(), log_path, true);
+        }
         if let Ok(mut children) = self.children.lock() {
           children.push(child);
         }
       }
       Err(err) => {
         eprintln!("Failed to start {}: {}", label, err);
+        self.append_startup_log(&format!("[{}] FAILED TO START: {}", label, err));
       }
+    }
+  }
+
+  /// `<data_dir>/startup.log` — where service output is teed for post-mortem.
+  fn startup_log_path(&self) -> Option<PathBuf> {
+    self
+      .data_dir
+      .lock()
+      .ok()
+      .and_then(|dd| dd.clone())
+      .map(|d| d.join("startup.log"))
+  }
+
+  fn append_startup_log(&self, line: &str) {
+    if let Some(p) = self.startup_log_path() {
+      use std::io::Write;
+      if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        let _ = writeln!(f, "{}", line);
+      }
+    }
+  }
+
+  /// Truncate the startup log at the start of a boot and write a header, so it only
+  /// ever reflects the CURRENT startup attempt (not accumulated across launches).
+  fn reset_startup_log(&self, header: &str) {
+    if let Some(p) = self.startup_log_path() {
+      let _ = std::fs::write(p, format!("=== Orcabot desktop startup ===\n{}\n", header));
+    }
+  }
+
+  /// Stop ONLY the sandbox VM (leave workerd/frontend running). Used when the user
+  /// accepts an update: the heavy VM shouldn't keep running/booting during the
+  /// download, but the frontend must stay up so the update-progress bar keeps working.
+  fn stop_sandbox_vm(&self) {
+    if let Ok(mut vm_lock) = self.sandbox_vm.lock() {
+      if let Some(ref mut vm) = *vm_lock {
+        eprintln!("Stopping sandbox VM (app update in progress)...");
+        let _ = vm.stop();
+      }
+      *vm_lock = None;
     }
   }
 
@@ -1012,6 +1127,7 @@ fn main() {
       commands::reveal_workspace,
       commands::get_ports,
       commands::get_app_version,
+      commands::read_startup_log,
       commands::verify_orcabot_account,
       commands::set_cloud_credential,
       commands::sign_in_google_loopback,
@@ -1130,6 +1246,7 @@ fn main() {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
         use tauri_plugin_updater::UpdaterExt;
         let handle = app.handle().clone();
+        let upd_services = Arc::clone(&services);
         tauri::async_runtime::spawn(async move {
           let updater = match handle.updater() {
             Ok(u) => u,
@@ -1157,6 +1274,13 @@ fn main() {
             eprintln!("[updater] update deferred by user");
             return;
           }
+
+          // The user chose update+restart. Everything is about to be torn down and
+          // relaunched, so stop spinning up the heavy sandbox VM during the ~minutes
+          // download: flag it so start_sandbox_vm won't (re)boot, and stop any VM that
+          // already came up. Leave workerd/frontend running so this progress UI works.
+          UPDATING.store(true, std::sync::atomic::Ordering::SeqCst);
+          upd_services.stop_sandbox_vm();
 
           // Tell the GUI a download is starting so it can show a progress bar,
           // then stream progress from the download closure. Emits are throttled
