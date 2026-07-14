@@ -922,8 +922,6 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const skipIpRateLimit =
       path === '/auth/google/callback'
       || path === '/auth/google/login'
-      || path === '/auth/desktop/exchange'
-      || path === '/auth/api-token/revoke-self'
       || path === '/auth/config'
       || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)

@@ -689,16 +689,24 @@ fn cloud_credential_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join("cloud-credential"))
 }
 
-fn read_cloud_credential(app: &tauri::AppHandle) -> Option<(String, String)> {
+/// (token, email, origin). `origin` is "google" for a desktop-minted cloud PAT,
+/// "pat" for a user-pasted token, or "" for legacy files. Only "google" tokens are
+/// safe to revoke on logout (a pasted PAT may be shared with the CLI/automation).
+fn read_cloud_credential_full(app: &tauri::AppHandle) -> Option<(String, String, String)> {
     let path = cloud_credential_path(app)?;
     let contents = std::fs::read_to_string(path).ok()?;
     let mut lines = contents.lines();
     let token = lines.next()?.trim().to_string();
     let email = lines.next().unwrap_or("").trim().to_string();
+    let origin = lines.next().unwrap_or("").trim().to_string();
     if token.is_empty() {
         return None;
     }
-    Some((token, email))
+    Some((token, email, origin))
+}
+
+fn read_cloud_credential(app: &tauri::AppHandle) -> Option<(String, String)> {
+    read_cloud_credential_full(app).map(|(t, e, _)| (t, e))
 }
 
 #[derive(Serialize, Clone)]
@@ -710,12 +718,17 @@ pub struct CloudAccount {
 /// Write to a temp file created 0600, then rename over the target — so the token is
 /// never briefly world-readable (umask race) and any pre-existing loose-permission
 /// file is replaced by a 0600 one. Permission failures are fatal.
-fn write_cloud_credential(app: &tauri::AppHandle, token: &str, email: &str) -> Result<(), String> {
+fn write_cloud_credential(
+    app: &tauri::AppHandle,
+    token: &str,
+    email: &str,
+    origin: &str,
+) -> Result<(), String> {
     let path = cloud_credential_path(app).ok_or("no app data dir")?;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let contents = format!("{}\n{}\n", token, email.trim());
+    let contents = format!("{}\n{}\n{}\n", token, email.trim(), origin);
     let tmp = path.with_extension("tmp");
     #[cfg(unix)]
     {
@@ -751,7 +764,9 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
     if !token.starts_with("orca_pat_") {
         return Err("Not an Orcabot token.".into());
     }
-    write_cloud_credential(&app, token, &email)?;
+    // "pat" origin — a user-pasted token, possibly shared with the CLI/automation,
+    // so logout must NOT revoke it server-side (only forget it locally).
+    write_cloud_credential(&app, token, &email, "pat")?;
     // A deliberate credential set (PAT paste, or the loopback flow) supersedes any
     // in-flight Google sign-in so it can't later overwrite this one.
     SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -999,7 +1014,8 @@ pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignI
     if !sign_in_current(my_gen) {
         return Err("sign-in cancelled".into());
     }
-    write_cloud_credential(&app, &token, &email)?;
+    // "google" origin — desktop-minted, so logout revokes it server-side.
+    write_cloud_credential(&app, &token, &email, "google")?;
     Ok(CloudSignIn { email, name })
 }
 
@@ -1016,23 +1032,29 @@ pub fn get_cloud_account(app: tauri::AppHandle) -> Option<CloudAccount> {
     read_cloud_credential(&app).map(|(_, email)| CloudAccount { email })
 }
 
-/// Forget the stored cloud credential (sign out of cloud sync). Also revokes the
-/// PAT server-side (best-effort) so logout doesn't leave an active token behind —
-/// the TTL is only a backstop for offline logout. Supersedes any in-flight sign-in.
+/// Forget the stored cloud credential (sign out of cloud sync). Deletes the local
+/// file FIRST (before any await) so a concurrent re-sign-in that writes a new
+/// credential can't be clobbered by this logout's late deletion. Then, only for a
+/// desktop-minted ("google") token, revokes it server-side (best-effort; the TTL is
+/// the offline backstop). A user-pasted PAT is only forgotten locally — it may be
+/// shared with the CLI/automation, so we must not revoke it globally.
 #[tauri::command]
 pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String> {
     SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if let Some((token, _email)) = read_cloud_credential(&app) {
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            let _ = ureq::post(&format!("{CLOUD_API_BASE}/auth/api-token/revoke-self"))
-                .set("Authorization", &format!("Bearer {token}"))
-                .timeout(std::time::Duration::from_secs(10))
-                .call();
-        })
-        .await;
-    }
+    let creds = read_cloud_credential_full(&app);
     if let Some(path) = cloud_credential_path(&app) {
         let _ = std::fs::remove_file(path);
+    }
+    if let Some((token, _email, origin)) = creds {
+        if origin == "google" {
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                let _ = ureq::post(&format!("{CLOUD_API_BASE}/auth/api-token/revoke-self"))
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .timeout(std::time::Duration::from_secs(10))
+                    .call();
+            })
+            .await;
+        }
     }
     Ok(())
 }

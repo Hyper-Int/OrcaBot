@@ -472,13 +472,13 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
     return json({ error: 'missing_code_or_verifier' }, 400);
   }
 
-  // Atomic single-use: DELETE … RETURNING consumes the row in one statement, so two
-  // racing requests can't both read it. (A wrong-verifier request also consumes it —
-  // a local observer who saw the code could deny the real app, but can't get a token;
-  // the user just retries.)
   const key = `desktopcode:${code}`;
+  // Peek first — do NOT consume on a bad verifier, or a local observer who saw the
+  // code could invalidate every legit sign-in by exchanging first with a bogus
+  // verifier. Only after PKCE passes do we atomically consume (compare-and-delete on
+  // the exact stored value, so concurrent success requests still can't double-mint).
   const rec = await env.DB
-    .prepare('DELETE FROM auth_states WHERE state = ? RETURNING redirect_url as v')
+    .prepare('SELECT redirect_url as v FROM auth_states WHERE state = ?')
     .bind(key)
     .first<{ v: string }>();
   if (!rec) {
@@ -488,13 +488,25 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
   try {
     parsed = JSON.parse(rec.v);
   } catch {
+    // Corrupt row — consume it so it can't wedge, then report.
+    await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
     return json({ error: 'corrupt' }, 500);
   }
   if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
+    await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
     return json({ error: 'expired' }, 410);
   }
   if (!parsed.challenge || (await sha256Base64Url(verifier)) !== parsed.challenge) {
-    return json({ error: 'forbidden' }, 403);
+    return json({ error: 'forbidden' }, 403); // wrong verifier — leave the code intact
+  }
+  // PKCE verified — atomically consume this exact record. A concurrent request that
+  // already deleted it makes this affect 0 rows → treat as already used.
+  const consumed = await env.DB
+    .prepare('DELETE FROM auth_states WHERE state = ? AND redirect_url = ? RETURNING redirect_url as v')
+    .bind(key, rec.v)
+    .first<{ v: string }>();
+  if (!consumed) {
+    return json({ error: 'not_found' }, 404);
   }
   const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop', DESKTOP_PAT_TTL_DAYS);
   return json({ token, email: parsed.email, name: parsed.name });

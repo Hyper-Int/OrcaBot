@@ -1,12 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v7-surface-skipped
+// REVISION: dashboards-tabs-v8-workspace-retry
 "use client";
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, HardDrive, Trash2, Link2, Plus, Loader2, Cloud } from "lucide-react";
+import { Download, HardDrive, Trash2, Link2, Plus, Loader2, Cloud, RefreshCw } from "lucide-react";
 import {
   Button,
   Card,
@@ -21,13 +21,14 @@ import {
   listCloudDashboards,
   openExternalUrl,
   onCloudWorkspaceProgress,
+  downloadCloudWorkspace,
   type CloudWorkspaceProgress,
 } from "@/lib/tauri-bridge";
 import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v7-surface-skipped";
+const MODULE_REVISION = "dashboards-tabs-v8-workspace-retry";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -73,8 +74,27 @@ export function DashboardsTabs({
   const [downloading, setDownloading] = React.useState<Set<string>>(new Set());
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
   const [progress, setProgress] = React.useState<Record<string, CloudWorkspaceProgress>>({});
+  // Cloud ids whose last workspace copy was incomplete (persisted, so it survives
+  // reload) — those cards get a "Retry files" action.
+  const [incomplete, setIncomplete] = React.useState<Set<string>>(new Set());
   const [tab, setTab] = React.useState<"online" | "local">("local");
   const defaultedToOnline = React.useRef(false);
+
+  const wsKey = (cloudId: string) => `orcabot:ws-incomplete:${cloudId}`;
+  const markIncomplete = React.useCallback((cloudId: string, yes: boolean) => {
+    try {
+      if (yes) localStorage.setItem(wsKey(cloudId), "1");
+      else localStorage.removeItem(wsKey(cloudId));
+    } catch {
+      /* localStorage unavailable — in-memory state still updates */
+    }
+    setIncomplete((prev) => {
+      const next = new Set(prev);
+      if (yes) next.add(cloudId);
+      else next.delete(cloudId);
+      return next;
+    });
+  }, []);
 
   // Live progress for in-flight downloads (so a slow cold cloud-VM boot doesn't
   // look like a hang), keyed by cloud dashboard id.
@@ -142,21 +162,40 @@ export function DashboardsTabs({
 
   const cloudList = cloudDashboards ?? [];
 
+  // Hydrate the incomplete set from localStorage once the cloud list is known.
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !cloudDashboards) return;
+    const s = new Set<string>();
+    for (const cd of cloudDashboards) {
+      try {
+        if (localStorage.getItem(wsKey(cd.id)) === "1") s.add(cd.id);
+      } catch {
+        /* ignore */
+      }
+    }
+    setIncomplete(s);
+  }, [cloudDashboards]);
+
   const download = async (cd: CloudDashboard) => {
     setDownloadError(null);
     setDownloading((s) => new Set(s).add(cd.id));
     try {
       const res = await downloadCloudDashboard(cd.id, cd.name);
       // Canvas downloaded; report incomplete workspace copies (hard error, or some
-      // files/dirs skipped) so it's not silently presented as complete.
+      // files/dirs skipped) so it's not silently presented as complete, and remember
+      // the incomplete state so the card can offer a retry.
       if (res.workspaceError) {
+        markIncomplete(cd.id, true);
         setDownloadError(
           `“${cd.name}” downloaded, but its files couldn't be copied: ${res.workspaceError}`
         );
       } else if (res.workspace && res.workspace.skipped > 0) {
+        markIncomplete(cd.id, true);
         setDownloadError(
-          `“${cd.name}” downloaded, but ${res.workspace.skipped} file(s)/folder(s) couldn't be copied — some workspace files may be missing. Re-download to retry.`
+          `“${cd.name}” downloaded, but ${res.workspace.skipped} file(s)/folder(s) couldn't be copied — use “Retry files” on the card to try again.`
         );
+      } else if (res.workspace) {
+        markIncomplete(cd.id, false);
       }
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed.");
@@ -164,6 +203,37 @@ export function DashboardsTabs({
       // Always refresh — the canvas may have been created even if files failed, so
       // the card should flip to "Local Storage".
       onDownloaded();
+      setDownloading((s) => {
+        const next = new Set(s);
+        next.delete(cd.id);
+        return next;
+      });
+      setProgress((prev) => {
+        const next = { ...prev };
+        delete next[cd.id];
+        return next;
+      });
+    }
+  };
+
+  // Workspace-only retry for an already-downloaded dashboard: re-pull the cloud
+  // files into the existing local dashboard's subfolder (no canvas re-create).
+  const retryWorkspace = async (cd: CloudDashboard, local: Dashboard) => {
+    setDownloadError(null);
+    setDownloading((s) => new Set(s).add(cd.id));
+    try {
+      const ws = await downloadCloudWorkspace(cd.id, local.id);
+      if (ws.skipped > 0) {
+        markIncomplete(cd.id, true);
+        setDownloadError(
+          `Retried “${cd.name}”, but ${ws.skipped} item(s) still couldn't be copied.`
+        );
+      } else {
+        markIncomplete(cd.id, false);
+      }
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : "Retry failed.");
+    } finally {
       setDownloading((s) => {
         const next = new Set(s);
         next.delete(cd.id);
@@ -259,7 +329,9 @@ export function DashboardsTabs({
             local={localByCloudId.get(cd.id)}
             isDownloading={downloading.has(cd.id)}
             downloadingLabel={downloadLabel(progress[cd.id])}
+            incomplete={incomplete.has(cd.id)}
             onDownload={() => void download(cd)}
+            onRetry={(local) => void retryWorkspace(cd, local)}
             onOpen={onOpen}
           />
         ))}
@@ -351,14 +423,18 @@ function CloudDashboardCard({
   local,
   isDownloading,
   downloadingLabel,
+  incomplete,
   onDownload,
+  onRetry,
   onOpen,
 }: {
   cd: CloudDashboard;
   local: Dashboard | undefined;
   isDownloading: boolean;
   downloadingLabel: string;
+  incomplete: boolean;
   onDownload: () => void;
+  onRetry: (local: Dashboard) => void;
   onOpen: (localDashboardId: string) => void;
 }) {
   const downloaded = !!local;
@@ -397,12 +473,32 @@ function CloudDashboardCard({
                 : "In your cloud account"}
             </p>
             {downloaded ? (
-              <span
-                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)] shrink-0"
-                title="Downloaded to this machine — click the card to open"
-              >
-                <HardDrive className="w-3.5 h-3.5" /> Local Storage
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-success,#34d399)]"
+                  title="Downloaded to this machine — click the card to open"
+                >
+                  <HardDrive className="w-3.5 h-3.5" /> Local Storage
+                </span>
+                {incomplete &&
+                  (isDownloading ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-[var(--foreground-muted)]">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> {downloadingLabel}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRetry(local!);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-[var(--status-warning,#f59e0b)] hover:underline"
+                      title="Some workspace files are missing — retry the copy"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Retry files
+                    </button>
+                  ))}
+              </div>
             ) : (
               <button
                 type="button"
