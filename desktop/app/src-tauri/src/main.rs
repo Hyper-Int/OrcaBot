@@ -26,6 +26,16 @@ fn pid_file_path(data_dir: &Path) -> PathBuf {
   data_dir.join("desktop-services.pid")
 }
 
+/// Set once the user accepts an auto-update ("Update & restart"). The whole stack is
+/// about to be torn down and relaunched, so we must NOT keep spinning up heavy
+/// processes (especially the sandbox VM boot / image download) during the ~minutes
+/// download — `start_sandbox_vm` checks this and bails.
+static UPDATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn is_updating() -> bool {
+  UPDATING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Progress of an in-flight auto-update, emitted to the GUI as `update-progress`
 /// so the frontend can show a download bar (the native "Update available" dialog
 /// otherwise gives no feedback between "Update & restart" and the relaunch).
@@ -665,6 +675,13 @@ impl DesktopServices {
     data_dir: &Path,
     resource_root: &Path,
   ) -> Result<(), vm::VMError> {
+    // The user accepted an app update → don't spin the VM up (or download its image)
+    // just to tear it all down on the imminent relaunch.
+    if is_updating() {
+      eprintln!("[vm] app update accepted — skipping sandbox VM startup");
+      return Ok(());
+    }
+
     // Check if VM resources exist
     let vm_resource_paths = vm::image::VMResourcePaths::from_resource_root(resource_root);
 
@@ -775,9 +792,20 @@ impl DesktopServices {
     };
     config = config.with_cmdline(cmdline);
 
-    // Create and start VM
+    // Create and start VM — unless an update was accepted while we were staging.
+    if is_updating() {
+      eprintln!("[vm] app update accepted — not booting sandbox VM");
+      return Ok(());
+    }
     let mut vm = create_platform_vm();
     vm.start(&config)?;
+    // If the update landed during boot, stop the VM we just started rather than
+    // waiting 120s for health only to tear it down on relaunch.
+    if is_updating() {
+      eprintln!("[vm] app update accepted mid-boot — stopping sandbox VM");
+      let _ = vm.stop();
+      return Ok(());
+    }
 
     // Wait for sandbox to be healthy
     eprintln!("Waiting for sandbox VM to become healthy...");
@@ -833,6 +861,19 @@ impl DesktopServices {
       Err(err) => {
         eprintln!("Failed to start {}: {}", label, err);
       }
+    }
+  }
+
+  /// Stop ONLY the sandbox VM (leave workerd/frontend running). Used when the user
+  /// accepts an update: the heavy VM shouldn't keep running/booting during the
+  /// download, but the frontend must stay up so the update-progress bar keeps working.
+  fn stop_sandbox_vm(&self) {
+    if let Ok(mut vm_lock) = self.sandbox_vm.lock() {
+      if let Some(ref mut vm) = *vm_lock {
+        eprintln!("Stopping sandbox VM (app update in progress)...");
+        let _ = vm.stop();
+      }
+      *vm_lock = None;
     }
   }
 
@@ -1130,6 +1171,7 @@ fn main() {
         use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
         use tauri_plugin_updater::UpdaterExt;
         let handle = app.handle().clone();
+        let upd_services = Arc::clone(&services);
         tauri::async_runtime::spawn(async move {
           let updater = match handle.updater() {
             Ok(u) => u,
@@ -1157,6 +1199,13 @@ fn main() {
             eprintln!("[updater] update deferred by user");
             return;
           }
+
+          // The user chose update+restart. Everything is about to be torn down and
+          // relaunched, so stop spinning up the heavy sandbox VM during the ~minutes
+          // download: flag it so start_sandbox_vm won't (re)boot, and stop any VM that
+          // already came up. Leave workerd/frontend running so this progress UI works.
+          UPDATING.store(true, std::sync::atomic::Ordering::SeqCst);
+          upd_services.stop_sandbox_vm();
 
           // Tell the GUI a download is starting so it can show a progress bar,
           // then stream progress from the download closure. Emits are throttled
