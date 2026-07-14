@@ -126,8 +126,14 @@ RUN npm cache clean --force && npm install -g @google/gemini-cli@latest
 # OpenCode re-enabled for benchmark harnesses (slop-code-bench drives it for
 # OpenRouter models, e.g. Kimi). Droid and OpenClaw stay disabled to save space.
 
-# Install OpenCode CLI and move to shared location
-RUN curl -fsSL https://opencode.ai/install | bash \
+# Install OpenCode CLI (PINNED) and move to shared location.
+# The installer's default (no --version) queries api.github.com/.../releases/latest,
+# which is rate-limited to 60 req/hr per IP unauthenticated — repeated/CI builds hit
+# the limit and fail with "Failed to fetch version information". Passing --version
+# downloads the release asset directly and skips that API call. Bump as needed
+# (latest: https://github.com/anomalyco/opencode/releases).
+ARG OPENCODE_VERSION=1.17.20
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "${OPENCODE_VERSION}" \
     && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # # Install Droid CLI (Factory)
