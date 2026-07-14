@@ -211,6 +211,34 @@ fn ensure_port_env(var: &str, preferred: u16, used: &[u16]) -> u16 {
   port
 }
 
+/// Tee a child process stream line-by-line to the console AND (if available) the
+/// per-boot startup log, each line prefixed with the service label. Runs on its own
+/// thread so it drains the pipe continuously (never blocking the child on a full buffer).
+fn tee_child_stream<R: std::io::Read + Send + 'static>(
+  stream: R,
+  label: String,
+  log_path: Option<PathBuf>,
+  is_err: bool,
+) {
+  use std::io::{BufRead, BufReader, Write};
+  std::thread::spawn(move || {
+    let mut logf =
+      log_path.and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok());
+    for line in BufReader::new(stream).lines() {
+      let Ok(line) = line else { break };
+      let out = format!("[{}] {}", label, line);
+      if is_err {
+        eprintln!("{}", out);
+      } else {
+        println!("{}", out);
+      }
+      if let Some(ref mut f) = logf {
+        let _ = writeln!(f, "{}", out);
+      }
+    }
+  });
+}
+
 /// Per-boot token that gates dev-auth to the trusted host frontend. Generated
 /// once at startup, passed to the control-plane worker (`SURFACE_TOKEN`) and
 /// handed to the GUI webview via the `get_surface_token` command. The sandbox VM
@@ -470,6 +498,13 @@ impl DesktopServices {
         format!("http://127.0.0.1:{}", sandbox_host_port),
       );
     }
+
+    // Start the per-boot startup log with the chosen ports — the first thing to check
+    // when startup fails (was a default busy? did allocation move a service?).
+    self.reset_startup_log(&format!(
+      "ports: control-plane={} frontend={} d1-shim={} sandbox={}",
+      cp_port, fe_port, d1_port, sandbox_host_port
+    ));
 
     if cp_port != 8787 || fe_port != 8788 || d1_port != 9001 || sandbox_host_port != 8080 {
       eprintln!(
@@ -846,21 +881,60 @@ impl DesktopServices {
 
     let mut command = Command::new(binary_path);
     command.args(args);
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
+    // Tee stdout+stderr to the console AND <data_dir>/startup.log. A Finder-launched
+    // .app has no attached terminal, so inherited output vanishes — this keeps a
+    // per-boot record of WHY a service failed (surfaced in the loading screen and
+    // recoverable as a file).
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
     for (key, value) in envs {
       command.env(key, value);
     }
 
     match command.spawn() {
-      Ok(child) => {
+      Ok(mut child) => {
+        let log_path = self.startup_log_path();
+        if let Some(out) = child.stdout.take() {
+          tee_child_stream(out, label.to_string(), log_path.clone(), false);
+        }
+        if let Some(err) = child.stderr.take() {
+          tee_child_stream(err, label.to_string(), log_path, true);
+        }
         if let Ok(mut children) = self.children.lock() {
           children.push(child);
         }
       }
       Err(err) => {
         eprintln!("Failed to start {}: {}", label, err);
+        self.append_startup_log(&format!("[{}] FAILED TO START: {}", label, err));
       }
+    }
+  }
+
+  /// `<data_dir>/startup.log` — where service output is teed for post-mortem.
+  fn startup_log_path(&self) -> Option<PathBuf> {
+    self
+      .data_dir
+      .lock()
+      .ok()
+      .and_then(|dd| dd.clone())
+      .map(|d| d.join("startup.log"))
+  }
+
+  fn append_startup_log(&self, line: &str) {
+    if let Some(p) = self.startup_log_path() {
+      use std::io::Write;
+      if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        let _ = writeln!(f, "{}", line);
+      }
+    }
+  }
+
+  /// Truncate the startup log at the start of a boot and write a header, so it only
+  /// ever reflects the CURRENT startup attempt (not accumulated across launches).
+  fn reset_startup_log(&self, header: &str) {
+    if let Some(p) = self.startup_log_path() {
+      let _ = std::fs::write(p, format!("=== Orcabot desktop startup ===\n{}\n", header));
     }
   }
 
@@ -1053,6 +1127,7 @@ fn main() {
       commands::reveal_workspace,
       commands::get_ports,
       commands::get_app_version,
+      commands::read_startup_log,
       commands::verify_orcabot_account,
       commands::set_cloud_credential,
       commands::sign_in_google_loopback,

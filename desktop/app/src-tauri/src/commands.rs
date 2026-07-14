@@ -616,6 +616,20 @@ pub fn get_app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// Read this boot's startup log (`<app_data>/startup.log`) — the teed workerd / D1
+/// output plus the chosen ports — so the loading screen can show WHY the backend
+/// failed to start (a Finder-launched .app has no console). Empty string if none.
+#[tauri::command]
+pub fn read_startup_log(app: tauri::AppHandle) -> String {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("startup.log"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
+}
+
 #[derive(Serialize, Clone)]
 pub struct OrcabotAccount {
     pub email: String,
