@@ -1,10 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-welcome-v7-rollback-catch
+// REVISION: desktop-welcome-v8-rollback-retry
 "use client";
 
 import * as React from "react";
+import { toast } from "sonner";
 import { CLOUD_SITE_URL } from "@/config/env";
 import {
   openExternalUrl,
@@ -16,7 +17,7 @@ import {
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v7-rollback-catch";
+const MODULE_REVISION = "desktop-welcome-v8-rollback-retry";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -55,6 +56,27 @@ export function DesktopWelcome() {
     []
   );
 
+  async function rollbackCancelledAttempt(attempt: number): Promise<void> {
+    const toastId = `desktop-signin-rollback-${attempt}`;
+    try {
+      await rollbackSignIn(attempt);
+      toast.success("Cancelled sign-in credential removed.", { id: toastId });
+    } catch (e) {
+      console.error("[welcome] failed to roll back cancelled sign-in:", e);
+      toast.error(
+        "The cancelled sign-in credential couldn't be removed locally. Keep the app open and retry cleanup.",
+        {
+          id: toastId,
+          duration: Infinity,
+          action: {
+            label: "Retry cleanup",
+            onClick: () => void rollbackCancelledAttempt(attempt),
+          },
+        }
+      );
+    }
+  }
+
   const connectToken = async () => {
     const t = token.trim();
     if (!t) return;
@@ -90,17 +112,10 @@ export function DesktopWelcome() {
       const account = await signInGoogleLoopback();
       if (currentAttemptRef.current !== myAttempt) {
         // Superseded (cancelled / another attempt / PAT pasted): roll back ONLY this
-        // attempt's credential — a no-op natively if something newer now owns it. If
-        // the rollback fails, the cancelled credential is still on disk, so warn the
-        // user (don't leave it as a silent unhandled rejection).
-        rollbackSignIn(account.attempt).catch((e) => {
-          console.error("[welcome] failed to roll back cancelled sign-in:", e);
-          void import("sonner").then(({ toast }) => {
-            toast.error(
-              "A cancelled sign-in left a credential on this device that couldn't be removed. Restart the app to clear it."
-            );
-          });
-        });
+        // attempt's credential — a no-op natively if something newer now owns it.
+        // Keep the attempt id alive in a persistent retry action if local deletion
+        // fails; restarting would discard the native ownership mapping.
+        void rollbackCancelledAttempt(account.attempt);
         return;
       }
       chooseSignedIn(account.email, account.name || account.email);

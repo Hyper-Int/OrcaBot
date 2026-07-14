@@ -1086,17 +1086,24 @@ pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignI
 /// pasted PAT wrote since, this is a no-op (can't clobber the current one).
 #[tauri::command]
 pub async fn rollback_sign_in(app: tauri::AppHandle, attempt: u64) -> Result<(), String> {
-    let creds = {
+    let (creds, delete_error) = {
         let _guard = cred_lock();
         if attempt == 0 || COMMITTED_GEN.load(std::sync::atomic::Ordering::SeqCst) != attempt {
             return Ok(()); // a newer write owns the credential — leave it
         }
         let creds = read_cloud_credential_full(&app);
-        // Delete FIRST; only relinquish ownership (COMMITTED_GEN) on success, so a
-        // failed delete keeps the mapping and a retry can still clean it up.
-        remove_credential_file(&app)?;
-        COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
-        creds
+        // Only relinquish ownership after deletion succeeds. On failure, keep the
+        // mapping so the UI can retry this exact attempt without risking a newer
+        // credential. Still attempt to revoke the server token below, limiting the
+        // exposure of the leftover file whenever the cloud is reachable.
+        let delete_error = match remove_credential_file(&app) {
+            Ok(()) => {
+                COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        (creds, delete_error)
     };
     if let Some((token, _email, origin)) = creds {
         if origin == "google" {
@@ -1109,7 +1116,10 @@ pub async fn rollback_sign_in(app: tauri::AppHandle, attempt: u64) -> Result<(),
             .await;
         }
     }
-    Ok(())
+    match delete_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// Cancel an in-flight loopback sign-in: bumps the attempt generation so the native
