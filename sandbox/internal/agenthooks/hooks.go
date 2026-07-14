@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -1114,64 +1115,60 @@ fi
 	// read but not overwritten by Codex.
 	configPath := filepath.Join(systemCodexDir, "config.toml")
 
-	// Read existing system config or create new
-	var existingConfig string
-	data, err := os.ReadFile(configPath)
-	if err == nil {
+	// Read the existing system config (owned by us — Codex only READS it, never writes
+	// it), then REBUILD it deterministically. Incrementally appending broke TOML scoping:
+	// `notify`/`check_for_updates` are TOP-LEVEL keys and MUST precede every [table]
+	// header, but they were being appended after the [projects."<root>"] trust tables, so
+	// TOML scoped `notify` under a project and Codex never saw the global hook.
+	// REVISION: codex-config-v3-rebuild-toplevel
+	existingConfig := ""
+	if data, readErr := os.ReadFile(configPath); readErr == nil {
 		existingConfig = string(data)
 	}
+	finalConfig := buildCodexSystemConfig(existingConfig, workspaceRoot, scriptPath)
 
-	// REVISION: codex-autoupdate-v1-disable
-	// Disable Codex CLI's update check. It prompts interactively on startup
-	// which blocks non-interactive use in the sandbox.
-	if !strings.Contains(existingConfig, "check_for_updates") {
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += "\n# Disable update check — updates managed via Docker image rebuilds\ncheck_for_updates = false\n"
-	}
-
-	// REVISION: codex-foldertrust-v2-session-root
-	// Pre-trust the SESSION workspace root so Codex doesn't show "Do you trust this
-	// directory?" on every reconnection. On desktop each dashboard's session is rooted
-	// at /workspace/<dashboardId>, so trusting the fixed /workspace no longer covers the
-	// terminal's cwd and the prompt would reappear (blocking unattended startup). Trust
-	// is stored per-project in config.toml under [projects."<workspaceRoot>"]. Safe
-	// because the sandbox is already isolated.
-	trustKey := fmt.Sprintf(`projects."%s"`, workspaceRoot)
-	if !strings.Contains(existingConfig, trustKey) {
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += fmt.Sprintf("\n# Pre-trust the session workspace — sandbox is already isolated\n[%s]\ntrust_level = \"trusted\"\n", trustKey)
-	}
-
-	// Point notify at EXACTLY our one global script — REPLACE any existing notify line
-	// rather than appending. Codex treats the notify array as command+args, so a second
-	// element would be passed as $1 instead of the event JSON and break completions.
-	// Because the script path is fixed and global, this is idempotent across dashboards.
-	notifyLine := fmt.Sprintf(`notify = ["%s"]`, scriptPath)
-	if strings.Contains(existingConfig, "notify") {
-		lines := strings.Split(existingConfig, "\n")
-		for i, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "notify") {
-				lines[i] = notifyLine
-				break
-			}
-		}
-		existingConfig = strings.Join(lines, "\n")
-	} else {
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += "\n# OrcaBot agent stop notification\n" + notifyLine + "\n"
-	}
-
-	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Codex system config to %s:\n%s\n", configPath, existingConfig)
-	if err := os.WriteFile(configPath, []byte(existingConfig), 0644); err != nil {
+	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Codex system config to %s:\n%s\n", configPath, finalConfig)
+	if err := os.WriteFile(configPath, []byte(finalConfig), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "[DEBUG] Failed to write Codex system config: %v\n", err)
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote Codex hooks to %s\n", configPath)
 	return nil
+}
+
+// buildCodexSystemConfig regenerates the OrcaBot-managed Codex system config as valid
+// TOML: top-level keys (check_for_updates, notify) FIRST — they must precede every
+// [table] header or TOML scopes them under it — then one [projects."<root>"] trust
+// table per workspace root. Existing trusted roots are preserved and workspaceRoot is
+// added, so trust accumulates across dashboards while notify stays a single top-level
+// command. Pure (no filesystem) so it can be unit-tested.
+func buildCodexSystemConfig(existingConfig, workspaceRoot, scriptPath string) string {
+	trustedRoots := map[string]bool{workspaceRoot: true}
+	for _, line := range strings.Split(existingConfig, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, `[projects."`) && strings.HasSuffix(t, `"]`) {
+			if root := t[len(`[projects."`) : len(t)-len(`"]`)]; root != "" {
+				trustedRoots[root] = true
+			}
+		}
+	}
+	roots := make([]string, 0, len(trustedRoots))
+	for r := range trustedRoots {
+		roots = append(roots, r)
+	}
+	sort.Strings(roots) // stable, deterministic output
+
+	var b strings.Builder
+	b.WriteString("# OrcaBot-managed Codex system config — regenerated per session.\n")
+	b.WriteString("# Update check disabled — updates ship via image rebuilds.\n")
+	b.WriteString("check_for_updates = false\n")
+	// Agent stop notification → one global script; it derives session/pty/secret from
+	// per-PTY env vars at runtime, so a single top-level notify works for all dashboards.
+	b.WriteString(fmt.Sprintf("notify = [\"%s\"]\n", scriptPath))
+	// Per-project trust tables LAST. Pre-trust each dashboard's session workspace root
+	// so Codex doesn't prompt (the sandbox is already isolated).
+	for _, r := range roots {
+		b.WriteString(fmt.Sprintf("\n[projects.%q]\ntrust_level = \"trusted\"\n", r))
+	}
+	return b.String()
 }
