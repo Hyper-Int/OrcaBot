@@ -184,25 +184,22 @@ export async function downloadCloudWorkspace(
   return invoke("download_cloud_workspace", { cloudId, subdir }) as Promise<WorkspaceDownloadResult>;
 }
 
-export interface CloudGoogleResult {
-  pending: boolean;
-  token?: string;
-  email?: string;
-  name?: string;
+export interface CloudSignIn {
+  email: string;
+  name: string;
 }
 
 /**
- * Poll the CLOUD control plane for the desktop Google sign-in result (a cloud PAT
- * + identity), by nonce + PKCE verifier. Native (no browser CORS). Returns
- * {pending:true} until the browser sign-in completes.
+ * Sign in to the cloud with Google via a LOOPBACK redirect (RFC 8252). The native
+ * layer runs a temporary 127.0.0.1 listener, opens the browser to the cloud login
+ * pointing back at it, receives a one-time code there, exchanges it for a PAT, and
+ * stores the PAT host-only — the token never enters the webview. Resolves with
+ * {email,name} once sign-in completes (rejects on timeout/cancel). Desktop only.
  */
-export async function pollCloudGoogleResult(
-  nonce: string,
-  verifier: string
-): Promise<CloudGoogleResult> {
+export async function signInGoogleLoopback(): Promise<CloudSignIn> {
   const invoke = await getTauriInvoke();
   if (!invoke) throw new Error("Sign-in is only available in the desktop app.");
-  return invoke("poll_cloud_google_result", { nonce, verifier }) as Promise<CloudGoogleResult>;
+  return invoke("sign_in_google_loopback") as Promise<CloudSignIn>;
 }
 
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */

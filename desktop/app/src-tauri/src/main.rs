@@ -1014,12 +1014,12 @@ fn main() {
       commands::get_app_version,
       commands::verify_orcabot_account,
       commands::set_cloud_credential,
+      commands::sign_in_google_loopback,
       commands::get_cloud_account,
       commands::clear_cloud_credential,
       commands::list_cloud_dashboards,
       commands::get_cloud_dashboard,
       commands::download_cloud_workspace,
-      commands::poll_cloud_google_result,
     ])
     .setup(|app| {
       let services = Arc::new(DesktopServices::new());

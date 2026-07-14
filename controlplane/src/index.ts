@@ -922,7 +922,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const skipIpRateLimit =
       path === '/auth/google/callback'
       || path === '/auth/google/login'
-      || path === '/auth/desktop/google-result'
+      || path === '/auth/desktop/exchange'
       || path === '/auth/config'
       || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)
@@ -1010,10 +1010,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return googleAuth.callbackGoogle(request, env);
   }
 
-  // GET /auth/desktop/google-result - desktop app polls for the Google sign-in
-  // result by nonce (desktop-only, surface-token gated inside the handler).
-  if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'google-result' && method === 'GET') {
-    return googleAuth.getDesktopGoogleResult(request, env);
+  // POST /auth/desktop/exchange - desktop app exchanges the one-time code it
+  // received on its loopback listener (from the OAuth callback redirect) for a PAT.
+  if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'exchange' && method === 'POST') {
+    return googleAuth.exchangeDesktopCode(request, env);
   }
 
   // POST /register-interest - Register interest (no auth required)

@@ -5,44 +5,20 @@
 "use client";
 
 import * as React from "react";
-import { CLOUD_API_URL, CLOUD_SITE_URL } from "@/config/env";
+import { CLOUD_SITE_URL } from "@/config/env";
 import {
   openExternalUrl,
-  pollCloudGoogleResult,
+  signInGoogleLoopback,
   setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v4-local-copy";
+const MODULE_REVISION = "desktop-welcome-v5-loopback-signin";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
   );
-}
-
-function randomNonce(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** PKCE code_verifier: 32 random bytes, base64url. */
-function randomVerifier(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes);
-}
-
-/** PKCE S256 code_challenge = base64url(SHA-256(verifier)). */
-async function sha256Base64Url(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return base64UrlEncode(new Uint8Array(digest));
 }
 
 /**
@@ -96,40 +72,19 @@ export function DesktopWelcome() {
     setGoogleError(null);
     setPanel("google");
     try {
-      // PKCE: the browser flow returns a real cloud PAT, so protect the poll with
-      // a verifier whose SHA-256 (the challenge) is sent to the CLOUD at login.
-      const nonce = randomNonce();
-      const verifier = randomVerifier();
-      const challenge = await sha256Base64Url(verifier);
-
-      // Google requires a REAL browser (it blocks OAuth in embedded webviews), and
-      // this authenticates against the CLOUD control plane (your real account) so
-      // we get a cloud credential for dashboard sync.
-      await openExternalUrl(
-        `${CLOUD_API_URL}/auth/google/login?mode=desktop` +
-          `&nonce=${encodeURIComponent(nonce)}` +
-          `&challenge=${encodeURIComponent(challenge)}`
-      );
-
-      const deadline = Date.now() + 180_000; // 3 min
-      while (!googleCancelRef.current && Date.now() < deadline) {
-        const res = await pollCloudGoogleResult(nonce, verifier);
-        if (res && !res.pending && res.token && res.email) {
-          // Store the cloud PAT (for listing/syncing dashboards) + set the local
-          // signed-in identity. App still runs locally.
-          await setCloudCredential(res.token, res.email);
-          chooseSignedIn(res.email, res.name || res.email);
-          return; // chooseSignedIn unmounts this
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      if (!googleCancelRef.current) {
-        setGoogleError("Sign-in timed out. Please try again.");
-        setPanel(null);
-      }
+      // Loopback sign-in (RFC 8252): the native layer opens the OS browser to the
+      // cloud login, receives the result on a local 127.0.0.1 listener, and stores
+      // the PAT host-only — the token never enters this webview. Resolves with the
+      // identity once done. Google needs a real browser (blocks embedded webviews),
+      // and this authenticates against the CLOUD so we get a credential for sync.
+      const account = await signInGoogleLoopback();
+      if (googleCancelRef.current) return;
+      chooseSignedIn(account.email, account.name || account.email);
+      // chooseSignedIn unmounts this component.
     } catch (e) {
+      if (googleCancelRef.current) return;
       setGoogleError(
-        e instanceof Error ? e.message : "Couldn't start Google sign-in."
+        e instanceof Error ? e.message : "Couldn't complete Google sign-in."
       );
       setPanel(null);
     }

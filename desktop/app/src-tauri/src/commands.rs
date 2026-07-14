@@ -706,21 +706,15 @@ pub struct CloudAccount {
     pub email: String,
 }
 
-/// Persist the cloud credential (PAT + email) host-only (0600) for dashboard sync.
-#[tauri::command]
-pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String) -> Result<(), String> {
-    let token = token.trim();
-    if !token.starts_with("orca_pat_") {
-        return Err("Not an Orcabot token.".into());
-    }
-    let path = cloud_credential_path(&app).ok_or("no app data dir")?;
+/// Persist the cloud credential (PAT + email) host-only (0600), atomically.
+/// Write to a temp file created 0600, then rename over the target — so the token is
+/// never briefly world-readable (umask race) and any pre-existing loose-permission
+/// file is replaced by a 0600 one. Permission failures are fatal.
+fn write_cloud_credential(app: &tauri::AppHandle, token: &str, email: &str) -> Result<(), String> {
+    let path = cloud_credential_path(app).ok_or("no app data dir")?;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    // Write to a temp file created 0600, then atomically rename over the target —
-    // so the credential is never briefly world-readable (umask race) and any
-    // pre-existing loose-permission file is replaced by a 0600 one. Permission
-    // failures are fatal (we must not leave a readable token on disk).
     let contents = format!("{}\n{}\n", token, email.trim());
     let tmp = path.with_extension("tmp");
     #[cfg(unix)]
@@ -748,6 +742,205 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
         format!("failed to store credential: {e}")
     })?;
     Ok(())
+}
+
+/// Persist the cloud credential (PAT + email) host-only (0600) for dashboard sync.
+#[tauri::command]
+pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String) -> Result<(), String> {
+    let token = token.trim();
+    if !token.starts_with("orca_pat_") {
+        return Err("Not an Orcabot token.".into());
+    }
+    write_cloud_credential(&app, token, &email)
+}
+
+#[derive(Serialize, Clone)]
+pub struct CloudSignIn {
+    pub email: String,
+    pub name: String,
+}
+
+/// Cryptographically-random hex token (OS RNG via /dev/urandom; the OS-seeded
+/// RandomState as a fallback). Used as the loopback CSRF `state`.
+fn random_hex(n: usize) -> String {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+            let mut buf = vec![0u8; n];
+            if f.read_exact(&mut buf).is_ok() {
+                return buf.iter().map(|b| format!("{b:02x}")).collect();
+            }
+        }
+    }
+    use std::hash::{BuildHasher, Hasher};
+    let mut s = String::new();
+    while s.len() < n * 2 {
+        let h = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
+        s.push_str(&format!("{h:016x}"));
+    }
+    s.truncate(n * 2);
+    s
+}
+
+/// Percent-encode a URL query value (unreserved chars pass through).
+fn pct(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+fn open_in_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut cmd = std::process::Command::new("xdg-open");
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    };
+    cmd.arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("failed to open browser: {e}"))
+}
+
+fn parse_query(path: &str) -> (Option<String>, Option<String>) {
+    let q = path.splitn(2, '?').nth(1).unwrap_or("");
+    let mut code = None;
+    let mut state = None;
+    for kv in q.split('&') {
+        let mut it = kv.splitn(2, '=');
+        match (it.next(), it.next()) {
+            (Some("code"), Some(v)) => code = Some(v.to_string()),
+            (Some("state"), Some(v)) => state = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    (code, state)
+}
+
+/// Wait (bounded) for the OAuth callback on the loopback listener; return the
+/// one-time `code` once a `/cb?code=…&state=…` request arrives with our state.
+fn await_loopback_code(
+    listener: std::net::TcpListener,
+    expect_state: &str,
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    listener.set_nonblocking(true).ok();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        if Instant::now() > deadline {
+            return Err("timed out waiting for the browser sign-in".into());
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("");
+                let (code, state) = parse_query(path);
+                if !path.starts_with("/cb") || code.is_none() {
+                    // Stray request (favicon, etc.) — brush it off and keep waiting.
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                let ok = state.as_deref() == Some(expect_state);
+                let page = if ok {
+                    "<!doctype html><meta charset=utf-8><title>Signed in</title><body style=\"font-family:system-ui;background:#0d1117;color:#eef2f8;text-align:center;padding:48px\"><h2>Signed in to Orcabot</h2><p>You can close this tab and return to the app.</p></body>"
+                } else {
+                    "<!doctype html><meta charset=utf-8><title>Sign-in failed</title><body style=\"font-family:system-ui;background:#0d1117;color:#eef2f8;text-align:center;padding:48px\"><h2>Sign-in couldn't be verified</h2><p>Please try again from the app.</p></body>"
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
+                    page.len(),
+                    page
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+                if !ok {
+                    return Err("sign-in verification failed (state mismatch)".into());
+                }
+                return Ok(code.unwrap());
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(format!("loopback listener error: {e}")),
+        }
+    }
+}
+
+fn exchange_desktop_code(code: &str) -> Result<(String, String, String), String> {
+    let url = format!("{CLOUD_API_BASE}/auth/desktop/exchange");
+    match ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send_json(serde_json::json!({ "code": code }))
+    {
+        Ok(rp) => {
+            let v: serde_json::Value = rp.into_json().map_err(|e| e.to_string())?;
+            let token = v
+                .get("token")
+                .and_then(|x| x.as_str())
+                .ok_or("sign-in response had no token")?
+                .to_string();
+            let email = v.get("email").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            Ok((token, email, name))
+        }
+        Err(ureq::Error::Status(c, rp)) => Err(format!(
+            "sign-in exchange failed ({c}): {}",
+            rp.into_string().unwrap_or_default().trim()
+        )),
+        Err(e) => Err(format!("couldn't reach orcabot.com: {e}")),
+    }
+}
+
+/// Sign in to the cloud with Google via a LOOPBACK redirect (RFC 8252): run a
+/// temporary 127.0.0.1 listener, open the browser to the cloud login pointing back
+/// at it, receive a one-time code there, exchange it for a PAT, and store the PAT
+/// host-only. The token never enters the webview. Returns {email,name} for the UI.
+#[tauri::command]
+pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignIn, String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("could not start local sign-in listener: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let state = random_hex(16);
+    let redirect = format!("http://127.0.0.1:{port}/cb");
+    let login_url = format!(
+        "{CLOUD_API_BASE}/auth/google/login?mode=desktop&redirect_uri={}&state={}",
+        pct(&redirect),
+        pct(&state)
+    );
+    open_in_browser(&login_url)?;
+
+    let (token, email, name) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(String, String, String), String> {
+            let code = await_loopback_code(listener, &state)?;
+            exchange_desktop_code(&code)
+        },
+    )
+    .await
+    .map_err(|e| format!("sign-in task failed: {e}"))??;
+
+    write_cloud_credential(&app, &token, &email)?;
+    Ok(CloudSignIn { email, name })
 }
 
 /// The signed-in cloud account (email), or null if not signed in to the cloud.
@@ -1331,63 +1524,6 @@ pub async fn download_cloud_workspace(
     })
     .await
     .map_err(|e| format!("workspace download task failed: {e}"))?
-}
-
-#[derive(Serialize, Clone)]
-pub struct CloudGoogleResult {
-    pub pending: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-/// Poll the CLOUD control plane for the desktop Google sign-in result (a PAT +
-/// identity), keyed by the app's nonce and PKCE verifier. Native so it isn't
-/// subject to browser CORS (the cloud only allows the orcabot.com origin). Returns
-/// {pending:true} until the browser sign-in completes.
-#[tauri::command]
-pub async fn poll_cloud_google_result(
-    nonce: String,
-    verifier: String,
-) -> Result<CloudGoogleResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        match ureq::get(&format!("{CLOUD_API_BASE}/auth/desktop/google-result"))
-            .query("nonce", &nonce)
-            .query("verifier", &verifier)
-            .timeout(std::time::Duration::from_secs(15))
-            .call()
-        {
-            Ok(resp) => {
-                let v: serde_json::Value = resp
-                    .into_json()
-                    .map_err(|e| format!("unexpected response from orcabot.com: {e}"))?;
-                if v["pending"].as_bool() == Some(true) {
-                    return Ok(CloudGoogleResult {
-                        pending: true,
-                        token: None,
-                        email: None,
-                        name: None,
-                    });
-                }
-                let token = v["token"].as_str().map(str::to_string);
-                let email = v["email"].as_str().map(str::to_string);
-                let name = v["name"].as_str().map(str::to_string);
-                if token.is_some() && email.is_some() {
-                    Ok(CloudGoogleResult { pending: false, token, email, name })
-                } else {
-                    Err("orcabot.com returned an unexpected sign-in result.".into())
-                }
-            }
-            Err(ureq::Error::Status(403, _)) => Err("Sign-in verification failed.".into()),
-            Err(ureq::Error::Status(code, _)) => Err(format!("orcabot.com returned {code}.")),
-            Err(e) => Err(format!("Couldn't reach orcabot.com: {e}")),
-        }
-    })
-    .await
-    .map_err(|e| format!("poll task failed: {e}"))?
 }
 
 /// Return the per-boot surface token. The host frontend sends it as the
