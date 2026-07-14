@@ -112,6 +112,34 @@ export async function revokeApiToken(env: Env, userId: string, id: string): Prom
 }
 
 /**
+ * Revoke the PAT presented as `Authorization: Bearer` — self-revoke, so the desktop
+ * app can invalidate its own cloud credential on logout (the normal token-management
+ * routes are method-gated against PATs). Presenting the token IS the authorization;
+ * it can only ever revoke itself. No-op (still 200) if unknown/already revoked.
+ */
+export async function revokeSelfApiToken(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  const auth = request.headers.get('Authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  const token = m?.[1]?.trim();
+  if (!token || !token.startsWith(PAT_PREFIX)) {
+    return json({ error: 'not_a_pat' }, 400);
+  }
+  const tokenHash = await hashToken(token);
+  await env.DB.prepare(
+    `UPDATE api_tokens SET revoked_at = datetime('now')
+     WHERE token_hash = ? AND revoked_at IS NULL`
+  )
+    .bind(tokenHash)
+    .run();
+  return json({ ok: true });
+}
+
+/**
  * Resolve a bearer PAT to a user. Returns null if the token is malformed,
  * unknown, revoked, or expired. Fail-closed. Updates last_used_at on success.
  */

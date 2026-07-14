@@ -202,6 +202,14 @@ export async function signInGoogleLoopback(): Promise<CloudSignIn> {
   return invoke("sign_in_google_loopback") as Promise<CloudSignIn>;
 }
 
+/** Cancel an in-flight loopback Google sign-in so the native flow stops before it
+ *  exchanges the code or writes the credential. No-op off desktop. */
+export async function cancelGoogleSignIn(): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("cancel_google_sign_in");
+}
+
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */
 export async function revealWorkspace(): Promise<void> {
   const invoke = await getTauriInvoke();

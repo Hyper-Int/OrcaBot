@@ -9,6 +9,7 @@ import { CLOUD_SITE_URL } from "@/config/env";
 import {
   openExternalUrl,
   signInGoogleLoopback,
+  cancelGoogleSignIn,
   setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
@@ -92,6 +93,9 @@ export function DesktopWelcome() {
 
   const cancelGoogle = () => {
     googleCancelRef.current = true;
+    // Actually stop the native flow (it keeps waiting/exchanging otherwise), so a
+    // cancelled sign-in can't later silently commit a credential.
+    void cancelGoogleSignIn();
     setPanel(null);
   };
 

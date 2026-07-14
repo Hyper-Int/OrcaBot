@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cloud-sync-v2-workspace-files
+// REVISION: cloud-sync-v3-pin-legacy-atomic
 "use client";
 
 import {
@@ -19,7 +19,7 @@ import type { Dashboard, DashboardItem, DashboardEdge } from "@/types";
 
 if (typeof window !== "undefined") {
   console.log(
-    `[cloud-sync] REVISION: cloud-sync-v2-workspace-files loaded at ${new Date().toISOString()}`
+    `[cloud-sync] REVISION: cloud-sync-v3-pin-legacy-atomic loaded at ${new Date().toISOString()}`
   );
 }
 
@@ -61,14 +61,18 @@ function sanitizeRel(p: string): string {
 }
 
 function pinTerminalToSubdir(content: string, subdir: string): string {
-  if (!content.trim().startsWith("{")) {
-    return content; // not JSON we understand — leave it (cwds to workspace root)
+  const trimmed = content.trim();
+  // Legacy / malformed terminal content is a plain string (the parser treats it as
+  // the terminal's display name). Wrap it into valid JSON so it, too, is pinned to
+  // this dashboard's subfolder instead of starting at the shared workspace root.
+  if (!trimmed.startsWith("{")) {
+    return JSON.stringify({ name: trimmed || "Terminal", workingDir: subdir });
   }
   let obj: Record<string, unknown>;
   try {
     obj = JSON.parse(content) as Record<string, unknown>;
   } catch {
-    return content;
+    return JSON.stringify({ name: trimmed, workingDir: subdir });
   }
   const existing =
     typeof obj.workingDir === "string" ? sanitizeRel(obj.workingDir) : "";

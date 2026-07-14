@@ -1015,6 +1015,7 @@ fn main() {
       commands::verify_orcabot_account,
       commands::set_cloud_credential,
       commands::sign_in_google_loopback,
+      commands::cancel_google_sign_in,
       commands::get_cloud_account,
       commands::clear_cloud_credential,
       commands::list_cloud_dashboards,

@@ -218,6 +218,10 @@ export async function loginWithGoogle(
   const isDesktopMode = mode === 'desktop';
   const desktopLoopback = isDesktopMode ? requestUrl.searchParams.get('redirect_uri') : null;
   const desktopState = isDesktopMode ? requestUrl.searchParams.get('state') : null;
+  // PKCE (S256): binds the one-time code to a verifier the native app never puts on
+  // the wire. Even a browser extension / local process that observes the loopback
+  // callback URL (which carries the code) can't exchange it without the verifier.
+  const desktopChallenge = isDesktopMode ? requestUrl.searchParams.get('challenge') : null;
 
   // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
   // Skip Turnstile in popup/desktop mode — Google's consent screen provides bot protection
@@ -236,8 +240,8 @@ export async function loginWithGoogle(
     }
   }
 
-  if (isDesktopMode && (!desktopLoopback || !desktopState || !isLoopbackRedirect(desktopLoopback))) {
-    return renderErrorPage('Desktop sign-in requires a loopback redirect.');
+  if (isDesktopMode && (!desktopLoopback || !desktopState || !desktopChallenge || !isLoopbackRedirect(desktopLoopback))) {
+    return renderErrorPage('Desktop sign-in requires a loopback redirect and PKCE challenge.');
   }
 
   const state = crypto.randomUUID();
@@ -250,7 +254,7 @@ export async function loginWithGoogle(
   const postLoginRedirect = isPopupMode
     ? 'popup'
     : isDesktopMode
-      ? `desktoplb:${btoa(JSON.stringify({ uri: desktopLoopback, st: desktopState }))}`
+      ? `desktoplb:${btoa(JSON.stringify({ uri: desktopLoopback, st: desktopState, ch: desktopChallenge }))}`
       : resolvePostLoginRedirect(request, env);
 
   await createAuthState(env, state, postLoginRedirect);
@@ -357,13 +361,16 @@ export async function callbackGoogle(
   if (postLoginRedirect.startsWith('desktoplb:')) {
     let uri: string;
     let st: string;
+    let ch: string;
     try {
       const dec = JSON.parse(atob(postLoginRedirect.slice('desktoplb:'.length))) as {
         uri: string;
         st: string;
+        ch: string;
       };
       uri = dec.uri;
       st = dec.st;
+      ch = dec.ch;
     } catch {
       return renderErrorPage('Desktop sign-in state was corrupt.');
     }
@@ -379,6 +386,7 @@ export async function callbackGoogle(
         userId,
         email: userInfo.email,
         name,
+        challenge: ch, // PKCE S256 — exchanged only with the matching verifier
         expiresAt: Date.now() + 5 * 60 * 1000, // 5 min to exchange
       })
     );
@@ -426,12 +434,25 @@ function isLoopbackRedirect(uri: string): boolean {
   }
 }
 
+/** Desktop-minted cloud PATs get a bounded lifetime so a leaked/orphaned one dies
+ *  on its own even if logout's server-side revoke never runs (offline logout). */
+const DESKTOP_PAT_TTL_DAYS = 90;
+
+/** base64url(SHA-256(input)) — PKCE S256 challenge computation. */
+async function sha256Base64Url(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  let bin = '';
+  for (const b of new Uint8Array(digest)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 /**
  * Desktop app exchanges the one-time `code` it received on its 127.0.0.1 listener
- * (from the OAuth callback redirect) for its cloud PAT + identity. The code is the
- * only way to obtain the token and was delivered solely to a loopback listener on
- * the machine that ran the flow, so a remote attacker can't harvest it. Single-use
- * (consumed on lookup) and short-lived.
+ * (from the OAuth callback redirect) for its cloud PAT + identity. The code alone is
+ * NOT sufficient — the app must also present the PKCE `verifier` whose S256 hash
+ * matches the challenge sent at login, so a local observer of the loopback callback
+ * URL can't exchange the code it saw. Atomically single-use (DELETE … RETURNING) and
+ * short-lived; the PAT is bounded by a TTL.
  */
 export async function exchangeDesktopCode(request: Request, env: Env): Promise<Response> {
   const json = (body: unknown, status = 200) =>
@@ -440,28 +461,30 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
 
-  let body: { code?: string };
+  let body: { code?: string; verifier?: string };
   try {
-    body = (await request.json()) as { code?: string };
+    body = (await request.json()) as { code?: string; verifier?: string };
   } catch {
     return json({ error: 'bad_request' }, 400);
   }
-  const code = body.code;
-  if (!code) {
-    return json({ error: 'missing_code' }, 400);
+  const { code, verifier } = body;
+  if (!code || !verifier) {
+    return json({ error: 'missing_code_or_verifier' }, 400);
   }
 
+  // Atomic single-use: DELETE … RETURNING consumes the row in one statement, so two
+  // racing requests can't both read it. (A wrong-verifier request also consumes it —
+  // a local observer who saw the code could deny the real app, but can't get a token;
+  // the user just retries.)
   const key = `desktopcode:${code}`;
   const rec = await env.DB
-    .prepare('SELECT redirect_url as v FROM auth_states WHERE state = ?')
+    .prepare('DELETE FROM auth_states WHERE state = ? RETURNING redirect_url as v')
     .bind(key)
     .first<{ v: string }>();
-  // Consume immediately (single-use) regardless of what happens next.
-  await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
   if (!rec) {
     return json({ error: 'not_found' }, 404);
   }
-  let parsed: { userId: string; email: string; name: string; expiresAt?: number };
+  let parsed: { userId: string; email: string; name: string; challenge?: string; expiresAt?: number };
   try {
     parsed = JSON.parse(rec.v);
   } catch {
@@ -470,7 +493,10 @@ export async function exchangeDesktopCode(request: Request, env: Env): Promise<R
   if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
     return json({ error: 'expired' }, 410);
   }
-  const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop');
+  if (!parsed.challenge || (await sha256Base64Url(verifier)) !== parsed.challenge) {
+    return json({ error: 'forbidden' }, 403);
+  }
+  const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop', DESKTOP_PAT_TTL_DAYS);
   return json({ token, email: parsed.email, name: parsed.name });
 }
 

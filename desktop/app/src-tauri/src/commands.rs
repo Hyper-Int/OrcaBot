@@ -751,13 +751,53 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
     if !token.starts_with("orca_pat_") {
         return Err("Not an Orcabot token.".into());
     }
-    write_cloud_credential(&app, token, &email)
+    write_cloud_credential(&app, token, &email)?;
+    // A deliberate credential set (PAT paste, or the loopback flow) supersedes any
+    // in-flight Google sign-in so it can't later overwrite this one.
+    SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
 pub struct CloudSignIn {
     pub email: String,
     pub name: String,
+}
+
+/// Monotonic "current sign-in attempt" generation. Bumped when the user cancels,
+/// starts another sign-in, or pastes a PAT — so an in-flight loopback sign-in can
+/// tell it's been superseded and must NOT exchange or overwrite the credential.
+static SIGN_IN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn sign_in_current(my_gen: u64) -> bool {
+    SIGN_IN_GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen
+}
+
+/// base64url (no padding) — matches the control plane's PKCE challenge encoding.
+fn b64url(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(T[((n >> 6) & 63) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(T[(n & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+/// PKCE S256 challenge: base64url(SHA-256(verifier)).
+fn pkce_challenge(verifier: &str) -> String {
+    use sha2::{Digest, Sha256};
+    b64url(&Sha256::digest(verifier.as_bytes()))
 }
 
 /// Cryptographically-random hex token (OS RNG via /dev/urandom; the OS-seeded
@@ -834,12 +874,16 @@ fn parse_query(path: &str) -> (Option<String>, Option<String>) {
 fn await_loopback_code(
     listener: std::net::TcpListener,
     expect_state: &str,
+    my_gen: u64,
 ) -> Result<String, String> {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
     listener.set_nonblocking(true).ok();
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
+        if !sign_in_current(my_gen) {
+            return Err("sign-in cancelled".into());
+        }
         if Instant::now() > deadline {
             return Err("timed out waiting for the browser sign-in".into());
         }
@@ -887,11 +931,11 @@ fn await_loopback_code(
     }
 }
 
-fn exchange_desktop_code(code: &str) -> Result<(String, String, String), String> {
+fn exchange_desktop_code(code: &str, verifier: &str) -> Result<(String, String, String), String> {
     let url = format!("{CLOUD_API_BASE}/auth/desktop/exchange");
     match ureq::post(&url)
         .timeout(std::time::Duration::from_secs(30))
-        .send_json(serde_json::json!({ "code": code }))
+        .send_json(serde_json::json!({ "code": code, "verifier": verifier }))
     {
         Ok(rp) => {
             let v: serde_json::Value = rp.into_json().map_err(|e| e.to_string())?;
@@ -918,29 +962,52 @@ fn exchange_desktop_code(code: &str) -> Result<(String, String, String), String>
 /// host-only. The token never enters the webview. Returns {email,name} for the UI.
 #[tauri::command]
 pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignIn, String> {
+    // Claim a fresh attempt generation; any later cancel / sign-in / PAT paste bumps
+    // it, so this flow will refuse to exchange or store once superseded.
+    let my_gen = SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("could not start local sign-in listener: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let state = random_hex(16);
+    // PKCE: keep the verifier in-process; send only its S256 challenge in the URL.
+    let verifier = random_hex(32);
+    let challenge = pkce_challenge(&verifier);
     let redirect = format!("http://127.0.0.1:{port}/cb");
     let login_url = format!(
-        "{CLOUD_API_BASE}/auth/google/login?mode=desktop&redirect_uri={}&state={}",
+        "{CLOUD_API_BASE}/auth/google/login?mode=desktop&redirect_uri={}&state={}&challenge={}",
         pct(&redirect),
-        pct(&state)
+        pct(&state),
+        pct(&challenge)
     );
     open_in_browser(&login_url)?;
 
     let (token, email, name) = tauri::async_runtime::spawn_blocking(
         move || -> Result<(String, String, String), String> {
-            let code = await_loopback_code(listener, &state)?;
-            exchange_desktop_code(&code)
+            let code = await_loopback_code(listener, &state, my_gen)?;
+            if !sign_in_current(my_gen) {
+                return Err("sign-in cancelled".into());
+            }
+            exchange_desktop_code(&code, &verifier)
         },
     )
     .await
     .map_err(|e| format!("sign-in task failed: {e}"))??;
 
+    // Final guard: don't overwrite the credential if the attempt was cancelled or
+    // superseded (e.g. the user pasted a PAT for a different account meanwhile).
+    if !sign_in_current(my_gen) {
+        return Err("sign-in cancelled".into());
+    }
     write_cloud_credential(&app, &token, &email)?;
     Ok(CloudSignIn { email, name })
+}
+
+/// Cancel an in-flight loopback sign-in: bumps the attempt generation so the native
+/// flow stops before exchanging the code or writing the credential.
+#[tauri::command]
+pub fn cancel_google_sign_in() {
+    SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// The signed-in cloud account (email), or null if not signed in to the cloud.
@@ -949,9 +1016,21 @@ pub fn get_cloud_account(app: tauri::AppHandle) -> Option<CloudAccount> {
     read_cloud_credential(&app).map(|(_, email)| CloudAccount { email })
 }
 
-/// Forget the stored cloud credential (sign out of cloud sync).
+/// Forget the stored cloud credential (sign out of cloud sync). Also revokes the
+/// PAT server-side (best-effort) so logout doesn't leave an active token behind —
+/// the TTL is only a backstop for offline logout. Supersedes any in-flight sign-in.
 #[tauri::command]
-pub fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String> {
+    SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Some((token, _email)) = read_cloud_credential(&app) {
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = ureq::post(&format!("{CLOUD_API_BASE}/auth/api-token/revoke-self"))
+                .set("Authorization", &format!("Bearer {token}"))
+                .timeout(std::time::Duration::from_secs(10))
+                .call();
+        })
+        .await;
+    }
     if let Some(path) = cloud_credential_path(&app) {
         let _ = std::fs::remove_file(path);
     }
@@ -1476,6 +1555,7 @@ pub async fn download_cloud_workspace(
                 }
                 Err(e) => {
                     eprintln!("[cloud-dl] skip dir {query_path}: {e}");
+                    skipped += 1; // count it so the result reports incompleteness
                     continue; // a deeper dir stayed unreachable — skip it
                 }
             };
@@ -1666,5 +1746,26 @@ pub fn switch_to_cli(app: tauri::AppHandle) -> Result<(), String> {
     {
         let _ = app;
         Err("switch_to_cli is only supported on macOS".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pkce_challenge_matches_reference() {
+        // Must equal base64url(SHA-256("test")) exactly, or the control plane's PKCE
+        // check (sha256Base64Url in google.ts) rejects every desktop sign-in.
+        assert_eq!(
+            pkce_challenge("test"),
+            "n4bQgYhMfWWaL-qgxVrQFaO_TxsrC4Is0V1sFbDwCgg"
+        );
+    }
+
+    #[test]
+    fn b64url_is_unpadded() {
+        assert_eq!(b64url(&[0x00]), "AA");
+        assert_eq!(b64url(&[0xff, 0xff]), "__8");
     }
 }

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboards-tabs-v6-download-progress
+// REVISION: dashboards-tabs-v7-surface-skipped
 "use client";
 
 import * as React from "react";
@@ -27,7 +27,7 @@ import { downloadCloudDashboard } from "@/lib/cloud-sync";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Dashboard } from "@/types/dashboard";
 
-const MODULE_REVISION = "dashboards-tabs-v6-download-progress";
+const MODULE_REVISION = "dashboards-tabs-v7-surface-skipped";
 if (typeof window !== "undefined") {
   console.log(
     `[dashboards-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -147,11 +147,15 @@ export function DashboardsTabs({
     setDownloading((s) => new Set(s).add(cd.id));
     try {
       const res = await downloadCloudDashboard(cd.id, cd.name);
-      // Canvas downloaded; if the workspace file copy failed, say so (the dashboard
-      // is still usable, just without its files).
+      // Canvas downloaded; report incomplete workspace copies (hard error, or some
+      // files/dirs skipped) so it's not silently presented as complete.
       if (res.workspaceError) {
         setDownloadError(
           `“${cd.name}” downloaded, but its files couldn't be copied: ${res.workspaceError}`
+        );
+      } else if (res.workspace && res.workspace.skipped > 0) {
+        setDownloadError(
+          `“${cd.name}” downloaded, but ${res.workspace.skipped} file(s)/folder(s) couldn't be copied — some workspace files may be missing. Re-download to retry.`
         );
       }
     } catch (e) {

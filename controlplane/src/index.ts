@@ -48,7 +48,7 @@ import { isAdminEmail } from './auth/admin';
 import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
-import { createApiToken, listApiTokens, revokeApiToken } from './auth/api-token';
+import { createApiToken, listApiTokens, revokeApiToken, revokeSelfApiToken } from './auth/api-token';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
@@ -923,6 +923,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       path === '/auth/google/callback'
       || path === '/auth/google/login'
       || path === '/auth/desktop/exchange'
+      || path === '/auth/api-token/revoke-self'
       || path === '/auth/config'
       || path === '/auth/code/session'
       || /^\/integrations\/[^/]+\/callback$/.test(path)
@@ -1014,6 +1015,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // received on its loopback listener (from the OAuth callback redirect) for a PAT.
   if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'exchange' && method === 'POST') {
     return googleAuth.exchangeDesktopCode(request, env);
+  }
+
+  // POST /auth/api-token/revoke-self - a PAT revokes ITSELF (desktop logout). Self-
+  // authorized by the presented bearer; can only revoke the token it presents.
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments[2] === 'revoke-self' && method === 'POST') {
+    return revokeSelfApiToken(request, env);
   }
 
   // POST /register-interest - Register interest (no auth required)
