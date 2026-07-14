@@ -564,7 +564,10 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 		return "", fmt.Errorf("invalid working directory: must be relative path within workspace")
 	}
 	actualWorkDir := filepath.Join(s.workspace.Root(), cleaned)
-	// Verify directory exists
+	// Verify directory exists. Per-dashboard isolation is handled by rooting the whole
+	// session at /workspace/<dashboardID> (see manager.Create), so an arbitrary missing
+	// sub-path here is a genuine bad path (e.g. a typo) and must still error — we do NOT
+	// auto-create arbitrary user-supplied dirs.
 	info, err := os.Stat(actualWorkDir)
 	if os.IsNotExist(err) {
 		return "", fmt.Errorf("working directory does not exist: %s", workingDir)

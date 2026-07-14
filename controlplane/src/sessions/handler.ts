@@ -526,7 +526,36 @@ async function ensureDashbоardSandbоxCreate(
   }
 
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
-  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+  // On desktop this is the local VM, which may still be booting on a cold app launch
+  // (the window loads immediately and fires session-create before the VM is up). Retry
+  // for up to ~30s — but ONLY connection/transient failures ("fetch error:" from the
+  // client, i.e. the VM isn't listening yet), never deterministic HTTP errors like a
+  // 4xx auth mismatch. Bounded by an overall deadline so a hung connection can't stack
+  // up 12×15s of client timeouts.
+  let sandboxSession: { id: string; machineId?: string } | undefined;
+  let lastCreateErr: unknown;
+  const retryDeadline = Date.now() + 30_000;
+  while (Date.now() < retryDeadline) {
+    try {
+      sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+      break;
+    } catch (createErr) {
+      lastCreateErr = createErr;
+      const msg = createErr instanceof Error ? createErr.message : String(createErr);
+      // Only "fetch error:" (connection refused/reset/timeout) is transient; an HTTP
+      // status error (createSession throws "<status> <statusText>") is deterministic.
+      if (!msg.includes('fetch error:') || Date.now() + 3000 >= retryDeadline) {
+        throw createErr;
+      }
+      console.warn(
+        `[ensureDashboardSandboxCreate] createSession failed (sandbox may still be booting), retrying in 3s: ${msg}`
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  if (!sandboxSession) {
+    throw lastCreateErr instanceof Error ? lastCreateErr : new Error('Failed to create sandbox session');
+  }
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
     VALUES (?, ?, ?, ?)
@@ -1361,6 +1390,10 @@ async function createSessionImpl(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir, modelSelection } = terminalConfig;
+    // NOTE: per-dashboard workspace isolation on desktop is handled in the SANDBOX
+    // (manager.Create roots each session at /workspace/<dashboardID>), so it applies
+    // uniformly to every dashboard-scoped execution path, not just this UI-terminal
+    // one. `workingDir` here is only the terminal's own relative sub-path (if any).
     let appliedSecretNames: string[] = [];
 
     const applyDashboardSecretsBeforePtyStart = async (
@@ -1860,16 +1893,34 @@ export async function getDashbоardSandbоxStatus(
   }
 
   const sandbox = await getDashbоardSandbоx(env, dashboardId);
-  if (!sandbox?.sandbox_machine_id) {
-    // No VM (or no machine id yet) — asleep until the first terminal/browser opens.
+  // "No sandbox yet" keys on the SESSION id, not the machine id: on desktop the local
+  // VM has no Fly machine, so sandbox_machine_id is empty even when the VM is up. Using
+  // machine id here made a healthy desktop sandbox show red "Sandbox asleep".
+  if (!sandbox?.sandbox_session_id) {
+    // No VM yet — asleep until the first terminal/browser opens.
     return Response.json({ state: 'asleep', flyState: null, machineId: null });
   }
 
   const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
     && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
   if (!flyProvisioningEnabled) {
-    // Can't query Fly (e.g. local/desktop). A recorded session implies it's up.
-    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id });
+    // Can't query Fly (e.g. local/desktop). The dashboard_sandboxes row PERSISTS across
+    // app restarts / sandbox crashes, but the actual sandbox session is in-memory — so
+    // trusting the row alone shows green while the VM is still booting or has crashed.
+    // Probe the local sandbox /health instead; not-yet-serving reads as "starting".
+    const localSandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const healthy = await localSandbox.health(undefined, 3000);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState: null,
+      machineId: sandbox.sandbox_machine_id || null,
+    });
+  }
+
+  // Fly path needs a machine id to query; if we somehow have a session without one,
+  // treat it as asleep so the code below can reprovision.
+  if (!sandbox.sandbox_machine_id) {
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
   }
 
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);

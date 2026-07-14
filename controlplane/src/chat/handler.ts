@@ -910,13 +910,14 @@ async function executeTool(
       const sessionId = sb.sandbox_session_id;
       const machineId = sb.sandbox_machine_id || undefined;
       const runId = generateId();
-      // Relative names for the file API (it resolves paths under /workspace — an
-      // absolute /workspace/... would double-nest to /workspace/workspace/...).
-      // The shell redirects still use the absolute path (correct inside the VM).
+      // Relative names for BOTH the shell redirect and the file API. The run PTY cwds
+      // into the session workspace root, and the file API resolves relative to that
+      // same root — so a relative name lands in one place regardless of whether the
+      // root is /workspace (cloud) or /workspace/<dashboardId> (desktop's per-dashboard
+      // session root). An absolute /workspace/... would miss the desktop root and the
+      // marker would never be found (command times out).
       const outRel = `.orc-run-${runId}.out`;
       const exitRel = `.orc-run-${runId}.exit`;
-      const outPath = `/workspace/${outRel}`;
-      const exitPath = `/workspace/${exitRel}`;
 
       // base64 the command so arbitrary quoting/metachars can't break the wrapper.
       const bytes = new TextEncoder().encode(command);
@@ -925,7 +926,7 @@ async function executeTool(
       const b64 = btoa(bin);
       // Run it, capture stdout+stderr to .out, then write the exit code to .exit
       // last (so the marker never appears before the output is flushed).
-      const wrapped = `echo ${b64} | base64 -d | bash > ${outPath} 2>&1; echo $? > ${exitPath}`;
+      const wrapped = `echo ${b64} | base64 -d | bash > ${outRel} 2>&1; echo $? > ${exitRel}`;
 
       const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
       // rel = path relative to the workspace root (/workspace).
@@ -937,7 +938,7 @@ async function executeTool(
       let pty: { id: string } | null = null;
       try {
         pty = await client.createPty(sessionId, '', wrapped, machineId);
-        console.log(`[run_command] pty created id=${pty?.id} session=${sessionId} machine=${machineId ?? '(none)'} — polling ${exitPath}`);
+        console.log(`[run_command] pty created id=${pty?.id} session=${sessionId} machine=${machineId ?? '(none)'} — polling ${exitRel}`);
 
         // Poll the (internal-token) file API for the exit marker — no new sandbox
         // endpoint needed. Interval kept at 2s to bound subrequest count.

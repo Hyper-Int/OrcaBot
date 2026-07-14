@@ -1056,7 +1056,19 @@ fi
 
 // generateCodexHooks creates notify hook for Codex CLI
 func generateCodexHooks(workspaceRoot, hooksDir string) error {
-	scriptPath := filepath.Join(hooksDir, "codex-stop.sh")
+	_ = hooksDir // Codex uses ONE global script (below), not the per-session hooks dir.
+	// One GLOBAL, workspace-independent notify script shared by every dashboard's Codex
+	// session. Codex's notify lives in the system-wide /etc/codex/config.toml (a single
+	// notify for ALL projects), so a per-workspace script path gets appended as a second
+	// array element and corrupts the command — Codex would treat the first script as the
+	// executable and pass the second path as $1 instead of the event JSON. The script
+	// derives its session/pty/secret context from per-PTY env vars at runtime, so one
+	// global copy works for every dashboard.
+	systemCodexDir := "/etc/codex"
+	if err := os.MkdirAll(systemCodexDir, 0755); err != nil {
+		return err
+	}
+	scriptPath := filepath.Join(systemCodexDir, "orcabot-codex-stop.sh")
 	// Codex passes JSON as first argument, not stdin
 	// Uses ORCABOT_SESSION_ID, ORCABOT_PTY_ID, and MCP_LOCAL_PORT env vars set by the PTY process
 	script := `#!/bin/bash
@@ -1097,88 +1109,115 @@ fi
 		return fmt.Errorf("failed to write codex hook script: %w", err)
 	}
 
-	// Write notify to /etc/codex/config.toml (system config).
-	// Codex CLI overwrites ~/.codex/config.toml on startup, stripping our additions.
-	// System config is read but not overwritten by Codex.
-	systemCodexDir := "/etc/codex"
-	if err := os.MkdirAll(systemCodexDir, 0755); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "[DEBUG] generateCodexHooks: systemCodexDir=%s\n", systemCodexDir)
-
+	// Write notify to /etc/codex/config.toml (system config). Codex CLI overwrites
+	// ~/.codex/config.toml on startup, stripping our additions; the system config is
+	// read but not overwritten by Codex.
 	configPath := filepath.Join(systemCodexDir, "config.toml")
 
-	// Read existing system config or create new
-	var existingConfig string
-	data, err := os.ReadFile(configPath)
-	if err == nil {
+	// Read the existing system config (owned by us — Codex only READS it, never writes
+	// it), then REBUILD it deterministically. Incrementally appending broke TOML scoping:
+	// `notify`/`check_for_updates` are TOP-LEVEL keys and MUST precede every [table]
+	// header, but they were being appended after the [projects."<root>"] trust tables, so
+	// TOML scoped `notify` under a project and Codex never saw the global hook.
+	// REVISION: codex-config-v3-rebuild-toplevel
+	existingConfig := ""
+	if data, readErr := os.ReadFile(configPath); readErr == nil {
 		existingConfig = string(data)
 	}
+	finalConfig := buildCodexSystemConfig(existingConfig, workspaceRoot, scriptPath)
 
-	// REVISION: codex-autoupdate-v1-disable
-	// Disable Codex CLI's update check. It prompts interactively on startup
-	// which blocks non-interactive use in the sandbox.
-	if !strings.Contains(existingConfig, "check_for_updates") {
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += "\n# Disable update check — updates managed via Docker image rebuilds\ncheck_for_updates = false\n"
-	}
-
-	// REVISION: codex-foldertrust-v1-pretrust
-	// Pre-trust /workspace so Codex doesn't show "Do you trust this directory?" on every
-	// reconnection. Trust is stored per-project in config.toml under [projects."/workspace"].
-	// Since the sandbox is already an isolated environment, this is safe.
-	if !strings.Contains(existingConfig, `projects."/workspace"`) {
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += "\n# Pre-trust /workspace — sandbox is already isolated\n[projects.\"/workspace\"]\ntrust_level = \"trusted\"\n"
-	}
-
-	// Check if our script is already in the config
-	if strings.Contains(existingConfig, scriptPath) {
-		// Already configured, write config (may have added check_for_updates above)
-		if err := os.WriteFile(configPath, []byte(existingConfig), 0644); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	// Check if notify is already set
-	if strings.Contains(existingConfig, "notify") {
-		// Parse existing notify array and append our script
-		lines := strings.Split(existingConfig, "\n")
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "notify") {
-				start := strings.Index(line, "[")
-				end := strings.LastIndex(line, "]")
-				if start != -1 && end != -1 && end > start {
-					existing := strings.TrimSpace(line[start+1 : end])
-					if existing == "" {
-						lines[i] = fmt.Sprintf(`notify = ["%s"]`, scriptPath)
-					} else {
-						lines[i] = fmt.Sprintf(`notify = [%s, "%s"]`, existing, scriptPath)
-					}
-				}
-				break
-			}
-		}
-		existingConfig = strings.Join(lines, "\n")
-	} else {
-		// Add notify line
-		if existingConfig != "" && !strings.HasSuffix(existingConfig, "\n") {
-			existingConfig += "\n"
-		}
-		existingConfig += fmt.Sprintf("\n# OrcaBot agent stop notification\nnotify = [\"%s\"]\n", scriptPath)
-	}
-
-	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Codex system config to %s:\n%s\n", configPath, existingConfig)
-	if err := os.WriteFile(configPath, []byte(existingConfig), 0644); err != nil {
+	fmt.Fprintf(os.Stderr, "[DEBUG] Writing Codex system config to %s:\n%s\n", configPath, finalConfig)
+	if err := os.WriteFile(configPath, []byte(finalConfig), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "[DEBUG] Failed to write Codex system config: %v\n", err)
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "[DEBUG] Successfully wrote Codex hooks to %s\n", configPath)
 	return nil
+}
+
+// buildCodexSystemConfig regenerates the OrcaBot-managed Codex system config as valid
+// TOML: top-level keys (check_for_updates, notify) FIRST — they must precede every
+// [table] header or TOML scopes them under it — then one [projects."<root>"] trust
+// table per workspace root. Existing trusted roots are preserved and workspaceRoot is
+// added, so trust accumulates across dashboards while notify stays a single top-level
+// command. Pure (no filesystem) so it can be unit-tested.
+func buildCodexSystemConfig(existingConfig, workspaceRoot, scriptPath string) string {
+	// Parse the existing config into a top-level preamble (before the first [header]) and
+	// its [table] sections. We MANAGE only two things: the top-level check_for_updates /
+	// notify keys, and the [projects."<root>"] trust tables. EVERYTHING else — notably
+	// [mcp_servers.*] written by mcp.GenerateSettingsForAgent into this same file — is
+	// preserved verbatim, so regenerating hooks doesn't clobber MCP tools.
+	var preamble []string
+	type section struct {
+		header string
+		body   []string
+	}
+	var sections []section
+	for _, line := range strings.Split(existingConfig, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			sections = append(sections, section{header: strings.TrimSpace(line)})
+		} else if len(sections) == 0 {
+			preamble = append(preamble, line)
+		} else {
+			sections[len(sections)-1].body = append(sections[len(sections)-1].body, line)
+		}
+	}
+
+	isManaged := func(line string) bool {
+		t := strings.TrimSpace(line)
+		return strings.HasPrefix(t, "check_for_updates") || strings.HasPrefix(t, "notify")
+	}
+	isTrustTable := func(header string) bool {
+		return strings.HasPrefix(header, `[projects."`) && strings.HasSuffix(header, `"]`)
+	}
+
+	var b strings.Builder
+	// (1) Managed top-level keys FIRST — they MUST precede any [table] or TOML scopes
+	//     them under it (that was the earlier notify-under-[projects] bug).
+	b.WriteString("# OrcaBot-managed Codex system config.\n")
+	b.WriteString("check_for_updates = false\n")
+	// One global notify script; it derives session/pty/secret from per-PTY env at runtime.
+	b.WriteString(fmt.Sprintf("notify = [\"%s\"]\n", scriptPath))
+	// (2) Preserve any OTHER top-level keys a tool set (drop our managed ones + our own
+	//     comment lines so they don't accumulate across regenerations).
+	for _, line := range preamble {
+		t := strings.TrimSpace(line)
+		if isManaged(line) || t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		b.WriteString(line + "\n")
+	}
+
+	// (3) Re-emit preserved sections (e.g. [mcp_servers.*]); normalize [projects] trust
+	//     tables and note whether this session's root is already present.
+	trustHeader := fmt.Sprintf(`[projects.%q]`, workspaceRoot)
+	haveCurrentTrust := false
+	for _, s := range sections {
+		if isTrustTable(s.header) {
+			if s.header == trustHeader {
+				haveCurrentTrust = true
+			}
+			b.WriteString("\n" + s.header + "\ntrust_level = \"trusted\"\n")
+			continue
+		}
+		// Non-managed section — preserve verbatim, minus any stray managed key a prior
+		// bug may have nested inside it, and minus trailing blank lines (idempotency).
+		kept := make([]string, 0, len(s.body))
+		for _, line := range s.body {
+			if isManaged(line) {
+				continue
+			}
+			kept = append(kept, line)
+		}
+		body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+		b.WriteString("\n" + s.header + "\n")
+		if body != "" {
+			b.WriteString(body + "\n")
+		}
+	}
+	// (4) Ensure this dashboard's session root is trusted.
+	if !haveCurrentTrust {
+		b.WriteString("\n" + trustHeader + "\ntrust_level = \"trusted\"\n")
+	}
+	return b.String()
 }
