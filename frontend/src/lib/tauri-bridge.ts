@@ -187,6 +187,8 @@ export async function downloadCloudWorkspace(
 export interface CloudSignIn {
   email: string;
   name: string;
+  /** Attempt id — pass to rollbackSignIn if this resolved sign-in was superseded. */
+  attempt: number;
 }
 
 /**
@@ -208,6 +210,15 @@ export async function cancelGoogleSignIn(): Promise<void> {
   const invoke = await getTauriInvoke();
   if (!invoke) return;
   await invoke("cancel_google_sign_in");
+}
+
+/** Roll back a specific sign-in attempt's credential (only if that attempt still
+ *  owns the stored credential — a no-op otherwise, so it can't delete a newer
+ *  sign-in or a pasted PAT). No-op off desktop. */
+export async function rollbackSignIn(attempt: number): Promise<void> {
+  const invoke = await getTauriInvoke();
+  if (!invoke) return;
+  await invoke("rollback_sign_in", { attempt });
 }
 
 /** Reveal the host workspace directory in Finder/Explorer (desktop only). */

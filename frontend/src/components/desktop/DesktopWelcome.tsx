@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-welcome-v4-local-copy
+// REVISION: desktop-welcome-v6-attempt-ids
 "use client";
 
 import * as React from "react";
@@ -10,13 +10,13 @@ import {
   openExternalUrl,
   signInGoogleLoopback,
   cancelGoogleSignIn,
-  clearCloudCredential,
+  rollbackSignIn,
   setCloudCredential,
   verifyOrcabotAccount,
 } from "@/lib/tauri-bridge";
 import { useDesktopAccountStore } from "@/stores/desktop-account-store";
 
-const MODULE_REVISION = "desktop-welcome-v5-loopback-signin";
+const MODULE_REVISION = "desktop-welcome-v6-attempt-ids";
 if (typeof window !== "undefined") {
   console.log(
     `[desktop-welcome] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
@@ -41,12 +41,16 @@ export function DesktopWelcome() {
   const [tokenBusy, setTokenBusy] = React.useState(false);
   const [tokenError, setTokenError] = React.useState<string | null>(null);
 
-  // Google flow
+  // Google flow. Each sign-in attempt gets a unique token; `currentAttemptRef`
+  // holds the one we'll accept. Cancelling, starting another attempt, or pasting a
+  // PAT changes/clears it, so a late-resolving attempt knows it's stale and rolls
+  // back ONLY its own credential (never a newer sign-in or a pasted token).
   const [googleError, setGoogleError] = React.useState<string | null>(null);
-  const googleCancelRef = React.useRef(false);
+  const attemptCounterRef = React.useRef(0);
+  const currentAttemptRef = React.useRef<number | null>(null);
   React.useEffect(
     () => () => {
-      googleCancelRef.current = true;
+      currentAttemptRef.current = null;
     },
     []
   );
@@ -56,6 +60,9 @@ export function DesktopWelcome() {
     if (!t) return;
     setTokenBusy(true);
     setTokenError(null);
+    // Pasting a PAT supersedes any in-flight Google attempt so its late resolve
+    // won't override this choice (the native side also guards the credential).
+    currentAttemptRef.current = null;
     try {
       const account = await verifyOrcabotAccount(t);
       // Keep the token as the cloud credential so we can list/download the user's
@@ -70,7 +77,8 @@ export function DesktopWelcome() {
   };
 
   const startGoogle = async () => {
-    googleCancelRef.current = false;
+    const myAttempt = ++attemptCounterRef.current;
+    currentAttemptRef.current = myAttempt;
     setGoogleError(null);
     setPanel("google");
     try {
@@ -80,17 +88,16 @@ export function DesktopWelcome() {
       // identity once done. Google needs a real browser (blocks embedded webviews),
       // and this authenticates against the CLOUD so we get a credential for sync.
       const account = await signInGoogleLoopback();
-      if (googleCancelRef.current) {
-        // The native flow may have committed the credential in the instant the user
-        // cancelled — remove it (and revoke the token) so a cancelled sign-in can't
-        // leave the account behind.
-        void clearCloudCredential();
+      if (currentAttemptRef.current !== myAttempt) {
+        // Superseded (cancelled / another attempt / PAT pasted): roll back ONLY this
+        // attempt's credential — a no-op natively if something newer now owns it.
+        void rollbackSignIn(account.attempt);
         return;
       }
       chooseSignedIn(account.email, account.name || account.email);
       // chooseSignedIn unmounts this component.
     } catch (e) {
-      if (googleCancelRef.current) return;
+      if (currentAttemptRef.current !== myAttempt) return; // stale attempt — ignore
       setGoogleError(
         e instanceof Error ? e.message : "Couldn't complete Google sign-in."
       );
@@ -99,9 +106,9 @@ export function DesktopWelcome() {
   };
 
   const cancelGoogle = () => {
-    googleCancelRef.current = true;
-    // Actually stop the native flow (it keeps waiting/exchanging otherwise), so a
-    // cancelled sign-in can't later silently commit a credential.
+    // Drop the current attempt so a late resolve rolls itself back instead of
+    // signing in, and stop the native flow (it keeps waiting/exchanging otherwise).
+    currentAttemptRef.current = null;
     void cancelGoogleSignIn();
     setPanel(null);
   };

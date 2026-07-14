@@ -764,14 +764,16 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
     if !token.starts_with("orca_pat_") {
         return Err("Not an Orcabot token.".into());
     }
-    // Under the lock: write, then bump the generation, so an in-flight Google flow
-    // that is between its own check and write can't overwrite this pasted token.
+    // Under the lock: claim a generation, write, and record it as the committing
+    // generation — so an in-flight Google flow (between its own check and write)
+    // can't overwrite this pasted token, and a stale Google rollback won't delete it.
     {
         let _guard = cred_lock();
+        let g = SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         // "pat" origin — a user-pasted token, possibly shared with the CLI/automation,
         // so logout must NOT revoke it server-side (only forget it locally).
         write_cloud_credential(&app, token, &email, "pat")?;
-        SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        COMMITTED_GEN.store(g, std::sync::atomic::Ordering::SeqCst);
     }
     Ok(())
 }
@@ -780,6 +782,9 @@ pub fn set_cloud_credential(app: tauri::AppHandle, token: String, email: String)
 pub struct CloudSignIn {
     pub email: String,
     pub name: String,
+    /// The attempt id (generation) that wrote this credential — the frontend passes
+    /// it back to rollback_sign_in if this attempt turns out to be stale/cancelled.
+    pub attempt: u64,
 }
 
 /// Monotonic "current sign-in attempt" generation. Bumped when the user cancels,
@@ -796,6 +801,12 @@ static CRED_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn cred_lock() -> std::sync::MutexGuard<'static, ()> {
     CRED_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// The generation (attempt id) that wrote the CURRENT stored credential, or 0 if
+/// none / it was cleared. Lets a superseded sign-in roll back ONLY its own write:
+/// if a newer sign-in or a pasted PAT has since written, this won't match and the
+/// rollback is a no-op (so it can't delete someone else's credential).
+static COMMITTED_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn sign_in_current(my_gen: u64) -> bool {
     SIGN_IN_GEN.load(std::sync::atomic::Ordering::SeqCst) == my_gen
@@ -1037,8 +1048,41 @@ pub async fn sign_in_google_loopback(app: tauri::AppHandle) -> Result<CloudSignI
         }
         // "google" origin — desktop-minted, so logout revokes it server-side.
         write_cloud_credential(&app, &token, &email, "google")?;
+        COMMITTED_GEN.store(my_gen, std::sync::atomic::Ordering::SeqCst);
     }
-    Ok(CloudSignIn { email, name })
+    Ok(CloudSignIn { email, name, attempt: my_gen })
+}
+
+/// Roll back a specific sign-in attempt's credential (called by the frontend when a
+/// resolved sign-in turns out to have been superseded/cancelled). Deletes + revokes
+/// ONLY if that attempt still owns the stored credential; if a newer sign-in or a
+/// pasted PAT wrote since, this is a no-op (can't clobber the current one).
+#[tauri::command]
+pub async fn rollback_sign_in(app: tauri::AppHandle, attempt: u64) -> Result<(), String> {
+    let creds = {
+        let _guard = cred_lock();
+        if attempt == 0 || COMMITTED_GEN.load(std::sync::atomic::Ordering::SeqCst) != attempt {
+            return Ok(()); // a newer write owns the credential — leave it
+        }
+        let creds = read_cloud_credential_full(&app);
+        if let Some(path) = cloud_credential_path(&app) {
+            let _ = std::fs::remove_file(path);
+        }
+        COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
+        creds
+    };
+    if let Some((token, _email, origin)) = creds {
+        if origin == "google" {
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                let _ = ureq::post(&format!("{CLOUD_API_BASE}/auth/api-token/revoke-self"))
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .timeout(std::time::Duration::from_secs(10))
+                    .call();
+            })
+            .await;
+        }
+    }
+    Ok(())
 }
 
 /// Cancel an in-flight loopback sign-in: bumps the attempt generation so the native
@@ -1099,6 +1143,7 @@ pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String>
                 return Err(format!("failed to remove stored credential: {e}"));
             }
         }
+        COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
         creds
     };
     if let Some((token, _email, origin)) = creds {
