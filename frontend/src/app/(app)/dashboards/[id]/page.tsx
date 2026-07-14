@@ -3626,32 +3626,34 @@ export default function DashboardPage() {
               <SandboxStatusLight dashboardId={dashboardId} />
             </div>
 
-            {/* Presence indicators */}
-            <div className="flex items-center gap-2">
-              <Tooltip
-                content={
-                  isCollaborationConnected
-                    ? `${presenceUsers.length} online`
-                    : "Connecting..."
-                }
-              >
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
-                  <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
-                  <span className="text-xs text-[var(--foreground-muted)]">
-                    {presenceUsers.length}
-                  </span>
-                  {/* Connection status dot */}
-                  <div
-                    className={`w-2 h-2 rounded-full ${
-                      isCollaborationConnected
-                        ? "bg-[var(--status-success)]"
-                        : "bg-[var(--status-warning)] animate-pulse"
-                    }`}
-                  />
-                </div>
-              </Tooltip>
-              <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
-            </div>
+            {/* Presence indicators — hidden on desktop (always a single local user) */}
+            {!DESKTOP_MODE && (
+              <div className="flex items-center gap-2">
+                <Tooltip
+                  content={
+                    isCollaborationConnected
+                      ? `${presenceUsers.length} online`
+                      : "Connecting..."
+                  }
+                >
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
+                    <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+                    <span className="text-xs text-[var(--foreground-muted)]">
+                      {presenceUsers.length}
+                    </span>
+                    {/* Connection status dot */}
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        isCollaborationConnected
+                          ? "bg-[var(--status-success)]"
+                          : "bg-[var(--status-warning)] animate-pulse"
+                      }`}
+                    />
+                  </div>
+                </Tooltip>
+                <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
+              </div>
+            )}
 
             {/* Dev-only sandbox metrics (inline in title bar) */}
             {process.env.NODE_ENV === "development" && (

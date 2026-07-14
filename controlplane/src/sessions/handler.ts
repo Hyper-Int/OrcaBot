@@ -526,7 +526,28 @@ async function ensureDashbоardSandbоxCreate(
   }
 
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
-  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+  // On desktop this is the local VM, which may still be booting on a cold app launch
+  // (the window loads immediately and fires session-create before the VM is up). Retry
+  // the connection for ~30s instead of failing the first terminal.
+  let sandboxSession: { id: string; machineId?: string } | undefined;
+  let lastCreateErr: unknown;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+      break;
+    } catch (createErr) {
+      lastCreateErr = createErr;
+      if (attempt < 11) {
+        console.warn(
+          `[ensureDashboardSandboxCreate] createSession attempt ${attempt + 1}/12 failed (sandbox may still be booting): ${createErr instanceof Error ? createErr.message : createErr}. Retrying in 3s...`
+        );
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+  }
+  if (!sandboxSession) {
+    throw lastCreateErr instanceof Error ? lastCreateErr : new Error('Failed to create sandbox session');
+  }
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
     VALUES (?, ?, ?, ?)
@@ -1361,6 +1382,15 @@ async function createSessionImpl(
   try {
     const terminalConfig = parseTerminalConfig(item.content);
     const { bootCommand, workingDir, modelSelection } = terminalConfig;
+    // Shared-sandbox deployments (desktop) put EVERY dashboard in one VM's /workspace,
+    // so default each dashboard's terminals into their own subdir (/workspace/<dashboardId>)
+    // for isolation — unless the terminal already set a workingDir (downloaded dashboards
+    // set their own via cloud-sync). Fly gives each dashboard its own VM, so no default
+    // there. The desktop sandbox auto-creates the subdir; cloud-dev without the subdir
+    // just falls back to root (unchanged).
+    const sharedSandbox = !(env.FLY_PROVISIONING_ENABLED === 'true'
+      && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME));
+    const effectiveWorkingDir = workingDir ?? (sharedSandbox ? dashboardId : undefined);
     let appliedSecretNames: string[] = [];
 
     const applyDashboardSecretsBeforePtyStart = async (
@@ -1431,12 +1461,12 @@ async function createSessionImpl(
         pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
           ptyId,
           integrationToken,
-          workingDir,
+          workingDir: effectiveWorkingDir,
           modelSelection,
         });
       } catch (wdErr) {
-        if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
-          console.log(`[createSession] Working dir "${workingDir}" not found, falling back to workspace root`);
+        if (effectiveWorkingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
+          console.log(`[createSession] Working dir "${effectiveWorkingDir}" not found, falling back to workspace root`);
           pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
             ptyId,
             integrationToken,
@@ -1860,16 +1890,26 @@ export async function getDashbоardSandbоxStatus(
   }
 
   const sandbox = await getDashbоardSandbоx(env, dashboardId);
-  if (!sandbox?.sandbox_machine_id) {
-    // No VM (or no machine id yet) — asleep until the first terminal/browser opens.
+  // "No sandbox yet" keys on the SESSION id, not the machine id: on desktop the local
+  // VM has no Fly machine, so sandbox_machine_id is empty even when the VM is up. Using
+  // machine id here made a healthy desktop sandbox show red "Sandbox asleep".
+  if (!sandbox?.sandbox_session_id) {
+    // No VM yet — asleep until the first terminal/browser opens.
     return Response.json({ state: 'asleep', flyState: null, machineId: null });
   }
 
   const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
     && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
   if (!flyProvisioningEnabled) {
-    // Can't query Fly (e.g. local/desktop). A recorded session implies it's up.
-    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id });
+    // Can't query Fly (e.g. local/desktop). A recorded session means the local VM is
+    // up (machine id is empty locally), so report ready.
+    return Response.json({ state: 'ready', flyState: null, machineId: sandbox.sandbox_machine_id || null });
+  }
+
+  // Fly path needs a machine id to query; if we somehow have a session without one,
+  // treat it as asleep so the code below can reprovision.
+  if (!sandbox.sandbox_machine_id) {
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
   }
 
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);

@@ -567,6 +567,18 @@ func (s *Session) resolveWorkingDir(workingDir string) (string, error) {
 	// Verify directory exists
 	info, err := os.Stat(actualWorkDir)
 	if os.IsNotExist(err) {
+		// Desktop isolates each dashboard into its own /workspace/<dashboardId> subdir
+		// across the shared VM; auto-create a missing one so the first terminal lands
+		// there instead of the control plane falling back to the shared root. On cloud
+		// (each dashboard has its own VM) we keep erroring so a stale mirror dir isn't
+		// silently recreated. ORCABOT_DEBUG_EXEC is set only by the desktop VM init.
+		// REVISION: working-dir-v3-desktop-autocreate
+		if os.Getenv("ORCABOT_DEBUG_EXEC") == "1" {
+			if mkErr := os.MkdirAll(actualWorkDir, 0o755); mkErr != nil {
+				return "", fmt.Errorf("failed to create working directory: %w", mkErr)
+			}
+			return actualWorkDir, nil
+		}
 		return "", fmt.Errorf("working directory does not exist: %s", workingDir)
 	}
 	if err != nil {
