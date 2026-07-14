@@ -138,15 +138,14 @@ export async function getCloudAccount(): Promise<CloudAccount | null> {
   }
 }
 
-/** Forget the stored cloud credential. */
+/** Forget the stored cloud credential (and revoke it if desktop-minted). Rejects if
+ *  the native command fails (e.g. the file couldn't be removed) so callers can
+ *  surface it — a swallowed error would leave the credential able to sign the user
+ *  back in. No-op off desktop. */
 export async function clearCloudCredential(): Promise<void> {
   const invoke = await getTauriInvoke();
   if (!invoke) return;
-  try {
-    await invoke("clear_cloud_credential");
-  } catch {
-    /* ignore */
-  }
+  await invoke("clear_cloud_credential");
 }
 
 /** List the signed-in user's cloud dashboards (raw JSON from api.orcabot.com). */

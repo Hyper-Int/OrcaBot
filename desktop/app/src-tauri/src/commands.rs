@@ -709,6 +709,33 @@ fn read_cloud_credential(app: &tauri::AppHandle) -> Option<(String, String)> {
     read_cloud_credential_full(app).map(|(t, e, _)| (t, e))
 }
 
+/// Remove the credential file, retrying a transient lock. Ok on success or NotFound;
+/// Err otherwise — callers must NOT clear ownership state (COMMITTED_GEN) on Err, so
+/// a later attempt can retry rather than losing track of a still-present credential.
+fn remove_credential_file(app: &tauri::AppHandle) -> Result<(), String> {
+    let path = match cloud_credential_path(app) {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let mut last_err: Option<std::io::Error> = None;
+    for attempt in 0..3 {
+        match std::fs::remove_file(&path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "failed to remove stored credential: {}",
+        last_err.map(|e| e.to_string()).unwrap_or_default()
+    ))
+}
+
 #[derive(Serialize, Clone)]
 pub struct CloudAccount {
     pub email: String,
@@ -1065,9 +1092,9 @@ pub async fn rollback_sign_in(app: tauri::AppHandle, attempt: u64) -> Result<(),
             return Ok(()); // a newer write owns the credential — leave it
         }
         let creds = read_cloud_credential_full(&app);
-        if let Some(path) = cloud_credential_path(&app) {
-            let _ = std::fs::remove_file(path);
-        }
+        // Delete FIRST; only relinquish ownership (COMMITTED_GEN) on success, so a
+        // failed delete keeps the mapping and a retry can still clean it up.
+        remove_credential_file(&app)?;
         COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
         creds
     };
@@ -1116,33 +1143,10 @@ pub async fn clear_cloud_credential(app: tauri::AppHandle) -> Result<(), String>
         let _guard = cred_lock();
         SIGN_IN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let creds = read_cloud_credential_full(&app);
-        if let Some(path) = cloud_credential_path(&app) {
-            // Only NotFound is fine; any other failure means the credential may still
-            // be on disk (it would sign the user back in on restart) — retry a few
-            // times for a transient lock, then report so the UI can surface it.
-            let mut last_err: Option<std::io::Error> = None;
-            for attempt in 0..3 {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => {
-                        last_err = None;
-                        break;
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        last_err = None;
-                        break;
-                    }
-                    Err(e) => {
-                        last_err = Some(e);
-                        if attempt < 2 {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
-                }
-            }
-            if let Some(e) = last_err {
-                return Err(format!("failed to remove stored credential: {e}"));
-            }
-        }
+        // Only NotFound is fine; any other failure means the credential may still be
+        // on disk (it would sign the user back in on restart). Report it so the UI
+        // can surface it, and keep ownership state until the delete actually succeeds.
+        remove_credential_file(&app)?;
         COMMITTED_GEN.store(0, std::sync::atomic::Ordering::SeqCst);
         creds
     };
