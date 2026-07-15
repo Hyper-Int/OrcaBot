@@ -35,7 +35,7 @@ DEFAULT_CONFIG = """\
 # `problems` sequentially. `workers` arms run in parallel.
 harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
 models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
-skills:    [baseline]            # baseline gsd omc superpowers karpathy (public agent-skill packs)
+skills:    [baseline]            # baseline gsd omc superpowers karpathy addyosmani (agent-skill packs)
 problems:  [file_backup]          # file_backup etl_pipeline layered_config_synthesizer
 workers:   1                      # how many arms run in parallel
 prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
@@ -56,6 +56,7 @@ SKILL_ENV = {
     "omc": "configs/environments/docker-python3.12-uv-with-omc-real.yaml",
     "superpowers": "configs/environments/docker-python3.12-uv-with-superpowers.yaml",
     "karpathy": "configs/environments/docker-python3.12-uv-with-karpathy.yaml",
+    "addyosmani": "configs/environments/docker-python3.12-uv-with-addyosmani.yaml",
 }
 SKILL_PROMPT = {
     "baseline": None,  # use config `prompt`
@@ -63,6 +64,7 @@ SKILL_PROMPT = {
     "omc": "just-solve-with-omc-real-trigger",
     "superpowers": "just-solve-with-superpowers-real-trigger",
     "karpathy": "just-solve-with-karpathy-trigger",
+    "addyosmani": "just-solve-with-addyosmani-trigger",
 }
 # skill -> (git repo, env var the env yaml reads to stage the plugin locally)
 SKILL_PLUGIN = {
@@ -161,6 +163,10 @@ def patch_broker():
     try:
         txt = open(prov, encoding="utf-8").read()
         new = txt.replace("api_base: https://openrouter.ai/api/v1", "api_base: " + broker)
+        # Also rewrite a STALE broker URL (a prior session's, e.g. captured into a
+        # non-pristine providers.yaml.orig) so opencode targets THIS session's
+        # broker path — otherwise the request hits a dead session and 401s.
+        new = re.sub(r"http://127\.0\.0\.1:\d+/broker/[0-9a-f]+/openrouter(?![-\w])", broker, new)
         if new != txt:
             open(prov, "w", encoding="utf-8").write(new)
             _log(f"routed OpenRouter via broker -> {broker}")

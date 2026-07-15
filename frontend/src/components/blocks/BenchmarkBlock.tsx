@@ -37,7 +37,7 @@ const PROMPTS = ["just-solve", "plan_first", "anti_slop", "plan-and-test"];
 const THINKING = ["low", "medium", "high"] as const;
 // Public agent-skill packs. baseline + gsd run in the Orcabot VM (local envs);
 // omc/superpowers/karpathy currently only have Docker envs (need Docker-in-sandbox).
-const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy"];
+const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy", "addyosmani"];
 const LOCAL_SKILLS = new Set(["baseline", "gsd"]);
 
 // Model suggestions: the validated arms + the OpenRouter catalog (routed via the
