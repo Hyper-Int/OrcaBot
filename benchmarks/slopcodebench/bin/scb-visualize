@@ -25,6 +25,7 @@ Usage:
   scb-visualize run [--workdir DIR] -- CMD…  # run the benchmark AND visualize
 """
 import json
+import re
 import os
 import shlex
 import subprocess
@@ -51,6 +52,55 @@ def _log(msg):
 
 def mcp_ready():
     return bool(SID and PTY and SECRET)
+
+
+def prepare_configs(workdir):
+    """Run-time config fixes applied HERE (in the runner PTY) so they can't be
+    skipped by the orchestrator and use THIS session's broker URL.
+
+    1. Route OpenRouter through the session-local secrets broker. The sandbox sets
+       OPENROUTER_BASE_URL=http://127.0.0.1:8082/broker/<sid>/openrouter when
+       OPENROUTER_API_KEY is a broker secret; the broker injects the real key
+       server-side. Without this, opencode hits openrouter.ai directly with the
+       broker *placeholder* key and fails auth (total_cost=0, "OpenCode error").
+    2. Pin the tmux log dir to a STABLE path under the checkout. It defaults to the
+       run's temp working dir (which is cleaned up), so runs.jsonl + the per-run
+       logfiles vanish and the live agent viewer never surfaces. Point it at
+       <workdir>/.scb_tmux — exactly where watch() looks."""
+    broker = os.environ.get("OPENROUTER_BASE_URL", "").strip()
+    providers = os.path.join(workdir, "configs", "providers.yaml")
+    if broker and os.path.isfile(providers):
+        try:
+            txt = open(providers, encoding="utf-8").read()
+            # Point the openrouter openai endpoint at this session's broker. Handle
+            # both the pristine openrouter.ai URL AND a stale broker URL left by a
+            # previous run in the shared /workspace (idempotent, always current sid).
+            new = txt.replace("https://openrouter.ai/api/v1", broker)
+            new = re.sub(r"http://127\.0\.0\.1:\d+/broker/[0-9a-f]+/openrouter(?![-\w])",
+                         broker, new)
+            if new != txt:
+                with open(providers, "w", encoding="utf-8") as fh:
+                    fh.write(new)
+                _log(f"routed OpenRouter via broker -> {broker}")
+        except OSError as exc:
+            _log(f"providers.yaml patch failed: {exc}")
+    elif not broker:
+        _log("OPENROUTER_BASE_URL not set — is OPENROUTER_API_KEY a broker secret?")
+
+    log_dir = os.path.join(workdir, ".scb_tmux")
+    env_yaml = os.path.join(workdir, "configs", "environments", "local-tmux-py.yaml")
+    if os.path.isfile(env_yaml):
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            txt = open(env_yaml, encoding="utf-8").read()
+            if "tmux_log_dir" not in txt and "  tmux_session: scb" in txt:
+                txt = txt.replace("  tmux_session: scb",
+                                  f"  tmux_session: scb\n  tmux_log_dir: {log_dir}")
+                with open(env_yaml, "w", encoding="utf-8") as fh:
+                    fh.write(txt)
+                _log(f"pinned tmux_log_dir -> {log_dir}")
+        except OSError as exc:
+            _log(f"env yaml patch failed: {exc}")
 
 
 def call_tool(name, arguments):
@@ -177,6 +227,7 @@ def main():
         if not cmd:
             _log("usage: scb-visualize run [--workdir DIR] -- <command...>")
             sys.exit(2)
+        prepare_configs(workdir)  # broker routing + stable log dir, before the run
         t = threading.Thread(target=watch, args=(workdir,), kwargs={"skip_existing": True}, daemon=True)
         t.start()
         rc = subprocess.call(cmd, cwd=workdir)
