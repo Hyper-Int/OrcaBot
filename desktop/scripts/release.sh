@@ -71,15 +71,14 @@ fi
 VERSION=$(read_version)
 echo "== target release: v$VERSION"
 
-# --- 3. Build bundled resources (frontend + workerd; bakes OAuth) ---------
-echo "== building desktop resources (frontend + control-plane workerd)..."
-sh "$SCRIPT_DIR/build-desktop-resources.sh"
-
-# --- 4. Signed + notarized app build --------------------------------------
-echo "== cargo tauri build (signed + notarized; this takes a while)..."
+# --- 3. Signed + notarized app build --------------------------------------
+# cargo tauri build's beforeBuildCommand (tauri.conf.json) already runs
+# build-desktop-resources.sh (frontend + control-plane workerd; bakes OAuth),
+# so we do NOT invoke it here — doing both rebuilt everything twice.
+echo "== cargo tauri build (builds resources via beforeBuildCommand, then signs + notarizes; this takes a while)..."
 ( cd "$SRC_TAURI" && cargo tauri build )
 
-# --- 5. Preflight gate + publish ------------------------------------------
+# --- 4. Preflight gate + publish ------------------------------------------
 echo "== publishing v$VERSION..."
 sh "$SCRIPT_DIR/publish-release.sh"
 
