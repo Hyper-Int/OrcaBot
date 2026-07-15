@@ -4,7 +4,7 @@
 //! per image version and verified against a SHA-256 baked into the binary. The
 //! small resources (kernel/initrd/vz-helper) are still staged from the bundle.
 //
-// REVISION: vm-image-ondemand-v1
+// REVISION: vm-image-ondemand-v2-cache-dir
 
 use super::VMError;
 use sha2::{Digest, Sha256};
@@ -267,16 +267,19 @@ impl VMResourcePaths {
 /// Stage all VM resources to the app data directory.
 pub fn stage_vm_resources(
     resource_paths: &VMResourcePaths,
-    data_dir: &Path,
+    vm_dir: &Path,
     progress: &dyn Fn(u64, u64),
 ) -> Result<VMResourcePaths, VMError> {
-    let vm_dir = data_dir.join("vm");
+    // vm_dir lives under the CACHE dir (resolved in start_sandbox_vm): the disk
+    // image + staged runtime binaries are large and fully regenerable, so they
+    // stay out of the precious Application Support tree.
+    let vm_dir = vm_dir.to_path_buf();
     fs::create_dir_all(&vm_dir)?;
 
     // The disk image is NOT bundled in the app (it would bloat every
     // auto-update), so fetch/adopt it on demand instead of staging from a
     // bundled resource.
-    let staged_image = ensure_vm_image(&resource_paths.image, data_dir, progress)?;
+    let staged_image = ensure_vm_image(&resource_paths.image, &vm_dir, progress)?;
 
     let staged_kernel = if let Some(ref kernel) = resource_paths.kernel {
         Some(stage_image(kernel, &vm_dir)?)
@@ -359,7 +362,7 @@ fn read_marker(marker: &Path) -> Option<String> {
 /// may be adopted without a download only while it's still the required version.
 const LEGACY_IMAGE_VERSION: &str = "v1";
 
-/// Ensure the VM disk image is present in the data dir and return its path.
+/// Ensure the VM disk image is present in the VM cache dir and return its path.
 ///
 /// The staged image is named by CONTENT (`sandbox-<token>.img`), never a fixed
 /// `sandbox.img`: macOS/Virtualization.framework caches a disk image's SIZE keyed
@@ -377,11 +380,11 @@ const LEGACY_IMAGE_VERSION: &str = "v1";
 ///  4. otherwise download the gz artifact, verify its SHA-256, decompress.
 pub fn ensure_vm_image(
     resource_image: &Path,
-    data_dir: &Path,
+    vm_dir: &Path,
     progress: &dyn Fn(u64, u64),
 ) -> Result<PathBuf, VMError> {
     let manifest = vm_image_manifest();
-    let vm_dir = data_dir.join("vm");
+    let vm_dir = vm_dir.to_path_buf();
     fs::create_dir_all(&vm_dir)?;
 
     // 0. Dev override: ORCABOT_VM_IMAGE forces a specific local image (raw .img or

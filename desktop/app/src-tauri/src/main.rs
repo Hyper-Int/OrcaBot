@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v12-surface-ws-hardening
-const MODULE_REVISION: &str = "main-v12-surface-ws-hardening";
+// REVISION: main-v13-vm-cache-dir
+const MODULE_REVISION: &str = "main-v13-vm-cache-dir";
 
 mod commands;
 mod vm;
@@ -362,6 +362,82 @@ struct DesktopServices {
   data_dir: Mutex<Option<PathBuf>>,
 }
 
+/// Relocate the staged VM dir from its old (app-data) location to the new (cache)
+/// one on a best-effort basis. Ensures `new` holds a complete copy of the image if
+/// one existed at `old` — but, apart from the atomic same-volume rename, it does
+/// **not** remove `old`. The caller removes `old` via [`reclaim_old_vm_dir`] only
+/// after `stage_vm_resources` confirms a valid image in `new`, so a failed
+/// migration + download can never delete the last working image (directory
+/// existence alone is not proof of a good image: staging creates the dir before the
+/// download lands).
+///
+/// - No-op if `old` is missing, equals `new`, or `new` already exists (the caller
+///   still reclaims `old` after a successful stage).
+/// - Same-volume: `rename(old, new)` — instant + atomic, moves old→new in one step
+///   (the macOS case; `old` is consumed atomically, so `new` is always complete).
+/// - Cross-volume (`rename` fails with EXDEV; split XDG dirs / roaming profiles):
+///   copy into a temp sibling, then atomically `rename` it into place so `new` is
+///   never seen half-copied. `old` is left intact for the caller to reclaim after
+///   staging succeeds. Any copy/swap failure drops the temp and preserves `old`.
+fn migrate_vm_dir(old: &Path, new: &Path) {
+  if old == new || !old.exists() || new.exists() {
+    return;
+  }
+  if let Some(parent) = new.parent() {
+    let _ = std::fs::create_dir_all(parent);
+  }
+  // Same-volume: atomic rename (consumes `old` in one atomic step).
+  if std::fs::rename(old, new).is_ok() {
+    eprintln!("[vm] migrated VM cache {} -> {}", old.display(), new.display());
+    return;
+  }
+  // Cross-volume: stage into a temp sibling (same volume as `new`), then swap it
+  // into place atomically so `new` is never seen half-copied. Leave `old` for the
+  // caller to reclaim after staging confirms a valid image.
+  let tmp = new.with_extension("migrating");
+  let _ = std::fs::remove_dir_all(&tmp); // clear any partial left by a prior crash
+  match copy_dir_all(old, &tmp) {
+    Ok(()) => match std::fs::rename(&tmp, new) {
+      Ok(()) => eprintln!("[vm] migrated VM cache (copy) {} -> {}", old.display(), new.display()),
+      Err(e) => {
+        let _ = std::fs::remove_dir_all(&tmp);
+        eprintln!("[vm] VM cache migration swap failed ({e}); old dir preserved");
+      }
+    },
+    Err(e) => {
+      let _ = std::fs::remove_dir_all(&tmp);
+      eprintln!("[vm] VM cache migration copy failed ({e}); old dir preserved, will re-download");
+    }
+  }
+}
+
+/// Remove a leftover pre-migration VM dir. Call this ONLY after
+/// `stage_vm_resources` has confirmed a valid image in the cache dir, so a failed
+/// download never strands the app without a working image. No-op on the same-volume
+/// path (the rename already consumed `old`).
+fn reclaim_old_vm_dir(old: &Path, new: &Path) {
+  if old != new && old.exists() {
+    let _ = std::fs::remove_dir_all(old);
+  }
+}
+
+/// Recursively copy a directory tree (regular files + subdirs; no symlink chasing
+/// needed — the VM dir holds only plain files).
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+  std::fs::create_dir_all(dst)?;
+  for entry in std::fs::read_dir(src)? {
+    let entry = entry?;
+    let from = entry.path();
+    let to = dst.join(entry.file_name());
+    if entry.file_type()?.is_dir() {
+      copy_dir_all(&from, &to)?;
+    } else {
+      std::fs::copy(&from, &to)?;
+    }
+  }
+  Ok(())
+}
+
 impl DesktopServices {
   fn new() -> Self {
     Self {
@@ -708,6 +784,7 @@ impl DesktopServices {
   fn start_sandbox_vm(
     &self,
     data_dir: &Path,
+    vm_dir: &Path,
     resource_root: &Path,
   ) -> Result<(), vm::VMError> {
     // The user accepted an app update → don't spin the VM up (or download its image)
@@ -716,6 +793,14 @@ impl DesktopServices {
       eprintln!("[vm] app update accepted — skipping sandbox VM startup");
       return Ok(());
     }
+
+    // One-time migration: the VM image + staged runtime binaries used to live under
+    // the app-data dir. They're large (~1GB) and fully regenerable, so they now live
+    // in the cache dir instead (Caches is the OS-purgeable bucket, and this keeps the
+    // image out of the precious Application Support tree). The old dir is reclaimed
+    // only after staging confirms a valid image below — never on mere dir existence.
+    let old_vm_dir = data_dir.join("vm");
+    migrate_vm_dir(&old_vm_dir, vm_dir);
 
     // Check if VM resources exist
     let vm_resource_paths = vm::image::VMResourcePaths::from_resource_root(resource_root);
@@ -738,7 +823,28 @@ impl DesktopServices {
         }
       }
     };
-    let staged_paths = vm::image::stage_vm_resources(&vm_resource_paths, data_dir, &progress)?;
+    let staged_paths = match vm::image::stage_vm_resources(&vm_resource_paths, vm_dir, &progress) {
+      Ok(paths) => {
+        // Staging confirmed a valid image in the cache dir, so it's now safe to
+        // reclaim any leftover pre-migration VM dir. Gating on staging success —
+        // not directory existence — means a failed migration never deletes the
+        // last working image.
+        reclaim_old_vm_dir(&old_vm_dir, vm_dir);
+        paths
+      }
+      Err(cache_err) if old_vm_dir.as_path() != vm_dir && old_vm_dir.exists() => {
+        // The cache dir is full/unwritable, but the preserved pre-migration image
+        // is still intact — boot from it so the sandbox still works instead of
+        // failing every launch. Leave `old_vm_dir` in place; a later launch with a
+        // writable cache migrates it over and reclaims it.
+        eprintln!(
+          "[vm] cache staging failed ({cache_err}); falling back to preserved VM dir {}",
+          old_vm_dir.display()
+        );
+        vm::image::stage_vm_resources(&vm_resource_paths, &old_vm_dir, &progress)?
+      }
+      Err(e) => return Err(e),
+    };
 
     // Create workspace directory
     let workspace_dir = data_dir.join("workspace");
@@ -1166,10 +1272,21 @@ fn main() {
       // Start sandbox VM in a background thread so the window appears immediately
       // instead of blocking for up to 120s waiting for the VM health check.
       let resource_root = resolve_resource_root(app);
+      // The large, regenerable VM artifacts (disk image + staged runtime binaries)
+      // live under the cache dir (~/Library/Caches/com.orcabot.desktop/vm), not
+      // Application Support — so a cleanup/uninstall reclaims the ~1GB and it sits in
+      // the OS-purgeable bucket. Fall back to the data dir if no cache dir resolves.
+      let vm_dir = match app.path().app_cache_dir() {
+        Ok(c) => c.join("vm"),
+        Err(_) => data_dir
+          .as_ref()
+          .map(|d| d.join("vm"))
+          .unwrap_or_else(|| PathBuf::from("vm")),
+      };
       if let (Some(rr), Some(dd)) = (resource_root, data_dir) {
         let vm_services = Arc::clone(&services);
         std::thread::spawn(move || {
-          if let Err(err) = vm_services.start_sandbox_vm(&dd, &rr) {
+          if let Err(err) = vm_services.start_sandbox_vm(&dd, &vm_dir, &rr) {
             eprintln!("Failed to start sandbox VM: {}", err);
             eprintln!("Sandbox features will be unavailable.");
           }
