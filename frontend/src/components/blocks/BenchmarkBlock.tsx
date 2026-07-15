@@ -35,10 +35,9 @@ const HARNESSES = ["opencode", "claude_code", "codex", "gemini", "kimi_cli", "cu
 const PROBLEMS_KNOWN = ["file_backup", "etl_pipeline", "layered_config_synthesizer"];
 const PROMPTS = ["just-solve", "plan_first", "anti_slop", "plan-and-test"];
 const THINKING = ["low", "medium", "high"] as const;
-// Public agent-skill packs. baseline + gsd run in the Orcabot VM (local envs);
-// omc/superpowers/karpathy currently only have Docker envs (need Docker-in-sandbox).
+// Public agent-skill packs. Every skill now runs in the Orcabot VM (local envs);
+// scb-matrix clones each skill's public plugin repo and stages it into the run.
 const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy", "addyosmani"];
-const LOCAL_SKILLS = new Set(["baseline", "gsd"]);
 
 // Model suggestions: the validated arms + the OpenRouter catalog (routed via the
 // broker, so prefixed openrouter/). The field also accepts free-typed ids.
@@ -348,18 +347,17 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
             </div>
           </div>
 
-          {/* Skills (public agent-skill packs; ⚙ = Docker env) */}
+          {/* Skills (public agent-skill packs; all run in the sandbox VM) */}
           <div className="space-y-1">
             <div className="text-[11px] font-medium text-[var(--foreground-muted)]">Skills</div>
             <div className="flex flex-wrap gap-1">
               {SKILLS.map((s) => {
                 const on = cfg.skills.includes(s);
-                const local = LOCAL_SKILLS.has(s);
                 return (
                   <button
                     key={s}
                     type="button"
-                    title={local ? "runs in the sandbox VM" : "Docker env — needs Docker-in-sandbox to run"}
+                    title="public agent-skill pack — cloned + staged into the run"
                     onClick={() => update({ skills: on ? cfg.skills.filter((x) => x !== s) : [...cfg.skills, s] })}
                     className={cn(
                       "nodrag rounded px-1.5 py-0.5 text-[11px] border transition-colors",
@@ -368,7 +366,7 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
                         : "bg-[var(--background-surface)] border-[var(--border)] text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
                     )}
                   >
-                    {s}{local ? "" : " ⚙"}
+                    {s}
                   </button>
                 );
               })}
