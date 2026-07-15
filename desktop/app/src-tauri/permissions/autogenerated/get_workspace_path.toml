@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-workspace-path"
+description = "Enables the get_workspace_path command without any pre-configured scope."
+commands.allow = ["get_workspace_path"]
+
+[[permission]]
+identifier = "deny-get-workspace-path"
+description = "Denies the get_workspace_path command without any pre-configured scope."
+commands.deny = ["get_workspace_path"]
