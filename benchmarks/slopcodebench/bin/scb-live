@@ -36,7 +36,7 @@ PROG = re.compile(
 )
 
 
-ARM_RE = re.compile(r"\[scb-matrix\] arm (\S+) x (\S+)")
+ARM_RE = re.compile(r"\[scb-matrix\] arm (\S+) x (\S+)(?: x (\S+))?")
 TS_RE = re.compile(r"\.(\d{8}T\d{6})\.log$")
 
 
@@ -58,7 +58,8 @@ def batch_logs():
 def arm_label(logpath, raw):
     m = ARM_RE.search(raw)
     if m:
-        return f"{m.group(1)} · {m.group(2)}"
+        parts = [m.group(1), m.group(2)] + ([m.group(3)] if m.group(3) else [])
+        return " · ".join(parts)
     base = re.sub(r"^\.scb-run\.|\.\d{8}T\d{6}\.log$|\.log$", "", os.path.basename(logpath))
     return base or "run"
 

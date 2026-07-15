@@ -31,19 +31,43 @@ CONFIG = os.environ.get("SCB_CONFIG", f"{WS}/.scb-config.yaml")
 
 DEFAULT_CONFIG = """\
 # SlopCodeBench run config — edit here, ask Orcabot chat ("add claude", "2 workers"),
-# or use the config panel. Each (harness x model) pair is one ARM; each arm runs all
+# or use the config panel. An ARM is one (harness x model x skill); each arm runs all
 # `problems` sequentially. `workers` arms run in parallel.
 harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
 models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
+skills:    [baseline]            # baseline gsd omc superpowers karpathy (public agent-skill packs)
 problems:  [file_backup]          # file_backup etl_pipeline layered_config_synthesizer
 workers:   1                      # how many arms run in parallel
-prompt:    just-solve             # just-solve plan_first anti_slop plan-and-test ...
+prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
 thinking:  low                    # low medium high
 evaluate:  false                  # true = score the run, false = inference-only
 """
 
 SCALARS = {"workers", "prompt", "thinking", "evaluate"}
-LISTS = {"harnesses", "models", "problems"}
+LISTS = {"harnesses", "models", "problems", "skills"}
+
+# A "skill" is a public agent-skill pack; running one swaps the slop-code
+# environment + prompt (see the fork's REPRODUCE_PUBLIC_SKILLS.md). baseline + gsd
+# have LOCAL (in-VM) envs; omc/superpowers/karpathy currently only have Docker
+# envs, so they need Docker-in-sandbox to actually run (still selectable here).
+SKILL_ENV = {
+    "baseline": "configs/environments/local-tmux-py.yaml",
+    "gsd": "configs/environments/local-tmux-py-with-gsd.yaml",
+    "omc": "configs/environments/docker-python3.12-uv-with-omc-real.yaml",
+    "superpowers": "configs/environments/docker-python3.12-uv-with-superpowers.yaml",
+    "karpathy": "configs/environments/docker-python3.12-uv-with-karpathy.yaml",
+}
+SKILL_PROMPT = {
+    "baseline": None,  # use config `prompt`
+    "gsd": "just-solve-with-gsd-local-trigger",
+    "omc": "just-solve-with-omc-real-trigger",
+    "superpowers": "just-solve-with-superpowers-real-trigger",
+    "karpathy": "just-solve-with-karpathy-trigger",
+}
+# skill -> (git repo, env var the env yaml reads to stage the plugin locally)
+SKILL_PLUGIN = {
+    "gsd": ("https://github.com/open-gsd/get-shit-done-redux", "SCB_SKILL_GSD_DIR"),
+}
 
 
 def _log(msg):
@@ -92,7 +116,7 @@ def load_config():
 
 def apply_overrides(cfg, args):
     """CLI flags override the config file (for a one-off run)."""
-    i, harn, mods, probs = 0, [], [], []
+    i, harn, mods, probs, skls = 0, [], [], [], []
     while i < len(args):
         a = args[i]
         if a == "--harness":
@@ -101,6 +125,8 @@ def apply_overrides(cfg, args):
             mods.append(args[i + 1]); i += 2
         elif a == "--problem":
             probs.append(args[i + 1]); i += 2
+        elif a == "--skill":
+            skls.append(args[i + 1]); i += 2
         elif a in ("--workers", "--thinking", "--prompt"):
             cfg[a[2:]] = args[i + 1]; i += 2
         elif a == "--evaluate":
@@ -113,6 +139,8 @@ def apply_overrides(cfg, args):
         cfg["models"] = mods
     if probs:
         cfg["problems"] = probs
+    if skls:
+        cfg["skills"] = skls
     return cfg
 
 
@@ -144,31 +172,52 @@ def slug(s):
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
 
 
-def run_arm(harness, model, cfg, ts):
+def stage_skill(skill):
+    """Clone a skill's public plugin once (cached in $WS/.scb-skills/<skill>) and
+    return the env var the skill's env yaml reads to stage it into the run. {} for
+    baseline or skills with no local plugin mapping."""
+    info = SKILL_PLUGIN.get(skill)
+    if not info:
+        return {}
+    repo, envvar = info
+    dest = os.path.join(WS, ".scb-skills", skill)
+    if not os.path.isdir(dest):
+        try:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            subprocess.call(["git", "clone", "--depth", "1", repo, dest],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _log(f"staged skill plugin {skill} <- {repo}")
+        except Exception as exc:  # noqa: BLE001
+            _log(f"skill plugin clone failed ({skill}): {exc}")
+    return {envvar: dest} if os.path.isdir(dest) else {}
+
+
+def run_arm(harness, model, skill, cfg, ts):
     problems = cfg.get("problems") or ["file_backup"]
-    prompt = cfg.get("prompt", "just-solve")
     thinking = cfg.get("thinking", "low")
     evaluate = str(cfg.get("evaluate", "false")).lower() in ("1", "true", "yes", "on")
-    log = f"{WS}/.scb-run.{slug(harness)}_{slug(model)}.{ts}.log"
+    env_cfg = SKILL_ENV.get(skill, SKILL_ENV["baseline"])
+    prompt = SKILL_PROMPT.get(skill) or cfg.get("prompt", "just-solve")
+    env = {**os.environ, **stage_skill(skill)}
+    log = f"{WS}/.scb-run.{slug(harness)}_{slug(model)}_{slug(skill)}.{ts}.log"
     cmd = [f"{VENV}/bin/slop-code", "run", "--agent", harness, "--model", model,
-           "--environment", "configs/environments/local-tmux-py.yaml",
-           "--prompt", f"configs/prompts/{prompt}.jinja"]
+           "--environment", env_cfg, "--prompt", f"configs/prompts/{prompt}.jinja"]
     for p in problems:
         cmd += ["--problem", p]
     if not evaluate:
         cmd.append("--no-evaluate")
     cmd.append(f"thinking={thinking}")
-    _log(f"arm start: {harness} x {model} -> {log}")
+    _log(f"arm start: {harness} x {model} x {skill} -> {log}")
     try:
         with open(log, "w", encoding="utf-8") as fh:
-            fh.write(f"[scb-matrix] arm {harness} x {model} problems={problems} "
-                     f"thinking={thinking} evaluate={evaluate}\n")
+            fh.write(f"[scb-matrix] arm {harness} x {model} x {skill} problems={problems} "
+                     f"env={env_cfg} prompt={prompt} thinking={thinking} evaluate={evaluate}\n")
             fh.flush()
-            rc = subprocess.call(cmd, cwd=REPO, stdout=fh, stderr=subprocess.STDOUT,
+            rc = subprocess.call(cmd, cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT,
                                  stdin=subprocess.DEVNULL)
-        _log(f"arm done:  {harness} x {model} rc={rc}")
+        _log(f"arm done:  {harness} x {model} x {skill} rc={rc}")
     except Exception as exc:  # noqa: BLE001 — one arm failing must not kill the matrix
-        _log(f"arm error: {harness} x {model}: {exc}")
+        _log(f"arm error: {harness} x {model} x {skill}: {exc}")
 
 
 def main():
@@ -189,12 +238,13 @@ def main():
 
     harnesses = cfg.get("harnesses") or ["opencode"]
     models = cfg.get("models") or ["openrouter/kimi-k2.6"]
+    skills = cfg.get("skills") or ["baseline"]
     try:
         workers = max(1, int(str(cfg.get("workers", "1")).strip()))
     except ValueError:
         workers = 1
-    arms = [(h, m) for h in harnesses for m in models]
-    _log(f"{len(arms)} arm(s) [{len(harnesses)} harness x {len(models)} model], "
+    arms = [(h, m, s) for h in harnesses for m in models for s in skills]
+    _log(f"{len(arms)} arm(s) [{len(harnesses)}h x {len(models)}m x {len(skills)}s], "
          f"{len(cfg.get('problems') or ['file_backup'])} problem(s), workers={workers}")
 
     patch_broker()
@@ -203,12 +253,12 @@ def main():
     sem = threading.Semaphore(workers)
     threads = []
 
-    def worker(h, m):
+    def worker(h, m, s):
         with sem:
-            run_arm(h, m, cfg, ts)
+            run_arm(h, m, s, cfg, ts)
 
-    for h, m in arms:
-        t = threading.Thread(target=worker, args=(h, m), daemon=False)
+    for h, m, s in arms:
+        t = threading.Thread(target=worker, args=(h, m, s), daemon=False)
         t.start()
         threads.append(t)
         time.sleep(0.2)  # stagger so tmux windows / logfiles don't collide

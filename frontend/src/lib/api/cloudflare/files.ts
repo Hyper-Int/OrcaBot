@@ -33,6 +33,42 @@ export async function deleteSessionFile(sessionId: string, path: string): Promis
   await apiDelete<void>(url);
 }
 
+/**
+ * Read a workspace file's text content. `path` is relative to the workspace root
+ * (e.g. ".scb-config.yaml"). Returns null on any error / missing file (best-effort).
+ */
+export async function readSessionFileText(sessionId: string, path: string): Promise<string | null> {
+  if (!sessionId) return null;
+  const url = `${API.cloudflare.base}/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`;
+  try {
+    const res = await fetch(url, { headers: { ...getAuthHeaders() }, credentials: "include" });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write raw text to a workspace file (owner-only; PUT /sessions/:id/file). `path`
+ * is workspace-relative. Returns true on success.
+ */
+export async function writeSessionFile(sessionId: string, path: string, content: string): Promise<boolean> {
+  if (!sessionId) return false;
+  const url = `${API.cloudflare.base}/sessions/${sessionId}/file?path=${encodeURIComponent(path)}`;
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: { ...getAuthHeaders(), "Content-Type": "text/plain" },
+      credentials: "include",
+      body: content,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export interface WorkspaceSnapshot {
   version: number;
   dashboardId: string;

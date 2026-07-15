@@ -62,6 +62,7 @@ import { GoogleChatBlock } from "@/components/blocks/GoogleChatBlock";
 import { TwitterBlock } from "@/components/blocks/TwitterBlock";
 import OutlookBlock from "@/components/blocks/OutlookBlock";
 import { OutlookCalendarBlock } from "@/components/blocks/OutlookCalendarBlock";
+import { BenchmarkBlock } from "@/components/blocks/BenchmarkBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
@@ -95,6 +96,7 @@ const nodeTypes: NodeTypes = {
   twitter: TwitterBlock,
   outlook: OutlookBlock,
   outlook_calendar: OutlookCalendarBlock,
+  benchmark: BenchmarkBlock,
   cursor: CursorNode,
 };
 
@@ -122,7 +124,8 @@ function itemsToNodes(
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onDuplicate?: (itemId: string) => void,
-  onTerminalCwdChange?: (itemId: string, cwd: string) => void
+  onTerminalCwdChange?: (itemId: string, cwd: string) => void,
+  onCreateTerminalBlock?: (name: string, bootCommand: string) => void
 ): Node[] {
   const workspaceSession =
     sessions.find((s) => s.status === "active")
@@ -160,7 +163,9 @@ function itemsToNodes(
         dashboardId: item.dashboardId,
         itemId: item.id, // Pass actual item ID for API calls
         session, // Pass session to terminal blocks
-        sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
+        sessionId: item.type === "workspace" || item.type === "benchmark" ? workspaceSession?.id : undefined,
+        // For benchmark blocks: launch a run by creating a terminal (same path as chat create_terminal)
+        onCreateTerminal: item.type === "benchmark" ? onCreateTerminalBlock : undefined,
         color, // Note color from metadata
         metadata: item.metadata, // Pass full metadata for type-specific use
         onRegisterTerminal,
@@ -215,6 +220,8 @@ interface CanvasProps {
   /** Called when multiple items are deleted at once (e.g. multi-select delete) */
   onItemsDelete?: (itemIds: string[]) => void;
   onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  /** Benchmark blocks call this to launch a run (creates a terminal with a boot command). */
+  onCreateTerminalBlock?: (name: string, bootCommand: string) => void;
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
   onCursorMove?: (point: { x: number; y: number }) => void;
   onCanvasClick?: () => void;
@@ -263,6 +270,7 @@ export function Canvas({
   onItemDelete,
   onItemsDelete,
   onCreateBrowserBlock,
+  onCreateTerminalBlock,
   onViewportChange,
   onCursorMove,
   onCanvasClick,
@@ -340,7 +348,8 @@ export function Canvas({
         onStorageLinked,
         onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
-        onTerminalCwdChange
+        onTerminalCwdChange,
+        onCreateTerminalBlock
       )
     );
     return [...baseNodes, ...extraNodes];
@@ -432,7 +441,8 @@ export function Canvas({
         onStorageLinked,
         onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
-        onTerminalCwdChange
+        onTerminalCwdChange,
+        onCreateTerminalBlock
       )
     );
     // Preserve selection state from current nodes when rebuilding
@@ -457,7 +467,7 @@ export function Canvas({
       if (selectedIds.size === 0) return newNodes;
       return newNodes.map(n => selectedIds.has(n.id) ? { ...n, selected: true } : n);
     });
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onStorageDisconnected, onDuplicate, onTerminalCwdChange]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onCreateTerminalBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onStorageDisconnected, onDuplicate, onTerminalCwdChange]);
 
   // Update nodes when items or sessions change from server
   // Deferred during active drag to prevent mid-drag position jumps

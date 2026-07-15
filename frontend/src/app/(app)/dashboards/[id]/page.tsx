@@ -15,6 +15,7 @@ import {
   StickyNote,
   CheckSquare,
   Globe,
+  FlaskConical,
   SquareTerminal,
   Users,
   Settings,
@@ -169,6 +170,7 @@ const blockTools: BlockTool[] = [
   { type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
+  { type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -262,6 +264,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
+  benchmark: { width: 340, height: 470 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },
@@ -2599,7 +2602,11 @@ export default function DashboardPage() {
       return;
     }
 
-    const defaultContent = tool.type === "todo" ? "[]" : "";
+    const defaultContent =
+      tool.type === "todo" ? "[]"
+      : tool.type === "benchmark"
+        ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: ["file_backup"], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
+        : "";
     // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
     // The PTY starts in the workspace root (~), so use a relative cd.
     const relCwd = workspaceCwd !== "/" ? workspaceCwd.replace(/^\//, "") : "";
@@ -2649,6 +2656,23 @@ export default function DashboardPage() {
         sourceId,
         sourceHandle: "right-out",
         targetHandle: "left-in",
+      });
+      ensureVisible(position, size);
+    },
+    [createItemMutation, computePlacement, ensureVisible]
+  );
+
+  // Benchmark block "Run": create a terminal that runs the pipeline boot command
+  // (same shape as the chat's create_terminal — the backend only reads bootCommand).
+  const handleCreateTerminalBlock = React.useCallback(
+    (name: string, bootCommand: string) => {
+      const size = defaultSizes.terminal;
+      const position = computePlacement(size);
+      createItemMutation.mutate({
+        type: "terminal",
+        content: JSON.stringify({ name, subagentIds: [], skillIds: [], agentic: false, bootCommand }),
+        position,
+        size,
       });
       ensureVisible(position, size);
     },
@@ -4052,6 +4076,7 @@ export default function DashboardPage() {
               edges={edgesToRender}
               onEdgesChange={onEdgesChange}
               onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+              onCreateTerminalBlock={role === "viewer" ? undefined : handleCreateTerminalBlock}
               onViewportChange={(next) => {
                 viewportRef.current = next;
               }}
