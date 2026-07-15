@@ -113,6 +113,8 @@ export interface BenchmarkContent {
   prompt: string;
   thinking: "low" | "medium" | "high";
   evaluate: boolean;
+  /** Codex auth: "broker" = brokered API key (default); "subscription" = codex login (ChatGPT/Codex plan). */
+  codexAuth?: "broker" | "subscription";
 }
 
 /**

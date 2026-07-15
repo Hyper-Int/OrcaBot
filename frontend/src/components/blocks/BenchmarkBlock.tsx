@@ -56,6 +56,7 @@ const DEFAULT_CONFIG: BenchmarkContent = {
   prompt: "just-solve",
   thinking: "low",
   evaluate: false,
+  codexAuth: "broker",
 };
 
 function parseConfig(content: string): BenchmarkContent {
@@ -70,6 +71,7 @@ function parseConfig(content: string): BenchmarkContent {
       prompt: typeof p.prompt === "string" ? p.prompt : DEFAULT_CONFIG.prompt,
       thinking: THINKING.includes(p.thinking) ? p.thinking : DEFAULT_CONFIG.thinking,
       evaluate: p.evaluate === true,
+      codexAuth: p.codexAuth === "subscription" ? "subscription" : "broker",
     };
   } catch {
     return { ...DEFAULT_CONFIG };
@@ -88,6 +90,7 @@ function toYaml(c: BenchmarkContent): string {
     `prompt: ${c.prompt}`,
     `thinking: ${c.thinking}`,
     `evaluate: ${c.evaluate}`,
+    `codex_auth: ${c.codexAuth ?? "broker"}`,
     "",
   ].join("\n");
 }
@@ -114,6 +117,7 @@ function fromYaml(text: string): Partial<BenchmarkContent> {
     prompt: out.prompt as string | undefined,
     thinking: out.thinking as BenchmarkContent["thinking"] | undefined,
     evaluate: out.evaluate != null ? String(out.evaluate) === "true" : undefined,
+    codexAuth: out.codex_auth === "subscription" ? "subscription" : out.codex_auth === "broker" ? "broker" : undefined,
   };
 }
 
@@ -126,6 +130,7 @@ function buildBootCommand(c: BenchmarkContent): string {
   for (const p of c.problems) flags.push("--problem", q(p));
   flags.push("--workers", String(c.workers), "--thinking", c.thinking, "--prompt", q(c.prompt));
   if (c.evaluate) flags.push("--evaluate");
+  if (c.codexAuth === "subscription") flags.push("--codex-auth", "subscription");
   const matrix = `bin/scb-matrix ${flags.join(" ")}`;
   return (
     "cd /workspace/slop-code-bench; " +
@@ -236,6 +241,7 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
           prompt: y.prompt || prev.prompt,
           thinking: y.thinking || prev.thinking,
           evaluate: y.evaluate ?? prev.evaluate,
+          codexAuth: y.codexAuth ?? prev.codexAuth,
         };
         data.onContentChange?.(JSON.stringify(merged));
         return merged;
@@ -405,6 +411,21 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
             <input type="checkbox" className="nodrag" checked={cfg.evaluate} onChange={(e) => update({ evaluate: e.target.checked })} />
             Evaluate (score the run, not just inference)
           </label>
+
+          {/* Codex auth: broker (API key) vs subscription (codex login). Only relevant when codex is selected. */}
+          {cfg.harnesses.includes("codex") && (
+            <label className="flex items-center gap-2 text-[11px] text-[var(--foreground-muted)]">
+              <input
+                type="checkbox"
+                className="nodrag"
+                checked={cfg.codexAuth === "subscription"}
+                onChange={(e) => update({ codexAuth: e.target.checked ? "subscription" : "broker" })}
+              />
+              <span title="Uses ~/.codex/auth.json (codex login) instead of a brokered API key. The credential lives in the VM — readable by the agent-under-test.">
+                Codex: use my subscription (codex login) ⚠
+              </span>
+            </label>
+          )}
 
           <div className="text-[11px] text-[var(--foreground-muted)]">
             <b className="text-[var(--foreground)]">{arms}</b> arm{arms === 1 ? "" : "s"} ({cfg.harnesses.length}h × {cfg.models.length}m × {cfg.skills.length}s)

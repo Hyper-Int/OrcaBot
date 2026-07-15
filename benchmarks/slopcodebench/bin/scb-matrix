@@ -29,6 +29,11 @@ REPO = os.environ.get("SCB_REPO_DIR", f"{WS}/slop-code-bench")
 VENV = os.environ.get("SCB_VENV", f"{WS}/scb-venv")
 CONFIG = os.environ.get("SCB_CONFIG", f"{WS}/.scb-config.yaml")
 
+# slop-code's local runtime spawns codex with HOME=/tmp/agent_home (agents/utils.py
+# HOME_PATH). Codex CLI reads its ChatGPT/Codex subscription from $HOME/.codex/auth.json.
+AGENT_HOME = os.environ.get("SCB_AGENT_HOME", "/tmp/agent_home")
+CODEX_AUTH_DEST = f"{AGENT_HOME}/.codex/auth.json"
+
 DEFAULT_CONFIG = """\
 # SlopCodeBench run config — edit here, ask Orcabot chat ("add claude", "2 workers"),
 # or use the config panel. An ARM is one (harness x model x skill); each arm runs all
@@ -41,9 +46,10 @@ workers:   1                      # how many arms run in parallel
 prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
 thinking:  low                    # low medium high
 evaluate:  false                  # true = score the run, false = inference-only
+codex_auth: broker                # broker = brokered API key; subscription = codex login (ChatGPT/Codex plan)
 """
 
-SCALARS = {"workers", "prompt", "thinking", "evaluate"}
+SCALARS = {"workers", "prompt", "thinking", "evaluate", "codex_auth"}
 LISTS = {"harnesses", "models", "problems", "skills"}
 
 # A "skill" is a public agent-skill pack; running one swaps the slop-code
@@ -137,10 +143,12 @@ def apply_overrides(cfg, args):
             probs.append(args[i + 1]); i += 2
         elif a == "--skill":
             skls.append(args[i + 1]); i += 2
-        elif a in ("--workers", "--thinking", "--prompt"):
-            cfg[a[2:]] = args[i + 1]; i += 2
+        elif a in ("--workers", "--thinking", "--prompt", "--codex-auth"):
+            cfg[a[2:].replace("-", "_")] = args[i + 1]; i += 2
         elif a == "--evaluate":
             cfg["evaluate"] = "true"; i += 1
+        elif a == "--subscription":  # shorthand for --codex-auth subscription
+            cfg["codex_auth"] = "subscription"; i += 1
         else:
             _log(f"ignoring unknown arg: {a}"); i += 1
     if harn:
@@ -182,6 +190,74 @@ def patch_broker():
         _log(f"providers.yaml patch failed: {exc}")
 
 
+def find_codex_auth():
+    """Locate a Codex subscription credential (auth.json written by `codex login`).
+    Search order: $SCB_CODEX_AUTH_FILE, $WS/.scb-codex-auth.json (staged by the
+    panel/user), then the usual CODEX_HOME / HOME locations. Returns a path or None."""
+    candidates = [
+        os.environ.get("SCB_CODEX_AUTH_FILE"),
+        os.path.join(WS, ".scb-codex-auth.json"),
+        os.path.join(os.environ.get("CODEX_HOME", ""), "auth.json") if os.environ.get("CODEX_HOME") else None,
+        os.path.join(os.path.expanduser("~"), ".codex", "auth.json"),
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def stage_codex_auth():
+    """Copy the located Codex subscription auth.json into the agent's HOME so the
+    in-VM (local runtime) codex process finds it at $HOME/.codex/auth.json. Returns
+    True if staged. Does NOT overwrite a newer dest."""
+    src = find_codex_auth()
+    if not src:
+        _log("codex_auth=subscription but no auth.json found "
+             f"(looked at $SCB_CODEX_AUTH_FILE, {WS}/.scb-codex-auth.json, ~/.codex/auth.json). "
+             "Run `codex login` or stage the file; the arm will fail auth without it.")
+        return False
+    try:
+        os.makedirs(os.path.dirname(CODEX_AUTH_DEST), exist_ok=True)
+        with open(src, "rb") as fh:
+            data = fh.read()
+        with open(CODEX_AUTH_DEST, "wb") as fh:
+            fh.write(data)
+        os.chmod(CODEX_AUTH_DEST, 0o600)
+        _log(f"staged codex subscription auth {src} -> {CODEX_AUTH_DEST}")
+        return True
+    except OSError as exc:
+        _log(f"codex auth staging failed: {exc}")
+        return False
+
+
+def patch_codex_provider():
+    """For subscription runs, flip the `openai` provider from an API-key env_var to
+    a file credential (the staged auth.json). slop-code then resolves a FILE
+    credential for codex (no OPENAI_API_KEY injected) and codex uses the ChatGPT/
+    Codex subscription. Idempotent; runs after patch_broker restores .orig."""
+    prov = os.path.join(REPO, "configs", "providers.yaml")
+    try:
+        txt = open(prov, encoding="utf-8").read()
+    except OSError:
+        return
+    new = re.sub(
+        r"(\n  openai:\n    )type: env_var\n    env_var: OPENAI_API_KEY",
+        r"\1type: file\n    file_path: " + CODEX_AUTH_DEST,
+        txt,
+        count=1,
+    )
+    if new != txt:
+        try:
+            open(prov, "w", encoding="utf-8").write(new)
+            _log("openai provider -> file credential (codex subscription)")
+        except OSError as exc:
+            _log(f"codex provider patch failed: {exc}")
+
+
+def is_codex_subscription(cfg):
+    return str(cfg.get("codex_auth", "broker")).strip().lower() == "subscription"
+
+
 def slug(s):
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
 
@@ -216,6 +292,13 @@ def run_arm(harness, model, skill, cfg, ts):
     env_cfg = SKILL_ENV.get(skill, SKILL_ENV["baseline"])
     prompt = SKILL_PROMPT.get(skill) or cfg.get("prompt", "just-solve")
     env = {**os.environ, **stage_skill(skill)}
+    # Codex subscription arm: the auth is a file (auth.json) + providers.yaml already
+    # points openai at it. Strip the brokered OPENAI_* / OPENROUTER_* so the codex CLI
+    # doesn't see a placeholder API key and falls back to the ChatGPT/Codex subscription.
+    if harness == "codex" and is_codex_subscription(cfg):
+        for k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+                  "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"):
+            env.pop(k, None)
     log = f"{WS}/.scb-run.{slug(harness)}_{slug(model)}_{slug(skill)}.{ts}.log"
     cmd = [f"{VENV}/bin/slop-code", "run", "--agent", harness, "--model", model,
            "--environment", env_cfg, "--prompt", f"configs/prompts/{prompt}.jinja"]
@@ -265,6 +348,14 @@ def main():
          f"{len(cfg.get('problems') or ['file_backup'])} problem(s), workers={workers}")
 
     patch_broker()
+
+    # Codex subscription mode: stage the ChatGPT/Codex auth.json + point the openai
+    # provider at it (must run AFTER patch_broker, which restores a pristine
+    # providers.yaml). Only relevant when a codex arm is present.
+    if "codex" in harnesses and is_codex_subscription(cfg):
+        _log("codex_auth=subscription — using ChatGPT/Codex login (no brokered key)")
+        stage_codex_auth()
+        patch_codex_provider()
 
     ts = time.strftime("%Y%m%dT%H%M%S")
     sem = threading.Semaphore(workers)
