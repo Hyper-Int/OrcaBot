@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""scb-live — dependency-free LIVE view of a running slop-code-bench eval.
+
+Serves an auto-refreshing HTML page (stdlib only, no deps, pinned port) showing
+what's happening right now + a running tally (per-problem checkpoint / steps /
+cost / state, and the cumulative cost). Reads the latest /workspace/.scb-run*.log
+that scb-run writes — so it works for inference-only runs (no scoring needed),
+unlike the Dash dashboard which needs evaluated runs.
+
+Point an Orcabot browser block at  http://localhost:<port>  (default 8051;
+deliberately NOT 8050/8080 to avoid the Dash / sandbox-server ports).
+
+Run:  bin/scb-live        (foreground)
+      SCB_LIVE_PORT=8055 bin/scb-live
+"""
+import glob
+import html
+import os
+import re
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+WS = os.environ.get("SCB_WORKSPACE", "/workspace")
+PORT = int(os.environ.get("SCB_LIVE_PORT", "8051"))
+
+# slop-code's rich console wraps each progress update across several padded
+# lines, so we flatten whitespace before matching.
+PROG = re.compile(
+    r"'(?P<problem>[^']+)': progress update "
+    r"checkpoint='(?P<cp>[^']+)' "
+    r"cost=(?P<cost>[\d.]+) "
+    r"elapsed=(?P<elapsed>[\d.]+) "
+    r"state='(?P<state>[^']+)' "
+    r"steps=(?P<steps>\d+) "
+    r"total_steps=(?P<total>\d+)"
+)
+
+
+ARM_RE = re.compile(r"\[scb-matrix\] arm (\S+) x (\S+)")
+TS_RE = re.compile(r"\.(\d{8}T\d{6})\.log$")
+
+
+def batch_logs():
+    """All logs from the LATEST run batch. scb-matrix stamps every arm's logfile
+    with one shared timestamp, so grouping by that timestamp shows the whole matrix
+    (and a single scb-run is just a 1-log batch)."""
+    logs = glob.glob(f"{WS}/.scb-run.*.log")
+    by_ts = {}
+    for p in logs:
+        m = TS_RE.search(p)
+        by_ts.setdefault(m.group(1) if m else "00000000T000000", []).append(p)
+    if not by_ts:
+        return None, []
+    latest = max(by_ts)
+    return latest, sorted(by_ts[latest], key=os.path.getmtime)
+
+
+def arm_label(logpath, raw):
+    m = ARM_RE.search(raw)
+    if m:
+        return f"{m.group(1)} · {m.group(2)}"
+    base = re.sub(r"^\.scb-run\.|\.\d{8}T\d{6}\.log$|\.log$", "", os.path.basename(logpath))
+    return base or "run"
+
+
+def parse_log(logpath):
+    """Return (arm label, {problem: latest progress}, tail lines) for one arm log."""
+    with open(logpath, errors="replace") as fh:
+        raw = fh.read()
+    flat = re.sub(r"\s+", " ", raw)
+    problems = {}
+    for m in PROG.finditer(flat):
+        d = m.groupdict()
+        problems[d["problem"]] = d
+    return arm_label(logpath, raw), problems, raw.splitlines()[-12:]
+
+
+def render():
+    now = time.strftime("%H:%M:%S")
+    ts, logs = batch_logs()
+    if not logs:
+        body = "<p class='muted'>No run yet. Launch one with <code>scb-matrix</code> or <code>scb-run</code>.</p>"
+        return page(body, "idle", now)
+
+    total_cost, max_elapsed, any_running, any_prog = 0.0, 0.0, False, False
+    rows, tail = [], []
+    multi = len(logs) > 1
+    for logpath in logs:
+        arm, problems, t = parse_log(logpath)
+        tail = t  # newest-updated arm's tail (logs sorted by mtime)
+        for name, p in sorted(problems.items()):
+            any_prog = True
+            total_cost += float(p["cost"])
+            max_elapsed = max(max_elapsed, float(p["elapsed"]))
+            if p["state"] == "running":
+                any_running = True
+            dot = "🟢" if p["state"] == "running" else "⚪"
+            arm_cell = f"<td>{html.escape(arm)}</td>" if multi else ""
+            rows.append(
+                f"<tr>{arm_cell}<td>{dot} {html.escape(name)}</td>"
+                f"<td>{html.escape(p['cp'])}</td>"
+                f"<td class='num'>{p['steps']}/{p['total']}</td>"
+                f"<td class='num'>${float(p['cost']):.4f}</td>"
+                f"<td>{html.escape(p['state'])}</td></tr>"
+            )
+    overall = "running" if any_running else ("done" if any_prog else "starting")
+    ncols = 6 if multi else 5
+    arm_th = "<th>arm</th>" if multi else ""
+    table = (
+        f"<table><thead><tr>{arm_th}<th>problem</th><th>checkpoint</th><th>steps</th>"
+        "<th>cost</th><th>state</th></tr></thead><tbody>"
+        + ("".join(rows) or f"<tr><td colspan={ncols} class='muted'>waiting for first progress…</td></tr>")
+        + "</tbody></table>"
+    )
+    tally = (
+        f"<div class='tally'><span><b>{len(logs)}</b> arm(s)</span>"
+        f"<span>total <b>${total_cost:.4f}</b></span>"
+        f"<span>elapsed <b>{max_elapsed:.0f}s</b></span>"
+        f"<span class='state-{overall}'>{overall.upper()}</span></div>"
+    )
+    log = "<pre class='log'>" + html.escape("\n".join(tail)) + "</pre>"
+    body = (
+        f"<p class='muted'>batch {html.escape(ts)} · {len(logs)} arm(s)</p>"
+        + tally + table + "<h2>activity (latest arm)</h2>" + log
+    )
+    return page(body, overall, now)
+
+
+def page(body, overall, now):
+    return f"""<!doctype html><html><head><meta charset=utf-8>
+<meta http-equiv="refresh" content="2">
+<title>slop-code-bench — live</title>
+<style>
+  body{{background:#0d1117;color:#e6edf3;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:20px}}
+  h1{{font-size:18px;margin:0 0 4px}} h2{{font-size:13px;color:#8b949e;margin:18px 0 6px;text-transform:uppercase;letter-spacing:.05em}}
+  .muted{{color:#8b949e}} code{{color:#79c0ff}}
+  .tally{{display:flex;gap:18px;align-items:center;margin:10px 0 14px;flex-wrap:wrap}}
+  .tally b{{color:#fff}} .tally span{{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:4px 10px}}
+  .state-running{{color:#3fb950;border-color:#238636!important}} .state-done{{color:#a371f7}} .state-starting,.state-idle{{color:#8b949e}}
+  table{{border-collapse:collapse;width:100%;margin-bottom:8px}}
+  th,td{{text-align:left;padding:6px 10px;border-bottom:1px solid #21262d}} th{{color:#8b949e;font-weight:600}}
+  td.num,th.num{{text-align:right;font-variant-numeric:tabular-nums}}
+  .log{{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;max-height:320px;overflow:auto;white-space:pre-wrap;color:#c9d1d9;font-size:12px}}
+</style></head><body>
+<h1>slop-code-bench <span class='muted'>· live</span></h1>
+<p class='muted'>updated {now} · auto-refresh 2s</p>
+{body}
+</body></html>"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        out = render().encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *_):  # quiet
+        pass
+
+
+if __name__ == "__main__":
+    print(f"scb-live serving http://127.0.0.1:{PORT}  (workspace={WS})", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

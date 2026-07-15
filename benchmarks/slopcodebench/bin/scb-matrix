@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""scb-matrix — expand a benchmark config into arms and run them, W at a time.
+
+An ARM is one (harness × model) pair; each arm runs all `problems` sequentially
+via slop-code. Arms run with `workers`-way parallelism. Each arm's output is tee'd
+to /workspace/.scb-run.<arm>.<ts>.log (scb-live aggregates these into the live
+per-arm tally) and mirrored to a tmux window (scb-visualize surfaces a per-arm
+read-only viewer).
+
+Config: /workspace/.scb-config.yaml — created with defaults if missing. CLI flags
+override the file for a one-off run (the panel/chat write the file to persist).
+
+Usage:
+  scb-matrix [--config PATH] [--print-config]
+             [--harness H]... [--model M]... [--problem P]...
+             [--workers N] [--thinking low|medium|high] [--prompt NAME] [--evaluate]
+
+Dependency-free (stdlib only), like scb-live / scb-visualize.
+"""
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+
+WS = os.environ.get("SCB_WORKSPACE", "/workspace")
+REPO = os.environ.get("SCB_REPO_DIR", f"{WS}/slop-code-bench")
+VENV = os.environ.get("SCB_VENV", f"{WS}/scb-venv")
+CONFIG = os.environ.get("SCB_CONFIG", f"{WS}/.scb-config.yaml")
+
+DEFAULT_CONFIG = """\
+# SlopCodeBench run config — edit here, ask Orcabot chat ("add claude", "2 workers"),
+# or use the config panel. Each (harness x model) pair is one ARM; each arm runs all
+# `problems` sequentially. `workers` arms run in parallel.
+harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
+models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
+problems:  [file_backup]          # file_backup etl_pipeline layered_config_synthesizer
+workers:   1                      # how many arms run in parallel
+prompt:    just-solve             # just-solve plan_first anti_slop plan-and-test ...
+thinking:  low                    # low medium high
+evaluate:  false                  # true = score the run, false = inference-only
+"""
+
+SCALARS = {"workers", "prompt", "thinking", "evaluate"}
+LISTS = {"harnesses", "models", "problems"}
+
+
+def _log(msg):
+    sys.stderr.write(f"[scb-matrix] {msg}\n")
+    sys.stderr.flush()
+
+
+def parse_config(text):
+    """Minimal YAML subset for the flat config: `key: scalar`, `key: [a, b]`, and
+    block lists (`key:` then `  - item`). Comments (#) and blanks ignored."""
+    cfg = {}
+    cur_list = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.startswith(" ") and line.lstrip().startswith("- ") and cur_list:
+            cfg[cur_list].append(line.lstrip()[2:].strip())
+            continue
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        cur_list = None
+        if val.startswith("[") and val.endswith("]"):
+            cfg[key] = [v.strip() for v in val[1:-1].split(",") if v.strip()]
+        elif val == "":
+            cfg[key] = []
+            cur_list = key
+        else:
+            cfg[key] = val
+    return cfg
+
+
+def load_config():
+    if not os.path.isfile(CONFIG):
+        try:
+            with open(CONFIG, "w", encoding="utf-8") as fh:
+                fh.write(DEFAULT_CONFIG)
+            _log(f"created default config {CONFIG}")
+        except OSError as exc:
+            _log(f"could not create {CONFIG}: {exc}")
+            return parse_config(DEFAULT_CONFIG)
+    return parse_config(open(CONFIG, encoding="utf-8").read())
+
+
+def apply_overrides(cfg, args):
+    """CLI flags override the config file (for a one-off run)."""
+    i, harn, mods, probs = 0, [], [], []
+    while i < len(args):
+        a = args[i]
+        if a == "--harness":
+            harn.append(args[i + 1]); i += 2
+        elif a == "--model":
+            mods.append(args[i + 1]); i += 2
+        elif a == "--problem":
+            probs.append(args[i + 1]); i += 2
+        elif a in ("--workers", "--thinking", "--prompt"):
+            cfg[a[2:]] = args[i + 1]; i += 2
+        elif a == "--evaluate":
+            cfg["evaluate"] = "true"; i += 1
+        else:
+            _log(f"ignoring unknown arg: {a}"); i += 1
+    if harn:
+        cfg["harnesses"] = harn
+    if mods:
+        cfg["models"] = mods
+    if probs:
+        cfg["problems"] = probs
+    return cfg
+
+
+def patch_broker():
+    """Restore a pristine providers.yaml and route openrouter through this session's
+    broker (mirrors scb-run; injects the real key server-side)."""
+    broker = os.environ.get("OPENROUTER_BASE_URL", "").strip().replace("localhost", "127.0.0.1")
+    orig = os.path.join(REPO, "configs", "providers.yaml.orig")
+    prov = os.path.join(REPO, "configs", "providers.yaml")
+    if os.path.isfile(orig):
+        try:
+            open(prov, "w", encoding="utf-8").write(open(orig, encoding="utf-8").read())
+        except OSError:
+            pass
+    if not broker:
+        _log("OPENROUTER_BASE_URL not set — is OPENROUTER_API_KEY a broker secret?")
+        return
+    try:
+        txt = open(prov, encoding="utf-8").read()
+        new = txt.replace("api_base: https://openrouter.ai/api/v1", "api_base: " + broker)
+        if new != txt:
+            open(prov, "w", encoding="utf-8").write(new)
+            _log(f"routed OpenRouter via broker -> {broker}")
+    except OSError as exc:
+        _log(f"providers.yaml patch failed: {exc}")
+
+
+def slug(s):
+    return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
+
+
+def run_arm(harness, model, cfg, ts):
+    problems = cfg.get("problems") or ["file_backup"]
+    prompt = cfg.get("prompt", "just-solve")
+    thinking = cfg.get("thinking", "low")
+    evaluate = str(cfg.get("evaluate", "false")).lower() in ("1", "true", "yes", "on")
+    log = f"{WS}/.scb-run.{slug(harness)}_{slug(model)}.{ts}.log"
+    cmd = [f"{VENV}/bin/slop-code", "run", "--agent", harness, "--model", model,
+           "--environment", "configs/environments/local-tmux-py.yaml",
+           "--prompt", f"configs/prompts/{prompt}.jinja"]
+    for p in problems:
+        cmd += ["--problem", p]
+    if not evaluate:
+        cmd.append("--no-evaluate")
+    cmd.append(f"thinking={thinking}")
+    _log(f"arm start: {harness} x {model} -> {log}")
+    try:
+        with open(log, "w", encoding="utf-8") as fh:
+            fh.write(f"[scb-matrix] arm {harness} x {model} problems={problems} "
+                     f"thinking={thinking} evaluate={evaluate}\n")
+            fh.flush()
+            rc = subprocess.call(cmd, cwd=REPO, stdout=fh, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL)
+        _log(f"arm done:  {harness} x {model} rc={rc}")
+    except Exception as exc:  # noqa: BLE001 — one arm failing must not kill the matrix
+        _log(f"arm error: {harness} x {model}: {exc}")
+
+
+def main():
+    args = sys.argv[1:]
+    cfg_path_override = None
+    if "--config" in args:
+        i = args.index("--config"); cfg_path_override = args[i + 1]
+        args = args[:i] + args[i + 2:]
+    global CONFIG
+    if cfg_path_override:
+        CONFIG = cfg_path_override
+
+    cfg = load_config()
+    if "--print-config" in args:
+        print(open(CONFIG, encoding="utf-8").read() if os.path.isfile(CONFIG) else DEFAULT_CONFIG)
+        return
+    cfg = apply_overrides(cfg, args)
+
+    harnesses = cfg.get("harnesses") or ["opencode"]
+    models = cfg.get("models") or ["openrouter/kimi-k2.6"]
+    try:
+        workers = max(1, int(str(cfg.get("workers", "1")).strip()))
+    except ValueError:
+        workers = 1
+    arms = [(h, m) for h in harnesses for m in models]
+    _log(f"{len(arms)} arm(s) [{len(harnesses)} harness x {len(models)} model], "
+         f"{len(cfg.get('problems') or ['file_backup'])} problem(s), workers={workers}")
+
+    patch_broker()
+
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    sem = threading.Semaphore(workers)
+    threads = []
+
+    def worker(h, m):
+        with sem:
+            run_arm(h, m, cfg, ts)
+
+    for h, m in arms:
+        t = threading.Thread(target=worker, args=(h, m), daemon=False)
+        t.start()
+        threads.append(t)
+        time.sleep(0.2)  # stagger so tmux windows / logfiles don't collide
+    for t in threads:
+        t.join()
+    _log("matrix complete")
+
+
+if __name__ == "__main__":
+    main()
