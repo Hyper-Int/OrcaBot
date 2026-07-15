@@ -21,8 +21,8 @@ MCP server using ORCABOT_MCP_SECRET; the dashboard is resolved server-side from
 the session, so no dashboard id is needed.
 
 Usage:
-  scb-visualize watch [--workdir DIR] [--no-viewers]        # watch an existing run
-  scb-visualize run   [--workdir DIR] [--no-viewers] -- CMD… # run AND visualize
+  scb-visualize watch [--workdir DIR] [--no-viewers] [--skip-existing]  # watch a run
+  scb-visualize run   [--workdir DIR] [--no-viewers] -- CMD…            # run + visualize
 
 --no-viewers (or SCB_VIEWERS=0): don't spawn a read-only PTY per run — rely on the
 scb-live browser dashboard instead. The run and dashboard are unaffected.
@@ -238,8 +238,16 @@ def main():
         spawn_viewers = True
         rest = [a for a in rest if a != "--viewers"]
 
+    # --skip-existing: for standalone `watch` in the pipeline — snapshot the runs
+    # already in the manifest and only surface runs that appear AFTER we start, so
+    # a shared/append-only runs.jsonl doesn't re-surface historical runs. (`run`
+    # mode always does this.)
+    skip_existing = "--skip-existing" in rest
+    if skip_existing:
+        rest = [a for a in rest if a != "--skip-existing"]
+
     if mode == "watch":
-        watch(workdir, spawn_viewers=spawn_viewers)
+        watch(workdir, skip_existing=skip_existing, spawn_viewers=spawn_viewers)
     elif mode == "run":
         cmd = rest[1:] if rest[:1] == ["--"] else rest
         if not cmd:
