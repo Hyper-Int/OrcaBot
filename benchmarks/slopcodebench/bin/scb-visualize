@@ -21,8 +21,11 @@ MCP server using ORCABOT_MCP_SECRET; the dashboard is resolved server-side from
 the session, so no dashboard id is needed.
 
 Usage:
-  scb-visualize watch [--workdir DIR]        # watch an existing run's manifest
-  scb-visualize run [--workdir DIR] -- CMD…  # run the benchmark AND visualize
+  scb-visualize watch [--workdir DIR] [--no-viewers]        # watch an existing run
+  scb-visualize run   [--workdir DIR] [--no-viewers] -- CMD… # run AND visualize
+
+--no-viewers (or SCB_VIEWERS=0): don't spawn a read-only PTY per run — rely on the
+scb-live browser dashboard instead. The run and dashboard are unaffected.
 """
 import json
 import re
@@ -146,7 +149,7 @@ def surface_run(idx, problem, logfile):
     _log(f"surfaced run '{problem}' -> {logfile}")
 
 
-def watch(workdir, stop=None, skip_existing=False):
+def watch(workdir, stop=None, skip_existing=False, spawn_viewers=True):
     manifest = os.path.join(workdir, ".scb_tmux", "runs.jsonl")
     _log(f"watching {manifest}")
     if not mcp_ready():
@@ -198,7 +201,9 @@ def watch(workdir, stop=None, skip_existing=False):
                 continue
             if not os.path.isabs(logfile):
                 logfile = os.path.join(workdir, logfile)
-            if mcp_ready():
+            if not spawn_viewers:
+                _log(f"viewers off — not surfacing: {problem} (use the scb-live browser dashboard)")
+            elif mcp_ready():
                 surface_run(idx, problem, logfile)
             else:
                 _log(f"(disabled) would surface: {problem} -> {logfile}")
@@ -220,15 +225,30 @@ def main():
         workdir = rest[i + 1]
         rest = rest[:i] + rest[i + 2:]
 
+    # Per-run PTY viewers are optional: a big multi-problem run would otherwise
+    # spawn one read-only terminal per problem, cluttering the canvas — the
+    # scb-live browser dashboard is the low-noise overview. Default on;
+    # `--no-viewers` or SCB_VIEWERS=0 turns them off (the run + dashboard are
+    # unaffected).
+    spawn_viewers = os.environ.get("SCB_VIEWERS", "1").strip().lower() not in ("0", "false", "no", "off")
+    if "--no-viewers" in rest:
+        spawn_viewers = False
+        rest = [a for a in rest if a != "--no-viewers"]
+    if "--viewers" in rest:
+        spawn_viewers = True
+        rest = [a for a in rest if a != "--viewers"]
+
     if mode == "watch":
-        watch(workdir)
+        watch(workdir, spawn_viewers=spawn_viewers)
     elif mode == "run":
         cmd = rest[1:] if rest[:1] == ["--"] else rest
         if not cmd:
-            _log("usage: scb-visualize run [--workdir DIR] -- <command...>")
+            _log("usage: scb-visualize run [--workdir DIR] [--no-viewers] -- <command...>")
             sys.exit(2)
         prepare_configs(workdir)  # broker routing + stable log dir, before the run
-        t = threading.Thread(target=watch, args=(workdir,), kwargs={"skip_existing": True}, daemon=True)
+        t = threading.Thread(target=watch, args=(workdir,),
+                             kwargs={"skip_existing": True, "spawn_viewers": spawn_viewers},
+                             daemon=True)
         t.start()
         rc = subprocess.call(cmd, cwd=workdir)
         time.sleep(2)  # let the watcher surface the final run
