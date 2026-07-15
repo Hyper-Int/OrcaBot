@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: tauri-bridge-v7-global-event-listen
-const MODULE_REVISION = "tauri-bridge-v7-global-event-listen";
+// REVISION: tauri-bridge-v8-opener-plugin
+const MODULE_REVISION = "tauri-bridge-v8-opener-plugin";
 console.log(
   `[tauri-bridge] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -344,7 +344,12 @@ export async function openExternalUrl(url: string): Promise<void> {
   const invoke = await getTauriInvoke();
   if (invoke) {
     try {
-      await invoke("open_url", { url });
+      // Use the opener plugin, not the custom `open_url` command: the packaged
+      // frontend is a remote (localhost) origin, and Tauri's ACL rejects custom
+      // app commands from remote origins ("not allowed by ACL"), which silently
+      // broke every OAuth connect button. `opener:allow-open-url` is granted for
+      // this webview in capabilities/default.json and works from remote.
+      await invoke("plugin:opener|open_url", { url });
       return;
     } catch {
       /* fall through to window.open */

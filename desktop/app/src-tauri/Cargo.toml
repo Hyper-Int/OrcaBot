@@ -43,6 +43,7 @@ ratatui = "0.29"
 tungstenite = { version = "0.21", default-features = false, features = ["handshake"] }
 # VT/ANSI parser to render PTY output (agents draw full-screen TUIs).
 vt100 = "0.15"
+tauri-plugin-opener = "2.5.4"
 
 [dev-dependencies]
 # Used by the vm/image.rs unit tests (was referenced but never declared).

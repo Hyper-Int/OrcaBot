@@ -1223,6 +1223,10 @@ fn main() {
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    // Opens external URLs (OAuth connect flows) from the remote-origin frontend.
+    // Its `opener:allow-open-url` permission works for the localhost webview,
+    // unlike the custom `open_url` command which the ACL rejects from remote.
+    .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       commands::get_workspace_path,
       commands::import_folder,
