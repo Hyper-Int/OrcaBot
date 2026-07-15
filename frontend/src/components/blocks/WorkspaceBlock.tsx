@@ -234,7 +234,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const openIntegration = React.useCallback(
     (provider: IntegrationProvider) => {
-      if (!user) return;
+      if (!useAuthStore.getState().user) return;
       if (provider === "google-drive") {
         setDrivePickerOpen(true);
         return;
@@ -255,6 +255,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   );
 
   const handleDriveConnect = React.useCallback(() => {
+    // Read the current user at click time via getState, NOT the reactive closure
+    // value: this is a React Flow node that may not re-render when auth resolves
+    // after mount, so the destructured `user` can be a stale null — which silently
+    // dead-ended every connect button. (getAuthHeaders already uses getState.)
+    const user = useAuthStore.getState().user;
     if (!user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
@@ -295,7 +300,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleGithubConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     // Desktop is a public OAuth client → GitHub uses the device flow (no secret,
     // no redirect) via a code dialog instead of the popup redirect.
     if (DESKTOP_MODE) {
@@ -319,7 +324,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleBoxConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/box/connect`);
       if (data.dashboardId) {
@@ -355,7 +360,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleOnedriveConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
       if (data.dashboardId) {
