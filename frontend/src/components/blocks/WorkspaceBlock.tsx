@@ -75,7 +75,6 @@ import type { SessionFileEntry } from "@/lib/api/cloudflare";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
 import { workspaceDoc } from "@/docs/content/workspace";
-import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
 import { connectViaBrowser } from "@/lib/oauth-connect";
@@ -266,15 +265,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     // after mount, so the destructured `user` can be a stale null — which silently
     // dead-ended every connect button. (getAuthHeaders already uses getState.)
     const user = useAuthStore.getState().user;
-    // DIAGNOSTIC (drive-connect-diag): surface the click + state so a dead button
-    // names its cause instead of failing silently. Remove once connect is verified.
-    toast.message("Drive connect clicked", {
-      description: `user=${user?.email ?? "NULL"} · desktop=${String(DESKTOP_MODE)} · base=${API.cloudflare.base}`,
-    });
-    if (!user) {
-      toast.error("Drive connect: no signed-in user (getState was null)");
-      return;
-    }
+    if (!user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
       connectUrl.searchParams.set("user_id", user.id);
