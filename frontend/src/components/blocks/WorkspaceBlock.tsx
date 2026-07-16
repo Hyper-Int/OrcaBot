@@ -152,7 +152,12 @@ type WorkspaceNode = Node<WorkspaceData, "workspace">;
 type IntegrationProvider = "google-drive" | "github" | "box" | "onedrive";
 
 export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>) {
-  const { user } = useAuthStore();
+  // Subscribe to the user, but fall back to the current store value: this is a
+  // React Flow node that can render before desktop auth resolves and then hold a
+  // stale null, which wrongly kept every connect button `disabled={!user}` (and
+  // dead-ended the handlers). getState() is always current, so `user` here is too.
+  const reactiveUser = useAuthStore((s) => s.user);
+  const user = reactiveUser ?? useAuthStore.getState().user;
   const sessionId = data.sessionId;
   const isMinimized = data.metadata?.minimized === true;
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
