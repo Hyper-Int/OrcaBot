@@ -91,6 +91,7 @@ import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
 import { connectViaBrowser } from "@/lib/oauth-connect";
+import { GithubDeviceDialog } from "@/components/blocks/GithubDeviceDialog";
 import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
@@ -239,6 +240,7 @@ export function WorkspaceSidebar({
   const [githubStatus, setGithubStatus] = React.useState<GithubSyncStatus | null>(null);
   const [githubSyncing, setGithubSyncing] = React.useState(false);
   const [githubPickerOpen, setGithubPickerOpen] = React.useState(false);
+  const [githubDeviceOpen, setGithubDeviceOpen] = React.useState(false);
   const [githubRepos, setGithubRepos] = React.useState<GithubRepo[]>([]);
   const [githubLoading, setGithubLoading] = React.useState(false);
   const [githubSelected, setGithubSelected] = React.useState<GithubRepo | null>(null);
@@ -649,10 +651,19 @@ export function WorkspaceSidebar({
     checkConnected: async () => Boolean((await getGoogleDriveIntegration(dashboardId))?.connected),
     onConnected: () => void loadDriveIntegration(),
   }), [openPopup, dashboardId, loadDriveIntegration]);
-  const handleGithubConnect = React.useCallback(() => openPopup("/integrations/github/connect", "orcabot-github-auth", {
-    checkConnected: async () => Boolean((await getGithubIntegration(dashboardId))?.connected),
-    onConnected: () => void loadGithubIntegration(),
-  }), [openPopup, dashboardId, loadGithubIntegration]);
+  const handleGithubConnect = React.useCallback(() => {
+    // Desktop is a public OAuth client → GitHub uses the DEVICE flow (no secret),
+    // not the web-redirect connect which needs the confidential GITHUB_CLIENT_SECRET
+    // we don't ship. On web, keep the redirect popup.
+    if (DESKTOP_MODE) {
+      setGithubDeviceOpen(true);
+      return;
+    }
+    openPopup("/integrations/github/connect", "orcabot-github-auth", {
+      checkConnected: async () => Boolean((await getGithubIntegration(dashboardId))?.connected),
+      onConnected: () => void loadGithubIntegration(),
+    });
+  }, [openPopup, dashboardId, loadGithubIntegration]);
   const handleBoxConnect = React.useCallback(() => openPopup("/integrations/box/connect", "orcabot-box-auth", {
     checkConnected: async () => Boolean((await getBoxIntegration(dashboardId))?.connected),
     onConnected: () => void loadBoxIntegration(),
@@ -1597,6 +1608,12 @@ export function WorkspaceSidebar({
         </DialogContent>
       </Dialog>
 
+      <GithubDeviceDialog
+        open={githubDeviceOpen}
+        onOpenChange={setGithubDeviceOpen}
+        dashboardId={dashboardId}
+        onConnected={() => void loadGithubIntegration()}
+      />
       <Dialog open={githubPickerOpen} onOpenChange={setGithubPickerOpen}>
         <DialogContent className="max-w-xl h-[540px] p-0">
           <DialogTitle className="sr-only">GitHub</DialogTitle>
