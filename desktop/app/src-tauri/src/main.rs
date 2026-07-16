@@ -438,26 +438,6 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
   Ok(())
 }
 
-/// Whether to clear the webview's persistent browsing cache this launch. True when
-/// `ORCABOT_CLEAR_CACHE=1` (local iteration — force a bust after rebuilding the
-/// frontend) or when the app version changed since the last launch (a shipped
-/// frontend, so old cached chunks must go). Records the current version so the
-/// version-change path fires only once per update, not every launch.
-fn webview_cache_should_clear(data_dir: &Path) -> bool {
-  if std::env::var("ORCABOT_CLEAR_CACHE").ok().as_deref() == Some("1") {
-    return true;
-  }
-  let marker = data_dir.join("webview-frontend-version");
-  let current = env!("CARGO_PKG_VERSION");
-  let last = std::fs::read_to_string(&marker).unwrap_or_default();
-  if last.trim() != current {
-    let _ = std::fs::create_dir_all(data_dir);
-    let _ = std::fs::write(&marker, current);
-    return true;
-  }
-  false
-}
-
 impl DesktopServices {
   fn new() -> Self {
     Self {
@@ -1280,22 +1260,14 @@ fn main() {
       // Start core services (d1-shim, workerd) — blocks until healthy (~5-10s)
       services.start(app);
 
-      // Bust the webview's persistent HTTP cache when the frontend may have
-      // changed: WKWebView keeps its cache across launches, so a rebuilt/updated
-      // frontend can otherwise serve stale JS chunks (dead buttons, old UI). We
-      // clear it BEFORE the loading screen redirects to the frontend, so the load
-      // is fresh. Gated so we don't wipe state every launch: on an app-version
-      // change (a shipped frontend), or ORCABOT_CLEAR_CACHE=1 for local iteration.
-      if let Some(dd) = app.path().app_data_dir().ok() {
-        if webview_cache_should_clear(&dd) {
-          if let Some(win) = app.get_webview_window("main") {
-            match win.clear_all_browsing_data() {
-              Ok(()) => eprintln!("[webview] cleared browsing data (frontend changed / forced)"),
-              Err(e) => eprintln!("[webview] clear browsing data failed: {e}"),
-            }
-          }
-        }
-      }
+      // NOTE: we deliberately do NOT clear the webview's browsing data here. An
+      // earlier attempt used clear_all_browsing_data() to bust a *suspected* stale
+      // frontend cache, but it also wiped cookies/localStorage — including the
+      // desktop-mode marker DESKTOP_MODE fell back to — which flipped the app into
+      // web mode (Box shown, connect buttons no-op'd, Calendar "access revoked").
+      // The real fix was robust Tauri detection in the frontend (env.ts uses
+      // __TAURI_INTERNALS__), so no cache-clear is needed. If genuine chunk
+      // staleness ever appears, use a cache-ONLY clear, never clear_all_browsing_data.
 
       // Register workspace state for Tauri commands
       let data_dir = app.path().app_data_dir().ok();
