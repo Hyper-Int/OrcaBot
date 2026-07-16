@@ -90,6 +90,7 @@ import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
@@ -609,10 +610,25 @@ export function WorkspaceSidebar({
   }, []);
 
   // ── Integration connect handlers ────────────────────────────────
-  const openPopup = React.useCallback((path: string, name: string) => {
-    console.log(`[WorkspaceSidebar] openPopup called: path=${path}, name=${name}, user=${user?.id}, dashboardId=${dashboardId}`);
-    if (!user) {
-      console.warn("[WorkspaceSidebar] openPopup: no user, aborting");
+  // On desktop (Tauri webview) window.open is a no-op, so open the OS browser via
+  // connectViaBrowser (opener plugin) and poll the provider status until connected —
+  // this is why the sidebar's Connect buttons did nothing on desktop. On web, keep
+  // the popup + postMessage handshake.
+  const openPopup = React.useCallback((
+    path: string,
+    name: string,
+    opts?: { checkConnected: () => Promise<boolean>; onConnected: () => void },
+  ) => {
+    if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}${path}`);
+      if (dashboardId) connectUrl.searchParams.set("dashboard_id", dashboardId);
+      // connectViaBrowser injects user identity + surface token itself.
+      connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: opts?.checkConnected ?? (async () => false),
+        onConnected: opts?.onConnected ?? (() => {}),
+      });
       return;
     }
     const url = new URL(`${API.cloudflare.base}${path}`);
@@ -626,14 +642,25 @@ export function WorkspaceSidebar({
     const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
     const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
     // NOTE: Do NOT use noopener - it breaks window.opener.postMessage which is needed for OAuth callback
-    const popup = window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
-    console.log(`[WorkspaceSidebar] popup opened:`, popup ? "success" : "blocked");
+    window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
   }, [dashboardId, user]);
 
-  const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth"), [openPopup]);
-  const handleGithubConnect = React.useCallback(() => openPopup("/integrations/github/connect", "orcabot-github-auth"), [openPopup]);
-  const handleBoxConnect = React.useCallback(() => openPopup("/integrations/box/connect", "orcabot-box-auth"), [openPopup]);
-  const handleOnedriveConnect = React.useCallback(() => openPopup("/integrations/onedrive/connect", "orcabot-onedrive-auth"), [openPopup]);
+  const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth", {
+    checkConnected: async () => Boolean((await getGoogleDriveIntegration(dashboardId))?.connected),
+    onConnected: () => void loadDriveIntegration(),
+  }), [openPopup, dashboardId, loadDriveIntegration]);
+  const handleGithubConnect = React.useCallback(() => openPopup("/integrations/github/connect", "orcabot-github-auth", {
+    checkConnected: async () => Boolean((await getGithubIntegration(dashboardId))?.connected),
+    onConnected: () => void loadGithubIntegration(),
+  }), [openPopup, dashboardId, loadGithubIntegration]);
+  const handleBoxConnect = React.useCallback(() => openPopup("/integrations/box/connect", "orcabot-box-auth", {
+    checkConnected: async () => Boolean((await getBoxIntegration(dashboardId))?.connected),
+    onConnected: () => void loadBoxIntegration(),
+  }), [openPopup, dashboardId, loadBoxIntegration]);
+  const handleOnedriveConnect = React.useCallback(() => openPopup("/integrations/onedrive/connect", "orcabot-onedrive-auth", {
+    checkConnected: async () => Boolean((await getOnedriveIntegration(dashboardId))?.connected),
+    onConnected: () => void loadOnedriveIntegration(),
+  }), [openPopup, dashboardId, loadOnedriveIntegration]);
 
   // ── Integration unlink/disconnect handlers ──────────────────────
   const handleUnlinkDrive = React.useCallback(async () => {
