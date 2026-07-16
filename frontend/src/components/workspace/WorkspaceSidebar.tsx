@@ -1197,22 +1197,25 @@ export function WorkspaceSidebar({
         </Button>
       </Tooltip>
 
-      <Tooltip content={isBoxLinked ? `Box: ${boxIntegration?.folder?.name ?? "Linked"}` : isBoxConnected ? "Box: Link folder" : "Connect Box"} side="bottom">
-        <Button
-          variant={isBoxLinked ? "secondary" : "ghost"}
-          size="icon-sm"
-          disabled={!user}
-          onClick={() => {
-            if (isBoxConnected) {
-              setBoxPickerOpen(true);
-            } else {
-              handleBoxConnect();
-            }
-          }}
-        >
-          <Box className="w-3.5 h-3.5" />
-        </Button>
-      </Tooltip>
+      {/* Box needs a confidential client secret we can't ship on desktop → hide it there. */}
+      {!DESKTOP_MODE && (
+        <Tooltip content={isBoxLinked ? `Box: ${boxIntegration?.folder?.name ?? "Linked"}` : isBoxConnected ? "Box: Link folder" : "Connect Box"} side="bottom">
+          <Button
+            variant={isBoxLinked ? "secondary" : "ghost"}
+            size="icon-sm"
+            disabled={!user}
+            onClick={() => {
+              if (isBoxConnected) {
+                setBoxPickerOpen(true);
+              } else {
+                handleBoxConnect();
+              }
+            }}
+          >
+            <Box className="w-3.5 h-3.5" />
+          </Button>
+        </Tooltip>
+      )}
 
       <Tooltip content={isOnedriveLinked ? `OneDrive: ${onedriveIntegration?.folder?.name ?? "Linked"}` : isOnedriveConnected ? "OneDrive: Link folder" : "Connect OneDrive"} side="bottom">
         <Button
@@ -1430,8 +1433,8 @@ export function WorkspaceSidebar({
                   </div>
                 )}
 
-                {/* Box */}
-                {isBoxConnected ? (
+                {/* Box needs a confidential secret we can't ship on desktop → hide there. */}
+                {!DESKTOP_MODE && (isBoxConnected ? (
                   <div className="rounded border border-[var(--border)] bg-[var(--background)]">
                     <div
                       className="flex items-center justify-between px-2 py-1.5 cursor-pointer"
@@ -1477,7 +1480,7 @@ export function WorkspaceSidebar({
                     </div>
                     <span className="text-[10px] text-[var(--accent-primary)]">Connect</span>
                   </div>
-                )}
+                ))}
 
                 {/* OneDrive */}
                 {isOnedriveConnected ? (
