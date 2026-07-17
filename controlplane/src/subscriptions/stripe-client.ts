@@ -35,8 +35,7 @@ async function stripeRequest<T = Record<string, unknown>>(
   const headers: Record<string, string> = {
     Authorization: `Bearer ${secretKey}`,
   };
-  // Stripe dedupes retries/races that carry the same Idempotency-Key, returning
-  // the original object instead of creating a duplicate. (Bug-hunt round 2.)
+  // Stripe dedupes requests sharing an Idempotency-Key, returning the original object.
   if (idempotencyKey) {
     headers["Idempotency-Key"] = idempotencyKey;
   }

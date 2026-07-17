@@ -1254,8 +1254,7 @@ async function processSubscriptionMessage(
       );
     }
 
-    // Clear the timeout when the resolves win the race, so we don't leave a
-    // dangling 1.5s timer holding its closure alive. (Bug-hunt round 2.)
+    // Clear the timeout when the resolves win, so it doesn't linger holding its closure.
     let resolveTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       Promise.allSettled(resolvePromises),
@@ -1895,12 +1894,9 @@ export async function createSubscription(
     }
   }
 
-  // The Telegram "one active sub per user" guard above is check-then-act; two
-  // concurrent creates both pass it. Make the insert atomic: skip it when a
-  // telegram sub already exists for this user. The `? = 'telegram'` term (the
-  // current provider) neutralises the guard for every other provider, so this is
-  // a no-op for them. meta.changes==0 on a telegram insert means a race was
-  // blocked. (Bug-hunt round 2.)
+  // Atomic insert guarding the Telegram "one active sub per user" invariant (the
+  // check above races). The `? = 'telegram'` term neutralises the guard for every
+  // other provider; changes==0 on a telegram insert means a race was blocked.
   const subInsert = await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider,

@@ -2203,7 +2203,7 @@ export async function getAuditLog(
     return Response.json({ error: 'E79735: Terminal not found or does not belong to this dashboard' }, { status: 404 });
   }
 
-  // A NaN limit/offset (e.g. ?limit=abc → parseInt → NaN) binds non-finite into D1 → 500. Clamp.
+  // Clamp limit/offset to a finite, bounded page (a NaN would 500 on the D1 bind).
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 0), 1000) : 100;
   const safeOffset = Number.isFinite(offset) ? Math.max(Math.trunc(offset), 0) : 0;
 
@@ -2246,7 +2246,7 @@ export async function getDashboardAuditLog(
     return Response.json({ error: 'E79734: Not found or no access' }, { status: 404 });
   }
 
-  // A NaN limit/offset (e.g. ?limit=abc → parseInt → NaN) binds non-finite into D1 → 500. Clamp.
+  // Clamp limit/offset to a finite, bounded page (a NaN would 500 on the D1 bind).
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 0), 1000) : 100;
   const safeOffset = Number.isFinite(offset) ? Math.max(Math.trunc(offset), 0) : 0;
 

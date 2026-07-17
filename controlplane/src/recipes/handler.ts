@@ -55,10 +55,8 @@ export async function listRecipеs(
       SELECT * FROM recipes WHERE dashboard_id = ? ORDER BY updated_at DESC
     `).bind(dashboardId).all();
   } else {
-    // Recipes from dashboards the user is a member of, plus the user's OWN global
-    // recipes. (Bug-hunt round 2: this used to return every dashboard-less recipe
-    // from every user — a cross-tenant leak. Global recipes are now owner-scoped
-    // via created_by.)
+    // Dashboards the user is a member of, plus the user's own global recipes
+    // (global recipes are owner-scoped via created_by).
     result = await env.DB.prepare(`
       SELECT r.* FROM recipes r
       LEFT JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id

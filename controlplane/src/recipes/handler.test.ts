@@ -111,7 +111,7 @@ describe('Recipe Handlers', () => {
   });
 
   describe('Access control', () => {
-    it('should scope dashboard-less recipes to their owner (bug-hunt round 2 IDOR fix)', async () => {
+    it('should scope dashboard-less recipes to their owner', async () => {
       // A global (no dashboard) recipe is accessible to its CREATOR...
       const recipe = await seedRecipe(ctx.db, { name: 'Global Recipe', createdBy: testUser.id });
 

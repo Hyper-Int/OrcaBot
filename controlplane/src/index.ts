@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v18-bughunt-round-2
-console.log(`[controlplane] REVISION: controlplane-v18-bughunt-round-2 loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v18-idor-input-validation
+console.log(`[controlplane] REVISION: controlplane-v18-idor-input-validation loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -531,11 +531,8 @@ export default {
           { status: 501 }
         ), origin, allowedOrigins);
       }
-      // A malformed request body surfaces here as a SyntaxError from
-      // `await request.json()` in a handler that didn't guard it locally. That's
-      // client error, not server error — return 400, not 500. (Bug-hunt round 2:
-      // ~45 endpoints had unguarded request.json(); this is the systemic guard so
-      // hostile/truncated bodies can never masquerade as an internal 500.)
+      // A malformed request body throws a SyntaxError from request.json() — that's
+      // client error, return 400 not 500.
       if (error instanceof SyntaxError) {
         return cоrsRespоnse(Response.json(
           { error: 'E40001: Invalid JSON body' },

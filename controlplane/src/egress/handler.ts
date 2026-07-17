@@ -118,13 +118,10 @@ export async function handleApproveEgress(
     );
   }
 
-  // If "always allow", persist to the allowlist only after sandbox accepted.
-  // Bug-hunt round 2: a concurrent allow_always + deny_always (two collaborators
-  // resolving the same toast) could leave the domain active in BOTH lists; later
-  // lifting the deny then silently re-allowed it. Guard the insert with NOT EXISTS
-  // an active blocklist row (deny precedence at write time). Because SQLite/D1
-  // serializes writes, this + the atomic deny batch below make the two mutually
-  // exclusive: whichever commits first excludes the other.
+  // Persist to the allowlist only after the sandbox accepted, and only if no
+  // active deny exists (deny precedence). Together with the atomic deny batch
+  // below — and SQLite's write serialization — a racing allow/deny for the same
+  // domain can't leave it active in both lists.
   if (body.decision === 'allow_always') {
     const entryId = generateId();
     await env.DB.prepare(`
@@ -145,10 +142,8 @@ export async function handleApproveEgress(
     ).run();
   }
 
-  // If "deny always", persist to the blocklist and revoke any conflicting allowlist
-  // entry for the same domain so the deny is unambiguous (deny wins). Run the
-  // revoke-allow + insert-block as one atomic batch so a racing allow_always can
-  // never observe a half-applied deny.
+  // If "deny always", revoke any conflicting allowlist entry and persist to the
+  // blocklist as one atomic batch (deny wins).
   if (body.decision === 'deny_always') {
     const entryId = generateId();
     await env.DB.batch([
@@ -599,7 +594,7 @@ export async function handleListEgressAudit(
   dashboardId: string,
 ): Promise<Response> {
   const url = new URL(request.url);
-  // parseInt('abc') → NaN, which binds non-finite into D1 → 500. Guard it.
+  // Guard against a NaN limit (parseInt('abc')) binding non-finite into D1.
   const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
   const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
 

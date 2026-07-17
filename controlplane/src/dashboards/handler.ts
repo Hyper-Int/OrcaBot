@@ -365,10 +365,8 @@ export async function deleteDashbоard(
     }
   }
 
-  // Purge the DashboardDO's persisted state + close any lingering collaborator
-  // sockets. The DO holds a full item/edge/session snapshot under its 'state' key
-  // that D1 deletion doesn't touch, and DOs can't be enumerated to sweep later, so
-  // it would leak forever with dashboard churn. Best-effort. (Bug-hunt round 2.)
+  // Purge the DashboardDO's persisted state (D1 deletion doesn't touch it, and
+  // DOs can't be enumerated to sweep later). Best-effort.
   try {
     const doId = env.DASHBOARD.idFromName(dashboardId);
     const stub = env.DASHBOARD.get(doId);

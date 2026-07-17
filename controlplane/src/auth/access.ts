@@ -65,12 +65,9 @@ export async function checkRecipеAccess(
     return { hasAccess: false };
   }
 
-  // Dashboard-less ("global") recipes are scoped to their creator, NOT to every
-  // authenticated user. (Bug-hunt round 2: returning hasAccess:true here let any
-  // user read/edit/delete/execute another user's global recipe — a cross-tenant
-  // IDOR. Also short-circuited the requiredRole check.) created_by is populated on
-  // create; legacy rows with a null created_by are treated as inaccessible
-  // (fail-closed) rather than world-readable.
+  // Dashboard-less ("global") recipes are scoped to their creator, not to every
+  // authenticated user. Legacy rows with a null created_by are inaccessible
+  // (fail-closed).
   if (!recipe.dashboard_id) {
     const hasAccess = Boolean(recipe.created_by) && recipe.created_by === userId;
     return { hasAccess, recipe: hasAccess ? recipe : undefined };

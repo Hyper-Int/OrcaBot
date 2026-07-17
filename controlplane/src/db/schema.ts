@@ -1195,9 +1195,7 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
     // Column already exists.
   }
 
-  // Bug-hunt round 2: recipes had no owner column, so dashboard-less ("global")
-  // recipes were readable/editable/deletable by ANY authenticated user (IDOR).
-  // Add created_by so checkRecipeAccess can gate global recipes to their owner.
+  // Owner column so checkRecipeAccess can scope dashboard-less recipes to their creator.
   try {
     await db.prepare(`
       ALTER TABLE recipes ADD COLUMN created_by TEXT
