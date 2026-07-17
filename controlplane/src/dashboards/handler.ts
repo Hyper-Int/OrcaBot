@@ -365,8 +365,17 @@ export async function deleteDashbоard(
     }
   }
 
-  // Purge the DashboardDO's persisted state (D1 deletion doesn't touch it, and
-  // DOs can't be enumerated to sweep later). Best-effort.
+  // Delete the dashboard (cascades to: dashboard_members, dashboard_invitations,
+  // dashboard_items, dashboard_edges, sessions, dashboard_sandboxes, drive_mirrors,
+  // github_mirrors, gmail_mirrors, calendar_mirrors, contacts_mirrors, sheets_mirrors,
+  // forms_mirrors, gmail_messages, gmail_actions, calendar_events, contacts,
+  // form_responses, terminal_integrations)
+  await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
+
+  // Purge the DashboardDO's persisted state AFTER D1 is gone — so a concurrent
+  // authorized mutation can't re-persist DO state between the two, and a failed
+  // D1 delete leaves the DO (and its sockets) intact. D1 deletion doesn't touch
+  // the DO, and DOs can't be enumerated to sweep later. Best-effort.
   try {
     const doId = env.DASHBOARD.idFromName(dashboardId);
     const stub = env.DASHBOARD.get(doId);
@@ -374,13 +383,6 @@ export async function deleteDashbоard(
   } catch (e) {
     console.error(`[deleteDashboard] DashboardDO purge failed for ${dashboardId}: ${e}`);
   }
-
-  // Delete the dashboard (cascades to: dashboard_members, dashboard_invitations,
-  // dashboard_items, dashboard_edges, sessions, dashboard_sandboxes, drive_mirrors,
-  // github_mirrors, gmail_mirrors, calendar_mirrors, contacts_mirrors, sheets_mirrors,
-  // forms_mirrors, gmail_messages, gmail_actions, calendar_events, contacts,
-  // form_responses, terminal_integrations)
-  await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
 
   return new Response(null, { status: 204 });
 }
