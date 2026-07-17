@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-block-v15-hide-lost-found
-const MODULE_REVISION = "workspace-block-v15-hide-lost-found";
+// REVISION: workspace-block-v16-desktop-oauth-picker
+const MODULE_REVISION = "workspace-block-v16-desktop-oauth-picker";
 console.log(`[WorkspaceBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 console.log(`[WorkspaceBlock] DEV_MODE_ENABLED=${DEV_MODE_ENABLED} loaded at ${new Date().toISOString()}`);
 
@@ -151,7 +151,12 @@ type WorkspaceNode = Node<WorkspaceData, "workspace">;
 type IntegrationProvider = "google-drive" | "github" | "box" | "onedrive";
 
 export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>) {
-  const { user } = useAuthStore();
+  // Subscribe to the user, but fall back to the current store value: this is a
+  // React Flow node that can render before desktop auth resolves and then hold a
+  // stale null, which wrongly kept every connect button `disabled={!user}` (and
+  // dead-ended the handlers). getState() is always current, so `user` here is too.
+  const reactiveUser = useAuthStore((s) => s.user);
+  const user = reactiveUser ?? useAuthStore.getState().user;
   const sessionId = data.sessionId;
   const isMinimized = data.metadata?.minimized === true;
   const [expandAnimation, setExpandAnimation] = React.useState<string | null>(null);
@@ -234,7 +239,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
 
   const openIntegration = React.useCallback(
     (provider: IntegrationProvider) => {
-      if (!user) return;
+      if (!useAuthStore.getState().user) return;
       if (provider === "google-drive") {
         setDrivePickerOpen(true);
         return;
@@ -255,6 +260,11 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   );
 
   const handleDriveConnect = React.useCallback(() => {
+    // Read the current user at click time via getState, NOT the reactive closure
+    // value: this is a React Flow node that may not re-render when auth resolves
+    // after mount, so the destructured `user` can be a stale null — which silently
+    // dead-ended every connect button. (getAuthHeaders already uses getState.)
+    const user = useAuthStore.getState().user;
     if (!user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/google/drive/connect`);
@@ -295,7 +305,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleGithubConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     // Desktop is a public OAuth client → GitHub uses the device flow (no secret,
     // no redirect) via a code dialog instead of the popup redirect.
     if (DESKTOP_MODE) {
@@ -319,7 +329,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleBoxConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/box/connect`);
       if (data.dashboardId) {
@@ -355,7 +365,7 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
   }, [data.dashboardId, user]);
 
   const handleOnedriveConnect = React.useCallback(() => {
-    if (!user) return;
+    if (!useAuthStore.getState().user) return;
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}/integrations/onedrive/connect`);
       if (data.dashboardId) {

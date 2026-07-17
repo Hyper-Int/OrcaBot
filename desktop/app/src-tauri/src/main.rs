@@ -1223,6 +1223,10 @@ fn main() {
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    // Opens external URLs (OAuth connect flows) from the remote-origin frontend.
+    // Its `opener:allow-open-url` permission works for the localhost webview,
+    // unlike the custom `open_url` command which the ACL rejects from remote.
+    .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       commands::get_workspace_path,
       commands::import_folder,
@@ -1255,6 +1259,15 @@ fn main() {
 
       // Start core services (d1-shim, workerd) — blocks until healthy (~5-10s)
       services.start(app);
+
+      // NOTE: we deliberately do NOT clear the webview's browsing data here. An
+      // earlier attempt used clear_all_browsing_data() to bust a *suspected* stale
+      // frontend cache, but it also wiped cookies/localStorage — including the
+      // desktop-mode marker DESKTOP_MODE fell back to — which flipped the app into
+      // web mode (Box shown, connect buttons no-op'd, Calendar "access revoked").
+      // The real fix was robust Tauri detection in the frontend (env.ts uses
+      // __TAURI_INTERNALS__), so no cache-clear is needed. If genuine chunk
+      // staleness ever appears, use a cache-ONLY clear, never clear_all_browsing_data.
 
       // Register workspace state for Tauri commands
       let data_dir = app.path().app_data_dir().ok();

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-startup-log"
+description = "Enables the read_startup_log command without any pre-configured scope."
+commands.allow = ["read_startup_log"]
+
+[[permission]]
+identifier = "deny-read-startup-log"
+description = "Denies the read_startup_log command without any pre-configured scope."
+commands.deny = ["read_startup_log"]
