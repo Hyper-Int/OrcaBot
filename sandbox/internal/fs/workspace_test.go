@@ -333,6 +333,70 @@ func TestWorkspaceSiblingDirectoryBypass(t *testing.T) {
 	}
 }
 
+// Security test - openat+O_NOFOLLOW write walk rejects a symlink at an
+// intermediate directory component (the TOCTOU vector: an attacker swaps a
+// validated ancestor dir for a symlink before the write lands).
+func TestWorkspaceWriteSymlinkIntermediateComponent(t *testing.T) {
+	parent, err := os.MkdirTemp("", "workspace-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(parent)
+
+	workspaceRoot := filepath.Join(parent, "workspace")
+	outside := filepath.Join(parent, "outside")
+	os.Mkdir(workspaceRoot, 0755)
+	os.Mkdir(outside, 0755)
+
+	ws := NewWоrkspace(workspaceRoot)
+
+	// Real intermediate dir, then replace a deeper component with a symlink
+	// pointing outside the workspace.
+	os.MkdirAll(filepath.Join(workspaceRoot, "a"), 0755)
+	if err := os.Symlink(outside, filepath.Join(workspaceRoot, "a", "b")); err != nil {
+		t.Skipf("cannot create symlink: %v", err)
+	}
+
+	// Writing through the symlinked "b" component must be rejected — and nothing
+	// may be created under the outside dir.
+	err = ws.Write("/a/b/pwned.txt", []byte("escape"))
+	if err != ErrPathTraversal {
+		t.Errorf("expected ErrPathTraversal for symlinked intermediate component, got: %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(outside, "pwned.txt")); !os.IsNotExist(serr) {
+		t.Error("write escaped the workspace through a symlinked intermediate component")
+	}
+}
+
+// Write must atomically overwrite an existing regular file (rename-in-place).
+func TestWorkspaceWriteOverwrite(t *testing.T) {
+	root := setupTestWorkspace(t)
+	defer os.RemoveAll(root)
+
+	ws := NewWоrkspace(root)
+
+	if err := ws.Write("/a/b/file.txt", []byte("first")); err != nil {
+		t.Fatalf("initial write failed: %v", err)
+	}
+	if err := ws.Write("/a/b/file.txt", []byte("second")); err != nil {
+		t.Fatalf("overwrite failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "a", "b", "file.txt"))
+	if err != nil {
+		t.Fatalf("read failed: %v", err)
+	}
+	if string(data) != "second" {
+		t.Errorf("expected 'second', got %q", string(data))
+	}
+	// No stray temp files left behind in the target dir.
+	entries, _ := os.ReadDir(filepath.Join(root, "a", "b"))
+	for _, e := range entries {
+		if len(e.Name()) >= 11 && e.Name()[:11] == ".orcawrite-" {
+			t.Errorf("leftover temp file: %s", e.Name())
+		}
+	}
+}
+
 // Security test - symlink escape prevention
 func TestWorkspaceSymlinkEscape(t *testing.T) {
 	root := setupTestWorkspace(t)

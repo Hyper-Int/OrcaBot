@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: workspace-v3-nonexistent-ancestor-symlink-guard
+// REVISION: workspace-v4-openat-nofollow-write-walk
 
 package fs
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const workspaceRevision = "workspace-v3-nonexistent-ancestor-symlink-guard"
+const workspaceRevision = "workspace-v4-openat-nofollow-write-walk"
 
 func init() {
 	log.Printf("[workspace] REVISION: %s loaded at %s", workspaceRevision, time.Now().Format(time.RFC3339))
@@ -208,46 +208,69 @@ func (w *Workspace) Read(path string) ([]byte, error) {
 	return data, nil
 }
 
-// Write writes content to a file, creating directories as needed
+// Write writes content to a file, creating directories as needed.
+//
+// Unlike the read side (which resolves symlinks with a check-then-access
+// pattern), Write is hardened against a symlink-TOCTOU race: a process that
+// shares the workspace (a sandboxed agent under /workspace) could otherwise
+// swap a validated ancestor directory for a symlink between the containment
+// check and the write, redirecting a root-owned write outside /workspace — and
+// on desktop /workspace is a host-shared virtiofs mount, so that escapes to the
+// host. Any check-then-path-write pattern is fundamentally racy.
+//
+// Instead of validating a string path and then writing to it, we walk every
+// path component with openat + O_NOFOLLOW (see safeWrite). Containment is
+// enforced by the kernel at open time: each component is opened relative to the
+// previous component's file descriptor, never by absolute path string, and a
+// symlink at any component makes openat fail with ELOOP. There is no window in
+// which a raced-in symlink could be traversed, so the TOCTOU is unwinnable.
 func (w *Workspace) Write(path string, content []byte) error {
-	resolved, err := w.resоlvePath(path)
+	// Cheap lexical pre-filter (reject raw "..", re-root, split into
+	// components). The kernel-enforced O_NOFOLLOW walk below is the real
+	// containment guard; this just rejects obviously-bad input early and
+	// produces the relative component list to walk.
+	rel, err := w.relComponents(path)
 	if err != nil {
 		return err
 	}
+	return safeWrite(w.root, rel, content)
+}
 
-	// Create parent directories
-	dir := filepath.Dir(resolved)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+// relComponents applies the lexical containment guard used across the workspace
+// (reject raw ".." before Clean, re-root absolute paths) and returns the path's
+// components relative to the workspace root. It returns ErrPathTraversal for any
+// input that does not name a file strictly within the workspace.
+func (w *Workspace) relComponents(path string) ([]string, error) {
+	// Check raw input for ".." segments BEFORE cleaning. filepath.Clean
+	// resolves ".." which can hide traversal attempts (e.g. "/../../tmp/evil"
+	// cleans to "/tmp/evil", losing the ".." evidence).
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return nil, ErrPathTraversal
+		}
 	}
 
-	// Write atomically: a fresh temp file + rename. Writing directly with
-	// O_TRUNC blocks indefinitely when the destination is held open by another
-	// process over a shared mount (virtiofs) — e.g. a cache file the host has
-	// mmap'd. rename() replaces the dir entry without opening the held file.
-	tmp, err := os.CreateTemp(dir, ".orcawrite-*.tmp")
-	if err != nil {
-		return err
+	cleaned := filepath.Clean(path)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	// "" or "." means the workspace root itself — no file component to write.
+	if cleaned == "" || cleaned == "." {
+		return nil, ErrPathTraversal
 	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
+
+	out := make([]string, 0)
+	for _, c := range strings.Split(cleaned, "/") {
+		if c == "" || c == "." {
+			continue
+		}
+		if c == ".." { // belt-and-suspenders: Clean shouldn't leave these
+			return nil, ErrPathTraversal
+		}
+		out = append(out, c)
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
+	if len(out) == 0 {
+		return nil, ErrPathTraversal
 	}
-	if err := os.Chmod(tmpName, 0644); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, resolved); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return out, nil
 }
 
 // Delete removes a file or directory (recursively)
