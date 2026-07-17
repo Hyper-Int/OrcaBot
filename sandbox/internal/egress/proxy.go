@@ -1,11 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v10-unified-decide
+// REVISION: egress-proxy-v11-held-conn-ctx-cancel
 
 package egress
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -20,7 +21,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v10-unified-decide"
+const proxyRevision = "egress-proxy-v11-held-conn-ctx-cancel"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -280,7 +281,7 @@ func isLocalhost(host string) bool {
 //
 // Returns DecisionDefault/DecisionAllowOnce/DecisionAllowAlways when permitted, or
 // DecisionDeny/DecisionTimeout when blocked. Callers permit on the allow set.
-func (p *EgressProxy) decide(host string, port int) string {
+func (p *EgressProxy) decide(ctx context.Context, host string, port int) string {
 	if isLocalhost(host) {
 		return DecisionDefault
 	}
@@ -298,7 +299,7 @@ func (p *EgressProxy) decide(host string, port int) string {
 	if p.allowlist.IsTracker(host) {
 		return DecisionDeny
 	}
-	return p.holdForApproval(host, port)
+	return p.holdForApproval(ctx, host, port)
 }
 
 // permitted reports whether a decision from decide() allows the connection.
@@ -309,7 +310,7 @@ func permitted(decision string) bool {
 // handleConnect handles HTTPS CONNECT tunneling.
 func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	host, port := splitHostPort(r.Host, 443)
-	if permitted(p.decide(host, port)) {
+	if permitted(p.decide(r.Context(), host, port)) {
 		p.tunnelConnect(w, host, port)
 		return
 	}
@@ -324,7 +325,7 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !permitted(p.decide(host, port)) {
+	if !permitted(p.decide(r.Context(), host, port)) {
 		http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
 		return
 	}
@@ -367,12 +368,14 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 // if blocked (denied, tracker, user-denied, or timed out).
 // REVISION: egress-proxy-v10-unified-decide
 func (p *EgressProxy) CheckAndHold(host string, port int) string {
-	return p.decide(host, port)
+	// Browser navigation has no request lifetime to cancel against; use a
+	// background context so waitForDecision only unblocks on decision/timeout/stop.
+	return p.decide(context.Background(), host, port)
 }
 
 // holdForApproval blocks the current goroutine until the user approves/denies
 // or the timeout expires. Multiple connections to the same domain coalesce.
-func (p *EgressProxy) holdForApproval(domain string, port int) string {
+func (p *EgressProxy) holdForApproval(ctx context.Context, domain string, port int) string {
 	domain = strings.ToLower(domain)
 
 	p.pendingMu.Lock()
@@ -381,7 +384,7 @@ func (p *EgressProxy) holdForApproval(domain string, port int) string {
 		existing.Waiters++
 		p.pendingMu.Unlock()
 
-		return p.waitForDecision(existing)
+		return p.waitForDecision(ctx, existing)
 	}
 
 	// Create new pending entry
@@ -445,18 +448,22 @@ func (p *EgressProxy) holdForApproval(domain string, port int) string {
 
 	log.Printf("[egress-proxy] Holding connection to %s:%d (request_id=%s)", domain, port, requestID)
 
-	return p.waitForDecision(pending)
+	return p.waitForDecision(ctx, pending)
 }
 
-// waitForDecision blocks until a decision arrives or the proxy stops.
-// The timeout goroutine in holdForApproval handles expiry by closing doneCh.
-func (p *EgressProxy) waitForDecision(pending *Pending) string {
+// waitForDecision blocks until a decision arrives, the client disconnects, or the
+// proxy stops. The timeout goroutine in holdForApproval handles expiry by closing
+// doneCh. A client that abandons the held connection (ctx canceled) is treated as a
+// deny so we don't pin the goroutine + hijacked conn until the 60s timeout.
+func (p *EgressProxy) waitForDecision(ctx context.Context, pending *Pending) string {
 	select {
 	case <-pending.doneCh:
 		if pending.decision == "" {
 			return DecisionDeny
 		}
 		return pending.decision
+	case <-ctx.Done():
+		return DecisionDeny
 	case <-p.stopCh:
 		return DecisionDeny
 	}

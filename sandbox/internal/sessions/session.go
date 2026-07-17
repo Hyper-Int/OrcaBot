@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v22-pool-empty-mcp-env
+// REVISION: session-v23-browser-close-race
 
 // Package sessions manages session lifecycle.
 //
@@ -40,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v22-pool-empty-mcp-env"
+const sessionRevision = "session-v23-browser-close-race"
 
 // Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
 // This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
@@ -71,7 +71,7 @@ func applyEgressProxyEnv(envVars map[string]string) {
 	// 127.0.0.0/8 covers the full IPv4 loopback range (consistent with iptables ! -d 127.0.0.0/8).
 	// curl and wget honour CIDR notation; the proxy-side isLocalhost() uses net.IP.IsLoopback()
 	// as the authoritative gate for clients that send non-127.0.0.1 loopback addresses.
-	// REVISION: session-v22-pool-empty-mcp-env
+	// REVISION: session-v23-browser-close-race
 	envVars["NO_PROXY"] = "127.0.0.0/8,::1,localhost"
 	envVars["no_proxy"] = "127.0.0.0/8,::1,localhost"
 }
@@ -119,6 +119,11 @@ type Session struct {
 	agent     *agent.Controller
 	workspace *fs.Workspace
 	browser   *browser.Controller
+	// closed is set true (under mu) by Close(). Once set, no browser may be
+	// (re)started — guards against the pre-warm goroutine starting an orphaned
+	// Chromium stack on a torn-down session. Guarded by mu.
+	// REVISION: session-v23-browser-close-race
+	closed bool
 
 	// Secrets broker for secure API key handling
 	broker     *broker.SecretsBroker
@@ -293,6 +298,10 @@ func (s *Session) Wоrkspace() *fs.Workspace {
 
 func (s *Session) StartBrowser() (browser.Status, error) {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return browser.Status{}, fmt.Errorf("session closed")
+	}
 	if s.browser == nil {
 		s.browser = browser.NewControllerWithEgress(s.workspace.Root(), s.egressProxyPort)
 	}
@@ -325,6 +334,10 @@ func (s *Session) BrowserStatus() browser.Status {
 
 func (s *Session) OpenBrowserURL(target string) error {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("session closed")
+	}
 	if s.browser == nil {
 		s.browser = browser.NewControllerWithEgress(s.workspace.Root(), s.egressProxyPort)
 	}
@@ -754,7 +767,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	}
 
 	// Per-PTY config directory: non-pool mode only. Same rationale as CreatePTY.
-	// REVISION: session-v22-pool-empty-mcp-env
+	// REVISION: session-v23-browser-close-race
 	if pty.GetPool() == nil {
 		orcabotPtyDir := filepath.Join(s.workspace.Root(), ".orcabot", "pty", ptyID)
 		if err := os.MkdirAll(orcabotPtyDir, 0750); err == nil {
@@ -769,7 +782,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 
 	// Allocate pool slot BEFORE writing any workspace config files.
 	// Same ordering invariant as CreatePTY — see comment there for rationale.
-	// REVISION: session-v22-pool-empty-mcp-env
+	// REVISION: session-v23-browser-close-race
 	cleanupSecretsWithToken := func() {
 		s.integrationTokensMu.Lock()
 		delete(s.integrationTokens, ptyID)
@@ -797,7 +810,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	if agentType != mcp.AgentTypeUnknown {
 		userTools := s.fetchUserMCPTools()
 		// Pool mode: empty mcpEnv — same rationale as CreatePTY.
-		// REVISION: session-v22-pool-empty-mcp-env
+		// REVISION: session-v23-browser-close-race
 		mcpEnv := map[string]string{}
 		if pty.GetPool() == nil {
 			mcpEnv["ORCABOT_SESSION_ID"] = s.ID
@@ -890,7 +903,7 @@ func (s *Session) CreatePTYWithOptions(opts CreatePTYOptions) (*PTYInfo, error) 
 	}
 
 	// Spawn PTY. Pool slot was allocated before workspace config writes above.
-	// REVISION: session-v22-pool-empty-mcp-env
+	// REVISION: session-v23-browser-close-race
 	var p *pty.PTY
 	if poolSlot != nil {
 		p, err = pty.NewWithCommandEnvIDSlot(poolSlot, s.ID, command, 80, 24, actualWorkDir, envVars)
@@ -1088,6 +1101,11 @@ func (s *Session) DeletePTY(id string) error {
 // Note: The secrets broker is shared and managed by the Manager, not stopped here.
 func (s *Session) Clоse() error {
 	s.mu.Lock()
+	// Mark closed BEFORE releasing the lock so any concurrent StartBrowser (e.g. the
+	// pre-warm goroutine firing after a quick delete) sees closed and refuses to
+	// launch — no orphaned Chromium stack. Read s.browser under the lock too (it was
+	// previously read racily, outside the lock).
+	s.closed = true
 	ptys := make([]*PTYInfo, 0, len(s.ptys))
 	for _, info := range s.ptys {
 		ptys = append(ptys, info)
@@ -1095,6 +1113,7 @@ func (s *Session) Clоse() error {
 	s.ptys = make(map[string]*PTYInfo)
 	agentCtrl := s.agent
 	s.agent = nil
+	browserCtrl := s.browser
 	s.mu.Unlock()
 
 	for _, info := range ptys {
@@ -1105,8 +1124,8 @@ func (s *Session) Clоse() error {
 		agentCtrl.Stоp()
 	}
 
-	if s.browser != nil {
-		s.browser.Stop()
+	if browserCtrl != nil {
+		browserCtrl.Stop()
 	}
 
 	// Stop Drive sync if running
@@ -1207,16 +1226,23 @@ func (s *Session) NotifyIntegrations(ptyID string, providers []string, ptyToken 
 		curr[p] = true
 	}
 
+	// Run attach/detach SYNCHRONOUSLY (not `go ...`) while holding knownProvidersMu.
+	// A bare goroutine gave attach and detach no relative ordering, so a detach could
+	// run before its preceding attach and leave a syncer running with no attachment
+	// (refCount desync). Dispatching under the serializing knownProvidersMu preserves
+	// call order across concurrent NotifyIntegrations calls. Both handlers lock the
+	// separate driveSyncMu (no shared lock with knownProvidersMu → no deadlock).
+
 	// Detect newly attached Drive
 	if curr["google_drive"] && !prev["google_drive"] {
 		log.Printf("[session] Drive integration attached via PTY %s: dashboardID=%s session=%s", ptyID, s.DashboardID, s.ID)
-		go s.OnDriveIntegrationAttached(ptyToken)
+		s.OnDriveIntegrationAttached(ptyToken)
 	}
 
 	// Detect detached Drive
 	if !curr["google_drive"] && prev["google_drive"] {
 		log.Printf("[session] Drive integration detached via PTY %s: dashboardID=%s session=%s", ptyID, s.DashboardID, s.ID)
-		go s.OnDriveIntegrationDetached()
+		s.OnDriveIntegrationDetached()
 	}
 
 	s.knownProviders[ptyID] = curr

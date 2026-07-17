@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v17-pty-ws-edge-debug
-console.log(`[controlplane] REVISION: controlplane-v17-pty-ws-edge-debug loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v18-idor-input-validation
+console.log(`[controlplane] REVISION: controlplane-v18-idor-input-validation loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -529,6 +529,15 @@ export default {
         return cоrsRespоnse(Response.json(
           { error: 'Desktop feature disabled', message: (error as Error).message },
           { status: 501 }
+        ), origin, allowedOrigins);
+      }
+      // Malformed request body (SyntaxError from request.json()) is client error →
+      // 400, not 500. Logged so a stray internal parse error isn't silent.
+      if (error instanceof SyntaxError) {
+        console.warn('Request body parse error (400):', error.message);
+        return cоrsRespоnse(Response.json(
+          { error: 'E40001: Invalid JSON body' },
+          { status: 400 }
         ), origin, allowedOrigins);
       }
       console.error('Request error:', error);
@@ -1517,6 +1526,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json() as { sourceItemId: string; targetItemId: string; sourceHandle?: string; targetHandle?: string };
+    if (typeof data?.sourceItemId !== 'string' || typeof data?.targetItemId !== 'string' || !data.sourceItemId || !data.targetItemId) {
+      return Response.json({ error: 'E40002: sourceItemId and targetItemId are required' }, { status: 400 });
+    }
     return dashboards.createEdge(env, segments[1], auth.user!.id, data);
   }
 
@@ -1762,6 +1774,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json() as { email: string; role: 'editor' | 'viewer' };
+    if (typeof data?.email !== 'string' || !data.email.trim()) {
+      return Response.json({ error: 'E40003: email is required' }, { status: 400 });
+    }
     return members.addMember(env, segments[1], auth.user!.id, data);
   }
 

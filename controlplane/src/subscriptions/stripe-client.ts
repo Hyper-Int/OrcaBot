@@ -29,11 +29,16 @@ async function stripeRequest<T = Record<string, unknown>>(
   method: string,
   path: string,
   params?: Record<string, string | undefined>,
+  idempotencyKey?: string,
 ): Promise<T> {
   const url = `${STRIPE_API_BASE}${path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${secretKey}`,
   };
+  // Stripe dedupes requests sharing an Idempotency-Key, returning the original object.
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
 
   const init: RequestInit = { method, headers };
 
@@ -64,11 +69,12 @@ export async function createCustomer(
   secretKey: string,
   email: string,
   name: string,
+  idempotencyKey?: string,
 ): Promise<{ id: string }> {
   const result = await stripeRequest<{ id: string }>(secretKey, "POST", "/customers", {
     email,
     name,
-  });
+  }, idempotencyKey);
   return { id: result.id };
 }
 

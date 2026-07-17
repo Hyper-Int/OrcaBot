@@ -218,6 +218,14 @@ func (m *Manager) Delete(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 
+	// REVISION: manager-v2-evict-logged-routes
+	// Release this session's per-session state on the shared broker so it doesn't
+	// accumulate over the VM's lifetime (loggedRoutes dedup keys are never
+	// otherwise evicted).
+	if m.broker != nil {
+		m.broker.EvictLoggedRoutesForSession(id)
+	}
+
 	// Close PTYs and agent
 	if err := session.Clоse(); err != nil {
 		return err

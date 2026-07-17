@@ -55,13 +55,14 @@ export async function listRecipеs(
       SELECT * FROM recipes WHERE dashboard_id = ? ORDER BY updated_at DESC
     `).bind(dashboardId).all();
   } else {
-    // Get recipes from dashboards user is a member of, plus global recipes (no dashboard_id)
+    // Dashboards the user is a member of, plus the user's own global recipes
+    // (global recipes are owner-scoped via created_by).
     result = await env.DB.prepare(`
       SELECT r.* FROM recipes r
       LEFT JOIN dashboard_members dm ON r.dashboard_id = dm.dashboard_id
-      WHERE r.dashboard_id IS NULL OR dm.user_id = ?
+      WHERE (r.dashboard_id IS NULL AND r.created_by = ?) OR dm.user_id = ?
       ORDER BY r.updated_at DESC
-    `).bind(userId).all();
+    `).bind(userId, userId).all();
   }
 
   const recipes = result.results.map(r => ({
@@ -125,14 +126,15 @@ export async function createRecipе(
   const now = new Date().toISOString();
 
   await env.DB.prepare(`
-    INSERT INTO recipes (id, dashboard_id, name, description, steps, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO recipes (id, dashboard_id, name, description, steps, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     data.dashboardId || null,
     data.name,
     data.description || '',
     JSON.stringify(data.steps || []),
+    userId,
     now,
     now
   ).run();
