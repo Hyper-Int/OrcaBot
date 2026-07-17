@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: workspace-v2-path-traversal-normalize
+// REVISION: workspace-v3-nonexistent-ancestor-symlink-guard
 
 package fs
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const workspaceRevision = "workspace-v2-path-traversal-normalize"
+const workspaceRevision = "workspace-v3-nonexistent-ancestor-symlink-guard"
 
 func init() {
 	log.Printf("[workspace] REVISION: %s loaded at %s", workspaceRevision, time.Now().Format(time.RFC3339))
@@ -82,28 +82,49 @@ func (w *Workspace) resоlvePath(path string) (string, error) {
 	// This prevents symlink-based escapes (e.g., /workspace/link -> /etc)
 	resolved, err := filepath.EvalSymlinks(fullPath)
 	if err != nil {
-		// If the path doesn't exist, check the parent directory instead
-		// This allows creating new files while still preventing symlink escapes
+		// The target doesn't exist yet (and possibly several of its ancestors).
+		// This allows creating new files while still preventing symlink escapes.
+		//
+		// A lexical Abs() fallback is unsafe: an *existing* in-workspace symlink
+		// pointing outside, combined with a not-yet-created intermediate dir, would
+		// pass a purely lexical containment check while Write's os.MkdirAll then
+		// followed the symlink and created dirs/files outside the workspace. So we
+		// find the LONGEST existing ancestor, resolve its symlinks, and require the
+		// resolved prefix to stay within the workspace. The still-nonexistent suffix
+		// cannot contain symlinks (nothing is there yet), so appending it lexically
+		// is safe — MkdirAll will materialize real directories under a vetted prefix.
 		if os.IsNotExist(err) {
-			parent := filepath.Dir(fullPath)
-			base := filepath.Base(fullPath)
-
-			resolvedParent, parentErr := filepath.EvalSymlinks(parent)
-			if parentErr != nil {
-				// Parent doesn't exist either - check if it's within workspace
-				// Use Abs as fallback for new directory trees
-				resolvedParent, parentErr = filepath.Abs(parent)
-				if parentErr != nil {
-					return "", parentErr
+			existing := fullPath
+			var suffix []string // path components below the longest existing ancestor, top-most last
+			for {
+				resolved, rerr := filepath.EvalSymlinks(existing)
+				if rerr == nil {
+					if !isPathWithin(resolved, w.root) {
+						return "", ErrPathTraversal
+					}
+					joined := resolved
+					for i := len(suffix) - 1; i >= 0; i-- {
+						joined = filepath.Join(joined, suffix[i])
+					}
+					// Belt-and-suspenders: the fully reconstructed path must also
+					// remain within the workspace.
+					if !isPathWithin(joined, w.root) {
+						return "", ErrPathTraversal
+					}
+					return joined, nil
 				}
+				if !os.IsNotExist(rerr) {
+					return "", rerr
+				}
+				parent := filepath.Dir(existing)
+				if parent == existing {
+					// Walked to the filesystem root without an existing ancestor
+					// (w.root should always exist, so this is unreachable in practice).
+					return "", ErrPathTraversal
+				}
+				suffix = append(suffix, filepath.Base(existing))
+				existing = parent
 			}
-
-			// Check parent is within workspace
-			if !isPathWithin(resolvedParent, w.root) {
-				return "", ErrPathTraversal
-			}
-
-			return filepath.Join(resolvedParent, base), nil
 		}
 		return "", err
 	}

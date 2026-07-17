@@ -4,6 +4,7 @@
 package egress
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -85,7 +86,7 @@ func TestProxy_DecideHonorsDenyAndTracker(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := permitted(proxy.decide(tc.host, 443))
+			got := permitted(proxy.decide(context.Background(), tc.host, 443))
 			if got != tc.want {
 				t.Errorf("decide(%q) permitted=%v, want %v", tc.host, got, tc.want)
 			}
@@ -98,7 +99,7 @@ func TestProxy_DecideHonorsDenyAndTracker(t *testing.T) {
 
 	// A user "Always Allow" must override the tracker denylist.
 	al.AddUserDomain("www.googletagmanager.com", "user-1")
-	if !permitted(proxy.decide("www.googletagmanager.com", 443)) {
+	if !permitted(proxy.decide(context.Background(), "www.googletagmanager.com", 443)) {
 		t.Error("expected user-approved tracker to be permitted (user allow wins)")
 	}
 }
@@ -213,7 +214,7 @@ func TestProxy_Coalescing(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			decisions[idx] = proxy.holdForApproval("coalesce-test.com", 443)
+			decisions[idx] = proxy.holdForApproval(context.Background(), "coalesce-test.com", 443)
 		}(i)
 	}
 

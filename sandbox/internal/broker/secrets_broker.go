@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// REVISION: broker-v6-provider-error-toast
-const brokerRevision = "broker-v6-provider-error-toast"
+// REVISION: broker-v7-evict-logged-routes
+const brokerRevision = "broker-v7-evict-logged-routes"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
@@ -123,6 +123,20 @@ func (b *SecretsBroker) ClearConfigsForSession(sessionID string) {
 			delete(b.configs, key)
 		}
 	}
+}
+
+// EvictLoggedRoutesForSession removes the per-(session,provider) routing-log dedup
+// entries for a session. loggedRoutes is a sync.Map keyed "sessionID:provider" that
+// otherwise grows unbounded as sessions are created and deleted over a VM's lifetime;
+// call this on session teardown to release those keys.
+func (b *SecretsBroker) EvictLoggedRoutesForSession(sessionID string) {
+	prefix := sessionID + ":"
+	b.loggedRoutes.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			b.loggedRoutes.Delete(k)
+		}
+		return true
+	})
 }
 
 // RemoveConfig removes a specific provider configuration.

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v39-file-read-redaction
+// REVISION: main-v40-import-gzip-bomb-cap
 
 package main
 
@@ -40,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v39-file-read-redaction"
+const mainRevision = "main-v40-import-gzip-bomb-cap"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -54,7 +54,37 @@ const (
 	// Upper bound on a bulk workspace import body (compressed tar.gz). Big enough
 	// for real project workspaces; caps memory/disk a single request can consume.
 	maxWorkspaceImportBytes = 1024 * 1024 * 1024
+	// Ceilings on a single import's *decompressed* payload, guarding against a
+	// gzip bomb (a small compressed body that expands enormously). These are
+	// independent of the compressed-body cap (maxWorkspaceImportBytes).
+	maxImportDecompressedBytes = 2 * 1024 * 1024 * 1024 // 2 GiB total across all entries
+	maxImportEntries           = 100_000                // total tar entries examined
 )
+
+// errImportTooLarge is returned when a decompressed import exceeds the ceilings.
+var errImportTooLarge = errors.New("import exceeds decompressed size/entry limit")
+
+// cappedReader caps the total number of bytes that can be read through it,
+// returning errImportTooLarge once the limit is crossed. Wrapping the gzip
+// output in this bounds decompression even for entries the extractor skips
+// (tar.Reader.Next still decompresses skipped entry data), defeating gzip bombs.
+type cappedReader struct {
+	r     io.Reader
+	n     int64
+	limit int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.n > c.limit {
+		return 0, errImportTooLarge
+	}
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	if c.n > c.limit {
+		return n, errImportTooLarge
+	}
+	return n, err
+}
 
 var errTooManyEntries = errors.New("too many files to list")
 
@@ -1323,8 +1353,10 @@ func extractTarGzToWоrkspace(ws *fs.Workspace, body io.Reader) (int, int, error
 	}
 	defer gz.Close()
 
-	tr := tar.NewReader(gz)
+	// Bound total decompressed bytes (gzip-bomb guard) and total entry count.
+	tr := tar.NewReader(&cappedReader{r: gz, limit: maxImportDecompressedBytes})
 	written, skipped := 0, 0
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -1332,6 +1364,10 @@ func extractTarGzToWоrkspace(ws *fs.Workspace, body io.Reader) (int, int, error
 		}
 		if err != nil {
 			return written, skipped, err
+		}
+		entries++
+		if entries > maxImportEntries {
+			return written, skipped, errImportTooLarge
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue // dirs/symlinks/etc — files carry their own parent path

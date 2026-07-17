@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v10-no-sandbox-warning
+// REVISION: browser-v11-status-kill-wait-reap
 package browser
 
 import (
@@ -377,6 +377,8 @@ func (c *Controller) Status() Status {
 				for _, p := range c.processes {
 					if p.Process != nil {
 						_ = p.Process.Kill()
+						// Reap so killed children don't linger as zombies (matches Stop()).
+						_, _ = p.Process.Wait()
 					}
 				}
 				c.processes = nil
