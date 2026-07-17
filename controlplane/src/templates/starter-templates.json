@@ -1,0 +1,353 @@
+[
+  {
+    "id": "starter-council-of-experts",
+    "name": "Council of Experts",
+    "description": "Send your prompt to multiple LLMs",
+    "category": "custom",
+    "items": [
+      {
+        "placeholderId": "item_0",
+        "type": "prompt",
+        "content": "",
+        "position": {
+          "x": 784,
+          "y": 0
+        },
+        "size": {
+          "width": 392,
+          "height": 208
+        }
+      },
+      {
+        "placeholderId": "item_1",
+        "type": "terminal",
+        "content": "{\"name\":\"Gemini CLI\",\"agentic\":true,\"bootCommand\":\"gemini\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 480,
+          "y": 272
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        }
+      },
+      {
+        "placeholderId": "item_2",
+        "type": "terminal",
+        "content": "{\"name\":\"Gemini CLI\",\"agentic\":true,\"bootCommand\":\"gemini\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 1008,
+          "y": 272
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        }
+      },
+      {
+        "placeholderId": "item_3",
+        "type": "terminal",
+        "content": "{\"name\":\"Claude Code\",\"agentic\":true,\"bootCommand\":\"claude\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 1552,
+          "y": 256
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        }
+      },
+      {
+        "placeholderId": "item_4",
+        "type": "terminal",
+        "content": "{\"name\":\"Codex\",\"agentic\":true,\"bootCommand\":\"codex\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": -64,
+          "y": 256
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        }
+      }
+    ],
+    "edges": [
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_1",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_2",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_3",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_4",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      }
+    ],
+    "viewport": {
+      "x": 243.61111437832903,
+      "y": 166.49999816035023,
+      "zoom": 0.6944444444444445
+    },
+    "itemCount": 5
+  },
+  {
+    "id": "starter-code-and-review",
+    "name": "Code and Review",
+    "description": "Have one agent review the code of another",
+    "category": "coding",
+    "items": [
+      {
+        "placeholderId": "item_0",
+        "type": "prompt",
+        "content": "Start work on new feature X",
+        "position": {
+          "x": 256,
+          "y": -176
+        },
+        "size": {
+          "width": 440,
+          "height": 144
+        }
+      },
+      {
+        "placeholderId": "item_1",
+        "type": "prompt",
+        "content": "Review the latest changes",
+        "position": {
+          "x": 864,
+          "y": 48
+        },
+        "size": {
+          "width": 312,
+          "height": 144
+        }
+      },
+      {
+        "placeholderId": "item_2",
+        "type": "browser",
+        "content": "",
+        "position": {
+          "x": 1312,
+          "y": 0
+        },
+        "size": {
+          "width": 680,
+          "height": 480
+        }
+      },
+      {
+        "placeholderId": "item_3",
+        "type": "terminal",
+        "content": "{\"name\":\"Terminal\",\"agentic\":false,\"bootCommand\":\"cd \\\"$HOME/github/robdmac/turtledash\\\" && exec bash\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 1376,
+          "y": -208
+        },
+        "size": {
+          "width": 576,
+          "height": 200
+        }
+      },
+      {
+        "placeholderId": "item_4",
+        "type": "terminal",
+        "content": "{\"name\":\"Claude Code\",\"agentic\":true,\"bootCommand\":\"cd \\\"$HOME/github\\\" && claude\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 240,
+          "y": 48
+        },
+        "size": {
+          "width": 496,
+          "height": 692
+        }
+      },
+      {
+        "placeholderId": "item_5",
+        "type": "terminal",
+        "content": "{\"name\":\"Codex\",\"agentic\":true,\"bootCommand\":\"codex\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 784,
+          "y": 240
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        }
+      }
+    ],
+    "edges": [
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_4",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_1",
+        "targetPlaceholderId": "item_5",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_4",
+        "targetPlaceholderId": "item_1",
+        "sourceHandle": "right-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_5",
+        "targetPlaceholderId": "item_4",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "left-in"
+      }
+    ],
+    "viewport": {
+      "x": 8.070002649095425,
+      "y": 253.78388832963515,
+      "zoom": 0.7925
+    },
+    "itemCount": 6
+  },
+  {
+    "id": "starter-agents-chess",
+    "name": "Agents Chess",
+    "description": "Comparing agents chess skills.",
+    "category": "custom",
+    "items": [
+      {
+        "placeholderId": "item_0",
+        "type": "terminal",
+        "content": "{\"name\":\"Gemini CLI\",\"agentic\":true,\"bootCommand\":\"gemini\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 896,
+          "y": 48
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        },
+        "metadata": {
+          "minimized": false,
+          "expandedSize": {
+            "width": 480,
+            "height": 500
+          }
+        }
+      },
+      {
+        "placeholderId": "item_1",
+        "type": "terminal",
+        "content": "{\"name\":\"Claude Code\",\"agentic\":true,\"bootCommand\":\"claude\",\"subagentIds\":[],\"skillIds\":[],\"mcpToolIds\":[]}",
+        "position": {
+          "x": 240,
+          "y": 48
+        },
+        "size": {
+          "width": 480,
+          "height": 500
+        },
+        "metadata": {
+          "minimized": false,
+          "expandedSize": {
+            "width": 480,
+            "height": 500
+          }
+        }
+      },
+      {
+        "placeholderId": "item_2",
+        "type": "prompt",
+        "content": "Lets play chess. You are white so you can go first...",
+        "position": {
+          "x": 256,
+          "y": -176
+        },
+        "size": {
+          "width": 440,
+          "height": 144
+        }
+      },
+      {
+        "placeholderId": "item_3",
+        "type": "note",
+        "content": "",
+        "position": {
+          "x": 240,
+          "y": 608
+        },
+        "size": {
+          "width": 472,
+          "height": 280
+        }
+      },
+      {
+        "placeholderId": "item_4",
+        "type": "note",
+        "content": "",
+        "position": {
+          "x": 896,
+          "y": 608
+        },
+        "size": {
+          "width": 472,
+          "height": 280
+        },
+        "metadata": {
+          "color": "blue"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "sourcePlaceholderId": "item_2",
+        "targetPlaceholderId": "item_1",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_1",
+        "targetPlaceholderId": "item_3",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_1",
+        "targetPlaceholderId": "item_0",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_4",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      },
+      {
+        "sourcePlaceholderId": "item_0",
+        "targetPlaceholderId": "item_1",
+        "sourceHandle": "bottom-out",
+        "targetHandle": "top-in"
+      }
+    ],
+    "viewport": {
+      "x": 209.1131436314363,
+      "y": 186.37127371273712,
+      "zoom": 0.6876693766937669
+    },
+    "itemCount": 5
+  }
+]

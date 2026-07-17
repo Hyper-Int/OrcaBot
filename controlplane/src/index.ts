@@ -915,6 +915,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     try {
       await initializeDatabase(env.DB);
+      // Seed curated starter templates on desktop (no-op on cloud + after first run).
+      await templates.seedStarterTemplates(env);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[init-db] FAILED:', msg, err);
