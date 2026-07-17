@@ -555,13 +555,9 @@ fn cmd_export(rest: &[String]) -> i32 {
     }
 }
 
-/// A `Read` wrapper that bounds the TOTAL bytes read from `inner`, erroring once
-/// the ceiling is crossed. Wrapping the gzip DECODER with this caps total
-/// decompressed output across the WHOLE archive — including entry bodies `tar`
-/// must drain just to advance to the next header — so a crafted huge or
-/// unsupported member can't force unbounded decompression. (`Read::take` alone
-/// would signal a clean EOF at the limit, which `tar` could treat as a truncated
-/// but valid end; erroring makes the overflow unambiguous.)
+/// `Read` wrapper that errors once total bytes read cross `cap`. Wrapping the gzip
+/// decoder bounds total decompression across the whole archive (skipped entries
+/// included). Errors rather than EOF-ing so tar can't read it as a clean truncation.
 struct CappedReader<R> {
     inner: R,
     remaining: u64,
@@ -588,9 +584,7 @@ impl<R: Read> Read for CappedReader<R> {
     }
 }
 
-/// Removes a directory tree when dropped — guarantees the private import staging
-/// dir is cleaned up on EVERY exit path (success, validation failure, or early
-/// return) without hand-written cleanup at each `return`.
+/// Removes a directory tree when dropped (cleans up the staging dir on every exit path).
 struct DirGuard(PathBuf);
 
 impl Drop for DirGuard {
@@ -599,33 +593,13 @@ impl Drop for DirGuard {
     }
 }
 
-/// Safely extract a `.orcabot` bundle (tar.gz) into a PRIVATE staging directory
-/// and return `(manifest.json bytes, staged workspace-relative paths)`. NOTHING
-/// is written to the live shared workspace here — the caller validates the
-/// manifest, creates the dashboard, and only THEN merges the staged files into
-/// `/workspace` via the O_NOFOLLOW `safe_workspace_write`. So a missing/corrupt
-/// manifest, a truncated archive, or a control-plane failure leaves the live
-/// workspace untouched (no partial overwrite — the P1 the old in-place extractor
-/// had, which wrote workspace members before validating anything).
-///
-/// This replaces the previous `tar -xzf … -C <stage>` shell-out, which handed a
-/// fully untrusted archive to system `tar` with ZERO validation. GNU tar honors
-/// `..` members (host-filesystem escape on Linux) and materializes symlink members
-/// (symlink-planting into the workspace on every platform). Every entry is vetted:
-///   * `..` / absolute / non-plain path components -> skipped (traversal guard),
-///   * symlink AND hardlink members -> never extracted (link-planting guard),
-///   * only regular files + on-demand dirs are extracted (char/block/fifo ignored),
-///   * an entry-count cap plus a hardened zip-bomb defense (below).
-///
-/// Zip-bomb / memory hardening vs. the old per-file cap:
-///   1. The `GzDecoder` is wrapped in a global `CappedReader`, so total
-///      decompression across ALL entries — even skipped/unsupported ones whose
-///      bodies `tar` drains to reach the next header — is bounded and errors on
-///      overflow. (The old cap only counted regular-file bodies, so a huge
-///      unsupported entry decompressed uncounted.)
-///   2. File bodies are STREAMED to the staged path with `io::copy` instead of
-///      buffered into a `Vec`, so a single 4 GiB member can't exhaust memory.
-///      Only `manifest.json` is read into memory, under a small dedicated cap.
+/// Extract a `.orcabot` bundle (tar.gz) into a private staging dir, returning
+/// `(manifest.json bytes, staged workspace-relative paths)`. Nothing is written to
+/// the live workspace here — the caller validates and merges later, so a bad bundle
+/// leaves it untouched. Each entry is vetted: skip `..`/absolute paths and
+/// symlink/hardlink members; extract regular files + on-demand dirs only. Zip-bomb
+/// guard: the gzip decoder is wrapped in `CappedReader` (bounds total decompression)
+/// and file bodies stream to disk; only `manifest.json` is buffered, under its own cap.
 fn extract_bundle_to_staging(
     bundle: &str,
     stage_dir: &std::path::Path,
@@ -722,12 +696,9 @@ fn extract_bundle_to_staging(
             if rel.is_empty() {
                 continue;
             }
-            // Stream the body straight to the PRIVATE staging dir. `rel`'s
-            // components are all plain names (verified above), so `stage_dir.join`
-            // can't escape it; the dir is freshly created + private and we never
-            // write links into it, so a lexical join is safe for staging. The
-            // authoritative O_NOFOLLOW guard runs later, at merge, against the live
-            // workspace (race-safe even if a symlink is planted mid-merge).
+            // Stream to the private staging dir. Components are all plain names
+            // (verified above) so a lexical join can't escape; the authoritative
+            // O_NOFOLLOW guard runs later at merge against the live workspace.
             let dest = stage_dir.join(&rel);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(|e| format!("stage {rel}: {e}"))?;
@@ -764,9 +735,7 @@ fn cmd_import(rest: &[String]) -> i32 {
         return 1;
     }
 
-    // 1) STAGE — extract the whole bundle into a PRIVATE temp dir. Nothing touches
-    //    the live workspace yet, so any failure below leaves it untouched. The
-    //    guard removes the staging tree on every exit path (incl. early returns).
+    // 1) STAGE — extract into a private temp dir (guard cleans it up on every exit).
     let stage = std::env::temp_dir().join(format!("orcabot-import-{}", std::process::id()));
     let _ = fs::remove_dir_all(&stage);
     if let Err(e) = fs::create_dir_all(&stage) {

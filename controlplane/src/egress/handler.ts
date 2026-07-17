@@ -118,10 +118,8 @@ export async function handleApproveEgress(
     );
   }
 
-  // Persist to the allowlist only after the sandbox accepted, and only if no
-  // active deny exists (deny precedence). Together with the atomic deny batch
-  // below — and SQLite's write serialization — a racing allow/deny for the same
-  // domain can't leave it active in both lists.
+  // Allowlist only if no active deny exists (deny precedence); with the atomic
+  // deny batch below this stops a racing allow/deny landing in both lists.
   if (body.decision === 'allow_always') {
     const entryId = generateId();
     await env.DB.prepare(`

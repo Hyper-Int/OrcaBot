@@ -115,12 +115,9 @@ export async function createCheckoutSession(
     }
   }
 
-  // Create Stripe customer if needed. The idempotency key lets two concurrent
-  // checkouts share one customer, but must NOT be permanent — a permanent key
-  // would make Stripe replay a since-deleted customer (or an initial 5xx) for its
-  // ~24h retention. Scope it to a short rotating window (so only genuinely
-  // concurrent attempts collide) and distinguish the stale-recovery path (a
-  // deleted customer being recreated) from a first-time create.
+  // Idempotency key dedupes concurrent creates, but must rotate: a permanent key
+  // makes Stripe replay a since-deleted customer for ~24h. Scope to a short window
+  // + new/recreate marker so only concurrent attempts share it.
   if (!stripeCustomerId) {
     const genWindow = Math.floor(Date.now() / 600_000); // 10-minute window
     const gen = existing?.stripe_customer_id ? 'recreate' : 'new';

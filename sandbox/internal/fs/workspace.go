@@ -82,17 +82,10 @@ func (w *Workspace) resоlvePath(path string) (string, error) {
 	// This prevents symlink-based escapes (e.g., /workspace/link -> /etc)
 	resolved, err := filepath.EvalSymlinks(fullPath)
 	if err != nil {
-		// The target doesn't exist yet (and possibly several of its ancestors).
-		// This allows creating new files while still preventing symlink escapes.
-		//
-		// A lexical Abs() fallback is unsafe: an *existing* in-workspace symlink
-		// pointing outside, combined with a not-yet-created intermediate dir, would
-		// pass a purely lexical containment check while Write's os.MkdirAll then
-		// followed the symlink and created dirs/files outside the workspace. So we
-		// find the LONGEST existing ancestor, resolve its symlinks, and require the
-		// resolved prefix to stay within the workspace. The still-nonexistent suffix
-		// cannot contain symlinks (nothing is there yet), so appending it lexically
-		// is safe — MkdirAll will materialize real directories under a vetted prefix.
+		// Target doesn't exist yet. Resolve the longest existing ancestor's
+		// symlinks and require it to stay in the workspace; the nonexistent suffix
+		// can't contain symlinks, so appending it lexically is safe. (A plain Abs()
+		// fallback would miss an existing in-workspace symlink pointing outside.)
 		if os.IsNotExist(err) {
 			existing := fullPath
 			var suffix []string // path components below the longest existing ancestor, top-most last
@@ -208,22 +201,11 @@ func (w *Workspace) Read(path string) ([]byte, error) {
 	return data, nil
 }
 
-// Write writes content to a file, creating directories as needed.
-//
-// Unlike the read side (which resolves symlinks with a check-then-access
-// pattern), Write is hardened against a symlink-TOCTOU race: a process that
-// shares the workspace (a sandboxed agent under /workspace) could otherwise
-// swap a validated ancestor directory for a symlink between the containment
-// check and the write, redirecting a root-owned write outside /workspace — and
-// on desktop /workspace is a host-shared virtiofs mount, so that escapes to the
-// host. Any check-then-path-write pattern is fundamentally racy.
-//
-// Instead of validating a string path and then writing to it, we walk every
-// path component with openat + O_NOFOLLOW (see safeWrite). Containment is
-// enforced by the kernel at open time: each component is opened relative to the
-// previous component's file descriptor, never by absolute path string, and a
-// symlink at any component makes openat fail with ELOOP. There is no window in
-// which a raced-in symlink could be traversed, so the TOCTOU is unwinnable.
+// Write writes content to a file, creating directories as needed. Rather than
+// validate a string path then write to it (a symlink-TOCTOU: a workspace process
+// could swap an ancestor for a symlink in between, escaping /workspace — a host
+// mount on desktop), it walks every component with openat + O_NOFOLLOW via
+// safeWrite, so containment is enforced by the kernel at open time.
 func (w *Workspace) Write(path string, content []byte) error {
 	// Cheap lexical pre-filter (reject raw "..", re-root, split into
 	// components). The kernel-enforced O_NOFOLLOW walk below is the real

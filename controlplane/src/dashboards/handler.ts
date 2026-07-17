@@ -372,10 +372,8 @@ export async function deleteDashbоard(
   // form_responses, terminal_integrations)
   await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
 
-  // Purge the DashboardDO's persisted state AFTER D1 is gone — so a concurrent
-  // authorized mutation can't re-persist DO state between the two, and a failed
-  // D1 delete leaves the DO (and its sockets) intact. D1 deletion doesn't touch
-  // the DO, and DOs can't be enumerated to sweep later. Best-effort.
+  // Purge the DO after D1 is gone (D1 delete doesn't touch it, and DOs can't be
+  // swept later). Best-effort.
   try {
     const doId = env.DASHBOARD.idFromName(dashboardId);
     const stub = env.DASHBOARD.get(doId);

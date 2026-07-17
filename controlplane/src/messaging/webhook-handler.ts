@@ -1894,9 +1894,8 @@ export async function createSubscription(
     }
   }
 
-  // Atomic insert guarding the Telegram "one active sub per user" invariant (the
-  // check above races). The `? = 'telegram'` term neutralises the guard for every
-  // other provider; changes==0 on a telegram insert means a race was blocked.
+  // Atomic guard for the Telegram "one active sub per user" invariant (the check
+  // above races). The `? = 'telegram'` term makes it a no-op for other providers.
   const subInsert = await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider,

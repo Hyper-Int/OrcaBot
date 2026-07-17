@@ -531,11 +531,8 @@ export default {
           { status: 501 }
         ), origin, allowedOrigins);
       }
-      // A malformed request body throws a SyntaxError from request.json() — client
-      // error, return 400 not 500. Internal JSON.parse sites (DB metadata, upstream
-      // responses) are individually try/catch-guarded, so a SyntaxError reaching
-      // here is a body-parse failure in practice; still log it so a mislabeled
-      // internal parse error isn't silent.
+      // Malformed request body (SyntaxError from request.json()) is client error →
+      // 400, not 500. Logged so a stray internal parse error isn't silent.
       if (error instanceof SyntaxError) {
         console.warn('Request body parse error (400):', error.message);
         return cоrsRespоnse(Response.json(

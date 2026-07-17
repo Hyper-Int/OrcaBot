@@ -241,8 +241,7 @@ export class DashboardDO implements DurableObject {
       });
     }
 
-    // Purge durable state on dashboard delete + close lingering sockets. The DO
-    // can't be enumerated to sweep later, so its 'state' blob would leak forever.
+    // Purge durable state + sockets on dashboard delete (DOs can't be swept later).
     if (path === '/destroy' && request.method === 'POST') {
       try {
         for (const ws of this.state.getWebSockets()) {
