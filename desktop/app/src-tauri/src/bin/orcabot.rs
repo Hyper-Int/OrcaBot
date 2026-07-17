@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v23-safe-import-extract
+// REVISION: orcabot-cli-v24-import-stage-then-merge
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -57,7 +57,7 @@ const DEFAULT_CONTROLPLANE_PORT: u16 = 8787;
 const DEFAULT_SANDBOX_PORT: u16 = 8080;
 const DEFAULT_FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v23-safe-import-extract";
+const REVISION: &str = "orcabot-cli-v24-import-stage-then-merge";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -555,39 +555,100 @@ fn cmd_export(rest: &[String]) -> i32 {
     }
 }
 
-/// Safely extract a `.orcabot` bundle (tar.gz) IN-PROCESS and return the raw
-/// `manifest.json` bytes. Any `workspace/<rel>` members are written straight into
-/// the (already-canonicalized) shared workspace via the O_NOFOLLOW component walk
-/// in `safe_workspace_write` — no intermediate staging dir, no `cp -R`.
+/// A `Read` wrapper that bounds the TOTAL bytes read from `inner`, erroring once
+/// the ceiling is crossed. Wrapping the gzip DECODER with this caps total
+/// decompressed output across the WHOLE archive — including entry bodies `tar`
+/// must drain just to advance to the next header — so a crafted huge or
+/// unsupported member can't force unbounded decompression. (`Read::take` alone
+/// would signal a clean EOF at the limit, which `tar` could treat as a truncated
+/// but valid end; erroring makes the overflow unambiguous.)
+struct CappedReader<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R> CappedReader<R> {
+    fn new(inner: R, cap: u64) -> Self {
+        CappedReader { inner, remaining: cap }
+    }
+}
+
+impl<R: Read> Read for CappedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "bundle decompresses too large (zip-bomb guard)",
+            ));
+        }
+        let cap = std::cmp::min(buf.len() as u64, self.remaining) as usize;
+        let n = self.inner.read(&mut buf[..cap])?;
+        self.remaining -= n as u64;
+        Ok(n)
+    }
+}
+
+/// Removes a directory tree when dropped — guarantees the private import staging
+/// dir is cleaned up on EVERY exit path (success, validation failure, or early
+/// return) without hand-written cleanup at each `return`.
+struct DirGuard(PathBuf);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Safely extract a `.orcabot` bundle (tar.gz) into a PRIVATE staging directory
+/// and return `(manifest.json bytes, staged workspace-relative paths)`. NOTHING
+/// is written to the live shared workspace here — the caller validates the
+/// manifest, creates the dashboard, and only THEN merges the staged files into
+/// `/workspace` via the O_NOFOLLOW `safe_workspace_write`. So a missing/corrupt
+/// manifest, a truncated archive, or a control-plane failure leaves the live
+/// workspace untouched (no partial overwrite — the P1 the old in-place extractor
+/// had, which wrote workspace members before validating anything).
 ///
 /// This replaces the previous `tar -xzf … -C <stage>` shell-out, which handed a
 /// fully untrusted archive to system `tar` with ZERO validation. GNU tar honors
 /// `..` members (host-filesystem escape on Linux) and materializes symlink members
-/// (symlink-planting into the workspace on every platform). Here every entry is
-/// vetted before anything touches disk:
+/// (symlink-planting into the workspace on every platform). Every entry is vetted:
 ///   * `..` / absolute / non-plain path components -> skipped (traversal guard),
 ///   * symlink AND hardlink members -> never extracted (link-planting guard),
-///   * only regular files are written; via `safe_workspace_write`, so even a
-///     symlink raced into the shared `/workspace` mid-extract can't be followed,
-///   * a cumulative decompressed-size cap and an entry-count cap (zip-bomb guard).
-fn extract_bundle_safely(
+///   * only regular files + on-demand dirs are extracted (char/block/fifo ignored),
+///   * an entry-count cap plus a hardened zip-bomb defense (below).
+///
+/// Zip-bomb / memory hardening vs. the old per-file cap:
+///   1. The `GzDecoder` is wrapped in a global `CappedReader`, so total
+///      decompression across ALL entries — even skipped/unsupported ones whose
+///      bodies `tar` drains to reach the next header — is bounded and errors on
+///      overflow. (The old cap only counted regular-file bodies, so a huge
+///      unsupported entry decompressed uncounted.)
+///   2. File bodies are STREAMED to the staged path with `io::copy` instead of
+///      buffered into a `Vec`, so a single 4 GiB member can't exhaust memory.
+///      Only `manifest.json` is read into memory, under a small dedicated cap.
+fn extract_bundle_to_staging(
     bundle: &str,
-    ws_canon: &std::path::Path,
-) -> Result<Vec<u8>, String> {
+    stage_dir: &std::path::Path,
+) -> Result<(Vec<u8>, Vec<String>), String> {
     use std::path::Component;
 
     // Decompressed-size and entry-count ceilings. A legit session bundle is far
     // under these; they exist purely to bound a hostile/zip-bomb archive.
-    const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed
+    const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed, all entries
     const MAX_ENTRIES: usize = 200_000;
+    // manifest.json is the ONLY member we legitimately hold in memory.
+    const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
 
     let file = File::open(bundle).map_err(|e| format!("open bundle: {e}"))?;
     let gz = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(gz);
+    // Cap the DECODER itself. `+1` so a legit bundle sitting exactly at the
+    // ceiling reads its last byte without false-tripping the guard.
+    let capped = CappedReader::new(gz, MAX_TOTAL_BYTES + 1);
+    let mut archive = tar::Archive::new(capped);
     let entries = archive.entries().map_err(|e| format!("read archive: {e}"))?;
 
     let mut manifest: Option<Vec<u8>> = None;
-    let mut total_bytes: u64 = 0;
+    let mut staged: Vec<String> = Vec::new();
     let mut count: usize = 0;
 
     for entry in entries {
@@ -622,23 +683,11 @@ fn extract_bundle_safely(
         }
 
         if etype.is_dir() {
-            continue; // dirs are created on demand under a verified parent fd
+            continue; // dirs are created on demand at merge time
         }
         if !etype.is_file() {
             continue; // char/block/fifo/etc. are never extracted
         }
-
-        // Read the entry body with a running decompressed-size cap. `take(rem+1)`
-        // lets us detect an overflow (read > rem) without unbounded allocation.
-        let remaining = MAX_TOTAL_BYTES - total_bytes;
-        let mut data: Vec<u8> = Vec::new();
-        let read = std::io::Read::take(&mut entry, remaining + 1)
-            .read_to_end(&mut data)
-            .map_err(|e| format!("read entry data: {e}"))? as u64;
-        if read > remaining {
-            return Err("bundle decompresses too large (zip-bomb guard)".into());
-        }
-        total_bytes += read;
 
         // Route the entry by its top-level component.
         let comps: Vec<std::ffi::OsString> = path
@@ -650,7 +699,16 @@ fn extract_bundle_safely(
             .collect();
 
         if comps.len() == 1 && comps[0] == "manifest.json" {
-            manifest = Some(data);
+            // The one member we must hold in memory — under a small dedicated cap
+            // (`take(max+1)` detects overflow without unbounded allocation).
+            let mut buf: Vec<u8> = Vec::new();
+            let n = std::io::Read::take(&mut entry, MAX_MANIFEST_BYTES + 1)
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("read manifest: {e}"))? as u64;
+            if n > MAX_MANIFEST_BYTES {
+                return Err("manifest.json is implausibly large".into());
+            }
+            manifest = Some(buf);
             continue;
         }
 
@@ -664,24 +722,27 @@ fn extract_bundle_safely(
             if rel.is_empty() {
                 continue;
             }
-            // Cheap lexical/ancestor pre-filter; the authoritative guard is the
-            // per-component O_NOFOLLOW walk in safe_workspace_write (race-safe
-            // even against a symlink planted mid-extract by a workspace-sharing
-            // process — same discipline as `pull`).
-            if safe_workspace_dest(ws_canon, &rel).is_none() {
-                eprintln!("orcabot: skip unsafe workspace path: {rel}");
-                continue;
+            // Stream the body straight to the PRIVATE staging dir. `rel`'s
+            // components are all plain names (verified above), so `stage_dir.join`
+            // can't escape it; the dir is freshly created + private and we never
+            // write links into it, so a lexical join is safe for staging. The
+            // authoritative O_NOFOLLOW guard runs later, at merge, against the live
+            // workspace (race-safe even if a symlink is planted mid-merge).
+            let dest = stage_dir.join(&rel);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("stage {rel}: {e}"))?;
             }
-            if let Err(e) = safe_workspace_write(ws_canon, &rel, &data) {
-                eprintln!("orcabot: skip {rel}: {e}");
-            }
+            let mut out = File::create(&dest).map_err(|e| format!("stage {rel}: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("stage {rel}: {e}"))?;
+            staged.push(rel);
             continue;
         }
         // Unknown top-level entry — ignore (legit bundles only ship
         // manifest.json + workspace/).
     }
 
-    manifest.ok_or_else(|| "bundle has no manifest.json".to_string())
+    let manifest = manifest.ok_or_else(|| "bundle has no manifest.json".to_string())?;
+    Ok((manifest, staged))
 }
 
 fn cmd_import(rest: &[String]) -> i32 {
@@ -703,9 +764,43 @@ fn cmd_import(rest: &[String]) -> i32 {
         return 1;
     }
 
-    // Canonicalize the shared workspace root ONCE; the safe extractor writes any
-    // `workspace/` members directly into it (no intermediate `cp -R`), validated
-    // per-entry. See extract_bundle_safely for the security rationale.
+    // 1) STAGE — extract the whole bundle into a PRIVATE temp dir. Nothing touches
+    //    the live workspace yet, so any failure below leaves it untouched. The
+    //    guard removes the staging tree on every exit path (incl. early returns).
+    let stage = std::env::temp_dir().join(format!("orcabot-import-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&stage);
+    if let Err(e) = fs::create_dir_all(&stage) {
+        eprintln!("orcabot: cannot create staging dir: {e}");
+        return 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Private staging dir: only this user can traverse/read the staged files.
+        let _ = fs::set_permissions(&stage, fs::Permissions::from_mode(0o700));
+    }
+    let _stage_guard = DirGuard(stage.clone());
+
+    let (manifest_bytes, staged_files) = match extract_bundle_to_staging(bundle, &stage) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("orcabot: failed to extract bundle: {e}");
+            return 1;
+        }
+    };
+
+    // 2) VALIDATE — parse the manifest before creating anything. A corrupt/missing
+    //    manifest bails here with the live workspace still untouched.
+    let manifest: serde_json::Value = match serde_json::from_slice(&manifest_bytes) {
+        Ok(m) => m,
+        Err(_) => {
+            eprintln!("orcabot: bundle has no valid manifest.json");
+            return 1;
+        }
+    };
+
+    // Resolve the live workspace root up front (read-only; does not overwrite any
+    // files) so a broken workspace path fails before we create the dashboard.
     let ws = workspace_dir();
     let _ = fs::create_dir_all(&ws);
     let ws_canon = match ws.canonicalize() {
@@ -716,27 +811,13 @@ fn cmd_import(rest: &[String]) -> i32 {
         }
     };
 
-    let manifest_bytes = match extract_bundle_safely(bundle, &ws_canon) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("orcabot: failed to extract bundle: {e}");
-            return 1;
-        }
-    };
-    let manifest: serde_json::Value = match serde_json::from_slice(&manifest_bytes) {
-        Ok(m) => m,
-        Err(_) => {
-            eprintln!("orcabot: bundle has no valid manifest.json");
-            return 1;
-        }
-    };
-
     let name = name_override.unwrap_or_else(|| {
         format!(
             "{} (imported)",
             manifest.get("name").and_then(|x| x.as_str()).unwrap_or("dashboard")
         )
     });
+    // 3) CREATE — dashboard + items + edges.
     let nd = match cp_call("POST", "/dashboards", Some(serde_json::json!({ "name": name }))) {
         Ok(v) => v
             .get("dashboard")
@@ -789,11 +870,39 @@ fn cmd_import(rest: &[String]) -> i32 {
         }
     }
 
-    // Workspace files were already restored (merged into the shared workspace)
-    // by extract_bundle_safely above, so there is no `cp -R` here anymore.
+    // 4) MERGE — only now copy the staged workspace files into the live shared
+    //    workspace, each through the O_NOFOLLOW component walk in
+    //    `safe_workspace_write` (race-safe against a symlink planted mid-merge by a
+    //    workspace-sharing sandbox process — same discipline as `pull`). Reaching
+    //    here means the manifest validated and the dashboard was created, so a
+    //    partial overwrite of the live workspace is no longer possible from an
+    //    upstream failure.
+    let mut restored = 0usize;
+    for rel in &staged_files {
+        // Staged files were written by us and contain no symlinks, so a plain read
+        // is safe; the authoritative anti-symlink guard is on the WRITE side.
+        let data = match fs::read(stage.join(rel)) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("orcabot: skip {rel}: {e}");
+                continue;
+            }
+        };
+        if safe_workspace_dest(&ws_canon, rel).is_none() {
+            eprintln!("orcabot: skip unsafe workspace path: {rel}");
+            continue;
+        }
+        if let Err(e) = safe_workspace_write(&ws_canon, rel, &data) {
+            eprintln!("orcabot: skip {rel}: {e}");
+            continue;
+        }
+        restored += 1;
+    }
+
+    // 5) CLEANUP — `_stage_guard` removes the private staging dir as it drops here.
 
     println!(
-        "orcabot: imported '{name}' -> dashboard {} ({} components, {edge_n} edges, workspace restored)",
+        "orcabot: imported '{name}' -> dashboard {} ({} components, {edge_n} edges, {restored} workspace files restored)",
         nd,
         idmap.len()
     );
