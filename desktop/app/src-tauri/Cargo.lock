@@ -2566,6 +2566,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "signal-hook",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v22-dynamic-ports
+// REVISION: orcabot-cli-v23-safe-import-extract
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -57,7 +57,7 @@ const DEFAULT_CONTROLPLANE_PORT: u16 = 8787;
 const DEFAULT_SANDBOX_PORT: u16 = 8080;
 const DEFAULT_FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v22-dynamic-ports";
+const REVISION: &str = "orcabot-cli-v23-safe-import-extract";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -555,6 +555,135 @@ fn cmd_export(rest: &[String]) -> i32 {
     }
 }
 
+/// Safely extract a `.orcabot` bundle (tar.gz) IN-PROCESS and return the raw
+/// `manifest.json` bytes. Any `workspace/<rel>` members are written straight into
+/// the (already-canonicalized) shared workspace via the O_NOFOLLOW component walk
+/// in `safe_workspace_write` — no intermediate staging dir, no `cp -R`.
+///
+/// This replaces the previous `tar -xzf … -C <stage>` shell-out, which handed a
+/// fully untrusted archive to system `tar` with ZERO validation. GNU tar honors
+/// `..` members (host-filesystem escape on Linux) and materializes symlink members
+/// (symlink-planting into the workspace on every platform). Here every entry is
+/// vetted before anything touches disk:
+///   * `..` / absolute / non-plain path components -> skipped (traversal guard),
+///   * symlink AND hardlink members -> never extracted (link-planting guard),
+///   * only regular files are written; via `safe_workspace_write`, so even a
+///     symlink raced into the shared `/workspace` mid-extract can't be followed,
+///   * a cumulative decompressed-size cap and an entry-count cap (zip-bomb guard).
+fn extract_bundle_safely(
+    bundle: &str,
+    ws_canon: &std::path::Path,
+) -> Result<Vec<u8>, String> {
+    use std::path::Component;
+
+    // Decompressed-size and entry-count ceilings. A legit session bundle is far
+    // under these; they exist purely to bound a hostile/zip-bomb archive.
+    const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed
+    const MAX_ENTRIES: usize = 200_000;
+
+    let file = File::open(bundle).map_err(|e| format!("open bundle: {e}"))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(gz);
+    let entries = archive.entries().map_err(|e| format!("read archive: {e}"))?;
+
+    let mut manifest: Option<Vec<u8>> = None;
+    let mut total_bytes: u64 = 0;
+    let mut count: usize = 0;
+
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        count += 1;
+        if count > MAX_ENTRIES {
+            return Err("bundle has too many entries (zip-bomb guard)".into());
+        }
+
+        // Reject link members outright — this is the symlink/hardlink-planting
+        // vector. We never create a link, only regular files under the workspace.
+        let etype = entry.header().entry_type();
+        if etype.is_symlink() || etype.is_hard_link() {
+            let p = entry
+                .path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            eprintln!("orcabot: skip link entry (not extracted): {p}");
+            continue;
+        }
+
+        let path = entry
+            .path()
+            .map_err(|e| format!("entry path: {e}"))?
+            .into_owned();
+
+        // Lexical guard: every component must be a plain name (reject "..",
+        // absolute/root, drive prefixes). This is the `..`-traversal kill.
+        if path.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {
+            eprintln!("orcabot: skip unsafe entry path: {}", path.display());
+            continue;
+        }
+
+        if etype.is_dir() {
+            continue; // dirs are created on demand under a verified parent fd
+        }
+        if !etype.is_file() {
+            continue; // char/block/fifo/etc. are never extracted
+        }
+
+        // Read the entry body with a running decompressed-size cap. `take(rem+1)`
+        // lets us detect an overflow (read > rem) without unbounded allocation.
+        let remaining = MAX_TOTAL_BYTES - total_bytes;
+        let mut data: Vec<u8> = Vec::new();
+        let read = std::io::Read::take(&mut entry, remaining + 1)
+            .read_to_end(&mut data)
+            .map_err(|e| format!("read entry data: {e}"))? as u64;
+        if read > remaining {
+            return Err("bundle decompresses too large (zip-bomb guard)".into());
+        }
+        total_bytes += read;
+
+        // Route the entry by its top-level component.
+        let comps: Vec<std::ffi::OsString> = path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_os_string()),
+                _ => None,
+            })
+            .collect();
+
+        if comps.len() == 1 && comps[0] == "manifest.json" {
+            manifest = Some(data);
+            continue;
+        }
+
+        if comps.first().map(|s| s == "workspace").unwrap_or(false) {
+            // Strip the leading "workspace/" to get the workspace-relative path.
+            let rel = comps[1..]
+                .iter()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if rel.is_empty() {
+                continue;
+            }
+            // Cheap lexical/ancestor pre-filter; the authoritative guard is the
+            // per-component O_NOFOLLOW walk in safe_workspace_write (race-safe
+            // even against a symlink planted mid-extract by a workspace-sharing
+            // process — same discipline as `pull`).
+            if safe_workspace_dest(ws_canon, &rel).is_none() {
+                eprintln!("orcabot: skip unsafe workspace path: {rel}");
+                continue;
+            }
+            if let Err(e) = safe_workspace_write(ws_canon, &rel, &data) {
+                eprintln!("orcabot: skip {rel}: {e}");
+            }
+            continue;
+        }
+        // Unknown top-level entry — ignore (legit bundles only ship
+        // manifest.json + workspace/).
+    }
+
+    manifest.ok_or_else(|| "bundle has no manifest.json".to_string())
+}
+
 fn cmd_import(rest: &[String]) -> i32 {
     if !controlplane_healthy() {
         eprintln!("orcabot: run `orcabot up` first");
@@ -574,25 +703,30 @@ fn cmd_import(rest: &[String]) -> i32 {
         return 1;
     }
 
-    let stage = std::env::temp_dir().join(format!("orcabot-import-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&stage);
-    let _ = fs::create_dir_all(&stage);
-    let untar = Command::new("tar")
-        .args(["-xzf", bundle, "-C", &stage.to_string_lossy()])
-        .status();
-    if !matches!(untar, Ok(s) if s.success()) {
-        eprintln!("orcabot: failed to extract bundle");
-        let _ = fs::remove_dir_all(&stage);
-        return 1;
-    }
-    let manifest: serde_json::Value = match fs::read_to_string(stage.join("manifest.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-    {
-        Some(m) => m,
-        None => {
+    // Canonicalize the shared workspace root ONCE; the safe extractor writes any
+    // `workspace/` members directly into it (no intermediate `cp -R`), validated
+    // per-entry. See extract_bundle_safely for the security rationale.
+    let ws = workspace_dir();
+    let _ = fs::create_dir_all(&ws);
+    let ws_canon = match ws.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("orcabot: cannot resolve workspace {}: {e}", ws.display());
+            return 1;
+        }
+    };
+
+    let manifest_bytes = match extract_bundle_safely(bundle, &ws_canon) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("orcabot: failed to extract bundle: {e}");
+            return 1;
+        }
+    };
+    let manifest: serde_json::Value = match serde_json::from_slice(&manifest_bytes) {
+        Ok(m) => m,
+        Err(_) => {
             eprintln!("orcabot: bundle has no valid manifest.json");
-            let _ = fs::remove_dir_all(&stage);
             return 1;
         }
     };
@@ -612,7 +746,6 @@ fn cmd_import(rest: &[String]) -> i32 {
             .to_string(),
         Err(e) => {
             eprintln!("orcabot: create dashboard: {e}");
-            let _ = fs::remove_dir_all(&stage);
             return 1;
         }
     };
@@ -656,17 +789,8 @@ fn cmd_import(rest: &[String]) -> i32 {
         }
     }
 
-    // Restore workspace files (merge into the shared workspace).
-    let src_ws = stage.join("workspace");
-    if src_ws.exists() {
-        let dest = workspace_dir();
-        let _ = fs::create_dir_all(&dest);
-        // cp -R <src>/. <dest>/   (merge, preserve)
-        let _ = Command::new("cp")
-            .args(["-R", &format!("{}/.", src_ws.to_string_lossy()), &dest.to_string_lossy()])
-            .status();
-    }
-    let _ = fs::remove_dir_all(&stage);
+    // Workspace files were already restored (merged into the shared workspace)
+    // by extract_bundle_safely above, so there is no `cp -R` here anymore.
 
     println!(
         "orcabot: imported '{name}' -> dashboard {} ({} components, {edge_n} edges, workspace restored)",

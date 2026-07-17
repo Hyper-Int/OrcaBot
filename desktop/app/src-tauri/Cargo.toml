@@ -28,6 +28,11 @@ serde_json = "1"
 walkdir = "2"
 libc = "0.2"
 flate2 = "1"
+# In-process tar extraction for `orcabot import` (.orcabot bundles). Used instead
+# of shelling out to system `tar`, which does ZERO path validation and lets GNU
+# tar honor `..` members + materialize symlinks (host escape / symlink planting).
+# Lightweight, pure-Rust; its main transitive dep (`filetime`) is already declared.
+tar = "0.4"
 # Verify the on-demand VM image download against a hash baked into the binary.
 sha2 = "0.10"
 filetime = "0.2"
