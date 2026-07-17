@@ -1254,10 +1254,14 @@ async function processSubscriptionMessage(
       );
     }
 
+    // Clear the timeout when the resolves win the race, so we don't leave a
+    // dangling 1.5s timer holding its closure alive. (Bug-hunt round 2.)
+    let resolveTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       Promise.allSettled(resolvePromises),
-      new Promise<void>(resolve => setTimeout(resolve, RESOLVE_TIMEOUT_MS)),
+      new Promise<void>(resolve => { resolveTimer = setTimeout(resolve, RESOLVE_TIMEOUT_MS); }),
     ]);
+    if (resolveTimer !== undefined) clearTimeout(resolveTimer);
   }
 
   // Enforce subscription channel scoping (Telegram uses chatId, Slack/Discord use channelId).
@@ -1891,12 +1895,23 @@ export async function createSubscription(
     }
   }
 
-  await env.DB.prepare(`
+  // The Telegram "one active sub per user" guard above is check-then-act; two
+  // concurrent creates both pass it. Make the insert atomic: skip it when a
+  // telegram sub already exists for this user. The `? = 'telegram'` term (the
+  // current provider) neutralises the guard for every other provider, so this is
+  // a no-op for them. meta.changes==0 on a telegram insert means a race was
+  // blocked. (Bug-hunt round 2.)
+  const subInsert = await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider,
       channel_id, channel_name, chat_id, team_id,
       webhook_id, webhook_secret, status, user_integration_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM messaging_subscriptions
+      WHERE user_id = ? AND provider = 'telegram' AND status IN ('pending', 'active') AND ? = 'telegram'
+    )
   `).bind(
     id, dashboardId, itemId, userId, provider,
     data.channelId || null,
@@ -1906,7 +1921,15 @@ export async function createSubscription(
     webhookId,
     webhookSecret,
     resolvedIntegrationId,
+    userId, provider,
   ).run();
+
+  if (!subInsert.meta.changes && provider === 'telegram') {
+    throw new Error(
+      `Only one active Telegram subscription per bot is allowed. ` +
+      `Delete the existing one first to create a new one.`
+    );
+  }
 
   // For Discord: register /orcabot slash command as a guild command (instant availability).
   // Resolve guild_id from the integration metadata or by looking up the channel.

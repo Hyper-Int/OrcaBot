@@ -245,9 +245,18 @@ export async function addMember(
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-  await env.DB.prepare(`
+  // The pending-invitation check above is check-then-act; two concurrent invites
+  // for the same email both pass it and insert duplicate rows (no unique index
+  // backs it). Make the insert atomic — INSERT only if no pending invite exists.
+  // SQLite/D1 serializes writes, so exactly one of a racing pair inserts; the
+  // other's WHERE NOT EXISTS fails and meta.changes is 0. (Bug-hunt round 2.)
+  const inserted = await env.DB.prepare(`
     INSERT INTO dashboard_invitations (id, dashboard_id, email, role, invited_by, token, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM dashboard_invitations
+      WHERE dashboard_id = ? AND LOWER(email) = LOWER(?) AND accepted_at IS NULL
+    )
   `).bind(
     invitationId,
     dashboardId,
@@ -256,8 +265,14 @@ export async function addMember(
     userId,
     token,
     now.toISOString(),
-    expiresAt.toISOString()
+    expiresAt.toISOString(),
+    dashboardId,
+    email
   ).run();
+
+  if (!inserted.meta.changes) {
+    return Response.json({ error: 'E79066: An invitation has already been sent to this email' }, { status: 400 });
+  }
 
   // Send invitation email
   const acceptUrl = `${getFrontendUrl(env)}/login?invite=${token}`;

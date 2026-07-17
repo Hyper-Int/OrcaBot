@@ -241,6 +241,25 @@ export class DashboardDO implements DurableObject {
       });
     }
 
+    // Purge all durable state when the dashboard is deleted. Without this the DO
+    // keeps its persisted 'state' blob forever (DOs can't be enumerated, so no
+    // sweep can reclaim it) and any still-connected collaborators keep a live
+    // socket to a DO whose D1 backing is gone. (Bug-hunt round 2.)
+    if (path === '/destroy' && request.method === 'POST') {
+      try {
+        for (const ws of this.state.getWebSockets()) {
+          try { ws.close(1001, 'dashboard deleted'); } catch { /* already closing */ }
+        }
+      } catch { /* no sockets */ }
+      this.dashboard = null;
+      this.items.clear();
+      this.terminalSessions.clear();
+      this.edges.clear();
+      this.presence.clear();
+      await this.state.storage.deleteAll();
+      return Response.json({ success: true });
+    }
+
     if (path === '/item' && request.method === 'PUT') {
       const item = await request.json() as DashboardItem;
       this.items.set(item.id, item);

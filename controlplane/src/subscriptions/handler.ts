@@ -115,9 +115,12 @@ export async function createCheckoutSession(
     }
   }
 
-  // Create Stripe customer if needed (or if previous one was stale)
+  // Create Stripe customer if needed (or if previous one was stale). Key the
+  // create by userId so two concurrent checkouts (double-click / two tabs) that
+  // both saw a null customer id can't create two Stripe customers — Stripe
+  // returns the same customer for the shared idempotency key. (Bug-hunt round 2.)
   if (!stripeCustomerId) {
-    const customer = await stripe.createCustomer(env.STRIPE_SECRET_KEY, email, email);
+    const customer = await stripe.createCustomer(env.STRIPE_SECRET_KEY, email, email, `customer-create-${userId}`);
     stripeCustomerId = customer.id;
 
     // Insert/update subscription row with new customer ID

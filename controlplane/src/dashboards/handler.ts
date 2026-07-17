@@ -365,6 +365,18 @@ export async function deleteDashbоard(
     }
   }
 
+  // Purge the DashboardDO's persisted state + close any lingering collaborator
+  // sockets. The DO holds a full item/edge/session snapshot under its 'state' key
+  // that D1 deletion doesn't touch, and DOs can't be enumerated to sweep later, so
+  // it would leak forever with dashboard churn. Best-effort. (Bug-hunt round 2.)
+  try {
+    const doId = env.DASHBOARD.idFromName(dashboardId);
+    const stub = env.DASHBOARD.get(doId);
+    await stub.fetch(new Request('http://do/destroy', { method: 'POST' }));
+  } catch (e) {
+    console.error(`[deleteDashboard] DashboardDO purge failed for ${dashboardId}: ${e}`);
+  }
+
   // Delete the dashboard (cascades to: dashboard_members, dashboard_invitations,
   // dashboard_items, dashboard_edges, sessions, dashboard_sandboxes, drive_mirrors,
   // github_mirrors, gmail_mirrors, calendar_mirrors, contacts_mirrors, sheets_mirrors,

@@ -119,6 +119,12 @@ export async function handleApproveEgress(
   }
 
   // If "always allow", persist to the allowlist only after sandbox accepted.
+  // Bug-hunt round 2: a concurrent allow_always + deny_always (two collaborators
+  // resolving the same toast) could leave the domain active in BOTH lists; later
+  // lifting the deny then silently re-allowed it. Guard the insert with NOT EXISTS
+  // an active blocklist row (deny precedence at write time). Because SQLite/D1
+  // serializes writes, this + the atomic deny batch below make the two mutually
+  // exclusive: whichever commits first excludes the other.
   if (body.decision === 'allow_always') {
     const entryId = generateId();
     await env.DB.prepare(`
@@ -128,26 +134,37 @@ export async function handleApproveEgress(
         SELECT 1 FROM egress_allowlist
         WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
       )
-    `).bind(entryId, dashboardId, normalizedDomain, userId, dashboardId, normalizedDomain).run();
-  }
-
-  // If "deny always", persist to the blocklist and revoke any conflicting allowlist
-  // entry for the same domain so the deny is unambiguous (deny wins).
-  if (body.decision === 'deny_always') {
-    await env.DB.prepare(`
-      UPDATE egress_allowlist SET revoked_at = datetime('now')
-      WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
-    `).bind(dashboardId, normalizedDomain).run();
-
-    const entryId = generateId();
-    await env.DB.prepare(`
-      INSERT INTO egress_blocklist (id, dashboard_id, domain, created_by, created_at)
-      SELECT ?, ?, ?, ?, datetime('now')
-      WHERE NOT EXISTS (
+      AND NOT EXISTS (
         SELECT 1 FROM egress_blocklist
         WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
       )
-    `).bind(entryId, dashboardId, normalizedDomain, userId, dashboardId, normalizedDomain).run();
+    `).bind(
+      entryId, dashboardId, normalizedDomain, userId,
+      dashboardId, normalizedDomain,
+      dashboardId, normalizedDomain,
+    ).run();
+  }
+
+  // If "deny always", persist to the blocklist and revoke any conflicting allowlist
+  // entry for the same domain so the deny is unambiguous (deny wins). Run the
+  // revoke-allow + insert-block as one atomic batch so a racing allow_always can
+  // never observe a half-applied deny.
+  if (body.decision === 'deny_always') {
+    const entryId = generateId();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE egress_allowlist SET revoked_at = datetime('now')
+        WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
+      `).bind(dashboardId, normalizedDomain),
+      env.DB.prepare(`
+        INSERT INTO egress_blocklist (id, dashboard_id, domain, created_by, created_at)
+        SELECT ?, ?, ?, ?, datetime('now')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM egress_blocklist
+          WHERE dashboard_id = ? AND domain = ? AND revoked_at IS NULL
+        )
+      `).bind(entryId, dashboardId, normalizedDomain, userId, dashboardId, normalizedDomain),
+    ]);
   }
 
   // Log the decision after successful sandbox forward.
@@ -582,7 +599,9 @@ export async function handleListEgressAudit(
   dashboardId: string,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 200);
+  // parseInt('abc') → NaN, which binds non-finite into D1 → 500. Guard it.
+  const parsedLimit = parseInt(url.searchParams.get('limit') || '50', 10);
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 200) : 50;
 
   const entries = await env.DB.prepare(`
     SELECT id, domain, port, decision, decided_by, created_at
