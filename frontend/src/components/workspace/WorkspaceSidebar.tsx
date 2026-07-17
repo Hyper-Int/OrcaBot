@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v25-hide-lost-found
-const MODULE_REVISION = "workspace-sidebar-v25-hide-lost-found";
+// REVISION: workspace-sidebar-v26-desktop-oauth-picker
+const MODULE_REVISION = "workspace-sidebar-v26-desktop-oauth-picker";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -612,6 +612,11 @@ export function WorkspaceSidebar({
   }, []);
 
   // ── Integration connect handlers ────────────────────────────────
+  // Holds the cancel fn of the in-flight desktop OAuth poll so we can stop it on
+  // unmount / when a new connect starts (otherwise the interval + focus listeners
+  // linger for the full timeout).
+  const openPopupCancelRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => { openPopupCancelRef.current?.(); }, []);
   // On desktop (Tauri webview) window.open is a no-op, so open the OS browser via
   // connectViaBrowser (opener plugin) and poll the provider status until connected —
   // this is why the sidebar's Connect buttons did nothing on desktop. On web, keep
@@ -625,8 +630,12 @@ export function WorkspaceSidebar({
     if (DESKTOP_MODE) {
       const connectUrl = new URL(`${API.cloudflare.base}${path}`);
       if (dashboardId) connectUrl.searchParams.set("dashboard_id", dashboardId);
-      // connectViaBrowser injects user identity + surface token itself.
-      connectViaBrowser({
+      // connectViaBrowser injects user identity + surface token itself, and returns
+      // a cancel fn. Cancel any prior in-flight poll (repeated clicks) and keep the
+      // handle so the unmount effect can stop the interval + focus listeners — else
+      // they'd keep polling for the full 5-minute timeout.
+      openPopupCancelRef.current?.();
+      openPopupCancelRef.current = connectViaBrowser({
         url: connectUrl.toString(),
         checkConnected: opts?.checkConnected ?? (async () => false),
         onConnected: opts?.onConnected ?? (() => {}),
@@ -647,9 +656,12 @@ export function WorkspaceSidebar({
     window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
   }, [dashboardId, user]);
 
+  // onConnected fires only on the desktop (connectViaBrowser) path — the web popup
+  // path drives completion via postMessage instead. Mirror the web handler so
+  // desktop also advances into the picker rather than making the user click again.
   const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth", {
     checkConnected: async () => Boolean((await getGoogleDriveIntegration(dashboardId))?.connected),
-    onConnected: () => void loadDriveIntegration(),
+    onConnected: () => { void loadDriveIntegration(); setDrivePickerOpen(true); },
   }), [openPopup, dashboardId, loadDriveIntegration]);
   const handleGithubConnect = React.useCallback(() => {
     // Desktop is a public OAuth client → GitHub uses the DEVICE flow (no secret),
@@ -670,8 +682,8 @@ export function WorkspaceSidebar({
   }), [openPopup, dashboardId, loadBoxIntegration]);
   const handleOnedriveConnect = React.useCallback(() => openPopup("/integrations/onedrive/connect", "orcabot-onedrive-auth", {
     checkConnected: async () => Boolean((await getOnedriveIntegration(dashboardId))?.connected),
-    onConnected: () => void loadOnedriveIntegration(),
-  }), [openPopup, dashboardId, loadOnedriveIntegration]);
+    onConnected: () => { void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); },
+  }), [openPopup, dashboardId, loadOnedriveIntegration, loadOnedriveFolders]);
 
   // ── Integration unlink/disconnect handlers ──────────────────────
   const handleUnlinkDrive = React.useCallback(async () => {
@@ -1612,7 +1624,7 @@ export function WorkspaceSidebar({
         open={githubDeviceOpen}
         onOpenChange={setGithubDeviceOpen}
         dashboardId={dashboardId}
-        onConnected={() => void loadGithubIntegration()}
+        onConnected={() => { void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); }}
       />
       <Dialog open={githubPickerOpen} onOpenChange={setGithubPickerOpen}>
         <DialogContent className="max-w-xl h-[540px] p-0">

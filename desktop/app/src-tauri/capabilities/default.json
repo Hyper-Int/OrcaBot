@@ -21,7 +21,6 @@
     "allow-switch-to-cli",
     "allow-quit-app",
     "allow-get-surface-token",
-    "allow-open-url",
     "allow-reveal-workspace",
     "allow-get-ports",
     "allow-get-app-version",

@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-block-v15-hide-lost-found
-const MODULE_REVISION = "workspace-block-v15-hide-lost-found";
+// REVISION: workspace-block-v16-desktop-oauth-picker
+const MODULE_REVISION = "workspace-block-v16-desktop-oauth-picker";
 console.log(`[WorkspaceBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 console.log(`[WorkspaceBlock] DEV_MODE_ENABLED=${DEV_MODE_ENABLED} loaded at ${new Date().toISOString()}`);
 
