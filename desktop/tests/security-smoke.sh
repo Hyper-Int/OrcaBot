@@ -17,7 +17,7 @@
 # Usage:  desktop/tests/security-smoke.sh
 set -uo pipefail
 
-CP="http://127.0.0.1:8787"
+CP="${CP:-http://127.0.0.1:8787}"
 ENDPOINT="/dashboards"   # user-scoped; requires auth
 TOKEN_FILE="${ORCABOT_SURFACE_TOKEN_FILE:-$HOME/Library/Application Support/com.orcabot.desktop/surface-token}"
 DEV=(-H "X-User-ID: dev-desktop" -H "X-User-Email: desktop@localhost" -H "X-User-Name: Desktop User")

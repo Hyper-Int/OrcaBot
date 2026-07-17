@@ -25,8 +25,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORCABOT="$SCRIPT_DIR/../app/src-tauri/target/release/orcabot"
-CP="http://127.0.0.1:8787"
-SB="http://127.0.0.1:8080"
+CP="${CP:-http://127.0.0.1:8787}"
+SB="${SB:-http://127.0.0.1:8080}"
 U="X-User-ID: dev-desktop"
 VZ_LOG="/tmp/vz-console.log"
 
@@ -118,11 +118,18 @@ c="$(code -X POST "${AUTH[@]}" -H 'Content-Type: application/json' --data-raw '{
 { [ "$c" -ge 400 ] && [ "$c" -lt 500 ]; } && ok "unknown provider -> $c (4xx)" || bad "unknown provider -> $c (want 4xx)"
 
 # ---- #6 ghost session reconcile -------------------------------------------
-echo "[#6] PTY death reconciles session to stopped"
+# The ws-proxy reconcile has a deliberate 30s grace period after session
+# creation (index.ts: "within grace period, not marking stopped") so a PTY 404
+# during provisioning doesn't kill the frontend's retry loop. So we must let the
+# session age past that window before killing, or the reconcile is (correctly)
+# suppressed and the session stays 'active'.
+RECONCILE_GRACE="${RECONCILE_GRACE:-33}"
+echo "[#6] PTY death reconciles session to stopped (after ${RECONCILE_GRACE}s grace)"
 before="$(X 'pgrep bash | sort | tr "\n" ","')"
 ITEM6="$(new_term)"; sleep 3
 after="$(X 'pgrep bash | sort | tr "\n" ","')"
 PID6="$(python3 -c "b=set('$before'.split(','))-{''};a=set('$after'.split(','))-{''};print(next(iter(a-b),''))")"
+sleep "$RECONCILE_GRACE"   # clear the 30s reconcile grace period
 X "kill -9 $PID6 2>/dev/null; echo ." >/dev/null; sleep 1
 st_before="$(sess_field "$ITEM6" status)"
 timeout 8 "$ORCABOT" tail "$ITEM6" --dash "$DID" --secs 2 >/dev/null 2>&1   # 404 -> reconcile

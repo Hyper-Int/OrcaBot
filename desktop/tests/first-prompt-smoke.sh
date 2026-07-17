@@ -24,7 +24,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORCABOT="${ORCABOT_BIN:-$SCRIPT_DIR/../app/src-tauri/target/release/orcabot}"
-CP="http://127.0.0.1:8787"
+CP="${CP:-http://127.0.0.1:8787}"
 U="X-User-ID: dev-desktop"
 ITER="${1:-15}"
 TAIL_SECS="${FIRST_PROMPT_TAIL_SECS:-3}"
