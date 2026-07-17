@@ -11,6 +11,7 @@
 
 import type { Env } from '../types';
 import { scrubItemContent, type DashboardItemType } from './scrubber';
+import starterTemplates from './starter-templates.json';
 
 /**
  * Ensure the status and viewport_json columns exist on dashboard_templates.
@@ -59,86 +60,9 @@ export interface TemplateEdge {
   targetHandle?: string;
 }
 
-// Curated starter templates for a fresh desktop DB (the cloud has real
-// user-submitted templates; desktop starts empty, so the picker showed only
-// blank-dashboard placeholders). Note content is plain text; terminal content is
-// the stringified terminal config the frontend uses.
-const STARTER_TEMPLATES: Array<{
-  id: string;
-  name: string;
-  description: string;
-  category: 'coding' | 'automation' | 'documentation';
-  items: TemplateItem[];
-}> = [
-  {
-    id: 'starter-agentic-coding',
-    name: 'Agentic Coding',
-    description: 'A Claude Code terminal, ready to build.',
-    category: 'coding',
-    items: [
-      {
-        placeholderId: 'note',
-        type: 'note' as DashboardItemType,
-        content:
-          '👋 Welcome to Orcabot\n\nThe terminal runs Claude Code — type what you want built and it writes the code for you.\n\nTip: add a GitHub or Google Drive block from the ＋ menu and draw an edge to the terminal to give the agent your files.',
-        position: { x: 48, y: 48 },
-        size: { width: 320, height: 220 },
-      },
-      {
-        placeholderId: 'claude',
-        type: 'terminal' as DashboardItemType,
-        content: JSON.stringify({ name: 'Claude Code', subagentIds: [], skillIds: [], agentic: true, bootCommand: 'claude' }),
-        position: { x: 420, y: 48 },
-        size: { width: 560, height: 440 },
-      },
-    ],
-  },
-  {
-    id: 'starter-automation',
-    name: 'Automation',
-    description: 'A shell terminal to wire into schedules and messaging.',
-    category: 'automation',
-    items: [
-      {
-        placeholderId: 'note',
-        type: 'note' as DashboardItemType,
-        content:
-          '⚙️ Automation starter\n\nThis is a plain shell terminal. Add a Schedule block from the ＋ menu and connect it to run commands on a timer, or wire a messaging block to trigger the terminal on an incoming message.',
-        position: { x: 48, y: 48 },
-        size: { width: 320, height: 220 },
-      },
-      {
-        placeholderId: 'shell',
-        type: 'terminal' as DashboardItemType,
-        content: JSON.stringify({ name: 'Shell', subagentIds: [], skillIds: [], agentic: false, bootCommand: '' }),
-        position: { x: 420, y: 48 },
-        size: { width: 560, height: 440 },
-      },
-    ],
-  },
-  {
-    id: 'starter-documentation',
-    name: 'Documentation',
-    description: 'Notes and a todo list to plan your work.',
-    category: 'documentation',
-    items: [
-      {
-        placeholderId: 'title',
-        type: 'note' as DashboardItemType,
-        content: '📝 Project Notes\n\nJot ideas, links, and context here. Double-click to edit.',
-        position: { x: 48, y: 48 },
-        size: { width: 320, height: 180 },
-      },
-      {
-        placeholderId: 'todo',
-        type: 'todo' as DashboardItemType,
-        content: '[]',
-        position: { x: 420, y: 48 },
-        size: { width: 300, height: 260 },
-      },
-    ],
-  },
-];
+// Starter templates seeded into a fresh desktop DB — verbatim copies of the
+// curated prod templates (the cloud has real user-submitted templates; desktop
+// starts empty). Block/edge/viewport data lives in starter-templates.json.
 
 /**
  * Seed the curated starter templates into a fresh desktop DB. Desktop only
@@ -149,23 +73,31 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
   if (!env.SURFACE_TOKEN) return;
   await ensureTemplateColumns(env);
 
-  const marker = 'seed_desktop_starter_templates_v1';
+  const marker = 'seed_desktop_starter_templates_v2';
   const already = await env.DB.prepare(
     `SELECT 1 FROM schema_migrations WHERE name = ?`
   ).bind(marker).first();
   if (already) return;
 
+  // Drop the earlier hand-made starters, superseded by these prod copies.
+  await env.DB.prepare(
+    `DELETE FROM dashboard_templates WHERE id IN
+     ('starter-agentic-coding', 'starter-automation', 'starter-documentation')`
+  ).run();
+
   const now = new Date().toISOString();
-  for (const t of STARTER_TEMPLATES) {
+  for (const t of starterTemplates) {
     await env.DB.prepare(
       `INSERT INTO dashboard_templates
        (id, name, description, category, author_id, author_name,
-        items_json, edges_json, item_count, is_featured, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, '[]', ?, 1, 'approved', ?, ?)
+        items_json, edges_json, viewport_json, item_count, is_featured, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, ?, ?, ?, 1, 'approved', ?, ?)
        ON CONFLICT(id) DO NOTHING`
     ).bind(
       t.id, t.name, t.description, t.category,
-      JSON.stringify(t.items), t.items.length, now, now
+      JSON.stringify(t.items), JSON.stringify(t.edges),
+      t.viewport ? JSON.stringify(t.viewport) : null,
+      t.itemCount, now, now
     ).run();
   }
   await env.DB.prepare(
