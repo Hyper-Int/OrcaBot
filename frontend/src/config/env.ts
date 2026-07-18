@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v9-prod-api-host
-const MODULE_REVISION = "desktop-env-v9-prod-api-host";
+// REVISION: desktop-env-v10-tauri-internals-detect
+const MODULE_REVISION = "desktop-env-v10-tauri-internals-detect";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -133,8 +133,21 @@ function getDesktopMode(): boolean {
   if (typeof window === "undefined") {
     return envDesktop;
   }
-  const tauriWindow = window as unknown as { __TAURI__?: unknown; __TAURI_IPC__?: unknown };
-  const isTauri = Boolean(tauriWindow.__TAURI__ || tauriWindow.__TAURI_IPC__);
+  const tauriWindow = window as unknown as {
+    __TAURI__?: unknown;
+    __TAURI_IPC__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  // __TAURI_INTERNALS__ is the global Tauri v2 ALWAYS injects (it's the IPC
+  // mechanism) — even in a remote-origin webview where withGlobalTauri's __TAURI__
+  // may be absent. Checking only __TAURI__ / __TAURI_IPC__ (the latter is v1, gone
+  // in v2) made isTauri false in the packaged app, so DESKTOP_MODE fell back to a
+  // cookie/localStorage flag — which the webview cache-clear wiped, flipping
+  // DESKTOP_MODE to false (Box shown, connect buttons no-op'd via window.open,
+  // dev-auth/Calendar breaking). Detect via the always-present internals global.
+  const isTauri = Boolean(
+    tauriWindow.__TAURI__ || tauriWindow.__TAURI_IPC__ || tauriWindow.__TAURI_INTERNALS__,
+  );
   const hostname = window.location.hostname;
   const isLocalhost =
     hostname === "localhost" ||

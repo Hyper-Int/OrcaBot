@@ -1,4 +1,4 @@
-// REVISION: orcabot-cli-v22-dynamic-ports
+// REVISION: orcabot-cli-v24-import-stage-then-merge
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
 //
@@ -57,7 +57,7 @@ const DEFAULT_CONTROLPLANE_PORT: u16 = 8787;
 const DEFAULT_SANDBOX_PORT: u16 = 8080;
 const DEFAULT_FRONTEND_PORT: u16 = 8788;
 const VZ_CONSOLE_LOG: &str = "/tmp/vz-console.log";
-const REVISION: &str = "orcabot-cli-v22-dynamic-ports";
+const REVISION: &str = "orcabot-cli-v24-import-stage-then-merge";
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
@@ -555,6 +555,167 @@ fn cmd_export(rest: &[String]) -> i32 {
     }
 }
 
+/// `Read` wrapper that errors once total bytes read cross `cap`. Wrapping the gzip
+/// decoder bounds total decompression across the whole archive (skipped entries
+/// included). Errors rather than EOF-ing so tar can't read it as a clean truncation.
+struct CappedReader<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R> CappedReader<R> {
+    fn new(inner: R, cap: u64) -> Self {
+        CappedReader { inner, remaining: cap }
+    }
+}
+
+impl<R: Read> Read for CappedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "bundle decompresses too large (zip-bomb guard)",
+            ));
+        }
+        let cap = std::cmp::min(buf.len() as u64, self.remaining) as usize;
+        let n = self.inner.read(&mut buf[..cap])?;
+        self.remaining -= n as u64;
+        Ok(n)
+    }
+}
+
+/// Removes a directory tree when dropped (cleans up the staging dir on every exit path).
+struct DirGuard(PathBuf);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Extract a `.orcabot` bundle (tar.gz) into a private staging dir, returning
+/// `(manifest.json bytes, staged workspace-relative paths)`. Nothing is written to
+/// the live workspace here — the caller validates and merges later, so a bad bundle
+/// leaves it untouched. Each entry is vetted: skip `..`/absolute paths and
+/// symlink/hardlink members; extract regular files + on-demand dirs only. Zip-bomb
+/// guard: the gzip decoder is wrapped in `CappedReader` (bounds total decompression)
+/// and file bodies stream to disk; only `manifest.json` is buffered, under its own cap.
+fn extract_bundle_to_staging(
+    bundle: &str,
+    stage_dir: &std::path::Path,
+) -> Result<(Vec<u8>, Vec<String>), String> {
+    use std::path::Component;
+
+    // Decompressed-size and entry-count ceilings. A legit session bundle is far
+    // under these; they exist purely to bound a hostile/zip-bomb archive.
+    const MAX_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB decompressed, all entries
+    const MAX_ENTRIES: usize = 200_000;
+    // manifest.json is the ONLY member we legitimately hold in memory.
+    const MAX_MANIFEST_BYTES: u64 = 8 * 1024 * 1024;
+
+    let file = File::open(bundle).map_err(|e| format!("open bundle: {e}"))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    // Cap the DECODER itself. `+1` so a legit bundle sitting exactly at the
+    // ceiling reads its last byte without false-tripping the guard.
+    let capped = CappedReader::new(gz, MAX_TOTAL_BYTES + 1);
+    let mut archive = tar::Archive::new(capped);
+    let entries = archive.entries().map_err(|e| format!("read archive: {e}"))?;
+
+    let mut manifest: Option<Vec<u8>> = None;
+    let mut staged: Vec<String> = Vec::new();
+    let mut count: usize = 0;
+
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("read entry: {e}"))?;
+        count += 1;
+        if count > MAX_ENTRIES {
+            return Err("bundle has too many entries (zip-bomb guard)".into());
+        }
+
+        // Reject link members outright — this is the symlink/hardlink-planting
+        // vector. We never create a link, only regular files under the workspace.
+        let etype = entry.header().entry_type();
+        if etype.is_symlink() || etype.is_hard_link() {
+            let p = entry
+                .path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            eprintln!("orcabot: skip link entry (not extracted): {p}");
+            continue;
+        }
+
+        let path = entry
+            .path()
+            .map_err(|e| format!("entry path: {e}"))?
+            .into_owned();
+
+        // Lexical guard: every component must be a plain name (reject "..",
+        // absolute/root, drive prefixes). This is the `..`-traversal kill.
+        if path.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {
+            eprintln!("orcabot: skip unsafe entry path: {}", path.display());
+            continue;
+        }
+
+        if etype.is_dir() {
+            continue; // dirs are created on demand at merge time
+        }
+        if !etype.is_file() {
+            continue; // char/block/fifo/etc. are never extracted
+        }
+
+        // Route the entry by its top-level component.
+        let comps: Vec<std::ffi::OsString> = path
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_os_string()),
+                _ => None,
+            })
+            .collect();
+
+        if comps.len() == 1 && comps[0] == "manifest.json" {
+            // The one member we must hold in memory — under a small dedicated cap
+            // (`take(max+1)` detects overflow without unbounded allocation).
+            let mut buf: Vec<u8> = Vec::new();
+            let n = std::io::Read::take(&mut entry, MAX_MANIFEST_BYTES + 1)
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("read manifest: {e}"))? as u64;
+            if n > MAX_MANIFEST_BYTES {
+                return Err("manifest.json is implausibly large".into());
+            }
+            manifest = Some(buf);
+            continue;
+        }
+
+        if comps.first().map(|s| s == "workspace").unwrap_or(false) {
+            // Strip the leading "workspace/" to get the workspace-relative path.
+            let rel = comps[1..]
+                .iter()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            if rel.is_empty() {
+                continue;
+            }
+            // Stream to the private staging dir. Components are all plain names
+            // (verified above) so a lexical join can't escape; the authoritative
+            // O_NOFOLLOW guard runs later at merge against the live workspace.
+            let dest = stage_dir.join(&rel);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("stage {rel}: {e}"))?;
+            }
+            let mut out = File::create(&dest).map_err(|e| format!("stage {rel}: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("stage {rel}: {e}"))?;
+            staged.push(rel);
+            continue;
+        }
+        // Unknown top-level entry — ignore (legit bundles only ship
+        // manifest.json + workspace/).
+    }
+
+    let manifest = manifest.ok_or_else(|| "bundle has no manifest.json".to_string())?;
+    Ok((manifest, staged))
+}
+
 fn cmd_import(rest: &[String]) -> i32 {
     if !controlplane_healthy() {
         eprintln!("orcabot: run `orcabot up` first");
@@ -574,25 +735,47 @@ fn cmd_import(rest: &[String]) -> i32 {
         return 1;
     }
 
+    // 1) STAGE — extract into a private temp dir (guard cleans it up on every exit).
     let stage = std::env::temp_dir().join(format!("orcabot-import-{}", std::process::id()));
     let _ = fs::remove_dir_all(&stage);
-    let _ = fs::create_dir_all(&stage);
-    let untar = Command::new("tar")
-        .args(["-xzf", bundle, "-C", &stage.to_string_lossy()])
-        .status();
-    if !matches!(untar, Ok(s) if s.success()) {
-        eprintln!("orcabot: failed to extract bundle");
-        let _ = fs::remove_dir_all(&stage);
+    if let Err(e) = fs::create_dir_all(&stage) {
+        eprintln!("orcabot: cannot create staging dir: {e}");
         return 1;
     }
-    let manifest: serde_json::Value = match fs::read_to_string(stage.join("manifest.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+    #[cfg(unix)]
     {
-        Some(m) => m,
-        None => {
+        use std::os::unix::fs::PermissionsExt;
+        // Private staging dir: only this user can traverse/read the staged files.
+        let _ = fs::set_permissions(&stage, fs::Permissions::from_mode(0o700));
+    }
+    let _stage_guard = DirGuard(stage.clone());
+
+    let (manifest_bytes, staged_files) = match extract_bundle_to_staging(bundle, &stage) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("orcabot: failed to extract bundle: {e}");
+            return 1;
+        }
+    };
+
+    // 2) VALIDATE — parse the manifest before creating anything. A corrupt/missing
+    //    manifest bails here with the live workspace still untouched.
+    let manifest: serde_json::Value = match serde_json::from_slice(&manifest_bytes) {
+        Ok(m) => m,
+        Err(_) => {
             eprintln!("orcabot: bundle has no valid manifest.json");
-            let _ = fs::remove_dir_all(&stage);
+            return 1;
+        }
+    };
+
+    // Resolve the live workspace root up front (read-only; does not overwrite any
+    // files) so a broken workspace path fails before we create the dashboard.
+    let ws = workspace_dir();
+    let _ = fs::create_dir_all(&ws);
+    let ws_canon = match ws.canonicalize() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("orcabot: cannot resolve workspace {}: {e}", ws.display());
             return 1;
         }
     };
@@ -603,6 +786,7 @@ fn cmd_import(rest: &[String]) -> i32 {
             manifest.get("name").and_then(|x| x.as_str()).unwrap_or("dashboard")
         )
     });
+    // 3) CREATE — dashboard + items + edges.
     let nd = match cp_call("POST", "/dashboards", Some(serde_json::json!({ "name": name }))) {
         Ok(v) => v
             .get("dashboard")
@@ -612,7 +796,6 @@ fn cmd_import(rest: &[String]) -> i32 {
             .to_string(),
         Err(e) => {
             eprintln!("orcabot: create dashboard: {e}");
-            let _ = fs::remove_dir_all(&stage);
             return 1;
         }
     };
@@ -656,20 +839,39 @@ fn cmd_import(rest: &[String]) -> i32 {
         }
     }
 
-    // Restore workspace files (merge into the shared workspace).
-    let src_ws = stage.join("workspace");
-    if src_ws.exists() {
-        let dest = workspace_dir();
-        let _ = fs::create_dir_all(&dest);
-        // cp -R <src>/. <dest>/   (merge, preserve)
-        let _ = Command::new("cp")
-            .args(["-R", &format!("{}/.", src_ws.to_string_lossy()), &dest.to_string_lossy()])
-            .status();
+    // 4) MERGE — only now copy the staged workspace files into the live shared
+    //    workspace, each through the O_NOFOLLOW component walk in
+    //    `safe_workspace_write` (race-safe against a symlink planted mid-merge by a
+    //    workspace-sharing sandbox process — same discipline as `pull`). Reaching
+    //    here means the manifest validated and the dashboard was created, so a
+    //    partial overwrite of the live workspace is no longer possible from an
+    //    upstream failure.
+    let mut restored = 0usize;
+    for rel in &staged_files {
+        // Staged files were written by us and contain no symlinks, so a plain read
+        // is safe; the authoritative anti-symlink guard is on the WRITE side.
+        let data = match fs::read(stage.join(rel)) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("orcabot: skip {rel}: {e}");
+                continue;
+            }
+        };
+        if safe_workspace_dest(&ws_canon, rel).is_none() {
+            eprintln!("orcabot: skip unsafe workspace path: {rel}");
+            continue;
+        }
+        if let Err(e) = safe_workspace_write(&ws_canon, rel, &data) {
+            eprintln!("orcabot: skip {rel}: {e}");
+            continue;
+        }
+        restored += 1;
     }
-    let _ = fs::remove_dir_all(&stage);
+
+    // 5) CLEANUP — `_stage_guard` removes the private staging dir as it drops here.
 
     println!(
-        "orcabot: imported '{name}' -> dashboard {} ({} components, {edge_n} edges, workspace restored)",
+        "orcabot: imported '{name}' -> dashboard {} ({} components, {edge_n} edges, {restored} workspace files restored)",
         nd,
         idmap.len()
     );

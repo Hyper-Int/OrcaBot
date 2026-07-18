@@ -635,8 +635,21 @@ input.chat-input-splash:focus-visible {
   padding-left: 1.5rem;
 }
 
+/* Tailwind Preflight resets `list-style: none` on ul/ol; restore the markers so
+   markdown-rendered ordered lists (and remark-gfm footnotes) show their numbers.
+   The marker inherits the list color (--foreground-muted), so it stays readable. */
+.legal-content ul {
+  list-style-type: disc;
+}
+.legal-content ol {
+  list-style-type: decimal;
+}
+
 .legal-content li {
   margin-bottom: 0.375rem;
+}
+.legal-content li::marker {
+  color: var(--foreground-muted);
 }
 
 .legal-content strong {

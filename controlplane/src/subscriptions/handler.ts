@@ -115,9 +115,14 @@ export async function createCheckoutSession(
     }
   }
 
-  // Create Stripe customer if needed (or if previous one was stale)
+  // Idempotency key dedupes concurrent creates, but must rotate: a permanent key
+  // makes Stripe replay a since-deleted customer for ~24h. Scope to a short window
+  // + new/recreate marker so only concurrent attempts share it.
   if (!stripeCustomerId) {
-    const customer = await stripe.createCustomer(env.STRIPE_SECRET_KEY, email, email);
+    const genWindow = Math.floor(Date.now() / 600_000); // 10-minute window
+    const gen = existing?.stripe_customer_id ? 'recreate' : 'new';
+    const idempotencyKey = `customer-create-${userId}-${gen}-${genWindow}`;
+    const customer = await stripe.createCustomer(env.STRIPE_SECRET_KEY, email, email, idempotencyKey);
     stripeCustomerId = customer.id;
 
     // Insert/update subscription row with new customer ID

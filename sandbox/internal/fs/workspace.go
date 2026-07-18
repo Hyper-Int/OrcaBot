@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: workspace-v2-path-traversal-normalize
+// REVISION: workspace-v4-openat-nofollow-write-walk
 
 package fs
 
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const workspaceRevision = "workspace-v2-path-traversal-normalize"
+const workspaceRevision = "workspace-v4-openat-nofollow-write-walk"
 
 func init() {
 	log.Printf("[workspace] REVISION: %s loaded at %s", workspaceRevision, time.Now().Format(time.RFC3339))
@@ -82,28 +82,42 @@ func (w *Workspace) resоlvePath(path string) (string, error) {
 	// This prevents symlink-based escapes (e.g., /workspace/link -> /etc)
 	resolved, err := filepath.EvalSymlinks(fullPath)
 	if err != nil {
-		// If the path doesn't exist, check the parent directory instead
-		// This allows creating new files while still preventing symlink escapes
+		// Target doesn't exist yet. Resolve the longest existing ancestor's
+		// symlinks and require it to stay in the workspace; the nonexistent suffix
+		// can't contain symlinks, so appending it lexically is safe. (A plain Abs()
+		// fallback would miss an existing in-workspace symlink pointing outside.)
 		if os.IsNotExist(err) {
-			parent := filepath.Dir(fullPath)
-			base := filepath.Base(fullPath)
-
-			resolvedParent, parentErr := filepath.EvalSymlinks(parent)
-			if parentErr != nil {
-				// Parent doesn't exist either - check if it's within workspace
-				// Use Abs as fallback for new directory trees
-				resolvedParent, parentErr = filepath.Abs(parent)
-				if parentErr != nil {
-					return "", parentErr
+			existing := fullPath
+			var suffix []string // path components below the longest existing ancestor, top-most last
+			for {
+				resolved, rerr := filepath.EvalSymlinks(existing)
+				if rerr == nil {
+					if !isPathWithin(resolved, w.root) {
+						return "", ErrPathTraversal
+					}
+					joined := resolved
+					for i := len(suffix) - 1; i >= 0; i-- {
+						joined = filepath.Join(joined, suffix[i])
+					}
+					// Belt-and-suspenders: the fully reconstructed path must also
+					// remain within the workspace.
+					if !isPathWithin(joined, w.root) {
+						return "", ErrPathTraversal
+					}
+					return joined, nil
 				}
+				if !os.IsNotExist(rerr) {
+					return "", rerr
+				}
+				parent := filepath.Dir(existing)
+				if parent == existing {
+					// Walked to the filesystem root without an existing ancestor
+					// (w.root should always exist, so this is unreachable in practice).
+					return "", ErrPathTraversal
+				}
+				suffix = append(suffix, filepath.Base(existing))
+				existing = parent
 			}
-
-			// Check parent is within workspace
-			if !isPathWithin(resolvedParent, w.root) {
-				return "", ErrPathTraversal
-			}
-
-			return filepath.Join(resolvedParent, base), nil
 		}
 		return "", err
 	}
@@ -187,46 +201,58 @@ func (w *Workspace) Read(path string) ([]byte, error) {
 	return data, nil
 }
 
-// Write writes content to a file, creating directories as needed
+// Write writes content to a file, creating directories as needed. Rather than
+// validate a string path then write to it (a symlink-TOCTOU: a workspace process
+// could swap an ancestor for a symlink in between, escaping /workspace — a host
+// mount on desktop), it walks every component with openat + O_NOFOLLOW via
+// safeWrite, so containment is enforced by the kernel at open time.
 func (w *Workspace) Write(path string, content []byte) error {
-	resolved, err := w.resоlvePath(path)
+	// Cheap lexical pre-filter (reject raw "..", re-root, split into
+	// components). The kernel-enforced O_NOFOLLOW walk below is the real
+	// containment guard; this just rejects obviously-bad input early and
+	// produces the relative component list to walk.
+	rel, err := w.relComponents(path)
 	if err != nil {
 		return err
 	}
+	return safeWrite(w.root, rel, content)
+}
 
-	// Create parent directories
-	dir := filepath.Dir(resolved)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+// relComponents applies the lexical containment guard used across the workspace
+// (reject raw ".." before Clean, re-root absolute paths) and returns the path's
+// components relative to the workspace root. It returns ErrPathTraversal for any
+// input that does not name a file strictly within the workspace.
+func (w *Workspace) relComponents(path string) ([]string, error) {
+	// Check raw input for ".." segments BEFORE cleaning. filepath.Clean
+	// resolves ".." which can hide traversal attempts (e.g. "/../../tmp/evil"
+	// cleans to "/tmp/evil", losing the ".." evidence).
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return nil, ErrPathTraversal
+		}
 	}
 
-	// Write atomically: a fresh temp file + rename. Writing directly with
-	// O_TRUNC blocks indefinitely when the destination is held open by another
-	// process over a shared mount (virtiofs) — e.g. a cache file the host has
-	// mmap'd. rename() replaces the dir entry without opening the held file.
-	tmp, err := os.CreateTemp(dir, ".orcawrite-*.tmp")
-	if err != nil {
-		return err
+	cleaned := filepath.Clean(path)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	// "" or "." means the workspace root itself — no file component to write.
+	if cleaned == "" || cleaned == "." {
+		return nil, ErrPathTraversal
 	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return err
+
+	out := make([]string, 0)
+	for _, c := range strings.Split(cleaned, "/") {
+		if c == "" || c == "." {
+			continue
+		}
+		if c == ".." { // belt-and-suspenders: Clean shouldn't leave these
+			return nil, ErrPathTraversal
+		}
+		out = append(out, c)
 	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
+	if len(out) == 0 {
+		return nil, ErrPathTraversal
 	}
-	if err := os.Chmod(tmpName, 0644); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	if err := os.Rename(tmpName, resolved); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
-	return nil
+	return out, nil
 }
 
 // Delete removes a file or directory (recursively)

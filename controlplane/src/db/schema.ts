@@ -645,11 +645,13 @@ CREATE TABLE IF NOT EXISTS recipes (
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   steps TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipes_dashboard ON recipes(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_created_by ON recipes(created_by);
 
 -- Executions (workflow runs)
 CREATE TABLE IF NOT EXISTS executions (
@@ -1188,6 +1190,15 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Owner column so checkRecipeAccess can scope dashboard-less recipes to their creator.
+  try {
+    await db.prepare(`
+      ALTER TABLE recipes ADD COLUMN created_by TEXT
     `).run();
   } catch {
     // Column already exists.

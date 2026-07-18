@@ -1,12 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: scroll-video-v3-ios-autoplay
+// REVISION: scroll-video-v4-earlier-start
 "use client";
 
 import { useRef, useEffect, useState } from "react";
 
-const MODULE_REVISION = "scroll-video-v3-ios-autoplay";
+const MODULE_REVISION = "scroll-video-v4-earlier-start";
 console.log(
   `[ScrollVideo] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -32,8 +32,11 @@ export function ScrollVideo({ src, poster, alt, style }: ScrollVideoProps) {
       if (!video.duration) return;
       const rect = container.getBoundingClientRect();
       const windowH = window.innerHeight;
-      // progress=0 when element top is at viewport center, progress=1 when fully exited top
-      const start = windowH * 0.5;
+      // progress=0 when the element top reaches START_FRACTION down the viewport
+      // (higher = starts sooner as it scrolls in from the bottom); progress=1 when
+      // it has fully exited the top. Tune START_FRACTION between ~0.5 and 1.0.
+      const START_FRACTION = 1.0;
+      const start = windowH * START_FRACTION;
       const end = -rect.height;
       const progress = Math.min(
         1,

@@ -241,6 +241,22 @@ export class DashboardDO implements DurableObject {
       });
     }
 
+    // Purge durable state + sockets on dashboard delete (DOs can't be swept later).
+    if (path === '/destroy' && request.method === 'POST') {
+      try {
+        for (const ws of this.state.getWebSockets()) {
+          try { ws.close(1001, 'dashboard deleted'); } catch { /* already closing */ }
+        }
+      } catch { /* no sockets */ }
+      this.dashboard = null;
+      this.items.clear();
+      this.terminalSessions.clear();
+      this.edges.clear();
+      this.presence.clear();
+      await this.state.storage.deleteAll();
+      return Response.json({ success: true });
+    }
+
     if (path === '/item' && request.method === 'PUT') {
       const item = await request.json() as DashboardItem;
       this.items.set(item.id, item);

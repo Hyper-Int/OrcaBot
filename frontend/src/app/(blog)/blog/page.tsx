@@ -5,6 +5,7 @@
 
 import { getPost, getAllPosts } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
@@ -130,7 +131,7 @@ export default function BlogIndexPage() {
 
               {/* Post body */}
               <div className="legal-content">
-                <ReactMarkdown>{post!.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{post!.content}</ReactMarkdown>
               </div>
 
               {/* Divider between posts */}

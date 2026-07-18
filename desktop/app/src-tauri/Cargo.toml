@@ -1,6 +1,6 @@
 [package]
 name = "orcabot-desktop"
-version = "0.8.0"
+version = "0.9.2"
 edition = "2021"
 description = "Orcabot Desktop shell"
 license = "UNLICENSED"
@@ -28,6 +28,11 @@ serde_json = "1"
 walkdir = "2"
 libc = "0.2"
 flate2 = "1"
+# In-process tar extraction for `orcabot import` (.orcabot bundles). Used instead
+# of shelling out to system `tar`, which does ZERO path validation and lets GNU
+# tar honor `..` members + materialize symlinks (host escape / symlink planting).
+# Lightweight, pure-Rust; its main transitive dep (`filetime`) is already declared.
+tar = "0.4"
 # Verify the on-demand VM image download against a hash baked into the binary.
 sha2 = "0.10"
 filetime = "0.2"
@@ -43,6 +48,7 @@ ratatui = "0.29"
 tungstenite = { version = "0.21", default-features = false, features = ["handshake"] }
 # VT/ANSI parser to render PTY output (agents draw full-screen TUIs).
 vt100 = "0.15"
+tauri-plugin-opener = "2.5.4"
 
 [dev-dependencies]
 # Used by the vm/image.rs unit tests (was referenced but never declared).

@@ -9,6 +9,7 @@ package egress
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -185,7 +186,10 @@ func (p *EgressProxy) handleTransparent(conn net.Conn) {
 	// Full egress decision ladder (same source of truth as the CONNECT/HTTP paths):
 	// localhost → deny → allowlist → tracker → hold. decide() handles localhost and
 	// emits the allow audit.
-	if !permitted(p.decide(domain, origPort)) {
+	// The transparent path is a raw redirected conn with no request context, so it
+	// keeps its original behavior (no held-connection cancel-on-disconnect; that
+	// applies to the CONNECT/HTTP proxy paths which carry r.Context()).
+	if !permitted(p.decide(context.Background(), domain, origPort)) {
 		return // denied (permanent/tracker/user) or timed out
 	}
 

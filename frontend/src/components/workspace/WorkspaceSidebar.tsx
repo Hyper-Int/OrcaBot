@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v25-hide-lost-found
-const MODULE_REVISION = "workspace-sidebar-v25-hide-lost-found";
+// REVISION: workspace-sidebar-v26-desktop-oauth-picker
+const MODULE_REVISION = "workspace-sidebar-v26-desktop-oauth-picker";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -90,6 +90,8 @@ import { getWorkspaceSnapshot } from "@/lib/api/cloudflare/files";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
+import { GithubDeviceDialog } from "@/components/blocks/GithubDeviceDialog";
 import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
@@ -238,6 +240,7 @@ export function WorkspaceSidebar({
   const [githubStatus, setGithubStatus] = React.useState<GithubSyncStatus | null>(null);
   const [githubSyncing, setGithubSyncing] = React.useState(false);
   const [githubPickerOpen, setGithubPickerOpen] = React.useState(false);
+  const [githubDeviceOpen, setGithubDeviceOpen] = React.useState(false);
   const [githubRepos, setGithubRepos] = React.useState<GithubRepo[]>([]);
   const [githubLoading, setGithubLoading] = React.useState(false);
   const [githubSelected, setGithubSelected] = React.useState<GithubRepo | null>(null);
@@ -609,10 +612,34 @@ export function WorkspaceSidebar({
   }, []);
 
   // ── Integration connect handlers ────────────────────────────────
-  const openPopup = React.useCallback((path: string, name: string) => {
-    console.log(`[WorkspaceSidebar] openPopup called: path=${path}, name=${name}, user=${user?.id}, dashboardId=${dashboardId}`);
-    if (!user) {
-      console.warn("[WorkspaceSidebar] openPopup: no user, aborting");
+  // Holds the cancel fn of the in-flight desktop OAuth poll so we can stop it on
+  // unmount / when a new connect starts (otherwise the interval + focus listeners
+  // linger for the full timeout).
+  const openPopupCancelRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => { openPopupCancelRef.current?.(); }, []);
+  // On desktop (Tauri webview) window.open is a no-op, so open the OS browser via
+  // connectViaBrowser (opener plugin) and poll the provider status until connected —
+  // this is why the sidebar's Connect buttons did nothing on desktop. On web, keep
+  // the popup + postMessage handshake.
+  const openPopup = React.useCallback((
+    path: string,
+    name: string,
+    opts?: { checkConnected: () => Promise<boolean>; onConnected: () => void },
+  ) => {
+    if (!user) return;
+    if (DESKTOP_MODE) {
+      const connectUrl = new URL(`${API.cloudflare.base}${path}`);
+      if (dashboardId) connectUrl.searchParams.set("dashboard_id", dashboardId);
+      // connectViaBrowser injects user identity + surface token itself, and returns
+      // a cancel fn. Cancel any prior in-flight poll (repeated clicks) and keep the
+      // handle so the unmount effect can stop the interval + focus listeners — else
+      // they'd keep polling for the full 5-minute timeout.
+      openPopupCancelRef.current?.();
+      openPopupCancelRef.current = connectViaBrowser({
+        url: connectUrl.toString(),
+        checkConnected: opts?.checkConnected ?? (async () => false),
+        onConnected: opts?.onConnected ?? (() => {}),
+      });
       return;
     }
     const url = new URL(`${API.cloudflare.base}${path}`);
@@ -626,14 +653,37 @@ export function WorkspaceSidebar({
     const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
     const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
     // NOTE: Do NOT use noopener - it breaks window.opener.postMessage which is needed for OAuth callback
-    const popup = window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
-    console.log(`[WorkspaceSidebar] popup opened:`, popup ? "success" : "blocked");
+    window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
   }, [dashboardId, user]);
 
-  const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth"), [openPopup]);
-  const handleGithubConnect = React.useCallback(() => openPopup("/integrations/github/connect", "orcabot-github-auth"), [openPopup]);
-  const handleBoxConnect = React.useCallback(() => openPopup("/integrations/box/connect", "orcabot-box-auth"), [openPopup]);
-  const handleOnedriveConnect = React.useCallback(() => openPopup("/integrations/onedrive/connect", "orcabot-onedrive-auth"), [openPopup]);
+  // onConnected fires only on the desktop (connectViaBrowser) path — the web popup
+  // path drives completion via postMessage instead. Mirror the web handler so
+  // desktop also advances into the picker rather than making the user click again.
+  const handleDriveConnect = React.useCallback(() => openPopup("/integrations/google/drive/connect", "orcabot-drive-auth", {
+    checkConnected: async () => Boolean((await getGoogleDriveIntegration(dashboardId))?.connected),
+    onConnected: () => { void loadDriveIntegration(); setDrivePickerOpen(true); },
+  }), [openPopup, dashboardId, loadDriveIntegration]);
+  const handleGithubConnect = React.useCallback(() => {
+    // Desktop is a public OAuth client → GitHub uses the DEVICE flow (no secret),
+    // not the web-redirect connect which needs the confidential GITHUB_CLIENT_SECRET
+    // we don't ship. On web, keep the redirect popup.
+    if (DESKTOP_MODE) {
+      setGithubDeviceOpen(true);
+      return;
+    }
+    openPopup("/integrations/github/connect", "orcabot-github-auth", {
+      checkConnected: async () => Boolean((await getGithubIntegration(dashboardId))?.connected),
+      onConnected: () => void loadGithubIntegration(),
+    });
+  }, [openPopup, dashboardId, loadGithubIntegration]);
+  const handleBoxConnect = React.useCallback(() => openPopup("/integrations/box/connect", "orcabot-box-auth", {
+    checkConnected: async () => Boolean((await getBoxIntegration(dashboardId))?.connected),
+    onConnected: () => void loadBoxIntegration(),
+  }), [openPopup, dashboardId, loadBoxIntegration]);
+  const handleOnedriveConnect = React.useCallback(() => openPopup("/integrations/onedrive/connect", "orcabot-onedrive-auth", {
+    checkConnected: async () => Boolean((await getOnedriveIntegration(dashboardId))?.connected),
+    onConnected: () => { void loadOnedriveIntegration(); setOnedrivePickerOpen(true); setOnedrivePath([]); void loadOnedriveFolders("root"); },
+  }), [openPopup, dashboardId, loadOnedriveIntegration, loadOnedriveFolders]);
 
   // ── Integration unlink/disconnect handlers ──────────────────────
   const handleUnlinkDrive = React.useCallback(async () => {
@@ -1170,22 +1220,25 @@ export function WorkspaceSidebar({
         </Button>
       </Tooltip>
 
-      <Tooltip content={isBoxLinked ? `Box: ${boxIntegration?.folder?.name ?? "Linked"}` : isBoxConnected ? "Box: Link folder" : "Connect Box"} side="bottom">
-        <Button
-          variant={isBoxLinked ? "secondary" : "ghost"}
-          size="icon-sm"
-          disabled={!user}
-          onClick={() => {
-            if (isBoxConnected) {
-              setBoxPickerOpen(true);
-            } else {
-              handleBoxConnect();
-            }
-          }}
-        >
-          <Box className="w-3.5 h-3.5" />
-        </Button>
-      </Tooltip>
+      {/* Box needs a confidential client secret we can't ship on desktop → hide it there. */}
+      {!DESKTOP_MODE && (
+        <Tooltip content={isBoxLinked ? `Box: ${boxIntegration?.folder?.name ?? "Linked"}` : isBoxConnected ? "Box: Link folder" : "Connect Box"} side="bottom">
+          <Button
+            variant={isBoxLinked ? "secondary" : "ghost"}
+            size="icon-sm"
+            disabled={!user}
+            onClick={() => {
+              if (isBoxConnected) {
+                setBoxPickerOpen(true);
+              } else {
+                handleBoxConnect();
+              }
+            }}
+          >
+            <Box className="w-3.5 h-3.5" />
+          </Button>
+        </Tooltip>
+      )}
 
       <Tooltip content={isOnedriveLinked ? `OneDrive: ${onedriveIntegration?.folder?.name ?? "Linked"}` : isOnedriveConnected ? "OneDrive: Link folder" : "Connect OneDrive"} side="bottom">
         <Button
@@ -1403,8 +1456,8 @@ export function WorkspaceSidebar({
                   </div>
                 )}
 
-                {/* Box */}
-                {isBoxConnected ? (
+                {/* Box needs a confidential secret we can't ship on desktop → hide there. */}
+                {!DESKTOP_MODE && (isBoxConnected ? (
                   <div className="rounded border border-[var(--border)] bg-[var(--background)]">
                     <div
                       className="flex items-center justify-between px-2 py-1.5 cursor-pointer"
@@ -1450,7 +1503,7 @@ export function WorkspaceSidebar({
                     </div>
                     <span className="text-[10px] text-[var(--accent-primary)]">Connect</span>
                   </div>
-                )}
+                ))}
 
                 {/* OneDrive */}
                 {isOnedriveConnected ? (
@@ -1567,6 +1620,12 @@ export function WorkspaceSidebar({
         </DialogContent>
       </Dialog>
 
+      <GithubDeviceDialog
+        open={githubDeviceOpen}
+        onOpenChange={setGithubDeviceOpen}
+        dashboardId={dashboardId}
+        onConnected={() => { void loadGithubIntegration(); setGithubPickerOpen(true); void loadGithubRepos(); }}
+      />
       <Dialog open={githubPickerOpen} onOpenChange={setGithubPickerOpen}>
         <DialogContent className="max-w-xl h-[540px] p-0">
           <DialogTitle className="sr-only">GitHub</DialogTitle>

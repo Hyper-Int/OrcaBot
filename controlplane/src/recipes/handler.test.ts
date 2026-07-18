@@ -111,15 +111,19 @@ describe('Recipe Handlers', () => {
   });
 
   describe('Access control', () => {
-    it('should allow access to recipes without dashboard_id', async () => {
-      // Recipe without dashboard is accessible to any authenticated user
-      const recipe = await seedRecipe(ctx.db, { name: 'Global Recipe' });
+    it('should scope dashboard-less recipes to their owner', async () => {
+      // A global (no dashboard) recipe is accessible to its CREATOR...
+      const recipe = await seedRecipe(ctx.db, { name: 'Global Recipe', createdBy: testUser.id });
 
-      const response = await getRecipе(ctx.env, recipe.id, testUser.id);
-
-      expect(response.status).toBe(200);
-      const data = await response.json() as Record<string, any>;
+      const ownerResponse = await getRecipе(ctx.env, recipe.id, testUser.id);
+      expect(ownerResponse.status).toBe(200);
+      const data = await ownerResponse.json() as Record<string, any>;
       expect(data.recipe.name).toBe('Global Recipe');
+
+      // ...but NOT to a different user. Previously this returned the recipe to
+      // anyone (cross-tenant IDOR); it must now 404.
+      const otherResponse = await getRecipе(ctx.env, recipe.id, 'user-2');
+      expect(otherResponse.status).toBe(404);
     });
 
     it('should return 404 for non-existent recipes', async () => {

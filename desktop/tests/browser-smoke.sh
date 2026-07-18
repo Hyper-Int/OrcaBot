@@ -20,8 +20,8 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ORCABOT="${ORCABOT_BIN:-$SCRIPT_DIR/../app/src-tauri/target/release/orcabot}"
-CP="http://127.0.0.1:8787"
-SB="http://127.0.0.1:8080"
+CP="${CP:-http://127.0.0.1:8787}"
+SB="${SB:-http://127.0.0.1:8080}"
 U="X-User-ID: dev-desktop"
 VZ_LOG="/tmp/vz-console.log"
 READY_TIMEOUT="${READY_TIMEOUT:-45}"   # chromium cold boot can be slow

@@ -11,6 +11,7 @@
 
 import type { Env } from '../types';
 import { scrubItemContent, type DashboardItemType } from './scrubber';
+import starterTemplates from './starter-templates.json';
 
 /**
  * Ensure the status and viewport_json columns exist on dashboard_templates.
@@ -57,6 +58,51 @@ export interface TemplateEdge {
   targetPlaceholderId: string;
   sourceHandle?: string;
   targetHandle?: string;
+}
+
+// Starter templates seeded into a fresh desktop DB — verbatim copies of the
+// curated prod templates (the cloud has real user-submitted templates; desktop
+// starts empty). Block/edge/viewport data lives in starter-templates.json.
+
+/**
+ * Seed the curated starter templates into a fresh desktop DB. Desktop only
+ * (SURFACE_TOKEN is set only by the desktop app) and once per DB (a schema
+ * marker, so a user who deletes them isn't re-seeded). Called from /init-db.
+ */
+export async function seedStarterTemplates(env: Env): Promise<void> {
+  if (!env.SURFACE_TOKEN) return;
+  await ensureTemplateColumns(env);
+
+  const marker = 'seed_desktop_starter_templates_v2';
+  const already = await env.DB.prepare(
+    `SELECT 1 FROM schema_migrations WHERE name = ?`
+  ).bind(marker).first();
+  if (already) return;
+
+  // Drop the earlier hand-made starters, superseded by these prod copies.
+  await env.DB.prepare(
+    `DELETE FROM dashboard_templates WHERE id IN
+     ('starter-agentic-coding', 'starter-automation', 'starter-documentation')`
+  ).run();
+
+  const now = new Date().toISOString();
+  for (const t of starterTemplates) {
+    await env.DB.prepare(
+      `INSERT INTO dashboard_templates
+       (id, name, description, category, author_id, author_name,
+        items_json, edges_json, viewport_json, item_count, is_featured, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, ?, ?, ?, 1, 'approved', ?, ?)
+       ON CONFLICT(id) DO NOTHING`
+    ).bind(
+      t.id, t.name, t.description, t.category,
+      JSON.stringify(t.items), JSON.stringify(t.edges),
+      t.viewport ? JSON.stringify(t.viewport) : null,
+      t.itemCount, now, now
+    ).run();
+  }
+  await env.DB.prepare(
+    `INSERT INTO schema_migrations (name) VALUES (?)`
+  ).bind(marker).run();
 }
 
 /**

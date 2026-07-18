@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-ports"
+description = "Enables the get_ports command without any pre-configured scope."
+commands.allow = ["get_ports"]
+
+[[permission]]
+identifier = "deny-get-ports"
+description = "Denies the get_ports command without any pre-configured scope."
+commands.deny = ["get_ports"]
