@@ -2,7 +2,7 @@
 title: Introducing OrcaBot
 date: 2026-03-04
 description: OrcaBot helps AI agents get to work in a managed sandbox.
-author: Rob Macrae
+author: Rob
 coverImage: /blog/introducing_orcabot.png
 ---
 
