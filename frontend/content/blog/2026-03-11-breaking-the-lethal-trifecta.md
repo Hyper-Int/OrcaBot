@@ -2,7 +2,7 @@
 title: Breaking the Lethal Trifecta
 date: 2026-03-12
 description: How OrcaBot structurally eliminates the three-way security threat that makes AI agents dangerous.
-author: Rob Macrae
+author: Rob
 coverImage: /blog/lethal_trifecta.png
 coverVideo: /blog/lethal_trifecta.mp4
 ---

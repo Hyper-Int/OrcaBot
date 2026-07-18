@@ -5,6 +5,7 @@
 
 import { getPost, getAllPosts } from "@/lib/blog";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -149,7 +150,7 @@ export default async function BlogPostPage({ params }: Props) {
 
       {/* Post body */}
       <article className="legal-content">
-        <ReactMarkdown>{post.content}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.content}</ReactMarkdown>
       </article>
     </div>
   );
