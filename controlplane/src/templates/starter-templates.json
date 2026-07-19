@@ -349,5 +349,60 @@
       "zoom": 0.6876693766937669
     },
     "itemCount": 5
+  },
+  {
+    "id": "starter-slopcodebench",
+    "name": "SlopCodeBench Runner",
+    "description": "Run slop-code-bench arms driven by Orcabot chat in plain English; each agent-under-test opens as a live read-only terminal on the canvas. One-time VM setup required (fork + venv).",
+    "category": "coding",
+    "items": [
+      {
+        "placeholderId": "runbook",
+        "type": "note",
+        "content": "# SlopCodeBench Runner\n\nRun slop-code-bench arms driven by **Orcabot chat** — just tell it what to run in\nplain English. Each agent-under-test opens as a **live, read-only terminal** on\nthe canvas, labelled with the problem it's solving.\n\n## One-time setup (per VM)\n1. Fork at `/workspace/slop-code-bench` with venv `/workspace/scb-venv`.\n2. Add your provider key in the **secrets panel**, broker-protected (e.g.\n   `OPENROUTER_API_KEY`).\n\n## Drive it from chat\n- \"Compare kimi-k2.6 and claude on file_backup, 2 workers\"\n- \"Add etl_pipeline and score the runs\"\n- \"How's it going?\" / \"Show the config\"\n\nConfigure with the **Benchmark panel** (dropdowns + Run) or just ask chat — both\nwrite `/workspace/.scb-config.yaml` (harnesses × models × problems, workers, evaluate).\nThe **results browser** shows a live per-arm tally (cost / steps / state). Broker\nrouting is automatic.",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "size": {
+          "width": 420,
+          "height": 340
+        }
+      },
+      {
+        "placeholderId": "config",
+        "type": "benchmark",
+        "content": "{\"harnesses\": [\"opencode\"], \"skills\": [\"baseline\"], \"models\": [\"openrouter/kimi-k2.6\"], \"problems\": [\"file_backup\"], \"workers\": 1, \"prompt\": \"just-solve\", \"thinking\": \"low\", \"evaluate\": false}",
+        "position": {
+          "x": 440,
+          "y": 0
+        },
+        "size": {
+          "width": 340,
+          "height": 470
+        }
+      },
+      {
+        "placeholderId": "results",
+        "type": "browser",
+        "content": "{\"name\": \"SlopCodeBench — Live\", \"url\": \"http://localhost:8051\"}",
+        "position": {
+          "x": 0,
+          "y": 360
+        },
+        "size": {
+          "width": 720,
+          "height": 500
+        }
+      }
+    ],
+    "edges": [],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    },
+    "itemCount": 3,
+    "setupGuide": "# SlopCodeBench orchestrator (you are Orcabot chat)\n\nYou run slop-code-bench for the user in this dashboard's VM using your tools — you\nare the orchestrator; do NOT open a separate agent terminal to drive it. Translate\nplain English into slop-code commands, launch them, and report progress by reading\nfiles. You do NOT solve the benchmark problems — the agent-under-test does.\n\nBe brief. Do each step with a tool and confirm before the next.\n\n## Your tools\n- create_terminal(boot_command=…) — run setup/benchmark commands in the VM.\n- terminal_send_input — type follow-up commands into a terminal you created.\n- read_file — check progress/results; this is how you answer \"how's it going?\".\n- secrets_create — help the user add a broker-protected provider key.\n\n## 1. Set up + VERIFY the harness — in a VISIBLE \"setup\" terminal\nUse this create_terminal call VERBATIM. Its boot_command is ONE line (do not split\nit) that prints to the terminal so the user watches uv sync scroll live, and writes a\ndone-marker only on success. It is idempotent; uv is baked into the image (the curl\nis just a fallback for older images):\n\n  create_terminal(name=\"setup\", boot_command=\"sleep 2; echo '== Orcabot setup =='; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; export PATH=$HOME/.local/bin:$PATH; }; [ -e /workspace/slop-code-bench/bin/scb-visualize ] || git clone --branch feat/host-tmux-executor https://github.com/robdmac/slop-code-bench /workspace/slop-code-bench; cd /workspace/slop-code-bench && { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -n configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; bin/scb-matrix --print-config >/dev/null 2>&1 || true; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK; exec bash\")\n\nThen check ONCE with read_file(\".scb-setup.done\"): if it contains SETUP_OK, setup was\nalready done — proceed to step 2. If it ERRORS (marker not there), setup is still\nrunning: tell the user it's running in the 'setup' terminal, to watch it, and that\nwhen it prints SETUP_OK they should say \"go\" (or ask you to \"check setup\") and you'll\ncontinue. Do NOT claim you are monitoring in the background — you cannot; you only act\nwhen the user messages you. uv sync is slow the first time — that's expected. If the\nterminal shows an error (e.g. github.com or astral.sh held by the egress proxy), ask\nthe user to Allow it, then re-run this same call.\n\n## 2. Provider key — do NOT ask up front\nThe runbook already tells the user to add OPENROUTER_API_KEY (broker-protected) in\nthe secrets panel. Assume it is there and proceed to the run. You have NO tool to\nlist secrets, so do not claim it is missing or ask for it pre-emptively. ONLY if the\nrun later errors with an auth/credit failure, ask the user to add or fix it\n(secrets_create, broker-protected). Never display or echo the value.\n\n## 3. Broker routing — automatic (nothing to do)\nscb-matrix (step 4) restores a pristine providers.yaml (from providers.yaml.orig that\nsetup saved) and rewrites the openrouter api_base to this session's local broker\n($OPENROUTER_BASE_URL — 127.0.0.1, injects the real key server-side). Do NOT patch\nproviders.yaml yourself.\n\n## 4. Configure + run\nThe run is configured by /workspace/.scb-config.yaml — harnesses, models, skills,\nproblems, workers, prompt, thinking, evaluate, codex_auth. For a Codex arm on a\nChatGPT/Codex subscription (no API key), set codex_auth: subscription and model\nopenai/gpt-5.5-codex, and make sure `codex login` has been run (auth.json). Note the\nsubscription credential then lives in the VM, readable by the agent-under-test. read_file(\".scb-config.yaml\") to show\nit. Each (harness x model x skill) is an ARM; each arm runs all `problems`; `workers`\narms run in parallel. Skills are public agent-skill packs (baseline, gsd, omc,\nsuperpowers, karpathy, addyosmani) — all run in the VM; scb-matrix clones each skill's\npublic plugin repo and stages it into the run. When the\nuser says what to run:\n- One-off: pass flags to scb-matrix — --harness H / --model M / --skill S / --problem P\n  (each repeatable), --workers N, --thinking low|medium|high, --prompt NAME, --evaluate.\n- Persist: rewrite /workspace/.scb-config.yaml (run_command) so it sticks / the panel\n  reflects it.\nLaunch with ONE create_terminal (VERBATIM). scb-matrix reads the config + patches the\nbroker; scb-live serves the live per-ARM tally (cost/steps/state) to the results\nbrowser; scb-visualize surfaces a viewer per arm:\n  create_terminal(name=\"benchmark runner\", boot_command=\"cd /workspace/slop-code-bench; SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 & nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & bin/scb-matrix; echo '[matrix done]'; exec bash\")\nFor a one-off matrix, append flags to `bin/scb-matrix` (e.g. `bin/scb-matrix --model\nopenrouter/kimi-k2.6 --model anthropic/claude-3.5 --problem file_backup --workers 2`).\nMany arms? add `--no-viewers` to the scb-visualize watch — the browser tally covers all.\n\n## 5. Report progress\nAnswer \"how's it going?\" by pointing the user at the live results browser (per-arm\ncost/steps/state), or read_file(\".scb-run.log\") for the latest arm's log. Success per\narm = advances past checkpoint_1 with cost>0 and steps>0. To score, set `evaluate:\ntrue` in /workspace/.scb-config.yaml (or pass --evaluate), or run\n`slop-code eval outputs/<run>/`."
   }
 ]

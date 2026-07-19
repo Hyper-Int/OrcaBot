@@ -73,7 +73,7 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
   if (!env.SURFACE_TOKEN) return;
   await ensureTemplateColumns(env);
 
-  const marker = 'seed_desktop_starter_templates_v2';
+  const marker = 'seed_desktop_starter_templates_v3';
   const already = await env.DB.prepare(
     `SELECT 1 FROM schema_migrations WHERE name = ?`
   ).bind(marker).first();
@@ -90,13 +90,14 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
     await env.DB.prepare(
       `INSERT INTO dashboard_templates
        (id, name, description, category, author_id, author_name,
-        items_json, edges_json, viewport_json, item_count, is_featured, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, ?, ?, ?, 1, 'approved', ?, ?)
+        items_json, edges_json, viewport_json, setup_guide, item_count, is_featured, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, ?, ?, ?, ?, 1, 'approved', ?, ?)
        ON CONFLICT(id) DO NOTHING`
     ).bind(
       t.id, t.name, t.description, t.category,
       JSON.stringify(t.items), JSON.stringify(t.edges),
       t.viewport ? JSON.stringify(t.viewport) : null,
+      (t as { setupGuide?: string }).setupGuide ?? null,
       t.itemCount, now, now
     ).run();
   }
