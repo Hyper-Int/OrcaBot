@@ -134,12 +134,15 @@ def slot(idx):
 def surface_run(idx, problem, logfile):
     # The terminal's own title ("agent: <problem>") already names the run, so there
     # is no separate note block — it was redundant canvas clutter (and rendered empty).
-    x, y = slot(idx)
+    #
+    # No explicit position: our old fixed grid started at a hardcoded origin and was
+    # blind to whatever else is already on the canvas (the benchmark panel, the runner
+    # terminal), so viewers landed on top of them. Omitting it lets Orcabot's canvas
+    # auto-placement find genuinely free space.
     call_tool("create_terminal", {
         "name": f"agent: {problem}",
         "boot_command": f"tail -n +1 -F {shlex.quote(logfile)}",
         "agentic": False,
-        "position": {"x": x, "y": y},
         "size": {"width": COL_W, "height": TERM_H},
     })
     _log(f"surfaced run '{problem}' -> {logfile}")
