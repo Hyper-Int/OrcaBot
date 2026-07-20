@@ -2580,7 +2580,12 @@ export default function DashboardPage() {
   };
 
   const handleCreateBrowserBlock = React.useCallback(
-    (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
+    (
+      url: string,
+      anchor?: { x: number; y: number },
+      sourceId?: string,
+      sizeOverride?: { width: number; height: number },
+    ) => {
       if (!url) return;
       // Reuse an existing browser on the same URL rather than stacking duplicates
       // (e.g. a run launched twice, or chat and the panel both opening the results
@@ -2590,7 +2595,7 @@ export default function DashboardPage() {
         ensureVisible(existing.position, existing.size);
         return;
       }
-      const size = defaultSizes.browser;
+      const size = sizeOverride ?? defaultSizes.browser;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
         : computePlacement(size);

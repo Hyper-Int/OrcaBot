@@ -35,8 +35,18 @@ const HARNESSES = ["opencode", "claude_code", "codex", "gemini", "kimi_cli", "cu
 const PROBLEMS_KNOWN = ["file_backup", "etl_pipeline", "layered_config_synthesizer"];
 const PROMPTS = ["just-solve", "plan_first", "anti_slop", "plan-and-test"];
 const THINKING = ["low", "medium", "high"] as const;
+// One-time (idempotent) harness setup, folded into the run so no separate setup
+// terminal is needed. A sandbox session requires a canvas item to exist, so the
+// runner terminal is the ONE component that does everything: fetch/clone the fork,
+// build the venv, start scb-live, then run the matrix. Re-runs are fast (fetch +
+// reset, venv already present).
+const SETUP_PRELUDE =
+  "export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D && { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
+
 // Live results view served by scb-live inside the VM (started during setup).
 const LIVE_URL = "http://127.0.0.1:8051";
+// 150% of the default 800x500 browser block.
+const LIVE_BROWSER_SIZE = { width: 1200, height: 750 };
 // Public agent-skill packs. Every skill now runs in the Orcabot VM (local envs);
 // scb-matrix clones each skill's public plugin repo and stages it into the run.
 const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy", "addyosmani"];
@@ -135,12 +145,9 @@ function buildBootCommand(c: BenchmarkContent): string {
   if (c.codexAuth === "subscription") flags.push("--codex-auth", "subscription");
   const matrix = `bin/scb-matrix ${flags.join(" ")}`;
   return (
-    "cd /workspace/slop-code-bench; " +
-    // Setup already starts scb-live; only start it if the port isn't already serving
-    // (a blind restart just fails with EADDRINUSE). Probe the PORT, not the process:
-    // `pgrep -f bin/scb-live` also matches this boot command's own shell, so it would
-    // always short-circuit and scb-live would never start.
-    "curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); " +
+    "echo '== Orcabot: preparing harness (first run installs deps) =='; " +
+    SETUP_PRELUDE + "; " +
+    "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
     matrix + "; echo '[matrix done]'; exec bash"
   );
@@ -154,7 +161,7 @@ interface BenchmarkData extends Record<string, unknown> {
   sessionId?: string;
   /** Create a terminal that runs bootCommand (same path the chat's create_terminal uses). */
   onCreateTerminal?: (name: string, bootCommand: string) => void;
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string, size?: { width: number; height: number }) => void;
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   onDuplicate?: () => void;
@@ -273,7 +280,9 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
       // Open the live results view only now that a run exists — a browser block
       // navigates once and never retries, so opening it earlier just parks it on
       // ERR_CONNECTION_REFUSED. Deduped upstream, so re-running won't stack blocks.
-      data.onCreateBrowserBlock?.(LIVE_URL);
+      // 150% of the default browser size — the live tally is a wide table and is
+      // cramped at the stock 800x500.
+      data.onCreateBrowserBlock?.(LIVE_URL, undefined, undefined, LIVE_BROWSER_SIZE);
       setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — results browser opened.`);
     } finally {
       setRunning(false);

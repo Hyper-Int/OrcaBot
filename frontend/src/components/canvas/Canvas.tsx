@@ -114,7 +114,8 @@ function itemsToNodes(
   onCreateBrowserBlock?: (
     url: string,
     anchor?: { x: number; y: number },
-    sourceId?: string
+    sourceId?: string,
+    size?: { width: number; height: number }
   ) => void,
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void,
   connectorMode?: boolean,
@@ -219,7 +220,7 @@ interface CanvasProps {
   onItemDelete?: (itemId: string) => void;
   /** Called when multiple items are deleted at once (e.g. multi-select delete) */
   onItemsDelete?: (itemIds: string[]) => void;
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string, size?: { width: number; height: number }) => void;
   /** Benchmark blocks call this to launch a run (creates a terminal with a boot command). */
   onCreateTerminalBlock?: (name: string, bootCommand: string) => void;
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
