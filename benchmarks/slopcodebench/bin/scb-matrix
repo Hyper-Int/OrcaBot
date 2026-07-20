@@ -41,7 +41,7 @@ DEFAULT_CONFIG = """\
 harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
 models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
 skills:    [baseline]            # baseline gsd omc superpowers karpathy addyosmani (agent-skill packs)
-problems:  [file_backup]          # file_backup etl_pipeline layered_config_synthesizer
+problems:  []                     # REQUIRED, pick at least one: file_backup etl_pipeline layered_config_synthesizer
 workers:   1                      # how many arms run in parallel
 prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
 thinking:  low                    # low medium high
@@ -286,7 +286,7 @@ def stage_skill(skill):
 
 
 def run_arm(harness, model, skill, cfg, ts):
-    problems = cfg.get("problems") or ["file_backup"]
+    problems = cfg.get("problems") or []
     thinking = cfg.get("thinking", "low")
     evaluate = str(cfg.get("evaluate", "false")).lower() in ("1", "true", "yes", "on")
     env_cfg = SKILL_ENV.get(skill, SKILL_ENV["baseline"])
@@ -339,13 +339,21 @@ def main():
     harnesses = cfg.get("harnesses") or ["opencode"]
     models = cfg.get("models") or ["openrouter/kimi-k2.6"]
     skills = cfg.get("skills") or ["baseline"]
+    # No default problem: running the wrong benchmark silently costs real money, so
+    # an unset `problems` is an error, not a fallback.
+    problems = cfg.get("problems") or []
+    if not problems:
+        _log("no problem selected — set `problems:` in the config, pick one in the "
+             "Benchmark panel, or pass --problem NAME. "
+             "Known: file_backup, etl_pipeline, layered_config_synthesizer")
+        sys.exit(2)
     try:
         workers = max(1, int(str(cfg.get("workers", "1")).strip()))
     except ValueError:
         workers = 1
     arms = [(h, m, s) for h in harnesses for m in models for s in skills]
     _log(f"{len(arms)} arm(s) [{len(harnesses)}h x {len(models)}m x {len(skills)}s], "
-         f"{len(cfg.get('problems') or ['file_backup'])} problem(s), workers={workers}")
+         f"{len(problems)} problem(s), workers={workers}")
 
     patch_broker()
 

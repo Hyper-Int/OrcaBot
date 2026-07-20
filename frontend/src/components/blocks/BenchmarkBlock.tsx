@@ -51,7 +51,7 @@ const DEFAULT_CONFIG: BenchmarkContent = {
   harnesses: ["opencode"],
   skills: ["baseline"],
   models: ["openrouter/kimi-k2.6"],
-  problems: ["file_backup"],
+  problems: [],
   workers: 1,
   prompt: "just-solve",
   thinking: "low",
