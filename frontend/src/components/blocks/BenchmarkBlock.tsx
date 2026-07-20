@@ -41,7 +41,7 @@ const THINKING = ["low", "medium", "high"] as const;
 // build the venv, start scb-live, then run the matrix. Re-runs are fast (fetch +
 // reset, venv already present).
 const SETUP_PRELUDE =
-  "export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
+  "rm -f /workspace/.scb-live.ready; export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); ( for i in $(seq 1 120); do curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ && { : > /workspace/.scb-live.ready; break; }; sleep 1; done ) >/dev/null 2>&1 & { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
 
 // Live results view served by scb-live inside the VM (started during setup).
 const LIVE_URL = "http://127.0.0.1:8051";
@@ -274,6 +274,37 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
   // problem when no --problem is passed), so it must NOT block Run.
   const canRun = cfg.harnesses.length > 0 && cfg.models.length > 0 && cfg.skills.length > 0;
 
+  // Open the results browser only once scb-live is confirmed up. The run writes
+  // /workspace/.scb-live.ready after :8051 answers; we poll for it via the session
+  // file API (the session itself only exists once the runner terminal is created,
+  // hence waiting on data.sessionId too).
+  const [awaitingLive, setAwaitingLive] = React.useState(false);
+  React.useEffect(() => {
+    if (!awaitingLive || !data.sessionId) return;
+    let cancelled = false;
+    let tries = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      tries += 1;
+      const ready = await readSessionFileText(data.sessionId!, ".scb-live.ready").catch(() => null);
+      if (cancelled) return;
+      if (ready !== null) {
+        data.onCreateBrowserBlock?.(LIVE_URL, undefined, undefined, LIVE_BROWSER_SIZE);
+        setAwaitingLive(false);
+        setStatus("Results browser opened.");
+        return;
+      }
+      if (tries > 150) { // ~5 min: setup is far slower than this only if something is wrong
+        setAwaitingLive(false);
+        setStatus("Live view didn't come up — check the runner terminal.");
+        return;
+      }
+      timer = setTimeout(tick, 2000);
+    };
+    let timer = setTimeout(tick, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [awaitingLive, data.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleRun = async () => {
     if (!canRun) { setStatus("Pick ≥1 harness, model, and skill."); return; }
     setRunning(true);
@@ -286,10 +317,12 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
       // Open the live results view only now that a run exists — a browser block
       // navigates once and never retries, so opening it earlier just parks it on
       // ERR_CONNECTION_REFUSED. Deduped upstream, so re-running won't stack blocks.
-      // 150% of the default browser size — the live tally is a wide table and is
-      // cramped at the stock 800x500.
-      data.onCreateBrowserBlock?.(LIVE_URL, undefined, undefined, LIVE_BROWSER_SIZE);
-      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — results browser opened.`);
+      // Do NOT open the results browser yet. A browser block navigates exactly once
+      // and never retries, so creating it now (while the first run is still cloning
+      // and building the venv) parks it on ERR_CONNECTION_REFUSED permanently. Wait
+      // for the run to report that :8051 is actually serving — see the effect below.
+      setAwaitingLive(true);
+      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — waiting for the live view…`);
     } finally {
       setRunning(false);
     }
