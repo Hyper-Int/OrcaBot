@@ -73,20 +73,37 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
   if (!env.SURFACE_TOKEN) return;
   await ensureTemplateColumns(env);
 
-  const marker = 'seed_desktop_starter_templates_v3';
-  const already = await env.DB.prepare(
+  // Two markers on purpose. The v2 marker still guards the ORIGINAL catalog, so a
+  // user who deliberately deleted one of those starters keeps it deleted. Bumping a
+  // single marker to v3 would have re-inserted the whole catalog and resurrected
+  // them. Newly-added starters get their own marker and are seeded on their own.
+  const baseMarker = 'seed_desktop_starter_templates_v2';
+  const seededBase = await env.DB.prepare(
     `SELECT 1 FROM schema_migrations WHERE name = ?`
-  ).bind(marker).first();
-  if (already) return;
+  ).bind(baseMarker).first();
 
-  // Drop the earlier hand-made starters, superseded by these prod copies.
-  await env.DB.prepare(
-    `DELETE FROM dashboard_templates WHERE id IN
-     ('starter-agentic-coding', 'starter-automation', 'starter-documentation')`
-  ).run();
+  // Starters introduced after the v2 catalog — seeded independently so they reach
+  // existing DBs without touching what the user has already curated.
+  const LATER_STARTERS = new Set(['starter-slopcodebench']);
+  const laterMarker = 'seed_desktop_starter_slopcodebench_v1';
+  const seededLater = await env.DB.prepare(
+    `SELECT 1 FROM schema_migrations WHERE name = ?`
+  ).bind(laterMarker).first();
+
+  if (seededBase && seededLater) return;
+
+  if (!seededBase) {
+    // Drop the earlier hand-made starters, superseded by these prod copies.
+    await env.DB.prepare(
+      `DELETE FROM dashboard_templates WHERE id IN
+       ('starter-agentic-coding', 'starter-automation', 'starter-documentation')`
+    ).run();
+  }
 
   const now = new Date().toISOString();
   for (const t of starterTemplates) {
+    const isLater = LATER_STARTERS.has(t.id);
+    if (isLater ? seededLater : seededBase) continue; // already handled for this group
     await env.DB.prepare(
       `INSERT INTO dashboard_templates
        (id, name, description, category, author_id, author_name,
@@ -101,9 +118,12 @@ export async function seedStarterTemplates(env: Env): Promise<void> {
       t.itemCount, now, now
     ).run();
   }
-  await env.DB.prepare(
-    `INSERT INTO schema_migrations (name) VALUES (?)`
-  ).bind(marker).run();
+  if (!seededBase) {
+    await env.DB.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(baseMarker).run();
+  }
+  if (!seededLater) {
+    await env.DB.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(laterMarker).run();
+  }
 }
 
 /**

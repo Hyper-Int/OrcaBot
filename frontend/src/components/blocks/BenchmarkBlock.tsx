@@ -41,7 +41,7 @@ const THINKING = ["low", "medium", "high"] as const;
 // build the venv, start scb-live, then run the matrix. Re-runs are fast (fetch +
 // reset, venv already present).
 const SETUP_PRELUDE =
-  "export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D && { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
+  "export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
 
 // Live results view served by scb-live inside the VM (started during setup).
 const LIVE_URL = "http://127.0.0.1:8051";
@@ -133,21 +133,27 @@ function fromYaml(text: string): Partial<BenchmarkContent> {
   };
 }
 
+
+// Write /workspace/.scb-config.yaml from the shell so the launched configuration is
+// ALWAYS persisted. Writing it via the file API only worked once a session existed,
+// so the very first run on a new dashboard left the file at defaults while the run
+// used panel flags — chat and later reloads then saw a config that never ran.
+function configWriteCommand(c: BenchmarkContent): string {
+  const lit = (v: string) => `'${String(v).replace(/'/g, "")}'`;
+  const lines = toYaml(c).split("\n").filter((l) => l.length > 0);
+  return `printf '%s\\n' ${lines.map(lit).join(" ")} > /workspace/.scb-config.yaml`;
+}
+
 function buildBootCommand(c: BenchmarkContent): string {
-  const q = (s: string) => (/^[\w./:-]+$/.test(s) ? s : `'${s.replace(/'/g, "")}'`);
-  const flags: string[] = [];
-  for (const h of c.harnesses) flags.push("--harness", q(h));
-  for (const m of c.models) flags.push("--model", q(m));
-  for (const s of c.skills) flags.push("--skill", q(s));
-  for (const p of c.problems) flags.push("--problem", q(p));
-  flags.push("--workers", String(c.workers), "--thinking", c.thinking, "--prompt", q(c.prompt));
-  if (c.evaluate) flags.push("--evaluate");
-  if (c.codexAuth === "subscription") flags.push("--codex-auth", "subscription");
-  const matrix = `bin/scb-matrix ${flags.join(" ")}`;
+  // No CLI flags: configWriteCommand persists the panel's config to
+  // /workspace/.scb-config.yaml and scb-matrix reads that, so the file stays the
+  // single source of truth shared by the panel, chat and the run itself.
+  const matrix = `bin/scb-matrix`;
   return (
     "echo '== Orcabot: preparing harness (first run installs deps) =='; " +
     SETUP_PRELUDE + "; " +
     "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
+    configWriteCommand(c) + "; " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
     matrix + "; echo '[matrix done]'; exec bash"
   );

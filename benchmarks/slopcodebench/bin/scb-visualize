@@ -27,6 +27,7 @@ Usage:
 --no-viewers (or SCB_VIEWERS=0): don't spawn a read-only PTY per run — rely on the
 scb-live browser dashboard instead. The run and dashboard are unaffected.
 """
+import glob
 import json
 import re
 import os
@@ -91,8 +92,12 @@ def prepare_configs(workdir):
         _log("OPENROUTER_BASE_URL not set — is OPENROUTER_API_KEY a broker secret?")
 
     log_dir = os.path.join(workdir, ".scb_tmux")
-    env_yaml = os.path.join(workdir, "configs", "environments", "local-tmux-py.yaml")
-    if os.path.isfile(env_yaml):
+    # EVERY local env, not just the baseline one. The skill variants
+    # (local-tmux-py-with-gsd/omc/superpowers/karpathy/addyosmani.yaml) also run on
+    # the tmux executor; without this patch their manifests land in the run's temp
+    # dir, watch() never sees runs.jsonl, and those arms surface no viewer at all.
+    env_dir = os.path.join(workdir, "configs", "environments")
+    for env_yaml in sorted(glob.glob(os.path.join(env_dir, "local-tmux-py*.yaml"))):
         try:
             os.makedirs(log_dir, exist_ok=True)
             txt = open(env_yaml, encoding="utf-8").read()
@@ -101,7 +106,7 @@ def prepare_configs(workdir):
                                   f"  tmux_session: scb\n  tmux_log_dir: {log_dir}")
                 with open(env_yaml, "w", encoding="utf-8") as fh:
                     fh.write(txt)
-                _log(f"pinned tmux_log_dir -> {log_dir}")
+                _log(f"pinned tmux_log_dir -> {log_dir} in {os.path.basename(env_yaml)}")
         except OSError as exc:
             _log(f"env yaml patch failed: {exc}")
 

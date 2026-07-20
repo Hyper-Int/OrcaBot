@@ -2543,7 +2543,7 @@ export default function DashboardPage() {
     const defaultContent =
       tool.type === "todo" ? "[]"
       : tool.type === "benchmark"
-        ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: ["file_backup"], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
+        ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: [], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
         : "";
     // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
     // The PTY starts in the workspace root (~), so use a relative cd.
