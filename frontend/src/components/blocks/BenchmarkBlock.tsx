@@ -250,10 +250,12 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
   }, [data.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const arms = cfg.harnesses.length * cfg.models.length * cfg.skills.length;
-  const canRun = cfg.harnesses.length > 0 && cfg.models.length > 0 && cfg.skills.length > 0 && cfg.problems.length > 0;
+  // No problems selected = run the FULL benchmark set (slop-code auto-discovers every
+  // problem when no --problem is passed), so it must NOT block Run.
+  const canRun = cfg.harnesses.length > 0 && cfg.models.length > 0 && cfg.skills.length > 0;
 
   const handleRun = async () => {
-    if (!canRun) { setStatus("Pick ≥1 harness, model, and problem."); return; }
+    if (!canRun) { setStatus("Pick ≥1 harness, model, and skill."); return; }
     setRunning(true);
     setStatus(null);
     try {
@@ -382,7 +384,12 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
           <TokenList label="Models" values={cfg.models} suggestions={MODEL_SUGGESTIONS}
             placeholder="add model (e.g. openrouter/kimi-k2.6)…" onChange={(v) => update({ models: v })} />
           <TokenList label="Problems" values={cfg.problems} suggestions={PROBLEMS_KNOWN}
-            placeholder="add problem…" onChange={(v) => update({ problems: v })} />
+            placeholder="add problem (empty = all)…" onChange={(v) => update({ problems: v })} />
+          {cfg.problems.length === 0 && (
+            <div className="text-[10px] text-[var(--foreground-muted)] -mt-0.5">
+              No problems selected → runs the <b className="text-[var(--foreground)]">full benchmark set</b>, one after another.
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-2">
             <label className="space-y-1">
@@ -429,7 +436,7 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
 
           <div className="text-[11px] text-[var(--foreground-muted)]">
             <b className="text-[var(--foreground)]">{arms}</b> arm{arms === 1 ? "" : "s"} ({cfg.harnesses.length}h × {cfg.models.length}m × {cfg.skills.length}s)
-            {" × "}<b className="text-[var(--foreground)]">{cfg.problems.length}</b> problem{cfg.problems.length === 1 ? "" : "s"}
+            {" × "}<b className="text-[var(--foreground)]">{cfg.problems.length || "all"}</b> problem{cfg.problems.length === 1 ? "" : "s"}
           </div>
         </div>
 

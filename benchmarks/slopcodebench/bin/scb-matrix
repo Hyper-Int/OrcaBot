@@ -41,7 +41,7 @@ DEFAULT_CONFIG = """\
 harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
 models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
 skills:    [baseline]            # baseline gsd omc superpowers karpathy addyosmani (agent-skill packs)
-problems:  []                     # REQUIRED, pick at least one: file_backup etl_pipeline layered_config_synthesizer
+problems:  []                     # empty = the FULL benchmark set (every problem, in sequence)
 workers:   1                      # how many arms run in parallel
 prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
 thinking:  low                    # low medium high
@@ -310,7 +310,7 @@ def run_arm(harness, model, skill, cfg, ts):
     _log(f"arm start: {harness} x {model} x {skill} -> {log}")
     try:
         with open(log, "w", encoding="utf-8") as fh:
-            fh.write(f"[scb-matrix] arm {harness} x {model} x {skill} problems={problems} "
+            fh.write(f"[scb-matrix] arm {harness} x {model} x {skill} problems={problems or 'ALL'} "
                      f"env={env_cfg} prompt={prompt} thinking={thinking} evaluate={evaluate}\n")
             fh.flush()
             rc = subprocess.call(cmd, cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT,
@@ -339,21 +339,17 @@ def main():
     harnesses = cfg.get("harnesses") or ["opencode"]
     models = cfg.get("models") or ["openrouter/kimi-k2.6"]
     skills = cfg.get("skills") or ["baseline"]
-    # No default problem: running the wrong benchmark silently costs real money, so
-    # an unset `problems` is an error, not a fallback.
+    # Empty `problems` = run the FULL benchmark set. slop-code auto-discovers every
+    # valid problem when no --problem is passed (_resolve_problem_names -> discovery),
+    # so we simply omit the flags rather than hardcoding a default problem.
     problems = cfg.get("problems") or []
-    if not problems:
-        _log("no problem selected — set `problems:` in the config, pick one in the "
-             "Benchmark panel, or pass --problem NAME. "
-             "Known: file_backup, etl_pipeline, layered_config_synthesizer")
-        sys.exit(2)
     try:
         workers = max(1, int(str(cfg.get("workers", "1")).strip()))
     except ValueError:
         workers = 1
     arms = [(h, m, s) for h in harnesses for m in models for s in skills]
     _log(f"{len(arms)} arm(s) [{len(harnesses)}h x {len(models)}m x {len(skills)}s], "
-         f"{len(problems)} problem(s), workers={workers}")
+         f"{len(problems) if problems else 'ALL'} problem(s), workers={workers}")
 
     patch_broker()
 
