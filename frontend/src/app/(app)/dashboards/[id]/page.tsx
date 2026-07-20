@@ -2644,6 +2644,14 @@ export default function DashboardPage() {
   const handleCreateBrowserBlock = React.useCallback(
     (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
       if (!url) return;
+      // Reuse an existing browser on the same URL rather than stacking duplicates
+      // (e.g. a run launched twice, or chat and the panel both opening the results
+      // view). A browser block navigates once, so a second one is pure clutter.
+      const existing = items.find((i) => i.type === "browser" && i.content === url);
+      if (existing) {
+        ensureVisible(existing.position, existing.size);
+        return;
+      }
       const size = defaultSizes.browser;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
@@ -2659,7 +2667,7 @@ export default function DashboardPage() {
       });
       ensureVisible(position, size);
     },
-    [createItemMutation, computePlacement, ensureVisible]
+    [createItemMutation, computePlacement, ensureVisible, items]
   );
 
   // Benchmark block "Run": create a terminal that runs the pipeline boot command

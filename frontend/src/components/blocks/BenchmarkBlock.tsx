@@ -35,6 +35,8 @@ const HARNESSES = ["opencode", "claude_code", "codex", "gemini", "kimi_cli", "cu
 const PROBLEMS_KNOWN = ["file_backup", "etl_pipeline", "layered_config_synthesizer"];
 const PROMPTS = ["just-solve", "plan_first", "anti_slop", "plan-and-test"];
 const THINKING = ["low", "medium", "high"] as const;
+// Live results view served by scb-live inside the VM (started during setup).
+const LIVE_URL = "http://127.0.0.1:8051";
 // Public agent-skill packs. Every skill now runs in the Orcabot VM (local envs);
 // scb-matrix clones each skill's public plugin repo and stages it into the run.
 const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy", "addyosmani"];
@@ -152,6 +154,7 @@ interface BenchmarkData extends Record<string, unknown> {
   sessionId?: string;
   /** Create a terminal that runs bootCommand (same path the chat's create_terminal uses). */
   onCreateTerminal?: (name: string, bootCommand: string) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
   onContentChange?: (content: string) => void;
   onItemChange?: (changes: Partial<DashboardItem>) => void;
   onDuplicate?: () => void;
@@ -267,7 +270,11 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
         await writeSessionFile(data.sessionId, ".scb-config.yaml", toYaml(cfg)).catch(() => false);
       }
       data.onCreateTerminal?.("benchmark runner", buildBootCommand(cfg));
-      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — watch the results browser.`);
+      // Open the live results view only now that a run exists — a browser block
+      // navigates once and never retries, so opening it earlier just parks it on
+      // ERR_CONNECTION_REFUSED. Deduped upstream, so re-running won't stack blocks.
+      data.onCreateBrowserBlock?.(LIVE_URL);
+      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — results browser opened.`);
     } finally {
       setRunning(false);
     }

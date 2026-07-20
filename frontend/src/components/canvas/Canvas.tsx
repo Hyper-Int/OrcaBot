@@ -687,6 +687,33 @@ export function Canvas({
     onViewportChange?.(nextViewport);
   }, [onViewportChange, reactFlowRef]);
 
+  // Cmd/Ctrl +/- zooms the CANVAS rather than the whole webview, which is what you
+  // actually want on a dashboard. Cmd+0 resets to 100%. We only intercept when the
+  // user isn't typing, so the shortcut can't hijack text fields.
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const inst = instanceRef.current;
+      if (!inst) return;
+      // "=" is the unshifted "+" key; also accept the numpad variants.
+      if (e.key === "+" || e.key === "=" || e.code === "NumpadAdd") {
+        e.preventDefault();
+        inst.zoomIn({ duration: 120 });
+      } else if (e.key === "-" || e.key === "_" || e.code === "NumpadSubtract") {
+        e.preventDefault();
+        inst.zoomOut({ duration: 120 });
+      } else if (e.key === "0") {
+        e.preventDefault();
+        const vp = inst.getViewport();
+        inst.setViewport({ ...vp, zoom: 1 }, { duration: 120 });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const handlePaneMouseMove = React.useCallback(
     (event: React.MouseEvent) => {
       if (!onCursorMove || !instanceRef.current) return;
