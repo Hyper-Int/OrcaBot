@@ -134,9 +134,11 @@ function buildBootCommand(c: BenchmarkContent): string {
   const matrix = `bin/scb-matrix ${flags.join(" ")}`;
   return (
     "cd /workspace/slop-code-bench; " +
-    // Setup already starts scb-live; only start it if it isn't already listening
-    // (a blind restart just fails with "Address already in use").
-    "pgrep -f bin/scb-live >/dev/null || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); " +
+    // Setup already starts scb-live; only start it if the port isn't already serving
+    // (a blind restart just fails with EADDRINUSE). Probe the PORT, not the process:
+    // `pgrep -f bin/scb-live` also matches this boot command's own shell, so it would
+    // always short-circuit and scb-live would never start.
+    "curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
     matrix + "; echo '[matrix done]'; exec bash"
   );

@@ -43,8 +43,8 @@ SID = os.environ.get("ORCABOT_SESSION_ID", "").strip()
 PTY = os.environ.get("ORCABOT_PTY_ID", "").strip()
 SECRET = os.environ.get("ORCABOT_MCP_SECRET", "").strip()
 
-# Canvas layout: a grid of columns; each run = a note stacked over its terminal.
-COL_W, NOTE_H, TERM_H, GAP, COLS = 380, 96, 300, 24, 3
+# Canvas layout: a grid of columns; each run = one terminal (title names the run).
+COL_W, TERM_H, GAP, COLS = 380, 300, 24, 3
 BASE_X, BASE_Y, COL_GAP, ROW_GAP = 40, 40, 40, 48
 
 
@@ -127,23 +127,19 @@ def call_tool(name, arguments):
 def slot(idx):
     col, row = idx % COLS, idx // COLS
     x = BASE_X + col * (COL_W + COL_GAP)
-    y = BASE_Y + row * (NOTE_H + TERM_H + GAP + ROW_GAP)
+    y = BASE_Y + row * (TERM_H + ROW_GAP)
     return x, y
 
 
 def surface_run(idx, problem, logfile):
+    # The terminal's own title ("agent: <problem>") already names the run, so there
+    # is no separate note block — it was redundant canvas clutter (and rendered empty).
     x, y = slot(idx)
-    call_tool("create_note", {
-        "content": f"### Solving: {problem}\n\nAgent-under-test — live, read-only.",
-        "position": {"x": x, "y": y},
-        "size": {"width": COL_W, "height": NOTE_H},
-        "color": "blue",
-    })
     call_tool("create_terminal", {
         "name": f"agent: {problem}",
         "boot_command": f"tail -n +1 -F {shlex.quote(logfile)}",
         "agentic": False,
-        "position": {"x": x, "y": y + NOTE_H + GAP},
+        "position": {"x": x, "y": y},
         "size": {"width": COL_W, "height": TERM_H},
     })
     _log(f"surfaced run '{problem}' -> {logfile}")
