@@ -134,7 +134,9 @@ function buildBootCommand(c: BenchmarkContent): string {
   const matrix = `bin/scb-matrix ${flags.join(" ")}`;
   return (
     "cd /workspace/slop-code-bench; " +
-    "SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 & " +
+    // Setup already starts scb-live; only start it if it isn't already listening
+    // (a blind restart just fails with "Address already in use").
+    "pgrep -f bin/scb-live >/dev/null || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
     matrix + "; echo '[matrix done]'; exec bash"
   );
