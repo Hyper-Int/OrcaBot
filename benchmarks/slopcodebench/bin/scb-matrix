@@ -484,7 +484,14 @@ def main():
     except OSError:
         pass
 
-    if is_codex_subscription(cfg) and "codex" in harnesses:
+    if is_codex_subscription(cfg):
+        non_codex = [h for h in harnesses if h != "codex"]
+        if non_codex:
+            _log("codex_auth=subscription needs the 'codex' harness: the ChatGPT/Codex "
+                 f"login (~/.codex/auth.json) is read only by the codex CLI, not {non_codex}. "
+                 "Set harness=codex (and model openai/gpt-5.5), or switch the provider to "
+                 "OpenRouter. Not starting.")
+            sys.exit(2)
         if not preflight_codex_subscription(cfg, models):
             sys.exit(2)
 
@@ -493,7 +500,7 @@ def main():
     # Codex subscription mode: stage the ChatGPT/Codex auth.json + point the openai
     # provider at it (must run AFTER patch_broker, which restores a pristine
     # providers.yaml). Only relevant when a codex arm is present.
-    if "codex" in harnesses and is_codex_subscription(cfg):
+    if is_codex_subscription(cfg):  # harnesses already validated to be codex
         _log("codex_auth=subscription — using ChatGPT/Codex login (no brokered key)")
         stage_codex_auth()
         patch_codex_provider()
