@@ -271,12 +271,10 @@ def preflight_codex_subscription(cfg, models):
              "terminal, or stage the file at " + os.path.join(WS, ".scb-codex-auth.json") +
              ". Not starting the run.")
         return False
-    bad = [m for m in models if "-codex" in m]
-    if bad:
-        _log(f"model(s) {bad} cannot run on a ChatGPT/Codex subscription — codex rejects "
-             "the '*-codex' variants ('not supported when using Codex with a ChatGPT "
-             "account'); those are API-key only. Use openai/gpt-5.5 instead. Not starting.")
-        return False
+    # Deliberately NOT blocking model ids here: which models a given ChatGPT/Codex plan
+    # can drive is account-dependent and not something we can check up front. A wrong
+    # model is caught at runtime by the fatal-error watchdog in run_arm() instead, which
+    # also covers auth/quota failures generally.
     return True
 
 
@@ -311,6 +309,48 @@ def stage_skill(skill):
     return {envvar: plugin_dir} if os.path.isdir(plugin_dir) else {}
 
 
+# Failures that will repeat identically for EVERY problem (bad model for this account,
+# bad/missing auth, exhausted quota). Without aborting on these, slop-code marches
+# through the whole suite failing the same way and scb-visualize spawns a dead viewer
+# per run — the "it kept spawning more tasks" failure mode.
+FATAL_PATTERNS = (
+    "not supported when using Codex with a ChatGPT account",
+    "401 Unauthorized",
+    "Incorrect API key",
+    "insufficient_quota",
+    "AuthenticationError",
+    "No auth credentials found",
+)
+
+
+def _watch_for_fatal(proc, logpath, label):
+    """Abort an arm whose every problem is failing for the same fundamental reason."""
+    while proc.poll() is None:
+        time.sleep(5)
+        if stop_requested():
+            _log(f"stop requested — terminating {label}")
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        try:
+            txt = open(logpath, errors="replace").read()
+        except OSError:
+            continue
+        for pat in FATAL_PATTERNS:
+            if pat in txt:
+                _log(f"FATAL for {label}: {pat!r} — aborting; this would repeat for every "
+                     "problem. Fix the model/auth and re-run.")
+                try:
+                    with open(STOP_FLAG, "w", encoding="utf-8") as fh:
+                        fh.write(f"fatal: {pat}\n")
+                    proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+
 def run_arm(harness, model, skill, cfg, ts):
     problems = cfg.get("problems") or []
     thinking = cfg.get("thinking", "low")
@@ -339,8 +379,12 @@ def run_arm(harness, model, skill, cfg, ts):
             fh.write(f"[scb-matrix] arm {harness} x {model} x {skill} problems={problems or 'ALL'} "
                      f"env={env_cfg} prompt={prompt} thinking={thinking} evaluate={evaluate}\n")
             fh.flush()
-            rc = subprocess.call(cmd, cwd=REPO, env=env, stdout=fh, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL)
+            proc = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=fh,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            label = f"{harness} x {model} x {skill}"
+            watcher = threading.Thread(target=_watch_for_fatal, args=(proc, log, label), daemon=True)
+            watcher.start()
+            rc = proc.wait()
         _log(f"arm done:  {harness} x {model} x {skill} rc={rc}")
     except Exception as exc:  # noqa: BLE001 — one arm failing must not kill the matrix
         _log(f"arm error: {harness} x {model} x {skill}: {exc}")

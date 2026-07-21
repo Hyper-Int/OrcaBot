@@ -48,9 +48,9 @@ const LIVE_URL = "http://127.0.0.1:8051";
 // Codex CLI native models — used with a ChatGPT/Codex subscription instead of a
 // brokered OpenRouter key. slop-code needs {provider}/{model}; provider "openai"
 // resolves the auth.json file credential.
-// Subscription-capable codex models. The "*-codex" variants (gpt-5.5-codex etc.) are
-// API-key ONLY — codex rejects them on a ChatGPT account ("not supported when using
-// Codex with a ChatGPT account"), which silently failed every instance.
+// Suggested codex model for a subscription — gpt-5.5 is what the SWE-bench Pro
+// harness drives. Only a SUGGESTION: which ids a given Codex plan exposes is
+// account-dependent, and the field accepts any free-typed value.
 const NATIVE_CODEX_MODELS = ["openai/gpt-5.5"];
 const DEFAULT_OPENROUTER_MODEL = "openrouter/kimi-k2.6";
 // 150% of the default 800x500 browser block.
