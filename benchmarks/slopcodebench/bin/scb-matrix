@@ -254,6 +254,32 @@ def patch_codex_provider():
             _log(f"codex provider patch failed: {exc}")
 
 
+STOP_FLAG = f"{WS}/.scb-stop"
+
+
+def stop_requested():
+    return os.path.exists(STOP_FLAG)
+
+
+def preflight_codex_subscription(cfg, models):
+    """Fail BEFORE launching anything if a codex-subscription run can't possibly work.
+    Without this, every problem fails identically and the matrix happily grinds through
+    the whole suite spawning a viewer per run (observed: dozens of dead terminals)."""
+    src = find_codex_auth()
+    if not src:
+        _log("codex_auth=subscription but no auth.json found. Run `codex login` in a "
+             "terminal, or stage the file at " + os.path.join(WS, ".scb-codex-auth.json") +
+             ". Not starting the run.")
+        return False
+    bad = [m for m in models if "-codex" in m]
+    if bad:
+        _log(f"model(s) {bad} cannot run on a ChatGPT/Codex subscription — codex rejects "
+             "the '*-codex' variants ('not supported when using Codex with a ChatGPT "
+             "account'); those are API-key only. Use openai/gpt-5.5 instead. Not starting.")
+        return False
+    return True
+
+
 def is_codex_subscription(cfg):
     return str(cfg.get("codex_auth", "broker")).strip().lower() == "subscription"
 
@@ -351,6 +377,16 @@ def main():
     _log(f"{len(arms)} arm(s) [{len(harnesses)}h x {len(models)}m x {len(skills)}s], "
          f"{len(problems) if problems else 'ALL'} problem(s), workers={workers}")
 
+    # Clear any stop flag from a previous run before starting a new one.
+    try:
+        os.remove(STOP_FLAG)
+    except OSError:
+        pass
+
+    if is_codex_subscription(cfg) and "codex" in harnesses:
+        if not preflight_codex_subscription(cfg, models):
+            sys.exit(2)
+
     patch_broker()
 
     # Codex subscription mode: stage the ChatGPT/Codex auth.json + point the openai
@@ -367,6 +403,9 @@ def main():
 
     def worker(h, m, s):
         with sem:
+            if stop_requested():
+                _log(f"stop requested — skipping arm {h} x {m} x {s}")
+                return
             run_arm(h, m, s, cfg, ts)
 
     for h, m, s in arms:

@@ -12,7 +12,7 @@ if (typeof window !== "undefined" && !(window as unknown as { __benchmarkBlockLo
 
 import * as React from "react";
 import { type NodeProps, type Node } from "@xyflow/react";
-import { FlaskConical, Play, X, Minimize2, Settings, Copy, Loader2 } from "lucide-react";
+import { FlaskConical, Play, Square, X, Minimize2, Settings, Copy, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
@@ -48,7 +48,10 @@ const LIVE_URL = "http://127.0.0.1:8051";
 // Codex CLI native models — used with a ChatGPT/Codex subscription instead of a
 // brokered OpenRouter key. slop-code needs {provider}/{model}; provider "openai"
 // resolves the auth.json file credential.
-const NATIVE_CODEX_MODELS = ["openai/gpt-5.5-codex", "openai/gpt-5.3-codex"];
+// Subscription-capable codex models. The "*-codex" variants (gpt-5.5-codex etc.) are
+// API-key ONLY — codex rejects them on a ChatGPT account ("not supported when using
+// Codex with a ChatGPT account"), which silently failed every instance.
+const NATIVE_CODEX_MODELS = ["openai/gpt-5.5"];
 const DEFAULT_OPENROUTER_MODEL = "openrouter/kimi-k2.6";
 // 150% of the default 800x500 browser block.
 const LIVE_BROWSER_SIZE = { width: 1200, height: 750 };
@@ -332,6 +335,14 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
     }
   };
 
+  const handleStop = async () => {
+    if (!data.sessionId) { setStatus("No sandbox session yet — nothing to stop."); return; }
+    // scb-matrix polls /workspace/.scb-stop and stops launching further arms. It can't
+    // interrupt an agent mid-problem, so this is "stop after the current one".
+    const ok = await writeSessionFile(data.sessionId, ".scb-stop", "stop\n").catch(() => false);
+    setStatus(ok ? "Stop requested — finishing the current problem, then halting." : "Couldn't write the stop flag.");
+  };
+
   const handleRun = async () => {
     if (!canRun) { setStatus("Pick ≥1 harness, model, and skill."); return; }
     setRunning(true);
@@ -508,7 +519,7 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
             values={cfg.models}
             suggestions={cfg.codexAuth === "subscription" ? NATIVE_CODEX_MODELS : MODEL_SUGGESTIONS}
             placeholder={cfg.codexAuth === "subscription"
-              ? "add model (e.g. openai/gpt-5.5-codex)…"
+              ? "add model (e.g. openai/gpt-5.5)…"
               : "add model (e.g. openrouter/kimi-k2.6)…"}
             onChange={(v) => update({ models: v })} />
           <TokenList label="Problems" values={cfg.problems} suggestions={PROBLEMS_KNOWN}
@@ -559,6 +570,17 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
           <Button size="sm" className="nodrag h-7 text-xs flex-1" disabled={!canRun || running} onClick={handleRun}>
             {running ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
             Run benchmark
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="nodrag h-7 text-xs"
+            disabled={!data.sessionId}
+            title="Stop after the current problem — scb-matrix stops launching further arms"
+            onClick={handleStop}
+          >
+            <Square className="w-3 h-3 mr-1" />
+            Stop
           </Button>
         </div>
         {status && <div className="px-3 pb-2 text-[10px] text-[var(--foreground-muted)]">{status}</div>}
