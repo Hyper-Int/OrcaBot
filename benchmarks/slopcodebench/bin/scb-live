@@ -40,6 +40,28 @@ ARM_RE = re.compile(r"\[scb-matrix\] arm (\S+) x (\S+)(?: x (\S+))?")
 TS_RE = re.compile(r"\.(\d{8}T\d{6})\.log$")
 
 
+
+def subscription_mode():
+    """Codex on a ChatGPT/Codex plan reports NO token_count/total_cost events, so cost
+    is legitimately always $0. Showing $0.0000 next to a healthy run reads as failure,
+    so label it instead."""
+    try:
+        txt = open(os.path.join(WS, ".scb-config.yaml"), encoding="utf-8").read()
+    except OSError:
+        return False
+    for line in txt.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("codex_auth:"):
+            return line.split(":", 1)[1].strip().lower() == "subscription"
+    return False
+
+
+def cost_cell(value, sub):
+    """$0.0000 on a subscription is correct (no per-token billing) but reads as a
+    failed run, so show the plan label instead."""
+    return "plan" if sub else f"${float(value):.4f}"
+
+
 def batch_logs():
     """All logs from the LATEST run batch. scb-matrix stamps every arm's logfile
     with one shared timestamp, so grouping by that timestamp shows the whole matrix
@@ -83,6 +105,7 @@ def render():
         body = "<p class='muted'>No run yet. Launch one with <code>scb-matrix</code> or <code>scb-run</code>.</p>"
         return page(body, "idle", now)
 
+    sub = subscription_mode()
     total_cost, max_elapsed, any_running, any_prog = 0.0, 0.0, False, False
     rows, tail = [], []
     multi = len(logs) > 1
@@ -101,7 +124,7 @@ def render():
                 f"<tr>{arm_cell}<td>{dot} {html.escape(name)}</td>"
                 f"<td>{html.escape(p['cp'])}</td>"
                 f"<td class='num'>{p['steps']}/{p['total']}</td>"
-                f"<td class='num'>${float(p['cost']):.4f}</td>"
+                f"<td class='num'>{cost_cell(p['cost'], sub)}</td>"
                 f"<td>{html.escape(p['state'])}</td></tr>"
             )
     overall = "running" if any_running else ("done" if any_prog else "starting")
@@ -115,7 +138,7 @@ def render():
     )
     tally = (
         f"<div class='tally'><span><b>{len(logs)}</b> arm(s)</span>"
-        f"<span>total <b>${total_cost:.4f}</b></span>"
+        f"<span>total <b>{'plan' if sub else f'${total_cost:.4f}'}</b></span>"
         f"<span>elapsed <b>{max_elapsed:.0f}s</b></span>"
         f"<span class='state-{overall}'>{overall.upper()}</span></div>"
     )
