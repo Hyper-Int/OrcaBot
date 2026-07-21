@@ -163,7 +163,12 @@ function buildBootCommand(c: BenchmarkContent): string {
     "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
     configWriteCommand(c) + "; " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
-    matrix + "; echo '[matrix done]'; exec bash"
+    // Durable lifecycle marker: the panel disables Run while it exists, so a second
+    // click can't launch a concurrent runner against the same checkout/config/logs.
+    // Trapped so it clears even if the run is killed. Exit code is surfaced rather
+    // than always printing success.
+    "trap 'rm -f /workspace/.scb-running' EXIT INT TERM; : > /workspace/.scb-running; " +
+    matrix + "; rc=$?; rm -f /workspace/.scb-running; echo \"[matrix done rc=$rc]\"; exec bash"
   );
 }
 
@@ -287,6 +292,23 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
   // file API (the session itself only exists once the runner terminal is created,
   // hence waiting on data.sessionId too).
   const [awaitingLive, setAwaitingLive] = React.useState(false);
+  // A run is in flight if /workspace/.scb-running exists. `running` alone only covered
+  // terminal creation, so Run went live again within a second and a second click would
+  // start a competing runner (same checkout, same config, same stop flag).
+  const [runActive, setRunActive] = React.useState(false);
+  React.useEffect(() => {
+    if (!data.sessionId) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      const marker = await readSessionFileText(data.sessionId!, ".scb-running").catch(() => null);
+      if (!cancelled) setRunActive(marker !== null);
+      if (!cancelled) timer = setTimeout(poll, 4000);
+    };
+    let timer = setTimeout(poll, 1000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [data.sessionId]);
+
   React.useEffect(() => {
     if (!awaitingLive || !data.sessionId) return;
     let cancelled = false;
@@ -567,9 +589,9 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
 
         {/* Footer / Run */}
         <div className="shrink-0 border-t border-[var(--border)] p-2 flex items-center gap-2">
-          <Button size="sm" className="nodrag h-7 text-xs flex-1" disabled={!canRun || running} onClick={handleRun}>
-            {running ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
-            Run benchmark
+          <Button size="sm" className="nodrag h-7 text-xs flex-1" disabled={!canRun || running || runActive} onClick={handleRun}>
+            {running || runActive ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
+            {runActive ? "Running…" : "Run benchmark"}
           </Button>
           <Button
             size="sm"
