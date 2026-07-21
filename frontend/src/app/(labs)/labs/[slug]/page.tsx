@@ -6,10 +6,12 @@
 import { getPost, getAllPosts } from "@/lib/labs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSlug from "rehype-slug";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
+import { LabsToc } from "@/components/LabsToc";
 
 const MODULE_REVISION = "labs-v1-post";
 console.log(`[labs-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
@@ -49,8 +51,36 @@ export default async function LabsPostPage({ params }: Props) {
   const post = getPost(slug);
   if (!post) notFound();
 
+  // Lead the side menu with the article title, then its headings.
+  const tocItems = [
+    { text: post.title, slug: post.slug, depth: 1 },
+    ...(post.headings ?? []).map((h) => ({ text: h.text, slug: h.slug, depth: h.depth })),
+  ];
+
   return (
-    <div className="max-w-3xl mx-auto px-6 py-12 pb-24">
+    <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `@media (max-width: 1023px) { .labs-toc-aside { display: none !important; } }`,
+        }}
+      />
+      <aside
+        className="labs-toc-aside"
+        style={{
+          width: 232,
+          flexShrink: 0,
+          position: "sticky",
+          top: 66,
+          alignSelf: "flex-start",
+          height: "calc(100vh - 66px)",
+          overflowY: "auto",
+          padding: "3.5rem 0",
+        }}
+      >
+        <LabsToc items={tocItems} />
+      </aside>
+
+      <div style={{ flex: 1, minWidth: 0, maxWidth: "44rem" }} className="px-6 py-12 pb-24">
       {/* Back link */}
       <div style={{ marginBottom: "2rem" }}>
         <Link
@@ -112,6 +142,7 @@ export default async function LabsPostPage({ params }: Props) {
           </time>
         )}
         <h1
+          id={post.slug}
           style={{
             fontSize: "2rem",
             fontWeight: 700,
@@ -119,6 +150,7 @@ export default async function LabsPostPage({ params }: Props) {
             letterSpacing: "-0.02em",
             lineHeight: 1.2,
             marginBottom: "0.75rem",
+            scrollMarginTop: "96px",
           }}
         >
           {post.title}
@@ -150,8 +182,9 @@ export default async function LabsPostPage({ params }: Props) {
 
       {/* Post body */}
       <article className="legal-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.content}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>{post.content}</ReactMarkdown>
       </article>
+      </div>
     </div>
   );
 }

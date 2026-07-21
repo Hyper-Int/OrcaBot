@@ -700,6 +700,14 @@ input.chat-input-splash:focus-visible {
   }
 }
 
+/* TOC jump targets: keep headings (and per-post anchors) clear of the sticky
+   site header (66px) when linked to from the Labs side menu — land ~30px below it. */
+.legal-content :is(h1, h2, h3),
+.legal-content [id],
+article[id] {
+  scroll-margin-top: 96px;
+}
+
 /* Body images (e.g. charts) render at natural size by default — keep them
    responsive and centred with a little breathing room. */
 .legal-content img {

@@ -8,6 +8,12 @@
 
 import postsData from "@/data/labs-posts.json";
 
+export interface TocHeading {
+  depth: number; // 2 = h2, 3 = h3
+  text: string;
+  slug: string;
+}
+
 export interface LabsPost {
   slug: string;
   title: string;
@@ -16,6 +22,7 @@ export interface LabsPost {
   author?: string | null;
   coverImage?: string | null;
   coverVideo?: string | null;
+  headings: TocHeading[];
   content: string;
 }
 
@@ -24,7 +31,7 @@ export type LabsPostMeta = Omit<LabsPost, "content">;
 const posts = postsData as LabsPost[];
 
 export function getAllPosts(): LabsPostMeta[] {
-  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo }) => ({
+  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo, headings }) => ({
     slug,
     title,
     date,
@@ -32,6 +39,7 @@ export function getAllPosts(): LabsPostMeta[] {
     author,
     coverImage,
     coverVideo,
+    headings: headings ?? [],
   }));
 }
 

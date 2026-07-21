@@ -18,7 +18,7 @@ export default function LabsLayout({
     // when the visitor's global theme is light — otherwise the hard-coded navy
     // background pairs with near-black :root text and everything greys out.
     <div className="midnight" style={{ minHeight: "100vh", backgroundColor: "#0b1a2e", color: "#ffffff" }}>
-      <SiteHeader section="Labs" />
+      <SiteHeader section="Labs" position="sticky" />
       <main>{children}</main>
     </div>
   );

@@ -6,9 +6,11 @@
 import { getPost, getAllPosts } from "@/lib/labs";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeSlug from "rehype-slug";
 import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
+import { LabsToc, type TocItem } from "@/components/LabsToc";
 
 const MODULE_REVISION = "labs-v1-index";
 console.log(`[labs-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
@@ -34,8 +36,39 @@ export default function LabsIndexPage() {
   const metas = getAllPosts();
   const posts = metas.map((m) => getPost(m.slug)).filter(Boolean);
 
+  // Table-of-contents items for the side menu: each post's title as a top-level
+  // entry, followed by its headings.
+  const tocItems: TocItem[] = posts.flatMap((post) => {
+    const heads = (post!.headings ?? []).map((h) => ({ text: h.text, slug: h.slug, depth: h.depth }));
+    return [{ text: post!.title, slug: post!.slug, depth: 1 }, ...heads];
+  });
+
   return (
-    <div className="max-w-3xl mx-auto px-6 py-12 pb-24">
+    <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `@media (max-width: 1023px) { .labs-toc-aside { display: none !important; } }`,
+        }}
+      />
+      {/* Heading side menu */}
+      <aside
+        className="labs-toc-aside"
+        style={{
+          width: 232,
+          flexShrink: 0,
+          position: "sticky",
+          top: 66,
+          alignSelf: "flex-start",
+          height: "calc(100vh - 66px)",
+          overflowY: "auto",
+          padding: "3.5rem 0",
+        }}
+      >
+        <LabsToc items={tocItems} />
+      </aside>
+
+      {/* Article column */}
+      <div style={{ flex: 1, minWidth: 0, maxWidth: "44rem" }} className="px-6 py-12 pb-24">
       {/* Page header */}
       <div className="mb-16">
         <h1
@@ -131,7 +164,7 @@ export default function LabsIndexPage() {
 
               {/* Post body */}
               <div className="legal-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{post!.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>{post!.content}</ReactMarkdown>
               </div>
 
               {/* Divider between posts */}
@@ -150,6 +183,7 @@ export default function LabsIndexPage() {
       {/* Subscribe form */}
       <div style={{ marginTop: "4rem" }}>
         <BlogSubscribe />
+      </div>
       </div>
     </div>
   );
