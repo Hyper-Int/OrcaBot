@@ -291,8 +291,18 @@ The frontend includes a blog and in-app documentation system.
 
 ### Blog
 - Route group: `src/app/(blog)/blog/`
-- Markdown content in `content/blog/` (built at compile time via `scripts/build-blog.mjs`)
+- Markdown content in `content/blog/` (built at compile time via `scripts/build-content.mjs`)
 - Blog utilities: `src/lib/blog.ts`
+
+### Labs
+Deeper technical dives. Same structure and styling as the blog, separate content.
+- Route group: `src/app/(labs)/labs/`
+- Markdown content in `content/labs/` (same build script + frontmatter as the blog)
+- Labs utilities: `src/lib/labs.ts`
+
+`scripts/build-content.mjs` generates `src/data/<section>-posts.json` for **both**
+sections from one parser (Workers have no runtime fs). Add a new section by adding
+an entry to its `SECTIONS` array.
 
 ### Documentation
 - Route group: `src/app/(docs)/docs/`

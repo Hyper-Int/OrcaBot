@@ -15,6 +15,7 @@ const BASE_NAV_LINKS: NavLink[] = [
   { href: "/download", label: "Download" },
   { href: "/docs", label: "Docs" },
   { href: "/blog", label: "Blog" },
+  { href: "/labs", label: "Labs" },
   { href: "/terms", label: "Terms" },
   { href: "/privacy", label: "Privacy" },
 ];

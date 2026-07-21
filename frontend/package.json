@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/build-blog.mjs",
+    "prebuild": "node scripts/build-content.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint src/",
