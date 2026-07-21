@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: benchmark-block-v1-config-panel
+// REVISION: benchmark-block-v2-flock-run-lock
 
 "use client";
 
-const BENCHMARK_BLOCK_REVISION = "benchmark-block-v1-config-panel";
+const BENCHMARK_BLOCK_REVISION = "benchmark-block-v2-flock-run-lock";
 if (typeof window !== "undefined" && !(window as unknown as { __benchmarkBlockLogged?: boolean }).__benchmarkBlockLogged) {
   (window as unknown as { __benchmarkBlockLogged?: boolean }).__benchmarkBlockLogged = true;
   console.log(`[BenchmarkBlock] REVISION: ${BENCHMARK_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
@@ -41,7 +41,7 @@ const THINKING = ["low", "medium", "high"] as const;
 // build the venv, start scb-live, then run the matrix. Re-runs are fast (fetch +
 // reset, venv already present).
 const SETUP_PRELUDE =
-  "rm -f /workspace/.scb-live.ready; export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || (SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 &); ( for i in $(seq 1 120); do curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ && { : > /workspace/.scb-live.ready; break; }; sleep 1; done ) >/dev/null 2>&1 & { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
+  "rm -f /workspace/.scb-live.ready; export PATH=$HOME/.local/bin:$PATH; command -v uv >/dev/null || { curl -LsSf https://astral.sh/uv/install.sh | sh; }; D=/workspace/slop-code-bench; B=feat/host-tmux-executor; R=https://github.com/robdmac/slop-code-bench; if [ -d $D/.git ]; then git -C $D fetch --depth 1 origin $B && git -C $D reset --hard FETCH_HEAD; else if [ -e $D ]; then mv $D $D.stale.$(date +%s); fi; git clone --depth 1 --branch $B $R $D; fi; cd $D; curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ || ( exec 9>&-; SCB_LIVE_PORT=8051 nohup bin/scb-live >/workspace/.scb-live.log 2>&1 & ); ( exec 9>&-; for i in $(seq 1 120); do curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8051/ && { : > /workspace/.scb-live.ready; break; }; sleep 1; done ) >/dev/null 2>&1 & { [ -e /workspace/scb-venv/bin/slop-code ] || UV_PYTHON_INSTALL_DIR=/workspace/.uv-python UV_PROJECT_ENVIRONMENT=/workspace/scb-venv uv sync --python 3.12; } && cp -f configs/providers.yaml configs/providers.yaml.orig 2>/dev/null; ls /workspace/scb-venv/bin/slop-code && echo SETUP_OK > /workspace/.scb-setup.done && echo SETUP_OK";
 
 // Live results view served by scb-live inside the VM (started during setup).
 const LIVE_URL = "http://127.0.0.1:8051";
@@ -53,8 +53,6 @@ const LIVE_URL = "http://127.0.0.1:8051";
 // account-dependent, and the field accepts any free-typed value.
 const NATIVE_CODEX_MODELS = ["openai/gpt-5.5"];
 const DEFAULT_OPENROUTER_MODEL = "openrouter/kimi-k2.6";
-// 150% of the default 800x500 browser block.
-const LIVE_BROWSER_SIZE = { width: 1200, height: 750 };
 // Public agent-skill packs. Every skill now runs in the Orcabot VM (local envs);
 // scb-matrix clones each skill's public plugin repo and stages it into the run.
 const SKILLS = ["baseline", "gsd", "omc", "superpowers", "karpathy", "addyosmani"];
@@ -158,19 +156,18 @@ function buildBootCommand(c: BenchmarkContent): string {
   // single source of truth shared by the panel, chat and the run itself.
   const matrix = `bin/scb-matrix`;
   return (
-    // Acquire the run lock FIRST — before clone/venv/setup, which can take minutes.
-    // The previous marker was created after all that and used `: >` (which never
-    // rejects an existing file), so it was not a lock at all: two clicks during
-    // setup both proceeded into the same checkout.
-    "L=/workspace/.scb-running; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then NOW=$(date +%s); B=$(sed -n \"s/.*beat=\\([0-9]*\\).*/\\1/p\" \"$L\" 2>/dev/null); if [ -n \"$B\" ] && [ $((NOW-B)) -lt 90 ]; then echo \"[scb] a benchmark run is already active (heartbeat $((NOW-B))s ago) \u2014 not starting a second one\"; exec bash; fi; echo \"[scb] clearing stale run lock (no heartbeat for $((NOW-${B:-0}))s)\"; rm -f \"$L\"; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then echo \"[scb] could not acquire run lock\"; exec bash; fi; fi; ( while :; do printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\"; sleep 20; done ) & HB=$!; trap 'kill $HB 2>/dev/null; rm -f $L' EXIT INT TERM; " +
+    // Acquire an advisory kernel lock FIRST — before clone/venv/setup, which can
+    // take minutes. The persistent lock file is never unlinked: flock makes both
+    // initial acquisition and crash recovery atomic across the shared PTY UID pool.
+    // The heartbeat file is only a UI status marker, not the synchronization primitive.
+    "K=/workspace/.scb-running.lock; L=/workspace/.scb-running; exec 9>\"$K\"; if ! flock -n 9; then echo \"[scb] a benchmark run is already active \u2014 not starting a second one\"; exec 9>&-; exec bash; fi; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\"; OWNER=$$; ( while kill -0 \"$OWNER\" 2>/dev/null; do printf \"pid=%s beat=%s\\n\" \"$OWNER\" \"$(date +%s)\" > \"$L\"; sleep 20; done ) & HB=$!; cleanup_lock() { trap - EXIT INT TERM; kill \"$HB\" 2>/dev/null; wait \"$HB\" 2>/dev/null; rm -f \"$L\"; flock -u 9 2>/dev/null; exec 9>&-; }; trap cleanup_lock EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; " +
     "echo '== Orcabot: preparing harness (first run installs deps) =='; " +
     SETUP_PRELUDE + "; " +
     "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
     configWriteCommand(c) + "; " +
-    "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
-    // Release explicitly BEFORE exec: exec replaces the shell so the EXIT trap never
-    // fires, and the heartbeat would keep the lock fresh forever.
-    matrix + "; rc=$?; kill $HB 2>/dev/null; rm -f \"$L\"; echo \"[matrix done rc=$rc]\"; exec bash"
+    "( exec 9>&-; nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 ) & " +
+    // Release explicitly BEFORE exec: exec replaces the shell so the EXIT trap never fires.
+    matrix + "; rc=$?; cleanup_lock; echo \"[matrix done rc=$rc]\"; exec bash"
   );
 }
 
@@ -289,58 +286,6 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
   // problem when no --problem is passed), so it must NOT block Run.
   const canRun = cfg.harnesses.length > 0 && cfg.models.length > 0 && cfg.skills.length > 0;
 
-  // Open the results browser only once scb-live is confirmed up. The run writes
-  // /workspace/.scb-live.ready after :8051 answers; we poll for it via the session
-  // file API (the session itself only exists once the runner terminal is created,
-  // hence waiting on data.sessionId too).
-  const [awaitingLive, setAwaitingLive] = React.useState(false);
-  // A run is in flight if /workspace/.scb-running exists. `running` alone only covered
-  // terminal creation, so Run went live again within a second and a second click would
-  // start a competing runner (same checkout, same config, same stop flag).
-  const [runActive, setRunActive] = React.useState(false);
-  React.useEffect(() => {
-    if (!data.sessionId) return;
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled) return;
-      const marker = await readSessionFileText(data.sessionId!, ".scb-running").catch(() => null);
-      // The runner heartbeats the lock every 20s. A SIGKILL / VM crash / power loss
-      // can't run the cleanup trap, so existence alone would disable Run forever with
-      // no way back. Treat a lock with no recent heartbeat as stale.
-      const beat = marker ? Number(/beat=(\d+)/.exec(marker)?.[1] ?? 0) : 0;
-      const fresh = beat > 0 && Date.now() / 1000 - beat < 90;
-      if (!cancelled) setRunActive(marker !== null && fresh);
-      if (!cancelled) timer = setTimeout(poll, 4000);
-    };
-    let timer = setTimeout(poll, 1000);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [data.sessionId]);
-
-  React.useEffect(() => {
-    if (!awaitingLive || !data.sessionId) return;
-    let cancelled = false;
-    let tries = 0;
-    const tick = async () => {
-      if (cancelled) return;
-      tries += 1;
-      const ready = await readSessionFileText(data.sessionId!, ".scb-live.ready").catch(() => null);
-      if (cancelled) return;
-      if (ready !== null) {
-        data.onCreateBrowserBlock?.(LIVE_URL, undefined, undefined, LIVE_BROWSER_SIZE);
-        setAwaitingLive(false);
-        setStatus("Results browser opened.");
-        return;
-      }
-      if (tries > 150) { // ~5 min: setup is far slower than this only if something is wrong
-        setAwaitingLive(false);
-        setStatus("Live view didn't come up — check the runner terminal.");
-        return;
-      }
-      timer = setTimeout(tick, 2000);
-    };
-    let timer = setTimeout(tick, 1500);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [awaitingLive, data.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Provider/auth is the one setting that constrains harness AND model, so make it
   // explicit rather than implied by a model prefix. Subscription mode only exists for
@@ -364,6 +309,26 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
     }
   };
 
+  // A run is in flight while /workspace/.scb-running exists with a fresh heartbeat.
+  // Polling the file (not React state) keeps Run disabled for the run's real duration
+  // and survives this component re-rendering — the fragility that broke the old
+  // browser-open poll. A crash leaves a stale marker, so require a recent heartbeat.
+  const [runActive, setRunActive] = React.useState(false);
+  React.useEffect(() => {
+    if (!data.sessionId) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      const marker = await readSessionFileText(data.sessionId!, ".scb-running").catch(() => null);
+      const beat = marker ? Number(/beat=(\d+)/.exec(marker)?.[1] ?? 0) : 0;
+      const fresh = beat > 0 && Date.now() / 1000 - beat < 90;
+      if (!cancelled) setRunActive(marker !== null && fresh);
+      if (!cancelled) timer = setTimeout(poll, 4000);
+    };
+    let timer = setTimeout(poll, 1000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [data.sessionId]);
+
   const handleStop = async () => {
     if (!data.sessionId) { setStatus("No sandbox session yet — nothing to stop."); return; }
     // scb-matrix polls /workspace/.scb-stop and stops launching further arms. It can't
@@ -384,12 +349,10 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
       // Open the live results view only now that a run exists — a browser block
       // navigates once and never retries, so opening it earlier just parks it on
       // ERR_CONNECTION_REFUSED. Deduped upstream, so re-running won't stack blocks.
-      // Do NOT open the results browser yet. A browser block navigates exactly once
-      // and never retries, so creating it now (while the first run is still cloning
-      // and building the venv) parks it on ERR_CONNECTION_REFUSED permanently. Wait
-      // for the run to report that :8051 is actually serving — see the effect below.
-      setAwaitingLive(true);
-      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — waiting for the live view…`);
+      // The runner opens the results browser itself once scb-live is serving
+      // (scb-visualize -> MCP create_browser), which is robust to this panel
+      // re-rendering. So we don't poll/open it from React state here anymore.
+      setStatus(`Launched ${arms} arm${arms === 1 ? "" : "s"} — results browser opens when live.`);
     } finally {
       setRunning(false);
     }

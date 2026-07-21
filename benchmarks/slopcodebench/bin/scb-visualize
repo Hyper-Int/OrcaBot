@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.request
 
+WS_ROOT = os.environ.get("SCB_WORKSPACE", "/workspace")
 MCP_BASE = os.environ.get("ORCABOT_MCP_BASE", "http://127.0.0.1:8081")
 SID = os.environ.get("ORCABOT_SESSION_ID", "").strip()
 PTY = os.environ.get("ORCABOT_PTY_ID", "").strip()
@@ -153,12 +154,48 @@ def surface_run(idx, problem, logfile):
     _log(f"surfaced run '{problem}' -> {logfile}")
 
 
+
+def surface_results_browser(workdir):
+    """Open the live results browser ONCE scb-live actually answers on its port. Done
+    server-side here (not from the panel's React state, which resets when the run adds
+    canvas items) via the same MCP path that surfaces viewers — so it's robust. A
+    marker file makes it at-most-once so re-launches don't stack browsers; the block
+    persists + auto-refreshes across runs anyway."""
+    if not mcp_ready():
+        return
+    port = os.environ.get("SCB_LIVE_PORT", "8051")
+    url = f"http://127.0.0.1:{port}"
+    marker = os.path.join(WS_ROOT, ".scb-browser-open")
+    if os.path.exists(marker):
+        return
+    # Wait for scb-live to actually serve (up to ~2min) before creating the block —
+    # a browser navigates once, so opening it early parks it on connection-refused.
+    for _ in range(120):
+        try:
+            urllib.request.urlopen(url + "/", timeout=2)
+            break
+        except Exception:  # noqa: BLE001
+            time.sleep(1)
+    else:
+        _log(f"results browser: {url} never answered — not surfacing")
+        return
+    call_tool("create_browser", {"url": url, "size": {"width": 1200, "height": 750}})
+    try:
+        open(marker, "w").close()
+    except OSError:
+        pass
+    _log(f"surfaced results browser -> {url}")
+
+
 def watch(workdir, stop=None, skip_existing=False, spawn_viewers=True):
     manifest = os.path.join(workdir, ".scb_tmux", "runs.jsonl")
     _log(f"watching {manifest}")
     if not mcp_ready():
         _log("not in an Orcabot PTY (no ORCABOT_MCP_SECRET) — visualization disabled; still tailing manifest for logs")
     seen, idx = set(), 0
+    # Open the results browser as soon as scb-live is live (independent of the
+    # per-run viewer loop below).
+    threading.Thread(target=surface_results_browser, args=(workdir,), daemon=True).start()
     # runs.jsonl is append-only across ALL runs. In `run` mode we launch a fresh
     # watcher per benchmark run, so without this it would re-surface a note + a
     # permanent `tail -F` terminal for every historical run on each launch.
