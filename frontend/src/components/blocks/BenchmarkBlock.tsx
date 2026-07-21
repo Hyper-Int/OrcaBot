@@ -162,13 +162,15 @@ function buildBootCommand(c: BenchmarkContent): string {
     // The previous marker was created after all that and used `: >` (which never
     // rejects an existing file), so it was not a lock at all: two clicks during
     // setup both proceeded into the same checkout.
-    "L=/workspace/.scb-running; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then OP=$(sed -n \"s/.*pid=\\([0-9]*\\).*/\\1/p\" \"$L\" 2>/dev/null); if [ -n \"$OP\" ] && kill -0 \"$OP\" 2>/dev/null; then echo \"[scb] a benchmark run is already active (pid $OP) \u2014 not starting a second one\"; exec bash; fi; echo \"[scb] clearing stale run lock (pid ${OP:-?} is gone)\"; rm -f \"$L\"; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then echo \"[scb] could not acquire run lock\"; exec bash; fi; fi; ( while :; do printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\"; sleep 20; done ) & HB=$!; trap 'kill $HB 2>/dev/null; rm -f $L' EXIT INT TERM; " +
+    "L=/workspace/.scb-running; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then NOW=$(date +%s); B=$(sed -n \"s/.*beat=\\([0-9]*\\).*/\\1/p\" \"$L\" 2>/dev/null); if [ -n \"$B\" ] && [ $((NOW-B)) -lt 90 ]; then echo \"[scb] a benchmark run is already active (heartbeat $((NOW-B))s ago) \u2014 not starting a second one\"; exec bash; fi; echo \"[scb] clearing stale run lock (no heartbeat for $((NOW-${B:-0}))s)\"; rm -f \"$L\"; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then echo \"[scb] could not acquire run lock\"; exec bash; fi; fi; ( while :; do printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\"; sleep 20; done ) & HB=$!; trap 'kill $HB 2>/dev/null; rm -f $L' EXIT INT TERM; " +
     "echo '== Orcabot: preparing harness (first run installs deps) =='; " +
     SETUP_PRELUDE + "; " +
     "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
     configWriteCommand(c) + "; " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
-    matrix + "; rc=$?; echo \"[matrix done rc=$rc]\"; exec bash"
+    // Release explicitly BEFORE exec: exec replaces the shell so the EXIT trap never
+    // fires, and the heartbeat would keep the lock fresh forever.
+    matrix + "; rc=$?; kill $HB 2>/dev/null; rm -f \"$L\"; echo \"[matrix done rc=$rc]\"; exec bash"
   );
 }
 
