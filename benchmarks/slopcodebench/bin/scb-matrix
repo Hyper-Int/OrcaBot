@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""scb-matrix — expand a benchmark config into arms and run them, W at a time.
+
+An ARM is one (harness × model) pair; each arm runs all `problems` sequentially
+via slop-code. Arms run with `workers`-way parallelism. Each arm's output is tee'd
+to /workspace/.scb-run.<arm>.<ts>.log (scb-live aggregates these into the live
+per-arm tally) and mirrored to a tmux window (scb-visualize surfaces a per-arm
+read-only viewer).
+
+Config: /workspace/.scb-config.yaml — created with defaults if missing. CLI flags
+override the file for a one-off run (the panel/chat write the file to persist).
+
+Usage:
+  scb-matrix [--config PATH] [--print-config]
+             [--harness H]... [--model M]... [--problem P]...
+             [--workers N] [--thinking low|medium|high] [--prompt NAME] [--evaluate]
+
+Dependency-free (stdlib only), like scb-live / scb-visualize.
+"""
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+
+WS = os.environ.get("SCB_WORKSPACE", "/workspace")
+REPO = os.environ.get("SCB_REPO_DIR", f"{WS}/slop-code-bench")
+VENV = os.environ.get("SCB_VENV", f"{WS}/scb-venv")
+CONFIG = os.environ.get("SCB_CONFIG", f"{WS}/.scb-config.yaml")
+
+# slop-code's local runtime spawns codex with HOME=/tmp/agent_home (agents/utils.py
+# HOME_PATH). Codex CLI reads its ChatGPT/Codex subscription from $HOME/.codex/auth.json.
+AGENT_HOME = os.environ.get("SCB_AGENT_HOME", "/tmp/agent_home")
+CODEX_AUTH_DEST = f"{AGENT_HOME}/.codex/auth.json"
+
+DEFAULT_CONFIG = """\
+# SlopCodeBench run config — edit here, ask Orcabot chat ("add claude", "2 workers"),
+# or use the config panel. An ARM is one (harness x model x skill); each arm runs all
+# `problems` sequentially. `workers` arms run in parallel.
+harnesses: [opencode]            # opencode claude_code codex gemini kimi_cli cursor_cli openhands miniswe pi
+models:    [openrouter/kimi-k2.6] # OpenRouter ("openrouter/<id>") or native model ids
+skills:    [baseline]            # baseline gsd omc superpowers karpathy addyosmani (agent-skill packs)
+problems:  []                     # empty = the FULL benchmark set (every problem, in sequence)
+workers:   1                      # how many arms run in parallel
+prompt:    just-solve             # baseline prompt (skills override this); just-solve plan_first ...
+thinking:  low                    # low medium high
+evaluate:  false                  # true = score the run, false = inference-only
+codex_auth: broker                # broker = brokered API key; subscription = codex login (ChatGPT/Codex plan)
+"""
+
+SCALARS = {"workers", "prompt", "thinking", "evaluate", "codex_auth"}
+LISTS = {"harnesses", "models", "problems", "skills"}
+
+# A "skill" is a public agent-skill pack; running one swaps the slop-code
+# environment + prompt (see the fork's REPRODUCE_PUBLIC_SKILLS.md). Every skill
+# now has a LOCAL (in-VM) env + `-local-trigger` prompt: scb-matrix clones the
+# skill's public plugin repo, points SCB_SKILL_<NAME>_DIR at it, and the env's
+# setup command copies it into the run's `.claude/skills/<dir>` (the Docker
+# variants that bind-mount from a host path are still in the fork for reference).
+SKILL_ENV = {
+    "baseline": "configs/environments/local-tmux-py.yaml",
+    "gsd": "configs/environments/local-tmux-py-with-gsd.yaml",
+    "omc": "configs/environments/local-tmux-py-with-omc.yaml",
+    "superpowers": "configs/environments/local-tmux-py-with-superpowers.yaml",
+    "karpathy": "configs/environments/local-tmux-py-with-karpathy.yaml",
+    "addyosmani": "configs/environments/local-tmux-py-with-addyosmani.yaml",
+}
+SKILL_PROMPT = {
+    "baseline": None,  # use config `prompt`
+    "gsd": "just-solve-with-gsd-local-trigger",
+    "omc": "just-solve-with-omc-local-trigger",
+    "superpowers": "just-solve-with-superpowers-local-trigger",
+    "karpathy": "just-solve-with-karpathy-local-trigger",
+    "addyosmani": "just-solve-with-addyosmani-local-trigger",
+}
+# skill -> (git repo, subpath within the repo that IS the plugin dir, env var the
+# env yaml reads to stage the plugin locally). subpath "" = repo root.
+SKILL_PLUGIN = {
+    "gsd": ("https://github.com/open-gsd/get-shit-done-redux", "", "SCB_SKILL_GSD_DIR"),
+    "omc": ("https://github.com/Yeachan-Heo/oh-my-claudecode", "", "SCB_SKILL_OMC_DIR"),
+    "superpowers": ("https://github.com/obra/superpowers", "", "SCB_SKILL_SUPERPOWERS_DIR"),
+    "karpathy": ("https://github.com/multica-ai/andrej-karpathy-skills",
+                 "skills/karpathy-guidelines", "SCB_SKILL_KARPATHY_DIR"),
+    "addyosmani": ("https://github.com/addyosmani/agent-skills", "", "SCB_SKILL_ADDYOSMANI_DIR"),
+}
+
+
+def _log(msg):
+    sys.stderr.write(f"[scb-matrix] {msg}\n")
+    sys.stderr.flush()
+
+
+def parse_config(text):
+    """Minimal YAML subset for the flat config: `key: scalar`, `key: [a, b]`, and
+    block lists (`key:` then `  - item`). Comments (#) and blanks ignored."""
+    cfg = {}
+    cur_list = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.startswith(" ") and line.lstrip().startswith("- ") and cur_list:
+            cfg[cur_list].append(line.lstrip()[2:].strip())
+            continue
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        cur_list = None
+        if val.startswith("[") and val.endswith("]"):
+            cfg[key] = [v.strip() for v in val[1:-1].split(",") if v.strip()]
+        elif val == "":
+            cfg[key] = []
+            cur_list = key
+        else:
+            cfg[key] = val
+    return cfg
+
+
+def load_config():
+    if not os.path.isfile(CONFIG):
+        try:
+            with open(CONFIG, "w", encoding="utf-8") as fh:
+                fh.write(DEFAULT_CONFIG)
+            _log(f"created default config {CONFIG}")
+        except OSError as exc:
+            _log(f"could not create {CONFIG}: {exc}")
+            return parse_config(DEFAULT_CONFIG)
+    return parse_config(open(CONFIG, encoding="utf-8").read())
+
+
+def apply_overrides(cfg, args):
+    """CLI flags override the config file (for a one-off run)."""
+    i, harn, mods, probs, skls = 0, [], [], [], []
+    while i < len(args):
+        a = args[i]
+        if a == "--harness":
+            harn.append(args[i + 1]); i += 2
+        elif a == "--model":
+            mods.append(args[i + 1]); i += 2
+        elif a == "--problem":
+            probs.append(args[i + 1]); i += 2
+        elif a == "--skill":
+            skls.append(args[i + 1]); i += 2
+        elif a in ("--workers", "--thinking", "--prompt", "--codex-auth"):
+            cfg[a[2:].replace("-", "_")] = args[i + 1]; i += 2
+        elif a == "--evaluate":
+            cfg["evaluate"] = "true"; i += 1
+        elif a == "--subscription":  # shorthand for --codex-auth subscription
+            cfg["codex_auth"] = "subscription"; i += 1
+        else:
+            _log(f"ignoring unknown arg: {a}"); i += 1
+    if harn:
+        cfg["harnesses"] = harn
+    if mods:
+        cfg["models"] = mods
+    if probs:
+        cfg["problems"] = probs
+    if skls:
+        cfg["skills"] = skls
+    return cfg
+
+
+def patch_broker():
+    """Restore a pristine providers.yaml and route openrouter through this session's
+    broker (mirrors scb-run; injects the real key server-side)."""
+    broker = os.environ.get("OPENROUTER_BASE_URL", "").strip().replace("localhost", "127.0.0.1")
+    orig = os.path.join(REPO, "configs", "providers.yaml.orig")
+    prov = os.path.join(REPO, "configs", "providers.yaml")
+    if os.path.isfile(orig):
+        try:
+            open(prov, "w", encoding="utf-8").write(open(orig, encoding="utf-8").read())
+        except OSError:
+            pass
+    if not broker:
+        _log("OPENROUTER_BASE_URL not set — is OPENROUTER_API_KEY a broker secret?")
+        return
+    try:
+        txt = open(prov, encoding="utf-8").read()
+        new = txt.replace("api_base: https://openrouter.ai/api/v1", "api_base: " + broker)
+        # Also rewrite a STALE broker URL (a prior session's, e.g. captured into a
+        # non-pristine providers.yaml.orig) so opencode targets THIS session's
+        # broker path — otherwise the request hits a dead session and 401s.
+        new = re.sub(r"http://127\.0\.0\.1:\d+/broker/[0-9a-f]+/openrouter(?![-\w])", broker, new)
+        if new != txt:
+            open(prov, "w", encoding="utf-8").write(new)
+            _log(f"routed OpenRouter via broker -> {broker}")
+    except OSError as exc:
+        _log(f"providers.yaml patch failed: {exc}")
+
+
+def find_codex_auth():
+    """Locate a Codex subscription credential (auth.json written by `codex login`).
+    Search order: $SCB_CODEX_AUTH_FILE, $WS/.scb-codex-auth.json (staged by the
+    panel/user), then the usual CODEX_HOME / HOME locations. Returns a path or None."""
+    candidates = [
+        os.environ.get("SCB_CODEX_AUTH_FILE"),
+        os.path.join(WS, ".scb-codex-auth.json"),
+        os.path.join(os.environ.get("CODEX_HOME", ""), "auth.json") if os.environ.get("CODEX_HOME") else None,
+        os.path.join(os.path.expanduser("~"), ".codex", "auth.json"),
+    ]
+    for c in candidates:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def stage_codex_auth():
+    """Copy the located Codex subscription auth.json into the agent's HOME so the
+    in-VM (local runtime) codex process finds it at $HOME/.codex/auth.json. Returns
+    True if staged. Does NOT overwrite a newer dest."""
+    src = find_codex_auth()
+    if not src:
+        _log("codex_auth=subscription but no auth.json found "
+             f"(looked at $SCB_CODEX_AUTH_FILE, {WS}/.scb-codex-auth.json, ~/.codex/auth.json). "
+             "Run `codex login` or stage the file; the arm will fail auth without it.")
+        return False
+    try:
+        os.makedirs(os.path.dirname(CODEX_AUTH_DEST), exist_ok=True)
+        with open(src, "rb") as fh:
+            data = fh.read()
+        with open(CODEX_AUTH_DEST, "wb") as fh:
+            fh.write(data)
+        os.chmod(CODEX_AUTH_DEST, 0o600)
+        _log(f"staged codex subscription auth {src} -> {CODEX_AUTH_DEST}")
+        return True
+    except OSError as exc:
+        _log(f"codex auth staging failed: {exc}")
+        return False
+
+
+def patch_codex_provider():
+    """For subscription runs, flip the `openai` provider from an API-key env_var to
+    a file credential (the staged auth.json). slop-code then resolves a FILE
+    credential for codex (no OPENAI_API_KEY injected) and codex uses the ChatGPT/
+    Codex subscription. Idempotent; runs after patch_broker restores .orig."""
+    prov = os.path.join(REPO, "configs", "providers.yaml")
+    try:
+        txt = open(prov, encoding="utf-8").read()
+    except OSError:
+        return
+    new = re.sub(
+        r"(\n  openai:\n    )type: env_var\n    env_var: OPENAI_API_KEY",
+        r"\1type: file\n    file_path: " + CODEX_AUTH_DEST,
+        txt,
+        count=1,
+    )
+    if new != txt:
+        try:
+            open(prov, "w", encoding="utf-8").write(new)
+            _log("openai provider -> file credential (codex subscription)")
+        except OSError as exc:
+            _log(f"codex provider patch failed: {exc}")
+
+
+STOP_FLAG = f"{WS}/.scb-stop"
+
+
+def stop_requested():
+    return os.path.exists(STOP_FLAG)
+
+
+def preflight_codex_subscription(cfg, models):
+    """Fail BEFORE launching anything if a codex-subscription run can't possibly work.
+    Without this, every problem fails identically and the matrix happily grinds through
+    the whole suite spawning a viewer per run (observed: dozens of dead terminals)."""
+    src = find_codex_auth()
+    if not src:
+        _log("codex_auth=subscription but no auth.json found. Run `codex login` in a "
+             "terminal, or stage the file at " + os.path.join(WS, ".scb-codex-auth.json") +
+             ". Not starting the run.")
+        return False
+    # Deliberately NOT blocking model ids here: which models a given ChatGPT/Codex plan
+    # can drive is account-dependent and not something we can check up front. A wrong
+    # model is caught at runtime by the fatal-error watchdog in run_arm() instead, which
+    # also covers auth/quota failures generally.
+    return True
+
+
+def is_codex_subscription(cfg):
+    return str(cfg.get("codex_auth", "broker")).strip().lower() == "subscription"
+
+
+def slug(s):
+    return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
+
+
+STAGE_MARKER = ".scb-staged"
+
+
+def stage_skill(skill):
+    """Clone a skill's public plugin once and return the env var its env yaml reads.
+    Clones to a temp dir and renames into place, so a concurrent reader can never see
+    a half-populated checkout. Returns {} if the clone failed — callers MUST treat that
+    as fatal rather than silently running the arm with no skill."""
+    info = SKILL_PLUGIN.get(skill)
+    if not info:
+        return {}
+    repo, subpath, envvar = info
+    dest = os.path.join(WS, ".scb-skills", skill)
+    plugin_dir = os.path.join(dest, subpath) if subpath else dest
+    # "non-empty dir" is NOT proof of a good checkout — an interrupted clone leaves a
+    # dir containing only .git, which the old check happily accepted (and legacy dirs
+    # from the earlier clone race look exactly like that). Require a marker that is
+    # only written after a validated, completed clone.
+    marker = os.path.join(dest, STAGE_MARKER)
+    if os.path.isfile(marker) and os.path.isdir(plugin_dir) and os.listdir(plugin_dir):
+        return {envvar: plugin_dir}
+    if os.path.exists(dest):
+        _log(f"skill '{skill}': existing checkout is unverified/partial — re-cloning")
+
+    tmp = dest + ".tmp"
+    subprocess.call(["rm", "-rf", tmp])
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        rc = subprocess.call(["git", "clone", "--depth", "1", repo, tmp],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if rc != 0:
+            _log(f"skill plugin clone FAILED ({skill} <- {repo}, rc={rc})")
+            subprocess.call(["rm", "-rf", tmp])
+            return {}
+        tmp_plugin = os.path.join(tmp, subpath) if subpath else tmp
+        if not (os.path.isdir(tmp_plugin) and os.listdir(tmp_plugin)):
+            _log(f"skill plugin {skill} incomplete after clone (missing {subpath or 'repo root'})")
+            subprocess.call(["rm", "-rf", tmp])
+            return {}
+        with open(os.path.join(tmp, STAGE_MARKER), "w", encoding="utf-8") as fh:
+            fh.write(f"{repo}\n")          # written ONLY after a validated clone
+        subprocess.call(["rm", "-rf", dest])
+        os.rename(tmp, dest)  # atomic: readers see complete+marked, or nothing
+    except Exception as exc:  # noqa: BLE001
+        _log(f"skill plugin staging failed ({skill}): {exc}")
+        subprocess.call(["rm", "-rf", tmp])
+        return {}
+
+    _log(f"staged skill plugin {skill} <- {repo}")
+    return {envvar: plugin_dir}
+
+
+def stage_skills(skills):
+    """Stage every skill up front, serially, BEFORE any worker starts. Previously each
+    worker raced to clone the same destination, so with several models sharing one skill
+    a worker could observe a partial checkout — or get no skill env at all."""
+    staged = {}
+    for skill in dict.fromkeys(skills):
+        if skill not in SKILL_PLUGIN:
+            staged[skill] = {}
+            continue
+        env = stage_skill(skill)
+        if not env:
+            _log(f"skill '{skill}' could not be staged — its arms would silently run "
+                 "WITHOUT the skill, so they will be failed instead.")
+        staged[skill] = env
+    return staged
+
+
+# Failures that will repeat identically for EVERY problem (bad model for this account,
+# bad/missing auth, exhausted quota). Without aborting on these, slop-code marches
+# through the whole suite failing the same way and scb-visualize spawns a dead viewer
+# per run — the "it kept spawning more tasks" failure mode.
+FATAL_PATTERNS = (
+    "not supported when using Codex with a ChatGPT account",
+    "401 Unauthorized",
+    "Incorrect API key",
+    "insufficient_quota",
+    "AuthenticationError",
+    "No auth credentials found",
+)
+
+
+def _watch_for_fatal(proc, logpath, label, fatal):
+    """Abort an arm whose every problem is failing for the same fundamental reason."""
+    while proc.poll() is None:
+        time.sleep(5)
+        if stop_requested():
+            _log(f"stop requested — terminating {label}")
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        try:
+            txt = open(logpath, errors="replace").read()
+        except OSError:
+            continue
+        for pat in FATAL_PATTERNS:
+            if pat in txt:
+                # Abort THIS arm only. Writing the global stop flag here (as an earlier
+                # version did) cancelled every other arm too — so one bad model killed
+                # the valid comparison arms it was supposed to be compared against.
+                _log(f"FATAL for {label}: {pat!r} — aborting this arm; it would repeat "
+                     "for every problem. Other arms continue.")
+                fatal["reason"] = pat
+                try:
+                    proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+
+def run_arm(harness, model, skill, cfg, ts, skill_envs):
+    problems = cfg.get("problems") or []
+    thinking = cfg.get("thinking", "low")
+    evaluate = str(cfg.get("evaluate", "false")).lower() in ("1", "true", "yes", "on")
+    env_cfg = SKILL_ENV.get(skill, SKILL_ENV["baseline"])
+    prompt = SKILL_PROMPT.get(skill) or cfg.get("prompt", "just-solve")
+    skill_env = skill_envs.get(skill, {})
+    if skill in SKILL_PLUGIN and not skill_env:
+        _log(f"arm FAILED before start: {harness} x {model} x {skill} — skill not staged")
+        return {"arm": f"{harness} x {model} x {skill}", "ok": False, "reason": "skill not staged"}
+    env = {**os.environ, **skill_env}
+    # Codex subscription arm: the auth is a file (auth.json) + providers.yaml already
+    # points openai at it. Strip the brokered OPENAI_* / OPENROUTER_* so the codex CLI
+    # doesn't see a placeholder API key and falls back to the ChatGPT/Codex subscription.
+    if harness == "codex" and is_codex_subscription(cfg):
+        for k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+                  "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"):
+            env.pop(k, None)
+    log = f"{WS}/.scb-run.{slug(harness)}_{slug(model)}_{slug(skill)}.{ts}.log"
+    cmd = [f"{VENV}/bin/slop-code", "run", "--agent", harness, "--model", model,
+           "--environment", env_cfg, "--prompt", f"configs/prompts/{prompt}.jinja"]
+    for p in problems:
+        cmd += ["--problem", p]
+    if not evaluate:
+        cmd.append("--no-evaluate")
+    cmd.append(f"thinking={thinking}")
+    _log(f"arm start: {harness} x {model} x {skill} -> {log}")
+    try:
+        with open(log, "w", encoding="utf-8") as fh:
+            fh.write(f"[scb-matrix] arm {harness} x {model} x {skill} problems={problems or 'ALL'} "
+                     f"env={env_cfg} prompt={prompt} thinking={thinking} evaluate={evaluate}\n")
+            fh.flush()
+            proc = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=fh,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            label = f"{harness} x {model} x {skill}"
+            fatal = {}
+            watcher = threading.Thread(target=_watch_for_fatal, args=(proc, log, label, fatal),
+                                       daemon=True)
+            watcher.start()
+            rc = proc.wait()
+        reason = fatal.get("reason") or (None if rc == 0 else f"rc={rc}")
+        _log(f"arm done:  {label} rc={rc}" + (f" ({reason})" if reason else ""))
+        return {"arm": label, "ok": rc == 0 and not fatal, "reason": reason}
+    except Exception as exc:  # noqa: BLE001 — one arm failing must not kill the matrix
+        _log(f"arm error: {harness} x {model} x {skill}: {exc}")
+        return {"arm": f"{harness} x {model} x {skill}", "ok": False, "reason": str(exc)}
+
+
+def main():
+    args = sys.argv[1:]
+    cfg_path_override = None
+    if "--config" in args:
+        i = args.index("--config"); cfg_path_override = args[i + 1]
+        args = args[:i] + args[i + 2:]
+    global CONFIG
+    if cfg_path_override:
+        CONFIG = cfg_path_override
+
+    cfg = load_config()
+    if "--print-config" in args:
+        print(open(CONFIG, encoding="utf-8").read() if os.path.isfile(CONFIG) else DEFAULT_CONFIG)
+        return
+    cfg = apply_overrides(cfg, args)
+
+    harnesses = cfg.get("harnesses") or ["opencode"]
+    models = cfg.get("models") or ["openrouter/kimi-k2.6"]
+    skills = cfg.get("skills") or ["baseline"]
+    # Empty `problems` = run the FULL benchmark set. slop-code auto-discovers every
+    # valid problem when no --problem is passed (_resolve_problem_names -> discovery),
+    # so we simply omit the flags rather than hardcoding a default problem.
+    problems = cfg.get("problems") or []
+    try:
+        workers = max(1, int(str(cfg.get("workers", "1")).strip()))
+    except ValueError:
+        workers = 1
+    arms = [(h, m, s) for h in harnesses for m in models for s in skills]
+    _log(f"{len(arms)} arm(s) [{len(harnesses)}h x {len(models)}m x {len(skills)}s], "
+         f"{len(problems) if problems else 'ALL'} problem(s), workers={workers}")
+
+    # Clear any stop flag from a previous run before starting a new one.
+    try:
+        os.remove(STOP_FLAG)
+    except OSError:
+        pass
+
+    if is_codex_subscription(cfg):
+        non_codex = [h for h in harnesses if h != "codex"]
+        if non_codex:
+            _log("codex_auth=subscription needs the 'codex' harness: the ChatGPT/Codex "
+                 f"login (~/.codex/auth.json) is read only by the codex CLI, not {non_codex}. "
+                 "Set harness=codex (and model openai/gpt-5.5), or switch the provider to "
+                 "OpenRouter. Not starting.")
+            sys.exit(2)
+        if not preflight_codex_subscription(cfg, models):
+            sys.exit(2)
+
+    patch_broker()
+
+    # Codex subscription mode: stage the ChatGPT/Codex auth.json + point the openai
+    # provider at it (must run AFTER patch_broker, which restores a pristine
+    # providers.yaml). Only relevant when a codex arm is present.
+    if is_codex_subscription(cfg):  # harnesses already validated to be codex
+        _log("codex_auth=subscription — using ChatGPT/Codex login (no brokered key)")
+        stage_codex_auth()
+        patch_codex_provider()
+
+    ts = time.strftime("%Y%m%dT%H%M%S")
+    # Stage every skill BEFORE any worker starts (no concurrent clones of one dest).
+    skill_envs = stage_skills(skills)
+
+    sem = threading.Semaphore(workers)
+    threads = []
+    results = []
+    results_lock = threading.Lock()
+
+    def worker(h, m, s):
+        with sem:
+            if stop_requested():
+                _log(f"stop requested — skipping arm {h} x {m} x {s}")
+                with results_lock:
+                    results.append({"arm": f"{h} x {m} x {s}", "ok": False, "reason": "stopped"})
+                return
+            res = run_arm(h, m, s, cfg, ts, skill_envs)
+            with results_lock:
+                results.append(res)
+
+    for h, m, s in arms:
+        t = threading.Thread(target=worker, args=(h, m, s), daemon=False)
+        t.start()
+        threads.append(t)
+        time.sleep(0.2)  # stagger so tmux windows / logfiles don't collide
+    for t in threads:
+        t.join()
+
+    # Exit code must reflect reality: an orchestrator can't tell "ran fine" from
+    # "nothing ran" if we always exit 0 and print "matrix complete".
+    failed = [r for r in results if r and not r.get("ok")]
+    ok = len(results) - len(failed)
+    if failed:
+        for r in failed:
+            _log(f"  FAILED: {r['arm']} — {r.get('reason')}")
+        _log(f"matrix finished with FAILURES: {ok} ok, {len(failed)} failed")
+        sys.exit(1)
+    _log(f"matrix complete: {ok} arm(s) ok")
+
+
+if __name__ == "__main__":
+    main()

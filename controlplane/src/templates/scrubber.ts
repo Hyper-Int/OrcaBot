@@ -27,7 +27,8 @@ export type DashboardItemType =
   | 'workspace'
   | 'recipe'
   | 'prompt'
-  | 'schedule';
+  | 'schedule'
+  | 'benchmark';
 
 /**
  * Safely parse JSON, returning null on failure
@@ -168,6 +169,25 @@ export function scrubItemContent(
           });
         }
         return JSON.stringify({ name: '', cron: '', eventTrigger: '', enabled: true });
+      }
+
+      case 'benchmark': {
+        // Benchmark config is run configuration, not user data — no names, URLs or
+        // credentials — so it survives export intact. Falling through to `default`
+        // blanked it, silently resetting exported dashboards to generic defaults.
+        const parsed = safeParseJson(content) as Record<string, unknown> | null;
+        if (!parsed || typeof parsed !== 'object') return '';
+        return JSON.stringify({
+          harnesses: parsed.harnesses ?? [],
+          skills: parsed.skills ?? [],
+          models: parsed.models ?? [],
+          problems: parsed.problems ?? [],
+          workers: parsed.workers ?? 1,
+          prompt: parsed.prompt ?? 'just-solve',
+          thinking: parsed.thinking ?? 'low',
+          evaluate: parsed.evaluate ?? false,
+          codexAuth: parsed.codexAuth ?? 'broker',
+        });
       }
 
       default:

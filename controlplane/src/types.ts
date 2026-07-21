@@ -174,7 +174,7 @@ export interface Dashboard {
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook' | 'benchmark';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };

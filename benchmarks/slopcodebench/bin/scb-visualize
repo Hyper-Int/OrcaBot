@@ -21,10 +21,15 @@ MCP server using ORCABOT_MCP_SECRET; the dashboard is resolved server-side from
 the session, so no dashboard id is needed.
 
 Usage:
-  scb-visualize watch [--workdir DIR]        # watch an existing run's manifest
-  scb-visualize run [--workdir DIR] -- CMD…  # run the benchmark AND visualize
+  scb-visualize watch [--workdir DIR] [--no-viewers] [--skip-existing]  # watch a run
+  scb-visualize run   [--workdir DIR] [--no-viewers] -- CMD…            # run + visualize
+
+--no-viewers (or SCB_VIEWERS=0): don't spawn a read-only PTY per run — rely on the
+scb-live browser dashboard instead. The run and dashboard are unaffected.
 """
+import glob
 import json
+import re
 import os
 import shlex
 import subprocess
@@ -34,13 +39,14 @@ import time
 import urllib.error
 import urllib.request
 
+WS_ROOT = os.environ.get("SCB_WORKSPACE", "/workspace")
 MCP_BASE = os.environ.get("ORCABOT_MCP_BASE", "http://127.0.0.1:8081")
 SID = os.environ.get("ORCABOT_SESSION_ID", "").strip()
 PTY = os.environ.get("ORCABOT_PTY_ID", "").strip()
 SECRET = os.environ.get("ORCABOT_MCP_SECRET", "").strip()
 
-# Canvas layout: a grid of columns; each run = a note stacked over its terminal.
-COL_W, NOTE_H, TERM_H, GAP, COLS = 380, 96, 300, 24, 3
+# Canvas layout: a grid of columns; each run = one terminal (title names the run).
+COL_W, TERM_H, GAP, COLS = 380, 300, 24, 3
 BASE_X, BASE_Y, COL_GAP, ROW_GAP = 40, 40, 40, 48
 
 
@@ -51,6 +57,59 @@ def _log(msg):
 
 def mcp_ready():
     return bool(SID and PTY and SECRET)
+
+
+def prepare_configs(workdir):
+    """Run-time config fixes applied HERE (in the runner PTY) so they can't be
+    skipped by the orchestrator and use THIS session's broker URL.
+
+    1. Route OpenRouter through the session-local secrets broker. The sandbox sets
+       OPENROUTER_BASE_URL=http://127.0.0.1:8082/broker/<sid>/openrouter when
+       OPENROUTER_API_KEY is a broker secret; the broker injects the real key
+       server-side. Without this, opencode hits openrouter.ai directly with the
+       broker *placeholder* key and fails auth (total_cost=0, "OpenCode error").
+    2. Pin the tmux log dir to a STABLE path under the checkout. It defaults to the
+       run's temp working dir (which is cleaned up), so runs.jsonl + the per-run
+       logfiles vanish and the live agent viewer never surfaces. Point it at
+       <workdir>/.scb_tmux — exactly where watch() looks."""
+    broker = os.environ.get("OPENROUTER_BASE_URL", "").strip()
+    providers = os.path.join(workdir, "configs", "providers.yaml")
+    if broker and os.path.isfile(providers):
+        try:
+            txt = open(providers, encoding="utf-8").read()
+            # Point the openrouter openai endpoint at this session's broker. Handle
+            # both the pristine openrouter.ai URL AND a stale broker URL left by a
+            # previous run in the shared /workspace (idempotent, always current sid).
+            new = txt.replace("https://openrouter.ai/api/v1", broker)
+            new = re.sub(r"http://127\.0\.0\.1:\d+/broker/[0-9a-f]+/openrouter(?![-\w])",
+                         broker, new)
+            if new != txt:
+                with open(providers, "w", encoding="utf-8") as fh:
+                    fh.write(new)
+                _log(f"routed OpenRouter via broker -> {broker}")
+        except OSError as exc:
+            _log(f"providers.yaml patch failed: {exc}")
+    elif not broker:
+        _log("OPENROUTER_BASE_URL not set — is OPENROUTER_API_KEY a broker secret?")
+
+    log_dir = os.path.join(workdir, ".scb_tmux")
+    # EVERY local env, not just the baseline one. The skill variants
+    # (local-tmux-py-with-gsd/omc/superpowers/karpathy/addyosmani.yaml) also run on
+    # the tmux executor; without this patch their manifests land in the run's temp
+    # dir, watch() never sees runs.jsonl, and those arms surface no viewer at all.
+    env_dir = os.path.join(workdir, "configs", "environments")
+    for env_yaml in sorted(glob.glob(os.path.join(env_dir, "local-tmux-py*.yaml"))):
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            txt = open(env_yaml, encoding="utf-8").read()
+            if "tmux_log_dir" not in txt and "  tmux_session: scb" in txt:
+                txt = txt.replace("  tmux_session: scb",
+                                  f"  tmux_session: scb\n  tmux_log_dir: {log_dir}")
+                with open(env_yaml, "w", encoding="utf-8") as fh:
+                    fh.write(txt)
+                _log(f"pinned tmux_log_dir -> {log_dir} in {os.path.basename(env_yaml)}")
+        except OSError as exc:
+            _log(f"env yaml patch failed: {exc}")
 
 
 def call_tool(name, arguments):
@@ -74,34 +133,69 @@ def call_tool(name, arguments):
 def slot(idx):
     col, row = idx % COLS, idx // COLS
     x = BASE_X + col * (COL_W + COL_GAP)
-    y = BASE_Y + row * (NOTE_H + TERM_H + GAP + ROW_GAP)
+    y = BASE_Y + row * (TERM_H + ROW_GAP)
     return x, y
 
 
 def surface_run(idx, problem, logfile):
-    x, y = slot(idx)
-    call_tool("create_note", {
-        "content": f"### Solving: {problem}\n\nAgent-under-test — live, read-only.",
-        "position": {"x": x, "y": y},
-        "size": {"width": COL_W, "height": NOTE_H},
-        "color": "blue",
-    })
+    # The terminal's own title ("agent: <problem>") already names the run, so there
+    # is no separate note block — it was redundant canvas clutter (and rendered empty).
+    #
+    # No explicit position: our old fixed grid started at a hardcoded origin and was
+    # blind to whatever else is already on the canvas (the benchmark panel, the runner
+    # terminal), so viewers landed on top of them. Omitting it lets Orcabot's canvas
+    # auto-placement find genuinely free space.
     call_tool("create_terminal", {
         "name": f"agent: {problem}",
         "boot_command": f"tail -n +1 -F {shlex.quote(logfile)}",
         "agentic": False,
-        "position": {"x": x, "y": y + NOTE_H + GAP},
         "size": {"width": COL_W, "height": TERM_H},
     })
     _log(f"surfaced run '{problem}' -> {logfile}")
 
 
-def watch(workdir, stop=None, skip_existing=False):
+
+def surface_results_browser(workdir):
+    """Open the live results browser ONCE scb-live actually answers on its port. Done
+    server-side here (not from the panel's React state, which resets when the run adds
+    canvas items) via the same MCP path that surfaces viewers — so it's robust. A
+    marker file makes it at-most-once so re-launches don't stack browsers; the block
+    persists + auto-refreshes across runs anyway."""
+    if not mcp_ready():
+        return
+    port = os.environ.get("SCB_LIVE_PORT", "8051")
+    url = f"http://127.0.0.1:{port}"
+    marker = os.path.join(WS_ROOT, ".scb-browser-open")
+    if os.path.exists(marker):
+        return
+    # Wait for scb-live to actually serve (up to ~2min) before creating the block —
+    # a browser navigates once, so opening it early parks it on connection-refused.
+    for _ in range(120):
+        try:
+            urllib.request.urlopen(url + "/", timeout=2)
+            break
+        except Exception:  # noqa: BLE001
+            time.sleep(1)
+    else:
+        _log(f"results browser: {url} never answered — not surfacing")
+        return
+    call_tool("create_browser", {"url": url, "size": {"width": 1200, "height": 750}})
+    try:
+        open(marker, "w").close()
+    except OSError:
+        pass
+    _log(f"surfaced results browser -> {url}")
+
+
+def watch(workdir, stop=None, skip_existing=False, spawn_viewers=True):
     manifest = os.path.join(workdir, ".scb_tmux", "runs.jsonl")
     _log(f"watching {manifest}")
     if not mcp_ready():
         _log("not in an Orcabot PTY (no ORCABOT_MCP_SECRET) — visualization disabled; still tailing manifest for logs")
     seen, idx = set(), 0
+    # Open the results browser as soon as scb-live is live (independent of the
+    # per-run viewer loop below).
+    threading.Thread(target=surface_results_browser, args=(workdir,), daemon=True).start()
     # runs.jsonl is append-only across ALL runs. In `run` mode we launch a fresh
     # watcher per benchmark run, so without this it would re-surface a note + a
     # permanent `tail -F` terminal for every historical run on each launch.
@@ -148,7 +242,9 @@ def watch(workdir, stop=None, skip_existing=False):
                 continue
             if not os.path.isabs(logfile):
                 logfile = os.path.join(workdir, logfile)
-            if mcp_ready():
+            if not spawn_viewers:
+                _log(f"viewers off — not surfacing: {problem} (use the scb-live browser dashboard)")
+            elif mcp_ready():
                 surface_run(idx, problem, logfile)
             else:
                 _log(f"(disabled) would surface: {problem} -> {logfile}")
@@ -170,14 +266,38 @@ def main():
         workdir = rest[i + 1]
         rest = rest[:i] + rest[i + 2:]
 
+    # Per-run PTY viewers are optional: a big multi-problem run would otherwise
+    # spawn one read-only terminal per problem, cluttering the canvas — the
+    # scb-live browser dashboard is the low-noise overview. Default on;
+    # `--no-viewers` or SCB_VIEWERS=0 turns them off (the run + dashboard are
+    # unaffected).
+    spawn_viewers = os.environ.get("SCB_VIEWERS", "1").strip().lower() not in ("0", "false", "no", "off")
+    if "--no-viewers" in rest:
+        spawn_viewers = False
+        rest = [a for a in rest if a != "--no-viewers"]
+    if "--viewers" in rest:
+        spawn_viewers = True
+        rest = [a for a in rest if a != "--viewers"]
+
+    # --skip-existing: for standalone `watch` in the pipeline — snapshot the runs
+    # already in the manifest and only surface runs that appear AFTER we start, so
+    # a shared/append-only runs.jsonl doesn't re-surface historical runs. (`run`
+    # mode always does this.)
+    skip_existing = "--skip-existing" in rest
+    if skip_existing:
+        rest = [a for a in rest if a != "--skip-existing"]
+
     if mode == "watch":
-        watch(workdir)
+        watch(workdir, skip_existing=skip_existing, spawn_viewers=spawn_viewers)
     elif mode == "run":
         cmd = rest[1:] if rest[:1] == ["--"] else rest
         if not cmd:
-            _log("usage: scb-visualize run [--workdir DIR] -- <command...>")
+            _log("usage: scb-visualize run [--workdir DIR] [--no-viewers] -- <command...>")
             sys.exit(2)
-        t = threading.Thread(target=watch, args=(workdir,), kwargs={"skip_existing": True}, daemon=True)
+        prepare_configs(workdir)  # broker routing + stable log dir, before the run
+        t = threading.Thread(target=watch, args=(workdir,),
+                             kwargs={"skip_existing": True, "spawn_viewers": spawn_viewers},
+                             daemon=True)
         t.start()
         rc = subprocess.call(cmd, cwd=workdir)
         time.sleep(2)  # let the watcher surface the final run

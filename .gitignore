@@ -77,3 +77,6 @@ e2e/node_modules/
 
 # Planning docs — keep locally, never publish to the repo
 /PLAN-*
+# Python bytecode (interpreter-generated)
+__pycache__/
+*.pyc

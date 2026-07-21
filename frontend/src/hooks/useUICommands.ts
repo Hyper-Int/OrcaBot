@@ -48,6 +48,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   todo: { width: 280, height: 160 },
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
+  benchmark: { width: 340, height: 470 },
   integration: { width: 320, height: 400 },
 };
 

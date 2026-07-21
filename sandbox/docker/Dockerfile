@@ -28,7 +28,7 @@ FROM debian:bookworm-slim
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# REVISION: sandbox-version-cli-v1-build-arg
+# REVISION: sandbox-version-cli-v2-flock-lock
 ARG SANDBOX_GIT_COMMIT=unknown
 ENV ORCABOT_SANDBOX_VERSION=${SANDBOX_GIT_COMMIT}
 
@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nano \
     less \
     jq \
+    util-linux \
     # Process management
     procps \
     kmod \

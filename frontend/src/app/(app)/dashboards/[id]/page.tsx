@@ -15,6 +15,7 @@ import {
   StickyNote,
   CheckSquare,
   Globe,
+  FlaskConical,
   SquareTerminal,
   Users,
   Settings,
@@ -76,6 +77,7 @@ import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog"
 import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
 import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
+import { findAvailableSpace } from "@/lib/canvas/placement";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -169,6 +171,7 @@ const blockTools: BlockTool[] = [
   { type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
+  { type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -262,6 +265,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
+  benchmark: { width: 340, height: 470 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },
@@ -281,7 +285,6 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   outlook_calendar: { width: 280, height: 280 },
 };
 
-const PLACEMENT_GAP = 32; // gap between items when finding space
 const COLLAPSED_SIDEBAR_WIDTH = 36; // w-9 = 2.25rem ≈ 36px
 const SIDEBAR_WIDTH_KEY = "orcabot:sidebar-width";
 const DEFAULT_SIDEBAR_WIDTH = 200;
@@ -297,83 +300,6 @@ function getSidebarWidth(collapsed: boolean): number {
   }
 }
 
-/**
- * Find available space for a new component that doesn't overlap existing items.
- * Strategy:
- * 1. Try to place within the visible viewport area, scanning positions on a grid.
- * 2. If no space in viewport, place to the right of all existing items.
- * Returns a snapped position (16px grid).
- *
- * @param sidebarInset  Pixels of the left edge occluded by the workspace sidebar.
- */
-function findAvailableSpace(
-  existingItems: Array<{ position: { x: number; y: number }; size: { width: number; height: number } }>,
-  newSize: { width: number; height: number },
-  viewport: { x: number; y: number; zoom: number },
-  containerWidth: number,
-  containerHeight: number,
-  sidebarInset: number,
-): { x: number; y: number } {
-  // Convert viewport to flow coordinates (visible area)
-  const zoom = viewport.zoom || 1;
-  const viewLeft = (-viewport.x + sidebarInset) / zoom; // shift right past sidebar
-  const viewTop = -viewport.y / zoom;
-  const viewWidth = (containerWidth - sidebarInset) / zoom;
-  const viewHeight = containerHeight / zoom;
-
-  // Check if a candidate position overlaps any existing item
-  function overlaps(cx: number, cy: number): boolean {
-    for (const item of existingItems) {
-      const ax = item.position.x;
-      const ay = item.position.y;
-      const aw = item.size.width;
-      const ah = item.size.height;
-
-      if (
-        cx < ax + aw + PLACEMENT_GAP &&
-        cx + newSize.width + PLACEMENT_GAP > ax &&
-        cy < ay + ah + PLACEMENT_GAP &&
-        cy + newSize.height + PLACEMENT_GAP > ay
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Snap to 16px grid
-  const snap = (v: number) => Math.round(v / 16) * 16;
-
-  // 1. Try to place within the visible viewport with some margin
-  const margin = 48;
-  const stepX = Math.max(64, snap(newSize.width / 2));
-  const stepY = Math.max(64, snap(newSize.height / 2));
-
-  for (let y = snap(viewTop + margin); y + newSize.height < viewTop + viewHeight - margin; y += stepY) {
-    for (let x = snap(viewLeft + margin); x + newSize.width < viewLeft + viewWidth - margin; x += stepX) {
-      if (!overlaps(x, y)) {
-        return { x, y };
-      }
-    }
-  }
-
-  // 2. No space in viewport — place to the right of all existing items
-  if (existingItems.length === 0) {
-    return { x: snap(viewLeft + margin), y: snap(viewTop + margin) };
-  }
-
-  let maxRight = -Infinity;
-  let topAtMaxRight = 0;
-  for (const item of existingItems) {
-    const right = item.position.x + item.size.width;
-    if (right > maxRight) {
-      maxRight = right;
-      topAtMaxRight = item.position.y;
-    }
-  }
-
-  return { x: snap(maxRight + PLACEMENT_GAP * 2), y: snap(topAtMaxRight) };
-}
 
 /**
  * Bridge component that watches for inbound messaging events (WhatsApp/Slack/Discord)
@@ -903,6 +829,15 @@ export default function DashboardPage() {
   }, [dashboardId, isAuthenticated, isAuthResolved]);
 
   // Compute a non-overlapping position for a new block and ensure it's visible
+  // Placements handed out in the last few seconds. `items` comes from React state, so
+  // blocks created in quick succession (scb-visualize surfacing several agent viewers,
+  // or chat creating a terminal then a browser) would all be placed against the SAME
+  // stale list and land on top of each other. Reserving each returned rect until the
+  // real item shows up in `items` makes back-to-back placement collision-free.
+  const recentPlacementsRef = React.useRef<
+    Array<{ position: { x: number; y: number }; size: { width: number; height: number }; at: number }>
+  >([]);
+
   const computePlacement = React.useCallback(
     (newSize: { width: number; height: number }) => {
       const container = canvasContainerRef.current;
@@ -910,14 +845,20 @@ export default function DashboardPage() {
       const containerHeight = container?.clientHeight ?? 800;
       const sidebarInset = getSidebarWidth(sidebarCollapsed);
 
-      return findAvailableSpace(
-        items,
+      const now = Date.now();
+      recentPlacementsRef.current = recentPlacementsRef.current.filter((p) => now - p.at < 5000);
+
+      const position = findAvailableSpace(
+        [...items, ...recentPlacementsRef.current],
         newSize,
         viewportRef.current,
         containerWidth,
         containerHeight,
         sidebarInset,
       );
+
+      recentPlacementsRef.current.push({ position, size: newSize, at: now });
+      return position;
     },
     [items, sidebarCollapsed],
   );
@@ -2599,7 +2540,11 @@ export default function DashboardPage() {
       return;
     }
 
-    const defaultContent = tool.type === "todo" ? "[]" : "";
+    const defaultContent =
+      tool.type === "todo" ? "[]"
+      : tool.type === "benchmark"
+        ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: [], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
+        : "";
     // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
     // The PTY starts in the workspace root (~), so use a relative cd.
     const relCwd = workspaceCwd !== "/" ? workspaceCwd.replace(/^\//, "") : "";
@@ -2635,9 +2580,22 @@ export default function DashboardPage() {
   };
 
   const handleCreateBrowserBlock = React.useCallback(
-    (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
+    (
+      url: string,
+      anchor?: { x: number; y: number },
+      sourceId?: string,
+      sizeOverride?: { width: number; height: number },
+    ) => {
       if (!url) return;
-      const size = defaultSizes.browser;
+      // Reuse an existing browser on the same URL rather than stacking duplicates
+      // (e.g. a run launched twice, or chat and the panel both opening the results
+      // view). A browser block navigates once, so a second one is pure clutter.
+      const existing = items.find((i) => i.type === "browser" && i.content === url);
+      if (existing) {
+        ensureVisible(existing.position, existing.size);
+        return;
+      }
+      const size = sizeOverride ?? defaultSizes.browser;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
         : computePlacement(size);
@@ -2649,6 +2607,23 @@ export default function DashboardPage() {
         sourceId,
         sourceHandle: "right-out",
         targetHandle: "left-in",
+      });
+      ensureVisible(position, size);
+    },
+    [createItemMutation, computePlacement, ensureVisible, items]
+  );
+
+  // Benchmark block "Run": create a terminal that runs the pipeline boot command
+  // (same shape as the chat's create_terminal — the backend only reads bootCommand).
+  const handleCreateTerminalBlock = React.useCallback(
+    (name: string, bootCommand: string) => {
+      const size = defaultSizes.terminal;
+      const position = computePlacement(size);
+      createItemMutation.mutate({
+        type: "terminal",
+        content: JSON.stringify({ name, subagentIds: [], skillIds: [], agentic: false, bootCommand }),
+        position,
+        size,
       });
       ensureVisible(position, size);
     },
@@ -4052,6 +4027,7 @@ export default function DashboardPage() {
               edges={edgesToRender}
               onEdgesChange={onEdgesChange}
               onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+              onCreateTerminalBlock={role === "viewer" ? undefined : handleCreateTerminalBlock}
               onViewportChange={(next) => {
                 viewportRef.current = next;
               }}

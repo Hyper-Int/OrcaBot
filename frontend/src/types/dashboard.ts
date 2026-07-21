@@ -22,7 +22,7 @@ export interface Dashboard {
 /**
  * Dashboard item types
  */
-export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "decision" | "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat" | "twitter" | "outlook" | "outlook_calendar";
+export type DashboardItemType = "note" | "todo" | "terminal" | "link" | "browser" | "workspace" | "recipe" | "prompt" | "schedule" | "decision" | "gmail" | "calendar" | "contacts" | "sheets" | "forms" | "slack" | "discord" | "telegram" | "whatsapp" | "teams" | "matrix" | "google_chat" | "twitter" | "outlook" | "outlook_calendar" | "benchmark";
 
 /**
  * Position on the canvas
@@ -96,6 +96,25 @@ export interface TodoItem {
 export interface TodoContent {
   title: string;
   items: TodoItem[];
+}
+
+/**
+ * Benchmark config block content (SlopCodeBench control panel).
+ * Mirrors /workspace/.scb-config.yaml — the single source of truth the chat and
+ * scb-matrix also read. A run is a matrix of (harness x model) arms.
+ */
+export interface BenchmarkContent {
+  harnesses: string[];
+  /** Public agent-skill packs (baseline/gsd/omc/superpowers/karpathy). Each = an arm axis. */
+  skills: string[];
+  models: string[];
+  problems: string[];
+  workers: number;
+  prompt: string;
+  thinking: "low" | "medium" | "high";
+  evaluate: boolean;
+  /** Codex auth: "broker" = brokered API key (default); "subscription" = codex login (ChatGPT/Codex plan). */
+  codexAuth?: "broker" | "subscription";
 }
 
 /**

@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v22-viewer-rbac-timeout-report
+// REVISION: chat-v23-list-secret-names
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v22-viewer-rbac-timeout-report loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v23-list-secret-names loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -65,6 +65,7 @@ When working with dashboards, use dashboard_list first to find existing ones, or
 
 AI PROVIDER SETUP (when user has NO stored keys and wants to set one up):
 - The three supported coding agents are: Claude Code (needs ANTHROPIC_API_KEY), Gemini CLI (needs GEMINI_API_KEY), and Codex (needs OPENAI_API_KEY).
+- NEVER ask the user to add a key without checking first: call list_secret_names (names only, no values) and see if it is already set. If it IS listed, say so and proceed — do not ask them to add it again.
 - If no keys are stored, ask which provider they want and use secrets_create to store it with dashboard_id="_global".
 - Keys are stored encrypted and are never visible to AI agents (secrets broker protection).
 - After storing the key, offer to create a terminal with the chosen agent.
@@ -306,6 +307,23 @@ const SECRETS_TOOLS: GeminiTool[] = [
         dashboard_id: {
           type: 'string',
           description: 'The dashboard ID',
+        },
+      },
+      required: ['dashboard_id'],
+    },
+  },
+  {
+    name: 'list_secret_names',
+    description:
+      'List the NAMES of secrets/env vars already configured for a dashboard (plus global ones). ' +
+      'Returns names only — never values. Use this to check whether a required key (e.g. ' +
+      'OPENROUTER_API_KEY) is already set BEFORE asking the user to add it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: {
+          type: 'string',
+          description: 'The dashboard ID whose secrets to list (global "_global" secrets are always included).',
         },
       },
       required: ['dashboard_id'],
@@ -1210,6 +1228,58 @@ async function executeTool(
       }
 
       return { result: data as Record<string, unknown>, isError: !response.ok };
+    }
+
+    if (toolName === 'list_secret_names') {
+      const dashboardId = args.dashboard_id as string;
+      if (!dashboardId) {
+        return { result: { error: 'dashboard_id is required' }, isError: true };
+      }
+
+      // Enumerating configured key names is metadata, not credentials — but it still
+      // reveals which providers/services a dashboard is wired to, so require write
+      // access (owner/editor) like the other non-read-only tools. A viewer must not
+      // be able to enumerate.
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+        console.log(`[list_secret_names] DENIED role=${access?.role ?? 'none'} dashboard=${dashboardId} user=${userId}`);
+        return {
+          result: { error: 'Access denied. list_secret_names requires owner or editor access to this dashboard.' },
+          isError: true,
+        };
+      }
+
+      // NAMES ONLY. Never select `value` — not even a prefix/suffix: a "helpful"
+      // preview like sk-ant-api03-abc… is a real leak. The result is strictly
+      // set/not-set metadata, so the broker's guarantee (LLM never sees values)
+      // is preserved.
+      const rows = await env.DB.prepare(`
+        SELECT name, type, broker_protected, dashboard_id
+        FROM user_secrets
+        WHERE user_id = ? AND dashboard_id IN (?, '_global')
+        ORDER BY name
+      `).bind(userId, dashboardId).all<{
+        name: string; type: string; broker_protected: number; dashboard_id: string;
+      }>();
+
+      const secrets_ = (rows.results ?? []).map((r) => ({
+        name: r.name,
+        type: r.type,
+        broker_protected: !!r.broker_protected,
+        scope: r.dashboard_id === '_global' ? 'global' : 'dashboard',
+      }));
+
+      return {
+        result: {
+          names: secrets_.map((s) => s.name),
+          secrets: secrets_,
+          count: secrets_.length,
+          note: 'Names only — values are never exposed. A listed name means the key IS set.',
+        },
+        isError: false,
+      };
     }
 
     if (toolName === 'secrets_create') {
