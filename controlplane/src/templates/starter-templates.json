@@ -353,7 +353,7 @@
   {
     "id": "starter-slopcodebench",
     "name": "SlopCodeBench Runner",
-    "description": "Run slop-code-bench arms driven by Orcabot chat in plain English; each agent-under-test opens as a live read-only terminal on the canvas. One-time VM setup required (fork + venv).",
+    "description": "Compare coding agents on slop-code-bench",
     "category": "coding",
     "items": [
       {

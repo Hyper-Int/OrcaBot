@@ -1,7 +1,7 @@
 {
   "_comment": "Importable Orcabot dashboard template. Orcabot chat is the orchestrator: it runs setup itself via run_command (no setup PTY, no note block) and drives runs via create_terminal/read_file, surfacing each agent-under-test as a live read-only component via bin/scb-visualize. Seed with bin/seed-benchmark-templates.",
   "name": "SlopCodeBench Runner",
-  "description": "Run slop-code-bench arms driven by Orcabot chat in plain English; each agent-under-test opens as a live read-only terminal on the canvas. One-time VM setup required (fork + venv).",
+  "description": "Compare coding agents on slop-code-bench",
   "category": "coding",
   "items": [
     {
