@@ -286,6 +286,9 @@ def slug(s):
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
 
 
+STAGE_MARKER = ".scb-staged"
+
+
 def stage_skill(skill):
     """Clone a skill's public plugin once and return the env var its env yaml reads.
     Clones to a temp dir and renames into place, so a concurrent reader can never see
@@ -297,8 +300,15 @@ def stage_skill(skill):
     repo, subpath, envvar = info
     dest = os.path.join(WS, ".scb-skills", skill)
     plugin_dir = os.path.join(dest, subpath) if subpath else dest
-    if os.path.isdir(plugin_dir) and os.listdir(plugin_dir):
+    # "non-empty dir" is NOT proof of a good checkout — an interrupted clone leaves a
+    # dir containing only .git, which the old check happily accepted (and legacy dirs
+    # from the earlier clone race look exactly like that). Require a marker that is
+    # only written after a validated, completed clone.
+    marker = os.path.join(dest, STAGE_MARKER)
+    if os.path.isfile(marker) and os.path.isdir(plugin_dir) and os.listdir(plugin_dir):
         return {envvar: plugin_dir}
+    if os.path.exists(dest):
+        _log(f"skill '{skill}': existing checkout is unverified/partial — re-cloning")
 
     tmp = dest + ".tmp"
     subprocess.call(["rm", "-rf", tmp])
@@ -310,16 +320,20 @@ def stage_skill(skill):
             _log(f"skill plugin clone FAILED ({skill} <- {repo}, rc={rc})")
             subprocess.call(["rm", "-rf", tmp])
             return {}
+        tmp_plugin = os.path.join(tmp, subpath) if subpath else tmp
+        if not (os.path.isdir(tmp_plugin) and os.listdir(tmp_plugin)):
+            _log(f"skill plugin {skill} incomplete after clone (missing {subpath or 'repo root'})")
+            subprocess.call(["rm", "-rf", tmp])
+            return {}
+        with open(os.path.join(tmp, STAGE_MARKER), "w", encoding="utf-8") as fh:
+            fh.write(f"{repo}\n")          # written ONLY after a validated clone
         subprocess.call(["rm", "-rf", dest])
-        os.rename(tmp, dest)  # atomic: readers see complete or nothing
+        os.rename(tmp, dest)  # atomic: readers see complete+marked, or nothing
     except Exception as exc:  # noqa: BLE001
         _log(f"skill plugin staging failed ({skill}): {exc}")
         subprocess.call(["rm", "-rf", tmp])
         return {}
 
-    if not (os.path.isdir(plugin_dir) and os.listdir(plugin_dir)):
-        _log(f"skill plugin {skill} incomplete after clone (missing {subpath or 'repo root'})")
-        return {}
     _log(f"staged skill plugin {skill} <- {repo}")
     return {envvar: plugin_dir}
 

@@ -158,17 +158,17 @@ function buildBootCommand(c: BenchmarkContent): string {
   // single source of truth shared by the panel, chat and the run itself.
   const matrix = `bin/scb-matrix`;
   return (
+    // Acquire the run lock FIRST — before clone/venv/setup, which can take minutes.
+    // The previous marker was created after all that and used `: >` (which never
+    // rejects an existing file), so it was not a lock at all: two clicks during
+    // setup both proceeded into the same checkout.
+    "L=/workspace/.scb-running; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then OP=$(sed -n \"s/.*pid=\\([0-9]*\\).*/\\1/p\" \"$L\" 2>/dev/null); if [ -n \"$OP\" ] && kill -0 \"$OP\" 2>/dev/null; then echo \"[scb] a benchmark run is already active (pid $OP) \u2014 not starting a second one\"; exec bash; fi; echo \"[scb] clearing stale run lock (pid ${OP:-?} is gone)\"; rm -f \"$L\"; if ! ( set -o noclobber; printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\" ) 2>/dev/null; then echo \"[scb] could not acquire run lock\"; exec bash; fi; fi; ( while :; do printf \"pid=%s beat=%s\\n\" \"$$\" \"$(date +%s)\" > \"$L\"; sleep 20; done ) & HB=$!; trap 'kill $HB 2>/dev/null; rm -f $L' EXIT INT TERM; " +
     "echo '== Orcabot: preparing harness (first run installs deps) =='; " +
     SETUP_PRELUDE + "; " +
     "echo '== running benchmark =='; cd /workspace/slop-code-bench; " +
     configWriteCommand(c) + "; " +
     "nohup bin/scb-visualize watch --skip-existing >/workspace/.scb-viz.log 2>&1 & " +
-    // Durable lifecycle marker: the panel disables Run while it exists, so a second
-    // click can't launch a concurrent runner against the same checkout/config/logs.
-    // Trapped so it clears even if the run is killed. Exit code is surfaced rather
-    // than always printing success.
-    "trap 'rm -f /workspace/.scb-running' EXIT INT TERM; : > /workspace/.scb-running; " +
-    matrix + "; rc=$?; rm -f /workspace/.scb-running; echo \"[matrix done rc=$rc]\"; exec bash"
+    matrix + "; rc=$?; echo \"[matrix done rc=$rc]\"; exec bash"
   );
 }
 
@@ -302,7 +302,12 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
     const poll = async () => {
       if (cancelled) return;
       const marker = await readSessionFileText(data.sessionId!, ".scb-running").catch(() => null);
-      if (!cancelled) setRunActive(marker !== null);
+      // The runner heartbeats the lock every 20s. A SIGKILL / VM crash / power loss
+      // can't run the cleanup trap, so existence alone would disable Run forever with
+      // no way back. Treat a lock with no recent heartbeat as stale.
+      const beat = marker ? Number(/beat=(\d+)/.exec(marker)?.[1] ?? 0) : 0;
+      const fresh = beat > 0 && Date.now() / 1000 - beat < 90;
+      if (!cancelled) setRunActive(marker !== null && fresh);
       if (!cancelled) timer = setTimeout(poll, 4000);
     };
     let timer = setTimeout(poll, 1000);
