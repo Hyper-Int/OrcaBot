@@ -45,6 +45,11 @@ const SETUP_PRELUDE =
 
 // Live results view served by scb-live inside the VM (started during setup).
 const LIVE_URL = "http://127.0.0.1:8051";
+// Codex CLI native models — used with a ChatGPT/Codex subscription instead of a
+// brokered OpenRouter key. slop-code needs {provider}/{model}; provider "openai"
+// resolves the auth.json file credential.
+const NATIVE_CODEX_MODELS = ["openai/gpt-5.5-codex", "openai/gpt-5.3-codex"];
+const DEFAULT_OPENROUTER_MODEL = "openrouter/kimi-k2.6";
 // 150% of the default 800x500 browser block.
 const LIVE_BROWSER_SIZE = { width: 1200, height: 750 };
 // Public agent-skill packs. Every skill now runs in the Orcabot VM (local envs);
@@ -305,6 +310,28 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
     return () => { cancelled = true; clearTimeout(timer); };
   }, [awaitingLive, data.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Provider/auth is the one setting that constrains harness AND model, so make it
+  // explicit rather than implied by a model prefix. Subscription mode only exists for
+  // the codex CLI (it reads ~/.codex/auth.json), so selecting it pins the harness.
+  const setProvider = (mode: "broker" | "subscription") => {
+    if (mode === "subscription") {
+      update({
+        codexAuth: "subscription",
+        harnesses: ["codex"],
+        models: cfg.models.every((m) => m.startsWith("openrouter/"))
+          ? [NATIVE_CODEX_MODELS[0]]
+          : cfg.models,
+      });
+    } else {
+      update({
+        codexAuth: "broker",
+        models: cfg.models.some((m) => m.startsWith("openai/"))
+          ? [DEFAULT_OPENROUTER_MODEL]
+          : cfg.models,
+      });
+    }
+  };
+
   const handleRun = async () => {
     if (!canRun) { setStatus("Pick ≥1 harness, model, and skill."); return; }
     setRunning(true);
@@ -389,6 +416,42 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
 
         {/* Body / form */}
         <div className="flex-1 overflow-auto p-3 space-y-3">
+          {/* Provider / auth — drives which models and harness make sense */}
+          <div className="space-y-1">
+            <div className="text-[11px] font-medium text-[var(--foreground-muted)]">Provider</div>
+            <div className="flex flex-wrap gap-1">
+              {([
+                ["broker", "OpenRouter (brokered key)", "Routes through the session secrets broker using your OPENROUTER_API_KEY. The LLM never sees the key."],
+                ["subscription", "Codex subscription", "Uses your ChatGPT/Codex login (~/.codex/auth.json) — no API key, no OpenRouter. Forces the codex harness."],
+              ] as const).map(([mode, label, tip]) => {
+                const on = (cfg.codexAuth ?? "broker") === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    title={tip}
+                    onClick={() => setProvider(mode)}
+                    className={cn(
+                      "nodrag rounded px-1.5 py-0.5 text-[11px] border transition-colors",
+                      on
+                        ? "bg-[var(--accent-primary)]/15 border-[var(--accent-primary)] text-[var(--foreground)]"
+                        : "bg-[var(--background-surface)] border-[var(--border)] text-[var(--foreground-muted)] hover:text-[var(--foreground)]"
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {cfg.codexAuth === "subscription" && (
+              <div className="text-[10px] text-[var(--foreground-muted)]">
+                Needs <code>codex login</code> — stage its <code>auth.json</code> at{" "}
+                <code>/workspace/.scb-codex-auth.json</code>. ⚠ That credential lives in the
+                VM and is readable by the agent-under-test.
+              </div>
+            )}
+          </div>
+
           {/* Harnesses */}
           <div className="space-y-1">
             <div className="text-[11px] font-medium text-[var(--foreground-muted)]">Harnesses</div>
@@ -440,8 +503,14 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
             </div>
           </div>
 
-          <TokenList label="Models" values={cfg.models} suggestions={MODEL_SUGGESTIONS}
-            placeholder="add model (e.g. openrouter/kimi-k2.6)…" onChange={(v) => update({ models: v })} />
+          <TokenList
+            label="Models"
+            values={cfg.models}
+            suggestions={cfg.codexAuth === "subscription" ? NATIVE_CODEX_MODELS : MODEL_SUGGESTIONS}
+            placeholder={cfg.codexAuth === "subscription"
+              ? "add model (e.g. openai/gpt-5.5-codex)…"
+              : "add model (e.g. openrouter/kimi-k2.6)…"}
+            onChange={(v) => update({ models: v })} />
           <TokenList label="Problems" values={cfg.problems} suggestions={PROBLEMS_KNOWN}
             placeholder="add problem (empty = all)…" onChange={(v) => update({ problems: v })} />
           {cfg.problems.length === 0 && (
@@ -478,20 +547,6 @@ export function BenchmarkBlock({ id, data, selected }: NodeProps<BenchmarkNode>)
             Evaluate (score the run, not just inference)
           </label>
 
-          {/* Codex auth: broker (API key) vs subscription (codex login). Only relevant when codex is selected. */}
-          {cfg.harnesses.includes("codex") && (
-            <label className="flex items-center gap-2 text-[11px] text-[var(--foreground-muted)]">
-              <input
-                type="checkbox"
-                className="nodrag"
-                checked={cfg.codexAuth === "subscription"}
-                onChange={(e) => update({ codexAuth: e.target.checked ? "subscription" : "broker" })}
-              />
-              <span title="Uses ~/.codex/auth.json (codex login) instead of a brokered API key. The credential lives in the VM — readable by the agent-under-test.">
-                Codex: use my subscription (codex login) ⚠
-              </span>
-            </label>
-          )}
 
           <div className="text-[11px] text-[var(--foreground-muted)]">
             <b className="text-[var(--foreground)]">{arms}</b> arm{arms === 1 ? "" : "s"} ({cfg.harnesses.length}h × {cfg.models.length}m × {cfg.skills.length}s)
