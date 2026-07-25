@@ -1,14 +1,31 @@
+// REVISION: e2e-config-v2-env-fallback
 import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
+import { existsSync } from "fs";
 import { resolve } from "path";
 
-// Load env vars from .env.test (API keys, ORCABOT_URL, etc.)
+const MODULE_REVISION = "e2e-config-v2-env-fallback";
+console.log(
+  `[e2e-config] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
+// Load committed/shared defaults first, then local fallbacks.
 dotenv.config({ path: resolve(__dirname, ".env.test") });
+dotenv.config({ path: resolve(__dirname, ".env") });
+dotenv.config({
+  path: resolve(__dirname, ".env.test.local"),
+  override: true,
+});
 
 const ORCABOT_URL = process.env.ORCABOT_URL;
+const storageStatePath =
+  process.env.E2E_STORAGE_STATE || resolve(__dirname, ".auth/orcabot-user.json");
+const storageState = existsSync(storageStatePath) ? storageStatePath : undefined;
+
 if (!ORCABOT_URL) {
   throw new Error(
     "ORCABOT_URL environment variable is required.\n" +
+      "Set it in e2e/.env, e2e/.env.test.local, or pass it inline.\n" +
       "Example: ORCABOT_URL=https://app.orcabot.com npx playwright test"
   );
 }
@@ -42,9 +59,10 @@ export default defineConfig({
 
   use: {
     baseURL: ORCABOT_URL,
-    trace: "on-first-retry",
+    storageState,
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: "on-first-retry",
+    video: "retain-on-failure",
     actionTimeout: 15_000,
   },
 

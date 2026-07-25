@@ -1,5 +1,6 @@
+// REVISION: e2e-base-v1-diagnostics-env
 import { test as base, expect } from "@playwright/test";
-import { devModeLogin, devModeLoginViaUI, logout } from "./auth";
+import { login, devModeLoginViaUI, logout } from "./auth";
 import {
   createDashboard,
   gotoDashboard,
@@ -12,6 +13,13 @@ import {
   waitForOutput,
 } from "./terminal";
 import { OrcabotAPI } from "../helpers/api";
+import { createDiagnostics, type E2EDiagnostics } from "../helpers/diagnostics";
+import { requireEnv, requiredEnvReport } from "../helpers/env";
+
+const MODULE_REVISION = "e2e-base-v1-diagnostics-env";
+console.log(
+  `[e2e-base] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
 
 /** Bundled auth helpers available in every test */
 export interface AuthFixture {
@@ -44,6 +52,11 @@ export interface APIFixture {
   client: OrcabotAPI;
 }
 
+/** Run-level diagnostics attached to every test */
+export interface DiagnosticsFixture {
+  collector: E2EDiagnostics;
+}
+
 /**
  * Extended test with auth, dashboard, terminal, and api fixtures.
  * Import { test, expect } from this file in all recipe specs.
@@ -53,10 +66,20 @@ export const test = base.extend<{
   dashboard: DashboardFixture;
   terminal: TerminalFixture;
   api: APIFixture;
+  diagnostics: DiagnosticsFixture;
 }>({
+  diagnostics: [
+    async ({ page }, use, testInfo) => {
+      const collector = await createDiagnostics(page);
+      await use({ collector });
+      await collector.attach(testInfo);
+    },
+    { auto: true },
+  ],
+
   auth: async ({ page }, use) => {
     await use({
-      login: (opts) => devModeLogin(page, opts?.name, opts?.email),
+      login: (opts) => login(page, opts?.name, opts?.email),
       loginViaUI: (opts) => devModeLoginViaUI(page, opts?.name, opts?.email),
       logout: () => logout(page),
     });
@@ -77,11 +100,10 @@ export const test = base.extend<{
     });
 
     // Auto-cleanup: attempt API-based delete for all tracked dashboards
-    const cpUrl = process.env.CONTROLPLANE_URL || "http://localhost:8787";
+    const cpUrl = requireEnv("CONTROLPLANE_URL");
     if (trackedIds.length > 0) {
-      const email =
-        process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
-      const name = process.env.E2E_USER_NAME || "E2E Test User";
+      const email = requireEnv("E2E_USER_EMAIL");
+      const name = requireEnv("E2E_USER_NAME");
       const api = new OrcabotAPI(page.request, cpUrl, email, name);
       for (const id of trackedIds) {
         try {
@@ -103,12 +125,23 @@ export const test = base.extend<{
   },
 
   api: async ({ page }, use) => {
-    const email = process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
-    const name = process.env.E2E_USER_NAME || "E2E Test User";
-    const cpUrl = process.env.CONTROLPLANE_URL || "http://localhost:8787";
+    const email = requireEnv("E2E_USER_EMAIL");
+    const name = requireEnv("E2E_USER_NAME");
+    const cpUrl = requireEnv("CONTROLPLANE_URL");
     const client = new OrcabotAPI(page.request, cpUrl, email, name);
     await use({ client });
   },
+});
+
+test.beforeAll(() => {
+  const report = requiredEnvReport();
+  if (!report.smoke.ready) {
+    throw new Error(
+      `Smoke-tier E2E env is incomplete. Missing: ${report.smoke.missing.join(
+        ", "
+      )}. Set them in e2e/.env.test.local.`
+    );
+  }
 });
 
 export { expect };

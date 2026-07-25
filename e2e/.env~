@@ -2,10 +2,6 @@
 ORCABOT_URL=http://localhost:3000
 CONTROLPLANE_URL=http://localhost:8787
 
-# Optional: path to a Playwright storageState JSON file for a pre-authenticated Orcabot session.
-# Recommended for prod-style runs where Google blocks automated login.
-E2E_STORAGE_STATE=/absolute/path/to/orcabot2/e2e/.auth/orcabot-user.json
-
 # Optional: override test user credentials
 E2E_USER_NAME=E2E Test User
 E2E_USER_EMAIL=e2e-test@orcabot.test

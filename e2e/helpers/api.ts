@@ -1,4 +1,10 @@
+// REVISION: e2e-api-v1-env-cleanup
 import type { APIRequestContext } from "@playwright/test";
+
+const MODULE_REVISION = "e2e-api-v1-env-cleanup";
+console.log(
+  `[e2e-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
 
 /**
  * Generate a stable user ID from email — mirrors frontend/src/stores/auth-store.ts:52

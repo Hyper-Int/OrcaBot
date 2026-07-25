@@ -1,15 +1,66 @@
-import { type Page, type BrowserContext, expect } from "@playwright/test";
+// REVISION: e2e-auth-v3-storage-state
+import { type Page, expect } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
+import { getEnv, requireEnv } from "../helpers/env";
 
-const DEFAULT_NAME = process.env.E2E_USER_NAME || "E2E Test User";
-const DEFAULT_EMAIL = process.env.E2E_USER_EMAIL || "e2e-test@orcabot.test";
+const MODULE_REVISION = "e2e-auth-v3-storage-state";
+console.log(
+  `[e2e-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
+const DEFAULT_NAME = getEnv("E2E_USER_NAME", "E2E Test User")!;
+const DEFAULT_EMAIL = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
+const GOOGLE_TEST_EMAIL = getEnv("GOOGLE_TEST_EMAIL");
+const GOOGLE_TEST_PASSWORD = getEnv("GOOGLE_TEST_PASSWORD");
 
 /**
  * Control plane URL for API calls.
  * Default: localhost:8787 (matches frontend/src/config/env.ts for localhost target).
  */
 const CONTROLPLANE_URL =
-  process.env.CONTROLPLANE_URL || "http://localhost:8787";
+  requireEnv("CONTROLPLANE_URL");
+
+function googleAuthConfigured(): boolean {
+  return Boolean(GOOGLE_TEST_EMAIL && GOOGLE_TEST_PASSWORD);
+}
+
+async function devAuthAvailable(page: Page): Promise<boolean> {
+  const response = await page.request.post(`${CONTROLPLANE_URL}/auth/dev/session`, {
+    headers: {
+      "X-User-ID": generateUserId(DEFAULT_EMAIL),
+      "X-User-Email": DEFAULT_EMAIL,
+      "X-User-Name": DEFAULT_NAME,
+    },
+  });
+
+  if (response.status() === 204) {
+    return true;
+  }
+
+  return false;
+}
+
+async function isAlreadyAuthenticated(page: Page): Promise<boolean> {
+  await page.goto("/dashboards", { waitUntil: "domcontentloaded" });
+
+  const onDashboards = await page
+    .waitForURL(/\/dashboards(?:$|\?)/, { timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!onDashboards) {
+    return false;
+  }
+
+  const dashboardsVisible = await page
+    .getByText("New Dashboard")
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  return dashboardsVisible;
+}
 
 /**
  * Log in by creating a server-side session directly via the control plane API,
@@ -99,6 +150,88 @@ export async function devModeLogin(
   await waitForDashboardsPage(page);
 }
 
+async function googlePopupLogin(page: Page): Promise<void> {
+  if (!GOOGLE_TEST_EMAIL || !GOOGLE_TEST_PASSWORD) {
+    throw new Error(
+      "Google OAuth credentials are not configured. Set GOOGLE_TEST_EMAIL and GOOGLE_TEST_PASSWORD in e2e/.env."
+    );
+  }
+
+  await page.goto("/");
+
+  const signInTrigger = page
+    .getByRole("link", { name: /^sign in$/i })
+    .or(page.getByRole("link", { name: /get started free/i }))
+    .or(page.getByRole("button", { name: /get started free/i }))
+    .first();
+
+  await signInTrigger.waitFor({ state: "visible", timeout: 20_000 });
+
+  const popupPromise = page.waitForEvent("popup", { timeout: 20_000 });
+  await signInTrigger.click();
+  const popup = await popupPromise;
+
+  await popup.waitForLoadState("domcontentloaded", { timeout: 20_000 });
+
+  // Google account chooser may show either an email field or an account tile.
+  const emailField = popup.locator('input[type="email"]').first();
+  const accountTile = popup.getByText(GOOGLE_TEST_EMAIL, { exact: false }).first();
+
+  if (await emailField.isVisible().catch(() => false)) {
+    await emailField.fill(GOOGLE_TEST_EMAIL);
+    await popup.getByRole("button", { name: /^next$/i }).click();
+  } else if (await accountTile.isVisible().catch(() => false)) {
+    await accountTile.click();
+  }
+
+  const passwordField = popup
+    .locator('input[name="Passwd"]:not([aria-hidden="true"])')
+    .first();
+  await passwordField.waitFor({ state: "visible", timeout: 30_000 });
+  await passwordField.fill(GOOGLE_TEST_PASSWORD);
+  await popup.getByRole("button", { name: /^next$/i }).click();
+
+  // Consent / continue screens vary slightly by account state.
+  const continueButton = popup
+    .getByRole("button", { name: /continue|allow/i })
+    .first();
+  if (await continueButton.isVisible().catch(() => false)) {
+    await continueButton.click();
+  }
+
+  // Popup callback posts a message back to the opener and closes.
+  await popup.waitForEvent("close", { timeout: 60_000 }).catch(async () => {
+    // Some browsers keep the popup open on the completion page briefly.
+    await popup.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  });
+
+  await waitForDashboardsPage(page);
+}
+
+export async function login(
+  page: Page,
+  name = DEFAULT_NAME,
+  email = DEFAULT_EMAIL
+): Promise<void> {
+  if (await isAlreadyAuthenticated(page)) {
+    return;
+  }
+
+  if (googleAuthConfigured()) {
+    await googlePopupLogin(page);
+    return;
+  }
+
+  if (await devAuthAvailable(page)) {
+    await devModeLogin(page, name, email);
+    return;
+  }
+
+  throw new Error(
+    "No usable login strategy found. Either set GOOGLE_TEST_EMAIL and GOOGLE_TEST_PASSWORD in e2e/.env, or run against an instance with dev auth enabled."
+  );
+}
+
 /**
  * Log in via the dev mode UI form on the splash page.
  *
@@ -113,6 +246,15 @@ export async function devModeLoginViaUI(
   name = DEFAULT_NAME,
   email = DEFAULT_EMAIL
 ): Promise<void> {
+  if (await isAlreadyAuthenticated(page)) {
+    return;
+  }
+
+  if (googleAuthConfigured()) {
+    await googlePopupLogin(page);
+    return;
+  }
+
   await page.goto("/");
 
   // Wait for auth to resolve (login buttons appear)
@@ -198,10 +340,11 @@ export async function logout(page: Page): Promise<void> {
   // Should redirect back to splash / login — wait for the "Dev mode login"
   // or "Continue with Google" button to appear, confirming we're logged out
   await expect(
-    page
-      .getByRole("button", { name: /dev mode login/i })
-      .or(page.getByRole("button", { name: /continue with google/i }))
-      .or(page.getByRole("button", { name: /get started/i }))
-      .first()
+      page
+        .getByRole("button", { name: /dev mode login/i })
+        .or(page.getByRole("link", { name: /^sign in$/i }))
+        .or(page.getByRole("button", { name: /continue with google/i }))
+        .or(page.getByRole("button", { name: /get started/i }))
+        .first()
   ).toBeVisible({ timeout: 10_000 });
 }
