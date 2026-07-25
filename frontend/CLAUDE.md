@@ -228,6 +228,16 @@ The frontend provides UI for managing secrets and environment variables.
 - Voice selection dropdown per provider
 - Live status display from WebSocket events
 
+### Model Selection (OpenRouter)
+- Per-terminal Model panel in the terminal settings dropdown (Claude/Codex/OpenCode/Droid/Gemini)
+- One flat list: Default section at top, OpenRouter section below with per-model pricing + context window
+- The panel warns when the selected model needs an `OPENROUTER_API_KEY` that isn't set (chip + ring + "Key needed" badge on the menu item)
+- Changing selection sets `pendingConfigRestart=true` → existing "restart to apply" banner fires (same flow as TTS/MCP/subagents)
+- Selection persisted in `terminalContent.modelSelection` (provider/model + catalog-resolved `contextWindow`/`maxOutputTokens`) and round-tripped to the sandbox via `model_selection` on PTY create; the limits drive Codex's `-c model_context_window`/`model_max_output_tokens`
+- Catalog: `src/data/openrouter-models.json` (curated; per-model pricing + context + `maxOutputTokens`; `compatibleHarnesses` filters which models appear per harness)
+- Freshness: `npm run check-catalogs` diffs local pricing, context length, and max output tokens vs the upstream OpenRouter API
+- Upstream errors: the sandbox broker emits a `model_provider_error` WS event on OpenRouter 429/402/etc; `TerminalWSManager` re-dispatches it and `dashboards/[id]/page.tsx` shows a toast with the fix (e.g. rate-limited → adjust OpenRouter provider routing, not a credit issue)
+
 Frontend does NOT:
 - Store secrets locally (all in control plane, encrypted)
 - Make decisions about which domains are safe
@@ -237,7 +247,7 @@ Frontend does NOT:
 - Egress events arrive via terminal WebSockets (not collaboration WS)
 - `TerminalWSManager` dispatches `window.CustomEvent` for `egress_approval_needed` / `egress_approval_resolved`
 - Dashboard page listens for CustomEvents and shows toast + approval dialog
-- Approval dialog: Deny / Allow Once / Always Allow (3 buttons)
+- Approval dialog: Deny Always / Deny / Allow Once / Always Allow (4 buttons). "Deny Always" persistently blocks the domain (e.g. trackers) so it is denied without prompting again; managed/undone in the allowlist panel's "Blocked domains" section
 - Allowlist panel: Shield icon in title bar, shows user-approved domains with revoke
 - Egress is enabled globally via `EGRESS_PROXY_ENABLED=true` on the sandbox machine; there is no per-user or per-session opt-in
 
@@ -314,6 +324,37 @@ Chat panel for AI-assisted onboarding and help, plus provider setup cards.
 - `src/components/chat/ChatPanel.tsx` — AI chat interface
 - `src/components/chat/AiProviderSetupCard.tsx` — API key setup onboarding
 - `src/components/help/HelpDialog.tsx` — Help dialog with documentation
+
+---
+
+## Settings & Personal Access Tokens
+
+The Settings page manages account-level configuration, including **personal access
+tokens (PATs)** used by the `orcabot` CLI to authenticate against a remote control
+plane.
+
+### PAT UI
+- Create a token (name it) → the plaintext is shown **once**, then only the prefix is listed
+- List existing tokens (name, created/last-used) and revoke them
+- The control plane stores only the SHA-256 hash and **method-gates** PAT management so a PAT can't manage other PATs (see `controlplane/CLAUDE.md`)
+
+### Key Files
+- `src/app/(app)/settings/page.tsx` — Settings page
+- `src/components/PersonalAccessTokensPanel.tsx` — PAT create/list/revoke UI
+
+---
+
+## Desktop bridge & surface switching
+
+When the frontend is served inside the Tauri desktop webview, it can hand a live
+session off to the terminal (the `orcabot` CLI). The dashboards header shows a
+**"Switch to CLI"** button (desktop-only).
+
+- `src/lib/tauri-bridge.ts` — detects the Tauri runtime and exposes `switchToCli()`. It resolves the Tauri `invoke` from `window.__TAURI__.core.invoke` (the app sets `withGlobalTauri: true`); a bare `import("@tauri-apps/api/core")` does **not** resolve in the remote-origin webview, so don't rely on it.
+- The button is hidden when not running under Tauri.
+
+See `desktop/CLAUDE.md` for the Rust side (`switch_to_cli` command) and the full
+cli ↔ desktop ↔ web surface-switching model.
 
 ---
 

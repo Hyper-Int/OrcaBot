@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: whatsapp-block-v17-help-button
+// REVISION: whatsapp-block-v19-secret-input
 
 "use client";
 
-const MODULE_REVISION = "whatsapp-block-v17-help-button";
+const MODULE_REVISION = "whatsapp-block-v19-secret-input";
 console.log(`[WhatsAppBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -24,10 +24,12 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -502,11 +504,44 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
     }
   };
 
+  const accountMenuSection = (
+    <>
+      {(integration?.accountName || integration?.phoneNumber) && (
+        <DropdownMenuLabel className="font-normal">
+          {integration?.accountName && (
+            <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.accountName}</div>
+          )}
+          {integration?.phoneNumber && (
+            <div className="text-[10px] text-[var(--foreground-muted)] truncate">{integration.phoneNumber}</div>
+          )}
+        </DropdownMenuLabel>
+      )}
+      {integration?.connected && (
+        <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+          <LogOut className="w-3.5 h-3.5 mr-2" />
+          Disconnect WhatsApp
+        </DropdownMenuItem>
+      )}
+      {personalSubId && personalStatus === "connected" && (
+        <DropdownMenuItem onClick={handleDisconnectPersonal} className="text-red-500">
+          <Smartphone className="w-3.5 h-3.5 mr-2" />
+          Unlink Phone
+        </DropdownMenuItem>
+      )}
+      {!integration?.connected && !personalSubId && (
+        <DropdownMenuItem onClick={() => { /* focus token input */ }}>
+          <WhatsAppIcon className="w-3.5 h-3.5 mr-2" />
+          Connect WhatsApp
+        </DropdownMenuItem>
+      )}
+    </>
+  );
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <WhatsAppIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.accountName || "WhatsApp"}
+        WhatsApp
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={whatsappDoc} />
@@ -525,24 +560,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect WhatsApp
-              </DropdownMenuItem>
-            )}
-            {personalSubId && personalStatus === "connected" && (
-              <DropdownMenuItem onClick={handleDisconnectPersonal} className="text-red-500">
-                <Smartphone className="w-3.5 h-3.5 mr-2" />
-                Unlink Phone
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && !personalSubId && (
-              <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-                <WhatsAppIcon className="w-3.5 h-3.5 mr-2" />
-                Connect WhatsApp
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -563,18 +581,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect WhatsApp
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-            <WhatsAppIcon className="w-3.5 h-3.5 mr-2" />
-            Connect WhatsApp
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -585,7 +592,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
         nodeId={id}
         selected={selected}
         icon={<WhatsAppIcon className="w-14 h-14" />}
-        label={integration?.accountName || "WhatsApp"}
+        label="WhatsApp"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}
@@ -698,8 +705,7 @@ export function WhatsAppBlock({ id, data, selected }: NodeProps<WhatsAppNode>) {
                 <p className="text-xs text-[var(--text-muted)] text-center mb-1">
                   Connect WhatsApp Business API
                 </p>
-                <input
-                  type="password"
+                <SecretInput
                   value={tokenInput}
                   onChange={(e) => setTokenInput(e.target.value)}
                   placeholder="Access token"

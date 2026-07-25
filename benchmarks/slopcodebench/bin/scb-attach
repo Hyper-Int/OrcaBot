@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# REVISION: scb-viewers-v1-attach
+# Attach READ-ONLY to a slop-code-bench run's tmux window.
+#
+# This is what a viewer terminal block runs as its boot command. The `-r` flag
+# makes the attachment read-only: the viewer can watch but cannot send input,
+# resize, or kill the run.
+#
+# Usage: scb-attach <run-window-name>
+#        scb-attach            # attaches to the most recently created run
+# Env:   SCB_SESSION (default: scb)
+set -euo pipefail
+
+SESSION="${SCB_SESSION:-scb}"
+WINDOW="${1:-}"
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "no slop-code runs yet (tmux session '$SESSION' not started)" >&2
+  exit 1
+fi
+
+if [ -z "$WINDOW" ]; then
+  # Most recently created non-placeholder window.
+  WINDOW=$(tmux list-windows -t "$SESSION" -F '#{window_name}' \
+            | grep -v '^_scb_runs$' | tail -n1 || true)
+  if [ -z "$WINDOW" ]; then
+    echo "no active runs to attach to" >&2
+    exit 1
+  fi
+fi
+
+exec tmux attach-session -r -t "${SESSION}:${WINDOW}"

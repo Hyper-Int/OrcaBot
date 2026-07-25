@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v6-navigate-egress
+// REVISION: browser-v7-autoopen-notify-diag
 package main
 
 import (
@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -138,7 +139,7 @@ func (s *Server) handleBrowserOpenLocal(w http.ResponseWriter, r *http.Request) 
 // Returns an HTTP status code and error message if navigation should be blocked,
 // or 0/nil if permitted.
 // No-op when EGRESS_PROXY_ENABLED is unset (s.egressEnabled == false).
-// REVISION: browser-v6-navigate-egress
+// REVISION: browser-v7-autoopen-notify-diag
 func (s *Server) checkBrowserEgress(urlStr string) (int, string) {
 	if !s.egressEnabled || s.egressProxy == nil {
 		return 0, ""
@@ -175,7 +176,7 @@ func (s *Server) checkBrowserEgress(urlStr string) (int, string) {
 // the equivalent of the user pressing Ctrl+L in a browser themselves. It is visible
 // in the frontend noVNC pane; it is not a covert channel.
 // The security boundary here is the egress allowlist check; see checkBrowserEgress.
-// REVISION: browser-v6-navigate-egress
+// REVISION: browser-v7-autoopen-notify-diag
 func (s *Server) handleBrowserOpenForPTY(w http.ResponseWriter, r *http.Request, session *sessions.Session, ptyID string, urlStr string) {
 	if status, msg := s.checkBrowserEgress(urlStr); status != 0 {
 		http.Error(w, msg, status)
@@ -197,8 +198,10 @@ func (s *Server) handleBrowserOpenForPTY(w http.ResponseWriter, r *http.Request,
 // component in the frontend. This runs async and is best-effort since the xdg-open
 // script inside the PTY cannot access INTERNAL_API_TOKEN (filtered for security).
 func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url string, ptyID string) {
+	// REVISION: browser-autoopen-diag-v1
 	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
 	internalToken := os.Getenv("INTERNAL_API_TOKEN")
+	log.Printf("[browser] notify start: sandboxSessionID=%s ptyID=%s cpURL=%q tokenset=%t", sandboxSessionID, ptyID, controlplaneURL, internalToken != "")
 	if controlplaneURL == "" || internalToken == "" {
 		log.Printf("[browser] skipping control plane notification: missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
 		return
@@ -232,7 +235,10 @@ func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		log.Printf("[browser] control plane returned status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		log.Printf("[browser] control plane notify returned status %d body=%s", resp.StatusCode, string(respBody))
+	} else {
+		log.Printf("[browser] notify ok (204) for sandboxSessionID=%s", sandboxSessionID)
 	}
 }
 

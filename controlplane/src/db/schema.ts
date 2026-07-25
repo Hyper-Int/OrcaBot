@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS dashboards (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_id TEXT NOT NULL REFERENCES users(id),
+  setup_guide TEXT,
+  -- Desktop: when this dashboard was downloaded from a cloud account, the id of
+  -- the source cloud dashboard (for the downloaded ✓ state + two-way sync). NULL
+  -- for purely-local dashboards.
+  cloud_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -145,6 +150,27 @@ CREATE TABLE IF NOT EXISTS user_subagents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_subagents_user ON user_subagents(user_id);
+
+-- User custom model endpoints (Ollama / vLLM / self-hosted / cloud BYO).
+-- See PLAN-custom-endpoints.md. The API key (if any) is a user_secrets entry
+-- referenced by secret_name — this table never stores the key.
+CREATE TABLE IF NOT EXISTS user_model_providers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  format TEXT NOT NULL DEFAULT 'openai',            -- 'openai' | 'anthropic'
+  model_id TEXT NOT NULL,
+  secret_name TEXT,                                 -- ref to user_secrets.name (the API key), nullable
+  context_window INTEGER,
+  max_output_tokens INTEGER,
+  compatible_harnesses TEXT NOT NULL DEFAULT '[]',  -- JSON array of harness ids
+  is_local INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_model_providers_user ON user_model_providers(user_id);
 
 -- User agent skills (Claude Code slash command favorites)
 CREATE TABLE IF NOT EXISTS user_agent_skills (
@@ -393,6 +419,60 @@ CREATE TABLE IF NOT EXISTS gmail_actions (
 CREATE INDEX IF NOT EXISTS idx_gmail_actions_user ON gmail_actions(user_id);
 CREATE INDEX IF NOT EXISTS idx_gmail_actions_dashboard ON gmail_actions(dashboard_id);
 
+-- Outlook email mirrors
+CREATE TABLE IF NOT EXISTS outlook_mirrors (
+  dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email_address TEXT NOT NULL,
+  folder_id TEXT NOT NULL DEFAULT 'inbox',
+  status TEXT NOT NULL CHECK (status IN ('idle', 'syncing', 'ready', 'error')),
+  last_synced_at TEXT,
+  sync_error TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_mirrors_user ON outlook_mirrors(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_mirrors_email ON outlook_mirrors(email_address);
+
+-- Outlook messages (metadata cache)
+CREATE TABLE IF NOT EXISTS outlook_messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  conversation_id TEXT,
+  received_date TEXT NOT NULL,
+  from_address TEXT,
+  from_name TEXT,
+  to_addresses TEXT,
+  subject TEXT,
+  body_preview TEXT,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  has_attachments INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_user ON outlook_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_dashboard ON outlook_messages(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_messages_conversation ON outlook_messages(conversation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outlook_messages_message ON outlook_messages(dashboard_id, message_id);
+
+-- Outlook action audit log
+CREATE TABLE IF NOT EXISTS outlook_actions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  message_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('archive', 'delete', 'mark_read', 'mark_unread')),
+  details TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_outlook_actions_user ON outlook_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_outlook_actions_dashboard ON outlook_actions(dashboard_id);
+
 -- Calendar mirrors (per dashboard)
 CREATE TABLE IF NOT EXISTS calendar_mirrors (
   dashboard_id TEXT PRIMARY KEY REFERENCES dashboards(id) ON DELETE CASCADE,
@@ -535,6 +615,22 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions(expires_at);
 
+-- Personal access tokens for CLI / external tools (orcabot push/pull).
+-- Only the SHA-256 hash of the token is stored; the plaintext is shown once at creation.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT 'cli',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
+
 -- OAuth login states (short-lived)
 CREATE TABLE IF NOT EXISTS auth_states (
   state TEXT PRIMARY KEY,
@@ -549,11 +645,13 @@ CREATE TABLE IF NOT EXISTS recipes (
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   steps TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipes_dashboard ON recipes(dashboard_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_created_by ON recipes(created_by);
 
 -- Executions (workflow runs)
 CREATE TABLE IF NOT EXISTS executions (
@@ -670,6 +768,7 @@ CREATE TABLE IF NOT EXISTS dashboard_templates (
   items_json TEXT NOT NULL DEFAULT '[]',
   edges_json TEXT NOT NULL DEFAULT '[]',
   viewport_json TEXT,
+  setup_guide TEXT,
   item_count INTEGER NOT NULL DEFAULT 0,
   is_featured INTEGER NOT NULL DEFAULT 0,
   use_count INTEGER NOT NULL DEFAULT 0,
@@ -936,6 +1035,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_allowlist_dashboard_domain_active
   ON egress_allowlist(dashboard_id, domain)
   WHERE revoked_at IS NULL;
 
+-- Egress blocked defaults (user-overridden built-in patterns per dashboard)
+CREATE TABLE IF NOT EXISTS egress_blocked_defaults (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  pattern TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT,
+  UNIQUE(dashboard_id, pattern)
+);
+CREATE INDEX IF NOT EXISTS idx_egress_blocked_defaults_dashboard
+  ON egress_blocked_defaults(dashboard_id);
+
+-- Egress blocklist (user permanently-denied domains per dashboard — "deny always")
+CREATE TABLE IF NOT EXISTS egress_blocklist (
+  id TEXT PRIMARY KEY,
+  dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_egress_blocklist_dashboard
+  ON egress_blocklist(dashboard_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_blocklist_dashboard_domain_active
+  ON egress_blocklist(dashboard_id, domain)
+  WHERE revoked_at IS NULL;
+
 -- Egress audit log (all proxy decisions)
 CREATE TABLE IF NOT EXISTS egress_audit_log (
   id TEXT PRIMARY KEY,
@@ -1024,7 +1151,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge
 `;
 
 // Initialize the database
-const SCHEMA_REVISION = "schema-v13-dashboard-links";
+const SCHEMA_REVISION = "schema-v16-dashboard-cloud-id";
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
   console.log(`[schema] REVISION: ${SCHEMA_REVISION} loaded at ${new Date().toISOString()}`);
@@ -1036,7 +1163,17 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   // This filters out comment-only blocks that would cause "SQL code did not contain a statement" errors.
   const isValidSql = (s: string) => /\b(CREATE|ALTER|INSERT|UPDATE|DELETE|DROP|SELECT)\b/i.test(s);
 
-  const statements = SCHEMA
+  // Strip `--` line comments BEFORE splitting on ';'. A semicolon inside a comment
+  // (e.g. "-- referenced by secret_name; this table...") would otherwise split the
+  // comment mid-sentence and feed the trailing fragment to D1 as a bogus statement
+  // ("near 'this': syntax error"). No schema string literal contains '--', so
+  // removing from the first '--' to end-of-line per line is safe.
+  const withoutComments = SCHEMA
+    .split('\n')
+    .map(line => line.replace(/--.*$/, ''))
+    .join('\n');
+
+  const statements = withoutComments
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0 && isValidSql(s));
@@ -1053,6 +1190,31 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN sandbox_machine_id TEXT NOT NULL DEFAULT ''
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Owner column so checkRecipeAccess can scope dashboard-less recipes to their creator.
+  try {
+    await db.prepare(`
+      ALTER TABLE recipes ADD COLUMN created_by TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboards ADD COLUMN cloud_id TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    await db.prepare(`
+      ALTER TABLE egress_blocked_defaults ADD COLUMN revoked_at TEXT
     `).run();
   } catch {
     // Column already exists.
@@ -1387,6 +1549,24 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   try {
     await db.prepare(`
       ALTER TABLE sessions ADD COLUMN agent_type TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+
+  // Template-driven setup walkthrough: a template can carry a guide script that
+  // the Orcabot chat runs as a guided setup; the resolved text is copied onto
+  // the dashboard at creation so the chat can inject it for that dashboard.
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT
+    `).run();
+  } catch {
+    // Column already exists.
+  }
+  try {
+    await db.prepare(`
+      ALTER TABLE dashboards ADD COLUMN setup_guide TEXT
     `).run();
   } catch {
     // Column already exists.

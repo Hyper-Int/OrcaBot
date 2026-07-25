@@ -1254,10 +1254,13 @@ async function processSubscriptionMessage(
       );
     }
 
+    // Clear the timeout when the resolves win, so it doesn't linger holding its closure.
+    let resolveTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       Promise.allSettled(resolvePromises),
-      new Promise<void>(resolve => setTimeout(resolve, RESOLVE_TIMEOUT_MS)),
+      new Promise<void>(resolve => { resolveTimer = setTimeout(resolve, RESOLVE_TIMEOUT_MS); }),
     ]);
+    if (resolveTimer !== undefined) clearTimeout(resolveTimer);
   }
 
   // Enforce subscription channel scoping (Telegram uses chatId, Slack/Discord use channelId).
@@ -1891,12 +1894,19 @@ export async function createSubscription(
     }
   }
 
-  await env.DB.prepare(`
+  // Atomic guard for the Telegram "one active sub per user" invariant (the check
+  // above races). The `? = 'telegram'` term makes it a no-op for other providers.
+  const subInsert = await env.DB.prepare(`
     INSERT INTO messaging_subscriptions (
       id, dashboard_id, item_id, user_id, provider,
       channel_id, channel_name, chat_id, team_id,
       webhook_id, webhook_secret, status, user_integration_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM messaging_subscriptions
+      WHERE user_id = ? AND provider = 'telegram' AND status IN ('pending', 'active') AND ? = 'telegram'
+    )
   `).bind(
     id, dashboardId, itemId, userId, provider,
     data.channelId || null,
@@ -1906,7 +1916,15 @@ export async function createSubscription(
     webhookId,
     webhookSecret,
     resolvedIntegrationId,
+    userId, provider,
   ).run();
+
+  if (!subInsert.meta.changes && provider === 'telegram') {
+    throw new Error(
+      `Only one active Telegram subscription per bot is allowed. ` +
+      `Delete the existing one first to create a new one.`
+    );
+  }
 
   // For Discord: register /orcabot slash command as a guild command (instant availability).
   // Resolve guild_id from the integration metadata or by looking up the channel.

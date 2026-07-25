@@ -1,9 +1,12 @@
-// REVISION: e2e-auth-v3-storage-state
-import { type Page, expect } from "@playwright/test";
+// REVISION: e2e-auth-v4-pat-and-derived-cp-url
+import { type Page, expect, request as playwrightRequest } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
-import { getEnv, requireEnv } from "../helpers/env";
+import { getEnv } from "../helpers/env";
+// The control-plane origin is derived from ORCABOT_URL (with CONTROLPLANE_URL as
+// an override) so a single knob points the whole harness at an instance.
+import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
-const MODULE_REVISION = "e2e-auth-v3-storage-state";
+const MODULE_REVISION = "e2e-auth-v4-pat-and-derived-cp-url";
 console.log(
   `[e2e-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -13,31 +16,46 @@ const DEFAULT_EMAIL = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
 const GOOGLE_TEST_EMAIL = getEnv("GOOGLE_TEST_EMAIL");
 const GOOGLE_TEST_PASSWORD = getEnv("GOOGLE_TEST_PASSWORD");
 
-/**
- * Control plane URL for API calls.
- * Default: localhost:8787 (matches frontend/src/config/env.ts for localhost target).
- */
-const CONTROLPLANE_URL =
-  requireEnv("CONTROLPLANE_URL");
-
 function googleAuthConfigured(): boolean {
   return Boolean(GOOGLE_TEST_EMAIL && GOOGLE_TEST_PASSWORD);
 }
 
-async function devAuthAvailable(page: Page): Promise<boolean> {
-  const response = await page.request.post(`${CONTROLPLANE_URL}/auth/dev/session`, {
-    headers: {
-      "X-User-ID": generateUserId(DEFAULT_EMAIL),
-      "X-User-Email": DEFAULT_EMAIL,
-      "X-User-Name": DEFAULT_NAME,
-    },
-  });
+/** Cached across a worker — whether dev auth is usable can't change mid-run. */
+let devAuthAvailableCache: boolean | undefined;
 
-  if (response.status() === 204) {
-    return true;
+/**
+ * Probe whether the target honors dev auth.
+ *
+ * Deliberately uses an ISOLATED request context, not `page.request`: the latter
+ * shares the browser context's cookie jar, so probing would mint a real session
+ * as a side effect and silently pre-authenticate the very UI login flow that
+ * devModeLoginViaUI is meant to exercise.
+ *
+ * Accepts any 2xx: the endpoint returned 204 historically but now returns 200
+ * with a JSON body ({id, email}). A 403 means either DEV_AUTH_ENABLED is off
+ * (E79406) or a SURFACE_TOKEN is provisioned and we aren't the trusted surface
+ * (E79407) — both mean "not usable", so fall through to another strategy.
+ */
+async function devAuthAvailable(): Promise<boolean> {
+  if (devAuthAvailableCache !== undefined) {
+    return devAuthAvailableCache;
   }
 
-  return false;
+  const probe = await playwrightRequest.newContext();
+  try {
+    const response = await probe.post(`${CONTROLPLANE_URL}/auth/dev/session`, {
+      headers: devAuthHeaders(DEFAULT_EMAIL, DEFAULT_NAME),
+    });
+    devAuthAvailableCache = response.ok();
+  } catch {
+    // Unreachable control plane — treat as unavailable and let the caller
+    // fall through to another strategy (or fail with a clearer message).
+    devAuthAvailableCache = false;
+  } finally {
+    await probe.dispose();
+  }
+
+  return devAuthAvailableCache;
 }
 
 async function isAlreadyAuthenticated(page: Page): Promise<boolean> {
@@ -63,6 +81,25 @@ async function isAlreadyAuthenticated(page: Page): Promise<boolean> {
 }
 
 /**
+ * Headers that identify us to dev auth.
+ *
+ * `X-Orcabot-Surface` is only required when the target provisions a
+ * SURFACE_TOKEN (desktop builds); on cloud/local-dev it is unset and ignored.
+ */
+function devAuthHeaders(email: string, name: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "X-User-ID": generateUserId(email),
+    "X-User-Email": email,
+    "X-User-Name": name,
+  };
+  const surfaceToken = getEnv("E2E_SURFACE_TOKEN");
+  if (surfaceToken) {
+    headers["X-Orcabot-Surface"] = surfaceToken;
+  }
+  return headers;
+}
+
+/**
  * Log in by creating a server-side session directly via the control plane API,
  * then injecting the session cookie and auth state into the browser.
  *
@@ -82,20 +119,26 @@ export async function devModeLogin(
   // Step 1: Create server-side session via direct API call
   const response = await page.request.post(
     `${CONTROLPLANE_URL}/auth/dev/session`,
-    {
-      headers: {
-        "X-User-ID": userId,
-        "X-User-Email": email,
-        "X-User-Name": name,
-      },
-    }
+    { headers: devAuthHeaders(email, name) }
   );
 
-  if (response.status() !== 204) {
+  // Any 2xx is success. This used to require exactly 204; the endpoint now
+  // returns 200 with a JSON body, which made every dev login fail here.
+  if (!response.ok()) {
     throw new Error(
       `Failed to create dev session: ${response.status()} ${await response.text()}`
     );
   }
+
+  // Dev auth is email-keyed server-side: if a user with this email already
+  // exists, the control plane reconciles to ITS id and ignores our generated
+  // one. Prefer the resolved id for the injected auth state, or the frontend's
+  // /users/me sync sees a mismatch and lands on an empty dashboard list.
+  const resolvedUserId = await response
+    .json()
+    .then((body: { id?: string }) => body?.id)
+    .catch(() => undefined);
+  const effectiveUserId = resolvedUserId || userId;
 
   // Step 2: Extract session cookie from the response
   const setCookieHeader = response.headers()["set-cookie"] || "";
@@ -124,7 +167,7 @@ export async function devModeLogin(
   const authState = JSON.stringify({
     state: {
       user: {
-        id: userId,
+        id: effectiveUserId,
         name: name.trim(),
         email: email.trim().toLowerCase(),
         createdAt: new Date().toISOString(),
@@ -159,9 +202,10 @@ async function googlePopupLogin(page: Page): Promise<void> {
 
   await page.goto("/");
 
+  // The splash CTA is a link to /go whose onClick opens the Google popup
+  // (window.open on /auth/google/login?mode=popup) instead of navigating.
   const signInTrigger = page
-    .getByRole("link", { name: /^sign in$/i })
-    .or(page.getByRole("link", { name: /get started free/i }))
+    .getByRole("link", { name: /get started free/i })
     .or(page.getByRole("button", { name: /get started free/i }))
     .first();
 
@@ -208,6 +252,17 @@ async function googlePopupLogin(page: Page): Promise<void> {
   await waitForDashboardsPage(page);
 }
 
+/**
+ * Log in using whichever strategy the target instance supports.
+ *
+ * Order matters — cheapest and least brittle first:
+ *   1. Already authenticated (a saved storageState, see E2E_STORAGE_STATE)
+ *   2. Dev auth (local / dev instances)
+ *   3. Driving Google's real login UI — LAST RESORT. It needs a real password
+ *      in the environment and is subject to bot detection, so prefer capturing
+ *      a storageState once (or using a PAT for API-only work) over relying on
+ *      it in CI.
+ */
 export async function login(
   page: Page,
   name = DEFAULT_NAME,
@@ -217,18 +272,20 @@ export async function login(
     return;
   }
 
+  if (await devAuthAvailable()) {
+    await devModeLogin(page, name, email);
+    return;
+  }
+
   if (googleAuthConfigured()) {
     await googlePopupLogin(page);
     return;
   }
 
-  if (await devAuthAvailable(page)) {
-    await devModeLogin(page, name, email);
-    return;
-  }
-
   throw new Error(
-    "No usable login strategy found. Either set GOOGLE_TEST_EMAIL and GOOGLE_TEST_PASSWORD in e2e/.env, or run against an instance with dev auth enabled."
+    "No usable login strategy found. Either capture a browser session into " +
+      "e2e/.auth/orcabot-user.json (see E2E_STORAGE_STATE), set GOOGLE_TEST_EMAIL " +
+      "and GOOGLE_TEST_PASSWORD, or run against an instance with dev auth enabled."
   );
 }
 
@@ -250,7 +307,10 @@ export async function devModeLoginViaUI(
     return;
   }
 
-  if (googleAuthConfigured()) {
+  // The dev-mode form only exists on instances with dev auth enabled. Where it
+  // doesn't, fall back to the real Google UI so the "log in via UI" intent of
+  // this helper is preserved rather than silently skipped.
+  if (!(await devAuthAvailable()) && googleAuthConfigured()) {
     await googlePopupLogin(page);
     return;
   }
@@ -340,11 +400,11 @@ export async function logout(page: Page): Promise<void> {
   // Should redirect back to splash / login — wait for the "Dev mode login"
   // or "Continue with Google" button to appear, confirming we're logged out
   await expect(
-      page
-        .getByRole("button", { name: /dev mode login/i })
-        .or(page.getByRole("link", { name: /^sign in$/i }))
-        .or(page.getByRole("button", { name: /continue with google/i }))
-        .or(page.getByRole("button", { name: /get started/i }))
-        .first()
+    page
+      .getByRole("button", { name: /dev mode login/i })
+      .or(page.getByRole("button", { name: /continue with google/i }))
+      .or(page.getByRole("link", { name: /get started/i }))
+      .or(page.getByRole("button", { name: /get started/i }))
+      .first()
   ).toBeVisible({ timeout: 10_000 });
 }

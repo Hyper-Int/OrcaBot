@@ -1,8 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: api-client-v2-error-body-single-read
 
 import { getAuthHeaders } from "@/stores/auth-store";
+import { ensureSurfaceToken } from "@/lib/tauri-bridge";
 import { trackEvent } from "@/lib/analytics";
+
+const API_CLIENT_REVISION = "api-client-v2-error-body-single-read";
+console.log(`[api-client] REVISION: ${API_CLIENT_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
  * Request deduplication cache
@@ -67,6 +72,10 @@ export async function apiFetch<T>(
     }
   }
 
+  // On desktop, ensure the surface token is loaded before we build auth headers,
+  // so the very first authed request already carries X-Orcabot-Surface (the
+  // control plane requires it to honor dev-auth).
+  await ensureSurfaceToken();
   const authHeaders = getAuthHeaders();
 
   const fetchPromise = (async (): Promise<T> => {
@@ -81,11 +90,17 @@ export async function apiFetch<T>(
     });
 
     if (!response.ok) {
-      let errorData: unknown;
-      try {
-        errorData = await response.json();
-      } catch {
-        errorData = await response.text();
+      // Read body once as text, then try to parse as JSON. Reading twice
+      // (e.g. response.json() then response.text() in a catch) throws
+      // "body is disturbed or locked" because the stream is already consumed.
+      const rawText = await response.text().catch(() => "");
+      let errorData: unknown = rawText;
+      if (rawText) {
+        try {
+          errorData = JSON.parse(rawText);
+        } catch {
+          // keep rawText as the error data
+        }
       }
 
       const message =

@@ -65,9 +65,12 @@ export async function checkRecipеAccess(
     return { hasAccess: false };
   }
 
-  // Recipes without dashboard_id are accessible to any authenticated user
+  // Dashboard-less ("global") recipes are scoped to their creator, not to every
+  // authenticated user. Legacy rows with a null created_by are inaccessible
+  // (fail-closed).
   if (!recipe.dashboard_id) {
-    return { hasAccess: true, recipe };
+    const hasAccess = Boolean(recipe.created_by) && recipe.created_by === userId;
+    return { hasAccess, recipe: hasAccess ? recipe : undefined };
   }
 
   const { hasAccess } = await checkDashbоardAccess(env, recipe.dashboard_id as string, userId, requiredRole);

@@ -35,6 +35,9 @@ AUTH_LOGIN_RESTRICTED = "true"
 # CORS - Only allow the dev frontend
 ALLOWED_ORIGINS = "https://dev.orcabot.com"
 
+# Egress proxy - enabled globally on sandbox machines
+EGRESS_PROXY_ENABLED = "true"
+
 # Fly.io per-dashboard machine provisioning
 FLY_APP_NAME = "orcabot-sandbox"
 FLY_REGION = "sjc"

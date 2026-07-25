@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: desktop-env-v7-user-setup
-const MODULE_REVISION = "desktop-env-v7-user-setup";
+// REVISION: desktop-env-v10-tauri-internals-detect
+const MODULE_REVISION = "desktop-env-v10-tauri-internals-detect";
 console.log(
   `[env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -29,7 +29,10 @@ const FRONTEND_TARGET = resolveFrontendTarget();
 const API_URL_BY_TARGET: Record<FrontendTarget, string> = {
   localhost: "http://localhost:8787",
   dev: "https://api.dev.orcabot.com",
-  production: "https://orcabot-controlplane.orcabot.workers.dev",
+  // The prod control plane is api.orcabot.com. (The old workers.dev subdomain is
+  // dead — the prod web build overrides this via NEXT_PUBLIC_API_URL, but
+  // CLOUD_API_URL reads this default directly, so it must be correct.)
+  production: "https://api.orcabot.com",
 };
 
 const SITE_URL_BY_TARGET: Record<FrontendTarget, string> = {
@@ -38,12 +41,81 @@ const SITE_URL_BY_TARGET: Record<FrontendTarget, string> = {
   production: "https://orcabot.com",
 };
 
-// API URLs with defaults
-export const CLOUDFLARE_API_URL =
+// API URLs with defaults. Desktop bakes NEXT_PUBLIC_API_URL=http://127.0.0.1:8787
+// at build time, so the client can't otherwise learn a dynamically-chosen control
+// -plane port (the desktop app picks a free port if 8787 is busy). The trusted
+// loading screen hands us the real port via ?cp= on the redirect; apply it here.
+const BAKED_API_URL =
   process.env.NEXT_PUBLIC_API_URL || API_URL_BY_TARGET[FRONTEND_TARGET];
+
+const CP_PORT_STORAGE_KEY = "orcabot-cp-port";
+
+/**
+ * If a `?cp=<port>` override was handed to us (desktop dynamic-port boot), rewrite
+ * the control-plane base to that port and cache it for later navigations (which
+ * drop the query string). Strictly gated: only when the baked base is a loopback
+ * URL, so a cloud origin can never be redirected to an attacker-supplied port.
+ */
+function resolveApiUrl(): string {
+  if (typeof window === "undefined") return BAKED_API_URL;
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(BAKED_API_URL);
+  } catch {
+    return BAKED_API_URL;
+  }
+  const isLoopback =
+    baseUrl.hostname === "127.0.0.1" ||
+    baseUrl.hostname === "localhost" ||
+    baseUrl.hostname === "::1";
+  // Only ever repoint a local control plane — never a cloud API origin.
+  if (!isLoopback) return BAKED_API_URL;
+
+  const applyPort = (portStr: string | null): string | null => {
+    if (!portStr) return null;
+    const port = Number(portStr);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    baseUrl.port = String(port);
+    // Drop the trailing slash URL() adds so the string matches the baked form.
+    return baseUrl.origin;
+  };
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = applyPort(params.get("cp"));
+    if (fromUrl) {
+      try {
+        localStorage.setItem(CP_PORT_STORAGE_KEY, baseUrl.port);
+      } catch {
+        /* ignore */
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.delete("cp");
+      window.history.replaceState({}, "", url.toString());
+      return fromUrl;
+    }
+    const fromStore = applyPort(localStorage.getItem(CP_PORT_STORAGE_KEY));
+    if (fromStore) return fromStore;
+  } catch {
+    /* ignore — fall back to the baked base */
+  }
+  return BAKED_API_URL;
+}
+
+// API URLs with defaults
+export const CLOUDFLARE_API_URL = resolveApiUrl();
 
 export const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL || SITE_URL_BY_TARGET[FRONTEND_TARGET];
+
+// The PUBLIC cloud control plane + site, regardless of build target. On desktop
+// CLOUDFLARE_API_URL points at the LOCAL control plane, so these give the desktop
+// app a way to reach orcabot.com for optional "sign in with your account" — the
+// app itself keeps running on the local control plane.
+export const CLOUD_API_URL =
+  process.env.NEXT_PUBLIC_CLOUD_API_URL || API_URL_BY_TARGET.production;
+export const CLOUD_SITE_URL =
+  process.env.NEXT_PUBLIC_CLOUD_SITE_URL || SITE_URL_BY_TARGET.production;
 
 export const DEV_MODE_ENABLED =
   process.env.NEXT_PUBLIC_DEV_MODE_ENABLED === "true";
@@ -61,8 +133,21 @@ function getDesktopMode(): boolean {
   if (typeof window === "undefined") {
     return envDesktop;
   }
-  const tauriWindow = window as unknown as { __TAURI__?: unknown; __TAURI_IPC__?: unknown };
-  const isTauri = Boolean(tauriWindow.__TAURI__ || tauriWindow.__TAURI_IPC__);
+  const tauriWindow = window as unknown as {
+    __TAURI__?: unknown;
+    __TAURI_IPC__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  // __TAURI_INTERNALS__ is the global Tauri v2 ALWAYS injects (it's the IPC
+  // mechanism) — even in a remote-origin webview where withGlobalTauri's __TAURI__
+  // may be absent. Checking only __TAURI__ / __TAURI_IPC__ (the latter is v1, gone
+  // in v2) made isTauri false in the packaged app, so DESKTOP_MODE fell back to a
+  // cookie/localStorage flag — which the webview cache-clear wiped, flipping
+  // DESKTOP_MODE to false (Box shown, connect buttons no-op'd via window.open,
+  // dev-auth/Calendar breaking). Detect via the always-present internals global.
+  const isTauri = Boolean(
+    tauriWindow.__TAURI__ || tauriWindow.__TAURI_IPC__ || tauriWindow.__TAURI_INTERNALS__,
+  );
   const hostname = window.location.hostname;
   const isLocalhost =
     hostname === "localhost" ||
@@ -125,6 +210,7 @@ export const env = {
 export const API = {
   cloudflare: {
     base: CLOUDFLARE_API_URL,
+    releasesLatest: `${CLOUDFLARE_API_URL}/releases/latest`,
     dashboards: `${CLOUDFLARE_API_URL}/dashboards`,
     recipes: `${CLOUDFLARE_API_URL}/recipes`,
     schedules: `${CLOUDFLARE_API_URL}/schedules`,
@@ -135,8 +221,11 @@ export const API = {
     usersMe: `${CLOUDFLARE_API_URL}/users/me`,
     embedCheck: `${CLOUDFLARE_API_URL}/embed-check`,
     subagents: `${CLOUDFLARE_API_URL}/subagents`,
+    modelProviders: `${CLOUDFLARE_API_URL}/model-providers`,
     templates: `${CLOUDFLARE_API_URL}/templates`,
     secrets: `${CLOUDFLARE_API_URL}/secrets`,
+    apiTokens: `${CLOUDFLARE_API_URL}/auth/api-tokens`,
+    apiTokenMint: `${CLOUDFLARE_API_URL}/auth/api-token`,
     pendingApprovals: `${CLOUDFLARE_API_URL}/pending-approvals`,
     asrKeys: `${CLOUDFLARE_API_URL}/asr/keys`,
     asrAssemblyAIToken: `${CLOUDFLARE_API_URL}/asr/assemblyai/token`,
@@ -189,6 +278,13 @@ export const API = {
     gmailWatch: `${CLOUDFLARE_API_URL}/integrations/google/gmail/watch`,
     gmailStop: `${CLOUDFLARE_API_URL}/integrations/google/gmail/stop`,
     gmailDisconnect: `${CLOUDFLARE_API_URL}/integrations/google/gmail/disconnect`,
+    // Outlook Mirror
+    outlookSetup: `${CLOUDFLARE_API_URL}/integrations/outlook/setup`,
+    outlookMirror: `${CLOUDFLARE_API_URL}/integrations/outlook/mirror`,
+    outlookStatus: `${CLOUDFLARE_API_URL}/integrations/outlook/status`,
+    outlookSync: `${CLOUDFLARE_API_URL}/integrations/outlook/sync`,
+    outlookMessages: `${CLOUDFLARE_API_URL}/integrations/outlook/messages`,
+    outlookAction: `${CLOUDFLARE_API_URL}/integrations/outlook/action`,
     // Google Calendar
     calendarIntegration: `${CLOUDFLARE_API_URL}/integrations/google/calendar`,
     calendarSetup: `${CLOUDFLARE_API_URL}/integrations/google/calendar/setup`,

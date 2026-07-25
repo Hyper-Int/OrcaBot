@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: asr-settings-v3-unified-secrets
+// REVISION: asr-settings-v4-secret-input
 
 "use client";
 
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SecretInput } from "@/components/ui/SecretInput";
 import { cn } from "@/lib/utils";
 import {
   useASRSettingsStore,
@@ -23,6 +24,9 @@ import {
 } from "@/stores/asr-settings-store";
 import { saveASRKey, deleteASRKey } from "@/lib/api/cloudflare/asr";
 import { useQueryClient } from "@tanstack/react-query";
+
+const ASR_SETTINGS_REVISION = "asr-settings-v4-secret-input";
+console.log(`[ASRSettingsDialog] REVISION: ${ASR_SETTINGS_REVISION} loaded at ${new Date().toISOString()}`);
 
 interface ASRSettingsDialogProps {
   trigger?: React.ReactNode;
@@ -219,8 +223,7 @@ export function ASRSettingsDialog({ trigger, open: controlledOpen, onOpenChange 
                           {keyConfig.label}
                         </label>
                         <div className="flex gap-2">
-                          <Input
-                            type="password"
+                          <SecretInput
                             value={keyInputs[keyConfig.key] || ""}
                             onChange={(e) =>
                               setKeyInputs((prev) => ({ ...prev, [keyConfig.key]: e.target.value }))

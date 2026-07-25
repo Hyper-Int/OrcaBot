@@ -1,14 +1,18 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v30-anthropic-key-pool-guard
+// REVISION: main-v40-import-gzip-bomb-cap
 
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +21,16 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
@@ -33,17 +40,165 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v30-anthropic-key-pool-guard"
+const mainRevision = "main-v40-import-gzip-bomb-cap"
+
+// debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
+// once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
+// VM console (root-only device), so a non-root agent in a PTY can neither read nor
+// guess it. Empty = endpoint rejects everything.
+var debugExecToken string
 
 const (
 	maxFileSizeBytes    = 50 * 1024 * 1024
 	maxRecursiveEntries = 100_000
+	// Upper bound on a bulk workspace import body (compressed tar.gz). Big enough
+	// for real project workspaces; caps memory/disk a single request can consume.
+	maxWorkspaceImportBytes = 1024 * 1024 * 1024
+	// Ceilings on a single import's *decompressed* payload, guarding against a
+	// gzip bomb (a small compressed body that expands enormously). These are
+	// independent of the compressed-body cap (maxWorkspaceImportBytes).
+	maxImportDecompressedBytes = 2 * 1024 * 1024 * 1024 // 2 GiB total across all entries
+	maxImportEntries           = 100_000                // total tar entries examined
 )
+
+// errImportTooLarge is returned when a decompressed import exceeds the ceilings.
+var errImportTooLarge = errors.New("import exceeds decompressed size/entry limit")
+
+// cappedReader caps the total number of bytes that can be read through it,
+// returning errImportTooLarge once the limit is crossed. Wrapping the gzip
+// output in this bounds decompression even for entries the extractor skips
+// (tar.Reader.Next still decompresses skipped entry data), defeating gzip bombs.
+type cappedReader struct {
+	r     io.Reader
+	n     int64
+	limit int64
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.n > c.limit {
+		return 0, errImportTooLarge
+	}
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	if c.n > c.limit {
+		return n, errImportTooLarge
+	}
+	return n, err
+}
 
 var errTooManyEntries = errors.New("too many files to list")
 
 func init() {
 	log.Printf("[main] REVISION: %s loaded at %s", mainRevision, time.Now().Format(time.RFC3339))
+}
+
+// handleDebugExec runs a shell command inside the sandbox and returns its
+// stdout/stderr/exit code as JSON. It is the primitive behind the desktop debug
+// API and the future `orcabot` CLI (`orcabot exec`).
+//
+// SECURITY: two gates. (1) ORCABOT_DEBUG_EXEC=1 — set only by the desktop VM init,
+// never on Fly — so the endpoint is entirely absent in production. (2) a random
+// per-boot token (X-Debug-Exec-Token) delivered to the host only via the root-only
+// VM console, so a non-root agent in a PTY can neither read nor guess it. This
+// matters because /debug/exec runs as root: where agents are non-root (the
+// egress-enabled config), it would otherwise be a privilege-escalation path. The
+// token is checked first thing in the handler, constant-time.
+func (s *Server) handleDebugExec(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("ORCABOT_DEBUG_EXEC") != "1" {
+		http.Error(w, "debug exec disabled (set ORCABOT_DEBUG_EXEC=1)", http.StatusForbidden)
+		return
+	}
+	// Auth via the random per-boot token (X-Debug-Exec-Token), NOT the internal
+	// token — on desktop the internal token is a guessable dev constant. The
+	// per-boot token is delivered only over the root-only VM console, so a non-root
+	// agent can neither read nor guess it. Constant-time compare; empty = reject.
+	if debugExecToken == "" ||
+		subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Debug-Exec-Token")), []byte(debugExecToken)) != 1 {
+		http.Error(w, "forbidden: missing or invalid X-Debug-Exec-Token", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Cmd       string `json:"cmd"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Cmd) == "" {
+		http.Error(w, "bad request: need JSON {\"cmd\": \"...\"}", http.StatusBadRequest)
+		return
+	}
+	timeout := 15 * time.Second
+	if req.TimeoutMs > 0 && req.TimeoutMs <= 120000 {
+		timeout = time.Duration(req.TimeoutMs) * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", req.Cmd)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	exitCode := 0
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"revision":  mainRevision,
+		"cmd":       req.Cmd,
+		"exit_code": exitCode,
+		"stdout":    stdout.String(),
+		"stderr":    stderr.String(),
+		"timed_out": ctx.Err() == context.DeadlineExceeded,
+	})
+}
+
+// initDebugExecToken mints the random per-boot secret for POST /debug/exec and
+// delivers it to the host out of band, where no in-guest agent can read it.
+func initDebugExecToken() {
+	if os.Getenv("ORCABOT_DEBUG_EXEC") != "1" {
+		return
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Printf("[debug-exec] token generation failed: %v — endpoint will reject all requests", err)
+		return
+	}
+	debugExecToken = hex.EncodeToString(b)
+
+	// Deliver to the host via the VM console ONLY. /dev/console is root-only
+	// (crw------- root), so a non-root agent in a PTY cannot read it, and the token
+	// is deliberately NOT written to the agent-readable server log. The desktop host
+	// captures the console (VZ_CONSOLE_DIRECT → /tmp/vz-console.log); the CLI reads
+	// the token from there. Best-effort: if the console is unavailable the endpoint
+	// still works, the operator just has no way to learn the token.
+	if f, err := os.OpenFile("/dev/console", os.O_WRONLY, 0); err == nil {
+		fmt.Fprintf(f, "[debug-exec] auth token: %s\n", debugExecToken)
+		_ = f.Close()
+	} else {
+		log.Printf("[debug-exec] token minted but could not write to /dev/console: %v", err)
+	}
+}
+
+// ensurePathFloor guarantees a usable PATH for exec.LookPath even when the
+// process is started from a bare environment (e.g. the desktop VM's PID-1 init).
+func ensurePathFloor() {
+	const defaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	cur := os.Getenv("PATH")
+	switch {
+	case cur == "":
+		os.Setenv("PATH", defaultPath)
+		log.Printf("[main] PATH was empty; set floor %q", defaultPath)
+	case !strings.Contains(cur, "/usr/bin"):
+		os.Setenv("PATH", cur+":"+defaultPath)
+		log.Printf("[main] PATH missing core dirs; appended floor")
+	}
 }
 
 func main() {
@@ -55,6 +210,17 @@ func main() {
 	// files created by pty-000 are writable by pty-001 and vice versa.
 	// REVISION: main-v20-umask-0002
 	syscall.Umask(0002)
+
+	// Defensive PATH floor. When launched by the desktop VM's minimal init (PID 1
+	// with an empty environment), os.Getenv("PATH") can be empty, which makes
+	// exec.LookPath fail for every child binary — the browser stack
+	// (Xvfb/x11vnc/websockify/chromium), agent CLIs, git, etc. — silently. Ensure a
+	// sane PATH so child exec never fails on a bare environment. No-op on Fly and
+	// anywhere PATH is already set normally.
+	ensurePathFloor()
+
+	// Mint the per-boot /debug/exec token (desktop debug API / orcabot CLI).
+	initDebugExecToken()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -72,6 +238,10 @@ func main() {
 
 	sessionManager := sessions.NewManager()
 	server := NewServer(sessionManager)
+
+	// Surface upstream model-provider errors (OpenRouter rate limits, out-of-credits,
+	// bad key) to the dashboard as a toast instead of failing silently in the harness.
+	sessionManager.Broker().SetOnProviderError(server.broadcastModelProviderError)
 
 	// Start egress proxy (HTTP forward proxy for network access control)
 	egressAllowlist := egress.NewAllowlist()
@@ -264,6 +434,10 @@ type Server struct {
 	egressEnabled              bool // true only when EGRESS_PROXY_ENABLED=true; gates browser egress checks
 	egressAllowlistMu          sync.Mutex
 	egressAllowlistDashboardID string
+
+	// Debounce for model-provider error toasts, keyed by sessionID:status.
+	providerErrMu   sync.Mutex
+	providerErrLast map[string]time.Time
 }
 
 func NewServer(sm *sessions.Manager) *Server {
@@ -280,6 +454,7 @@ func NewServer(sm *sessions.Manager) *Server {
 		driveMirror:      drive.NewMirrorFromEnv(),
 		driveSyncActive:  make(map[string]bool),
 		mirrorSyncActive: make(map[string]bool),
+		providerErrLast:  make(map[string]time.Time),
 	}
 }
 
@@ -428,6 +603,13 @@ func (s *Server) Handler() http.Handler {
 	// Health check - unauthenticated (for load balancer probes)
 	mux.HandleFunc("GET /health", s.handleHеalth)
 
+	// Debug exec — desktop debug API / `orcabot` CLI primitive. Runs a shell command
+	// in the sandbox and returns stdout/stderr/exit. Gated by ORCABOT_DEBUG_EXEC=1
+	// (off by default; only the desktop VM's init sets it) AND a random per-boot
+	// token checked inside the handler, so it is absent in production and
+	// unreachable by in-guest agents. No requireMachine: desktop has no Fly machine id.
+	mux.HandleFunc("POST /debug/exec", s.handleDebugExec)
+
 	// Debug profiling - machine routing first, then auth
 	mux.HandleFunc("GET /debug/pprof/", s.requireMachine(s.auth.RequireAuthFunc(pprof.Index)))
 	mux.HandleFunc("GET /debug/pprof/cmdline", s.requireMachine(s.auth.RequireAuthFunc(pprof.Cmdline)))
@@ -491,6 +673,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handlePutFile)))
 	mux.HandleFunc("DELETE /sessions/{sessionId}/file", s.requireMachine(s.auth.RequireAuthFunc(s.handleDeleteFile)))
 	mux.HandleFunc("GET /sessions/{sessionId}/file/stat", s.requireMachine(s.auth.RequireAuthFunc(s.handleStatFile)))
+	mux.HandleFunc("POST /sessions/{sessionId}/workspace/import", s.requireMachine(s.auth.RequireAuthFunc(s.handleImportWorkspace)))
 	mux.HandleFunc("POST /sessions/{sessionId}/drive/sync", s.requireMachine(s.auth.RequireAuthFunc(s.handleDriveSync)))
 
 	// MCP proxy - allows agents to call MCP UI tools via the control plane
@@ -510,6 +693,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /egress/revoke", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressRevoke)))
 	mux.HandleFunc("GET /egress/pending", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressPending)))
 	mux.HandleFunc("GET /egress/allowlist", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressAllowlist)))
+	mux.HandleFunc("POST /egress/block-default", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressBlockDefault)))
+	mux.HandleFunc("DELETE /egress/block-default/{pattern}", s.requireMachine(s.auth.RequireAuthFunc(s.handleEgressUnblockDefault)))
 
 	return mux
 }
@@ -615,7 +800,9 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	}
 
 	var payload struct {
-		Domains []string `json:"domains"`
+		Domains         []string `json:"domains"`
+		BlockedPatterns []string `json:"blocked_patterns"`
+		DeniedDomains   []string `json:"denied_domains"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
@@ -629,11 +816,21 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 		}
 		allowlist.AddUserDomain(domain, "persisted-"+dashboardID)
 	}
+	for _, pattern := range payload.BlockedPatterns {
+		allowlist.BlockDefault(pattern)
+	}
+	for _, domain := range payload.DeniedDomains {
+		domain = strings.TrimSpace(strings.ToLower(domain))
+		if domain == "" {
+			continue
+		}
+		allowlist.AddDeniedDomain(domain, "persisted-"+dashboardID)
+	}
 
 	s.egressAllowlistMu.Lock()
 	s.egressAllowlistDashboardID = dashboardID
 	s.egressAllowlistMu.Unlock()
-	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains for dashboard %s", len(payload.Domains), dashboardID)
+	log.Printf("[egress-proxy] Loaded %d persisted allowlist domains, %d blocked defaults, and %d denied domains for dashboard %s", len(payload.Domains), len(payload.BlockedPatterns), len(payload.DeniedDomains), dashboardID)
 	return nil
 }
 
@@ -694,16 +891,44 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
+		ModelSelection   *struct {
+			Provider        string `json:"provider"`
+			Model           string `json:"model"`
+			ContextWindow   int    `json:"contextWindow"`
+			MaxOutputTokens int    `json:"maxOutputTokens"`
+			BaseURL         string `json:"baseUrl"`
+			Format          string `json:"format"`
+			SecretName      string `json:"secretName"`
+		} `json:"model_selection"` // Per-PTY OpenRouter / custom-endpoint override
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
 	}
 
-	// Use CreatePTYWithToken if pty_id or integration_token or working_dir is provided
+	// Use CreatePTYWithOptions when any optional field is present
 	var ptyInfo *sessions.PTYInfo
 	var err error
-	if req.PtyID != "" || req.IntegrationToken != "" || req.WorkingDir != "" {
-		ptyInfo, err = session.CreatePTYWithToken(req.CreatorID, req.Command, req.PtyID, req.IntegrationToken, req.WorkingDir)
+	hasOpts := req.PtyID != "" || req.IntegrationToken != "" || req.WorkingDir != "" || req.ModelSelection != nil
+	if hasOpts {
+		opts := sessions.CreatePTYOptions{
+			CreatorID:        req.CreatorID,
+			Command:          req.Command,
+			PtyID:            req.PtyID,
+			IntegrationToken: req.IntegrationToken,
+			WorkingDir:       req.WorkingDir,
+		}
+		if req.ModelSelection != nil {
+			opts.ModelSelection = &sessions.ModelSelection{
+				Provider:        req.ModelSelection.Provider,
+				Model:           req.ModelSelection.Model,
+				ContextWindow:   req.ModelSelection.ContextWindow,
+				MaxOutputTokens: req.ModelSelection.MaxOutputTokens,
+				BaseURL:         req.ModelSelection.BaseURL,
+				Format:          req.ModelSelection.Format,
+				SecretName:      req.ModelSelection.SecretName,
+			}
+		}
+		ptyInfo, err = session.CreatePTYWithOptions(opts)
 	} else {
 		ptyInfo, err = session.CreatePTY(req.CreatorID, req.Command, "")
 	}
@@ -1034,8 +1259,26 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Redact known session secret values before the bytes leave the box.
+	// Mirrors PTY output redaction (Hub.redactSecrets) so a secret written to
+	// disk can't be exfiltrated via the authenticated file-read / export path.
+	data = redactFileSecrets(data, session.GetSecretValues())
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
+}
+
+// redactFileSecrets replaces secret values with asterisks in file bytes.
+// Unlike the PTY path there is no cross-chunk tail buffer (the whole file is in
+// memory). session.GetSecretValues() already filters to values >= 8 bytes.
+func redactFileSecrets(data []byte, secrets []string) []byte {
+	for _, secret := range secrets {
+		b := []byte(secret)
+		if len(b) >= 8 && bytes.Contains(data, b) {
+			data = bytes.ReplaceAll(data, b, bytes.Repeat([]byte("*"), len(b)))
+		}
+	}
+	return data
 }
 
 func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
@@ -1068,6 +1311,105 @@ func (s *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// handleImportWorkspace extracts a gzipped tar (request body) into the session
+// workspace — the bulk equivalent of many PUT /file calls (one request instead
+// of one per file). Each entry is written via Workspace().Write, which scopes
+// to /workspace and rejects traversal/symlink escapes, so path safety is
+// inherited (no separate tar-slip handling needed). Directories and non-regular
+// entries are skipped (parent dirs are created on file write).
+func (s *Server) handleImportWorkspace(w http.ResponseWriter, r *http.Request) {
+	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
+	if session == nil {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxWorkspaceImportBytes)
+	written, skipped, err := extractTarGzToWоrkspace(session.Wоrkspace(), r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "E79761: import too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "E79762: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"written": written, "skipped": skipped})
+}
+
+// extractTarGzToWоrkspace extracts a gzipped tar stream into the workspace.
+// Regular files are written via Workspace.Write (which scopes to /workspace and
+// rejects ".." / symlink escapes — so a hostile entry is counted as skipped, not
+// an error). Directories and other entry types are ignored. Returns
+// (written, skipped). A malformed gzip/tar (or oversized body) is a hard error.
+func extractTarGzToWоrkspace(ws *fs.Workspace, body io.Reader) (int, int, error) {
+	gz, err := gzip.NewReader(body)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid gzip stream: %w", err)
+	}
+	defer gz.Close()
+
+	// Bound total decompressed bytes (gzip-bomb guard) and total entry count.
+	tr := tar.NewReader(&cappedReader{r: gz, limit: maxImportDecompressedBytes})
+	written, skipped := 0, 0
+	entries := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return written, skipped, err
+		}
+		entries++
+		if entries > maxImportEntries {
+			return written, skipped, errImportTooLarge
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue // dirs/symlinks/etc — files carry their own parent path
+		}
+		if hdr.Size > maxFileSizeBytes {
+			skipped++
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxFileSizeBytes+1))
+		if err != nil {
+			return written, skipped, err
+		}
+		if int64(len(data)) > maxFileSizeBytes {
+			skipped++
+			continue
+		}
+		// Write() scopes to the workspace and rejects ".." / symlink escapes.
+		// Bound each write: on the desktop, the workspace is a host-shared mount
+		// (virtiofs) and a guest write to a file the *host* holds open (Spotlight,
+		// QuickLook, …) blocks indefinitely — even via temp+rename. A per-file
+		// timeout skips such a file so one stuck entry can't hang the whole import
+		// (matching the per-file PUT path's resilience). On real cloud ext4 writes
+		// never stall, so this never trips. The goroutine for a stuck write leaks
+		// until the host releases the file — bounded and desktop-only.
+		done := make(chan error, 1)
+		name := hdr.Name
+		go func() { done <- ws.Write(name, data) }()
+		select {
+		case err := <-done:
+			if err != nil {
+				if errors.Is(err, fs.ErrPathTraversal) {
+					skipped++
+					continue // hostile entry — skip, don't abort the whole import
+				}
+				return written, skipped, err
+			}
+			written++
+		case <-time.After(10 * time.Second):
+			skipped++ // host-held file over virtiofs; skip and move on
+		}
+	}
+	return written, skipped, nil
 }
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
@@ -1521,6 +1863,15 @@ func (s *Server) forwardEgressAudit(event egress.AuditEvent) {
 	}
 }
 
+// broadcastToSessionHubs fans a raw JSON event out to all of a session's PTY hubs.
+func broadcastToSessionHubs(session *sessions.Session, event []byte) {
+	for _, ptyInfo := range session.ListPTYs() {
+		if hub := session.GetHub(ptyInfo.ID); hub != nil {
+			hub.BroadcastRawJSON(event)
+		}
+	}
+}
+
 // broadcastEgressApproval broadcasts an egress approval request to all connected WebSocket clients.
 // Called by the egress proxy when a connection to an unknown domain is held.
 // REVISION: egress-proxy-v1-broadcast
@@ -1531,15 +1882,38 @@ func (s *Server) broadcastEgressApproval(req egress.ApprovalRequest) {
 		"port":       req.Port,
 		"request_id": req.RequestID,
 	})
-
-	// Broadcast to ALL hubs across all sessions so all dashboard viewers see it
 	for _, session := range s.sessions.List() {
-		for _, ptyInfo := range session.ListPTYs() {
-			hub := session.GetHub(ptyInfo.ID)
-			if hub != nil {
-				hub.BroadcastRawJSON(event)
-			}
-		}
+		broadcastToSessionHubs(session, event)
+	}
+}
+
+// broadcastModelProviderError surfaces an upstream model-provider error (e.g. an
+// OpenRouter 429/402) to the dashboard as a toast. Scoped to the originating
+// session and debounced per session+status so a harness retry storm shows once.
+// REVISION: provider-error-toast-v1
+func (s *Server) broadcastModelProviderError(e broker.ProviderError) {
+	// Debounce: at most one toast per (session, status) every 20s.
+	key := e.SessionID + ":" + strconv.Itoa(e.Status)
+	s.providerErrMu.Lock()
+	if last, ok := s.providerErrLast[key]; ok && time.Since(last) < 20*time.Second {
+		s.providerErrMu.Unlock()
+		return
+	}
+	s.providerErrLast[key] = time.Now()
+	s.providerErrMu.Unlock()
+
+	log.Printf("[provider-error] session=%s provider=%s status=%d title=%q", e.SessionID, e.Provider, e.Status, e.Title)
+
+	event, _ := json.Marshal(map[string]interface{}{
+		"type":     "model_provider_error",
+		"provider": e.Provider,
+		"status":   e.Status,
+		"title":    e.Title,
+		"message":  e.Message,
+		"hint":     e.Hint,
+	})
+	if sess, err := s.sessions.Get(e.SessionID); err == nil {
+		broadcastToSessionHubs(sess, event)
 	}
 }
 
@@ -1553,14 +1927,8 @@ func (s *Server) broadcastEgressResolution(res egress.ApprovalResolution) {
 		"request_id": res.RequestID,
 		"decision":   res.Decision,
 	})
-
 	for _, session := range s.sessions.List() {
-		for _, ptyInfo := range session.ListPTYs() {
-			hub := session.GetHub(ptyInfo.ID)
-			if hub != nil {
-				hub.BroadcastRawJSON(event)
-			}
-		}
+		broadcastToSessionHubs(session, event)
 	}
 }
 
@@ -1582,7 +1950,8 @@ func (s *Server) handleEgressApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Decision != egress.DecisionAllowOnce && req.Decision != egress.DecisionAllowAlways && req.Decision != egress.DecisionDeny {
+	if req.Decision != egress.DecisionAllowOnce && req.Decision != egress.DecisionAllowAlways &&
+		req.Decision != egress.DecisionDeny && req.Decision != egress.DecisionDenyAlways {
 		http.Error(w, "E79862: invalid decision value", http.StatusBadRequest)
 		return
 	}
@@ -1601,8 +1970,9 @@ func (s *Server) handleEgressApprove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleEgressRevoke removes a domain from the runtime allowlist.
-// Called by the control plane when a user revokes an always-allowed domain.
+// handleEgressRevoke removes a domain from the runtime allow/deny sets.
+// Called by the control plane when a user revokes an always-allowed domain or
+// lifts a permanent deny ("deny always"). Clearing both is idempotent and safe.
 func (s *Server) handleEgressRevoke(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Domain string `json:"domain"`
@@ -1620,7 +1990,8 @@ func (s *Server) handleEgressRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.egressProxy.Allowlist().RemoveUserDomain(req.Domain)
-	log.Printf("[egress] Revoked domain from runtime allowlist: %s", req.Domain)
+	s.egressProxy.Allowlist().RemoveDeniedDomain(req.Domain)
+	log.Printf("[egress] Revoked domain from runtime allow/deny sets: %s", req.Domain)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1642,8 +2013,10 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 	if s.egressProxy == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"defaults": []string{},
+			"defaults": egress.DefaultPatterns(),
+			"blocked":  []string{},
 			"user":     map[string]string{},
+			"denied":   map[string]string{},
 		})
 		return
 	}
@@ -1652,6 +2025,42 @@ func (s *Server) handleEgressAllowlist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"defaults": al.DefaultPatterns(),
+		"blocked":  al.BlockedDefaults(),
 		"user":     al.UserDomains(),
+		"denied":   al.DeniedDomains(),
 	})
+}
+
+func (s *Server) handleEgressBlockDefault(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pattern string `json:"pattern"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "E79890: Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Pattern) == "" {
+		http.Error(w, "E79891: pattern required", http.StatusBadRequest)
+		return
+	}
+	if s.egressProxy == nil {
+		http.Error(w, "E79892: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+	s.egressProxy.Allowlist().BlockDefault(req.Pattern)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleEgressUnblockDefault(w http.ResponseWriter, r *http.Request) {
+	pattern := strings.TrimSpace(r.PathValue("pattern"))
+	if pattern == "" {
+		http.Error(w, "E79893: pattern required", http.StatusBadRequest)
+		return
+	}
+	if s.egressProxy == nil {
+		http.Error(w, "E79894: egress proxy not running", http.StatusServiceUnavailable)
+		return
+	}
+	s.egressProxy.Allowlist().UnblockDefault(pattern)
+	w.WriteHeader(http.StatusNoContent)
 }

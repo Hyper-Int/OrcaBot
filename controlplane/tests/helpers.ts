@@ -152,19 +152,24 @@ export async function seedRecipe(
     dashboardId?: string;
     name?: string;
     steps?: unknown[];
+    // Dashboard-less recipes are now owner-scoped (checkRecipeAccess). Default to
+    // the standard test user ('user-1') so seeded global recipes are owned by the
+    // user the tests authenticate as.
+    createdBy?: string;
   } = {}
 ) {
   const id = data.id || `recipe-${Date.now()}-${Math.random()}`;
   const name = data.name || 'Test Recipe';
   const steps = JSON.stringify(data.steps || []);
+  const createdBy = data.createdBy || 'user-1';
   const now = new Date().toISOString();
 
   await db.prepare(`
-    INSERT INTO recipes (id, dashboard_id, name, description, steps, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, data.dashboardId || null, name, '', steps, now, now).run();
+    INSERT INTO recipes (id, dashboard_id, name, description, steps, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, data.dashboardId || null, name, '', steps, createdBy, now, now).run();
 
-  return { id, name, steps: data.steps || [] };
+  return { id, name, steps: data.steps || [], createdBy };
 }
 
 export async function seedSchedule(

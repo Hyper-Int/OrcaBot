@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# REVISION: scb-viewers-v1-dashboard
+# Launch the slop-code-bench results dashboard (Dash) inside the sandbox VM.
+#
+# An Orcabot browser block pointed at http://localhost:8050 then renders it on
+# the canvas, next to the orchestrator and the run viewers.
+#
+# Usage: scb-dashboard [runs_dir]
+#   runs_dir  directory containing run outputs   (default: outputs)
+#
+# Note: upstream slop_code.dashboard.app serves on Dash's default 127.0.0.1:8050
+# (it calls app.run(debug=True) with no port arg). Point the browser block at
+# http://localhost:8050. To change the port you must patch the upstream app.
+#
+# Run from the slop-code-bench checkout (where `uv run` resolves the package).
+set -euo pipefail
+
+RUNS_DIR="${1:-outputs}"
+
+if [ ! -d "$RUNS_DIR" ]; then
+  echo "runs dir '$RUNS_DIR' not found — run a benchmark first" >&2
+  exit 1
+fi
+
+echo "[scb-dashboard] serving '$RUNS_DIR' on http://localhost:8050"
+echo "[scb-dashboard] point an Orcabot browser block at http://localhost:8050"
+exec uv run python -m slop_code.dashboard.app "$RUNS_DIR"

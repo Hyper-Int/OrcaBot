@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v7-analytics
-const TERMINAL_BLOCK_REVISION = "terminal-block-v8-input-dark-mode";
+// REVISION: terminal-block-v10-first-connect-no-clear
+const TERMINAL_BLOCK_REVISION = "terminal-block-v10-first-connect-no-clear";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -42,11 +42,14 @@ import {
   Palette,
   Type,
   ListTodo,
+  Cpu,
+  Check,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
+import { perfStart, perfMark, perfEnd } from "@/lib/perf";
 import { BlockWrapper } from "./BlockWrapper";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import {
@@ -59,7 +62,6 @@ import {
   DialogHeader,
   DialogTitle,
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -71,6 +73,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
+  SecretInput,
 } from "@/components/ui";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { ConnectionMarkers } from "./ConnectionMarkers";
@@ -107,12 +110,17 @@ import {
   listMcpTools,
   type UserMcpTool,
   listSessionFiles,
+  listModelProviders,
+  createModelProvider,
+  deleteModelProvider,
+  type UserModelProvider,
 } from "@/lib/api/cloudflare";
 import type { Session } from "@/types/dashboard";
 import { useTerminalOverlay } from "@/components/terminal";
 import subagentCatalog from "@/data/claude-subagents.json";
 import agentSkillsCatalog from "@/data/claude-agent-skills.json";
 import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
+import openrouterModelsCatalog from "@/data/openrouter-models.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { TasksPanel } from "./TasksPanel";
@@ -121,6 +129,11 @@ import { HelpButton } from "@/components/help/HelpDialog";
 import { terminalsDoc } from "@/docs/content/terminals";
 import type { IntegrationProvider, SecurityLevel } from "@/lib/api/cloudflare/integration-policies";
 import { getAgentType, getAgentIconSrc, type AgentType } from "@/lib/agent-icons";
+
+/** Auto-restart loop guard: restarts closer together than the window count as a
+ *  fast-fail loop; pause after this many consecutive ones. */
+const RAPID_REOPEN_WINDOW_MS = 6000;
+const MAX_RAPID_REOPENS = 3;
 
 /** Default API key name to pre-populate for each agentic coder */
 const AGENT_DEFAULT_API_KEY: Partial<Record<AgentType, string>> = {
@@ -204,7 +217,33 @@ type McpToolCatalogCategory = {
   items: McpToolCatalogItem[];
 };
 
-type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "integrations" | "working-dir" | "tasks" | null;
+type ActivePanel = "secrets" | "subagents" | "agent-skills" | "mcp-tools" | "tts-voice" | "model" | "integrations" | "working-dir" | "tasks" | null;
+
+type ModelSelection = {
+  provider: "default" | "openrouter" | "custom";
+  model?: string; // OpenRouter model id (openrouter) or custom endpoint model id (custom)
+  // Resolved from the catalog/saved-provider at selection time; forwarded to the
+  // sandbox so Codex gets correct -c model_context_window / model_max_output_tokens.
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  // Custom endpoint fields (provider === "custom"); see PLAN-custom-endpoints.md.
+  customProviderId?: string;
+  baseUrl?: string;
+  format?: "openai" | "anthropic";
+  secretName?: string;
+};
+
+type OpenRouterModel = {
+  id: string;
+  label: string;
+  provider: string;
+  contextLength: number;
+  maxOutputTokens?: number;
+  pricing: { input: number; output: number };
+  compatibleHarnesses: string[];
+};
+
+const OPENROUTER_MODELS: OpenRouterModel[] = (openrouterModelsCatalog.models ?? []) as OpenRouterModel[];
 
 type TerminalContentState = {
   name: string;
@@ -219,6 +258,7 @@ type TerminalContentState = {
   ttsProvider?: string;
   ttsVoice?: string;
   skipApprovals?: boolean;
+  modelSelection?: ModelSelection;
 };
 
 // Font size presets - "auto" means dynamic resizing based on terminal width
@@ -450,6 +490,7 @@ function parseTerminalContent(content: string | null | undefined): TerminalConte
         ttsProvider: parsed.ttsProvider,
         ttsVoice: parsed.ttsVoice,
         skipApprovals: parsed.skipApprovals,
+        modelSelection: parsed.modelSelection,
       };
     } catch {
       return { name: content, subagentIds: [], skillIds: [], mcpToolIds: defaultMcpToolIds };
@@ -589,7 +630,48 @@ export function TerminalBlock({
   const { user } = useAuthStore();
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
-  const { deleteElements } = useReactFlow();
+  const { deleteElements, getViewport, setViewport } = useReactFlow();
+
+  // Right-drag pans the canvas even while the pointer is over the terminal.
+  // xterm captures normal (left) drags, so a large PTY is otherwise a pan trap;
+  // this drives React Flow's viewport directly on a right-button drag and
+  // swallows the follow-up context menu only if we actually panned.
+  const termPan = React.useRef<
+    { x0: number; y0: number; vx: number; vy: number; zoom: number; moved: boolean } | null
+  >(null);
+  const handleTermPanStart = React.useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 2) return; // right button only; left/middle stay with xterm
+      const vp = getViewport();
+      termPan.current = { x0: e.clientX, y0: e.clientY, vx: vp.x, vy: vp.y, zoom: vp.zoom, moved: false };
+      const onMove = (ev: MouseEvent) => {
+        const p = termPan.current;
+        if (!p) return;
+        const dx = ev.clientX - p.x0;
+        const dy = ev.clientY - p.y0;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) p.moved = true;
+        if (p.moved) setViewport({ x: p.vx + dx, y: p.vy + dy, zoom: p.zoom });
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        termPan.current = null; // clear on release, NOT in the contextmenu handler
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [getViewport, setViewport]
+  );
+  // Always suppress the native WebView text context menu over the terminal. macOS
+  // fires (and shows) it on right-mousedown — before we can tell a pan from a plain
+  // click — and once it's up it captures the mouse and the right-drag pan can't run.
+  // The menu is useless here anyway (xterm renders to a canvas, so Cut/Copy are dead;
+  // paste is Cmd+V). Suppressing it lets right-drag pan reliably. We do NOT touch
+  // termPan here — this fires right after mousedown, so nulling it would kill the pan
+  // before the drag starts; mouseup owns cleanup.
+  const handleTermContextMenu = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
   const [isReady, setIsReady] = React.useState(false);
   const [isClaudeSession, setIsClaudeSession] = React.useState(false);
   const [activePanel, setActivePanel] = React.useState<ActivePanel>(null);
@@ -787,7 +869,12 @@ export function TerminalBlock({
   const secretsQuery = useQuery({
     queryKey: ["secrets", "_global"],
     queryFn: () => listSecrets("_global"),
-    enabled: activePanel === "secrets",
+    // Also fetch when the Model panel is open, or when an OpenRouter model is already
+    // selected, so we can flag a missing OPENROUTER_API_KEY (in-panel and on the menu item).
+    enabled:
+      activePanel === "secrets" ||
+      activePanel === "model" ||
+      terminalMeta.modelSelection?.provider === "openrouter",
     staleTime: 60000,
   });
 
@@ -888,6 +975,34 @@ export function TerminalBlock({
       queryClient.invalidateQueries({ queryKey: ["subagents"] });
     },
   });
+
+  // Custom model endpoints (per-user saved providers)
+  const modelProvidersQuery = useQuery({
+    queryKey: ["model-providers"],
+    queryFn: () => listModelProviders(),
+    enabled: activePanel === "model",
+    staleTime: 60000,
+  });
+  const customProviders: UserModelProvider[] = modelProvidersQuery.data ?? [];
+
+  const createModelProviderMutation = useMutation({
+    mutationFn: createModelProvider,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["model-providers"] }),
+  });
+  const deleteModelProviderMutation = useMutation({
+    mutationFn: deleteModelProvider,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["model-providers"] }),
+  });
+
+  // Add-custom-endpoint form state
+  const [showCustomForm, setShowCustomForm] = React.useState(false);
+  const [cpLabel, setCpLabel] = React.useState("");
+  const [cpBaseUrl, setCpBaseUrl] = React.useState("");
+  const [cpModelId, setCpModelId] = React.useState("");
+  const [cpFormat, setCpFormat] = React.useState<"openai" | "anthropic">("openai");
+  const [cpApiKey, setCpApiKey] = React.useState("");
+  const [cpContextWindow, setCpContextWindow] = React.useState("");
+  const [cpMaxOutput, setCpMaxOutput] = React.useState("");
 
   // Agent Skills queries and mutations
   const agentSkillsQuery = useQuery({
@@ -991,6 +1106,11 @@ export function TerminalBlock({
   // Split into secrets (brokered) and env vars (non-brokered)
   const savedSecrets = allSecrets.filter(s => s.type === 'secret' || !s.type); // Default to secret for backwards compat
   const savedEnvVars = allSecrets.filter(s => s.type === 'env_var');
+  // Whether an OpenRouter key has been configured (used to flag invalid model selections).
+  // Only trust this once the query has resolved, otherwise we'd false-flag before secrets load.
+  const hasOpenRouterKey = allSecrets.some(s => s.name === "OPENROUTER_API_KEY");
+  const openRouterKeyResolved = secretsQuery.isSuccess;
+  const openRouterKeyMissing = openRouterKeyResolved && !hasOpenRouterKey;
 
   // Pre-populate secret name field on first secrets panel open for agentic coders
   React.useEffect(() => {
@@ -1047,6 +1167,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1126,6 +1247,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (subagentName) {
@@ -1196,6 +1318,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
@@ -1218,6 +1341,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
@@ -1277,10 +1401,58 @@ export function TerminalBlock({
           ttsProvider: newProvider,
           ttsVoice: newVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
     },
     [data, terminalMeta]
+  );
+
+  const handleModelChange = React.useCallback(
+    (next: ModelSelection) => {
+      if (!data.onItemChange) return;
+      const current = terminalMeta.modelSelection ?? { provider: "default" as const };
+      const providerChanged = current.provider !== next.provider;
+      const modelChanged = current.model !== next.model;
+      const customChanged = current.customProviderId !== next.customProviderId;
+      if (!providerChanged && !modelChanged && !customChanged) return;
+
+      // Resolve context/output limits from the catalog at selection time so the
+      // sandbox can pass Codex correct -c model_context_window / max_output_tokens.
+      let resolved: ModelSelection = next;
+      if (next.provider === "openrouter" && next.model) {
+        const cat = OPENROUTER_MODELS.find((m) => m.id === next.model);
+        resolved = {
+          provider: "openrouter",
+          model: next.model,
+          contextWindow: cat?.contextLength,
+          maxOutputTokens: cat?.maxOutputTokens,
+        };
+      }
+
+      data.onItemChange({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          workingDir: terminalMeta.workingDir,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: resolved,
+        }),
+      });
+
+      if (session?.id) {
+        setPendingConfigRestart(true);
+      }
+    },
+    [data, terminalMeta, session?.id]
   );
 
   const attachedNames = React.useMemo(() => {
@@ -1407,6 +1579,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1436,6 +1609,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       if (skillName) {
@@ -1525,6 +1699,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       // Mark that config changed - restart needed to apply
@@ -1553,6 +1728,7 @@ export function TerminalBlock({
           ttsProvider: terminalMeta.ttsProvider,
           ttsVoice: terminalMeta.ttsVoice,
           skipApprovals: terminalMeta.skipApprovals,
+          modelSelection: terminalMeta.modelSelection,
         }),
       });
       syncSessionAttachments({
@@ -1756,8 +1932,10 @@ export function TerminalBlock({
   React.useEffect(() => {
     if (connectionState === "connected") {
       wasConnectedRef.current = true;
+      // Perf: close the create→connected span (no-op if not started, e.g. reconnect).
+      perfEnd(`terminal:${data.itemId || id}`, "ws-connected");
     }
-  }, [connectionState]);
+  }, [connectionState, data.itemId, id]);
 
   // Reset wasConnected when session changes (new session created)
   React.useEffect(() => {
@@ -2103,8 +2281,12 @@ export function TerminalBlock({
     setSessionError(null);
 
     try {
+      // Perf: time terminal create → first connected. perfEnd fires in the
+      // connectionState effect when the WS reaches "connected".
+      perfStart(`terminal:${actualItemId}`);
       console.log(`[TerminalBlock] Creating session...`);
       const newSession = await createSession(data.dashboardId, actualItemId);
+      perfMark(`terminal:${actualItemId}`, "session-created");
       console.log(`[TerminalBlock] Session created:`, newSession);
       setSession(newSession);
       upsertDashboardSession(newSession);
@@ -2199,6 +2381,14 @@ export function TerminalBlock({
     }
   }, [data.dashboardId, isReady, session, actualItemId, stopSession, markSessionStopped, upsertDashboardSession]);
 
+  // Tracks whether this session has connected at least once, so we clear the
+  // terminal only on RE-connects (not the first attach, which would wipe replayed
+  // boot output). Reset when the session identity changes (a new PTY).
+  const hasConnectedOnceRef = React.useRef(false);
+  React.useEffect(() => {
+    hasConnectedOnceRef.current = false;
+  }, [session?.id]);
+
   // Show connected message when WebSocket connects
   React.useEffect(() => {
     if (isConnected && session && isReady) {
@@ -2209,7 +2399,15 @@ export function TerminalBlock({
         terminalRef.current?.fit();
       }, 120);
 
-      terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+      // Only clear on a RE-connect. On the first connect the sandbox replays the
+      // PTY's buffered output (a fast boot_command's output — e.g. setup's
+      // SETUP_OK — that already ran before we attached); clearing here would wipe
+      // it and leave a blank terminal. On reconnect we clear to avoid a duplicated
+      // scrollback replay.
+      if (hasConnectedOnceRef.current) {
+        terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
+      }
+      hasConnectedOnceRef.current = true;
       terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n\r\n");
 
       // Control is requested separately once connected.
@@ -2222,6 +2420,13 @@ export function TerminalBlock({
       autoReopenAttemptedRef.current = false;
     }
   }, [isConnected, session?.id]);
+
+  // Fast-fail loop guard: if a freshly-restarted session dies again within a few
+  // seconds (e.g. a boot command that exits immediately — bad flag, missing
+  // binary, Claude refusing --dangerously-skip-permissions as root), don't keep
+  // recreating it forever. Count consecutive rapid restarts and pause after a few.
+  const lastAutoReopenAtRef = React.useRef(0);
+  const rapidReopenCountRef = React.useRef(0);
 
   // Auto-restart when the connection fails or the session ends.
   // Previously this was gated on session.status === "stopped", but after
@@ -2244,6 +2449,24 @@ export function TerminalBlock({
       return;
     }
     autoReopenAttemptedRef.current = true;
+
+    // Detect a rapid restart loop: restarts spaced closely together mean the
+    // session keeps dying on startup. After MAX_RAPID_REOPENS, stop and surface
+    // an error instead of hammering the backend. A spaced-out restart resets it.
+    const now = Date.now();
+    rapidReopenCountRef.current =
+      now - lastAutoReopenAtRef.current < RAPID_REOPEN_WINDOW_MS
+        ? rapidReopenCountRef.current + 1
+        : 0;
+    lastAutoReopenAtRef.current = now;
+    if (rapidReopenCountRef.current >= MAX_RAPID_REOPENS) {
+      console.warn(`[TerminalBlock] Auto-restart paused after ${rapidReopenCountRef.current} rapid restarts`);
+      terminalRef.current?.write(
+        "\x1b[31mAgent keeps exiting on startup — auto-restart paused. Check the command/settings (e.g. Skip Permissions), then reopen manually.\x1b[0m\r\n"
+      );
+      return;
+    }
+
     console.log(`[TerminalBlock] Auto-restart: isFailed=${isFailed} isDisconnected=${isDisconnected} ptyClosed=${ptyClosed} sessionExpired=${sessionExpired} sessionStatus=${session.status}`);
     terminalRef.current?.write("\x1b[90mReconnecting to a fresh session...\x1b[0m\r\n");
     void handleReopen();
@@ -2697,17 +2920,7 @@ export function TerminalBlock({
                       <div className="text-[10px] text-[var(--foreground-muted)]">
                         Secrets are brokered - the LLM cannot read them directly.
                       </div>
-                      <form
-                        autoComplete="off"
-                        data-form-type="other"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (newSecretName.trim() && newSecretValue.trim()) {
-                            handleAddSecret();
-                          }
-                        }}
-                        className="flex gap-1"
-                      >
+                      <div className="flex gap-1">
                         <Input
                           name="secret_key_name"
                           placeholder="NAME"
@@ -2717,29 +2930,37 @@ export function TerminalBlock({
                           autoComplete="off"
                           data-form-type="other"
                         />
-                        <Input
+                        <SecretInput
                           ref={secretValueInputRef}
                           name="secret_key_value"
-                          type="text"
                           placeholder="Value"
                           value={newSecretValue}
                           onChange={(e) => setNewSecretValue(e.target.value)}
                           className="h-6 text-xs flex-1 nodrag"
-                          autoComplete="off"
-                          data-form-type="other"
-                          data-lpignore="true"
-                          style={{ WebkitTextSecurity: "disc" } as React.CSSProperties}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (newSecretName.trim() && newSecretValue.trim()) {
+                                handleAddSecret();
+                              }
+                            }
+                          }}
                         />
                         <Button
-                          type="submit"
+                          type="button"
                           variant="secondary"
                           size="sm"
                           disabled={!newSecretName.trim() || !newSecretValue.trim()}
+                          onClick={() => {
+                            if (newSecretName.trim() && newSecretValue.trim()) {
+                              handleAddSecret();
+                            }
+                          }}
                           className="h-6 px-2 nodrag"
                         >
                           <Plus className="w-3 h-3" />
                         </Button>
-                      </form>
+                      </div>
                       {/* Pending domain approvals */}
                       {pendingApprovalsQuery.data && pendingApprovalsQuery.data.length > 0 && (
                         <div className="space-y-1">
@@ -2852,17 +3073,7 @@ export function TerminalBlock({
                           </div>
                         </div>
                       )}
-                      <form
-                        autoComplete="off"
-                        data-form-type="other"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (newEnvVarName.trim() && newEnvVarValue.trim()) {
-                            handleAddEnvVar();
-                          }
-                        }}
-                        className="flex gap-1"
-                      >
+                      <div className="flex gap-1">
                         <Input
                           name="env_var_name"
                           placeholder="NAME"
@@ -2872,27 +3083,36 @@ export function TerminalBlock({
                           autoComplete="off"
                           data-form-type="other"
                         />
-                        <Input
+                        <SecretInput
                           name="env_var_value"
-                          type="text"
                           placeholder="Value"
                           value={newEnvVarValue}
                           onChange={(e) => setNewEnvVarValue(e.target.value)}
                           className="h-6 text-xs flex-1 nodrag"
-                          autoComplete="off"
-                          data-form-type="other"
-                          data-lpignore="true"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+                                handleAddEnvVar();
+                              }
+                            }
+                          }}
                         />
                         <Button
-                          type="submit"
+                          type="button"
                           variant="secondary"
                           size="sm"
                           disabled={!newEnvVarName.trim() || !newEnvVarValue.trim()}
+                          onClick={() => {
+                            if (newEnvVarName.trim() && newEnvVarValue.trim()) {
+                              handleAddEnvVar();
+                            }
+                          }}
                           className="h-6 px-2 nodrag"
                         >
                           <Plus className="w-3 h-3" />
                         </Button>
-                      </form>
+                      </div>
                       {/* Env vars list */}
                       <div className="space-y-1">
                         {secretsQuery.isLoading && (
@@ -3193,7 +3413,351 @@ export function TerminalBlock({
             />
           )}
 
-          {/* TTS Voice Panel */}
+          {/* Model Selection Panel */}
+          {activePanel === "model" && (
+            <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-80">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                  <Cpu className="w-3 h-3" />
+                  <span>Model</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setActivePanel(null)}
+                  className="h-5 w-5 nodrag"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+              <div className="p-3 space-y-3 max-h-[420px] overflow-y-auto">
+                {/* Default section */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Default
+                  </div>
+                  <label className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer">
+                    <input
+                      type="radio"
+                      name={`model-${id}`}
+                      checked={(terminalMeta.modelSelection?.provider ?? "default") === "default"}
+                      onChange={() => handleModelChange({ provider: "default" })}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-[var(--foreground)]">
+                        {terminalType === "claude" && "Claude Code (Anthropic native)"}
+                        {terminalType === "codex" && "Codex (OpenAI native)"}
+                        {terminalType === "opencode" && "OpenCode (default provider)"}
+                        {terminalType === "droid" && "Droid (Factory.ai default)"}
+                        {terminalType === "gemini" && "Gemini (Google native)"}
+                      </div>
+                      <div className="text-[10px] text-[var(--foreground-muted)]">
+                        Uses the harness&apos;s built-in API key.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* OpenRouter section */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                      OpenRouter
+                    </div>
+                    {openRouterKeyMissing && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[var(--status-warning)]">
+                        <AlertCircle className="w-3 h-3" />
+                        API key required
+                      </span>
+                    )}
+                  </div>
+                  {openRouterKeyMissing && (
+                    <div className="text-[10px] text-[var(--foreground-muted)] leading-snug">
+                      Selecting a model below won&apos;t work until you add an
+                      {" "}
+                      <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code>.
+                    </div>
+                  )}
+                  {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).map((m) => {
+                    const selected =
+                      terminalMeta.modelSelection?.provider === "openrouter" &&
+                      terminalMeta.modelSelection?.model === m.id;
+                    return (
+                      <label
+                        key={m.id}
+                        className={`flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer ${
+                          selected && openRouterKeyMissing ? "ring-1 ring-[var(--status-warning)]" : ""
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`model-${id}`}
+                          checked={selected}
+                          onChange={() => handleModelChange({ provider: "openrouter", model: m.id })}
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <div className="text-xs text-[var(--foreground)] truncate">{m.label}</div>
+                              {selected && openRouterKeyMissing && (
+                                <AlertCircle className="w-3 h-3 text-[var(--status-warning)] shrink-0" />
+                              )}
+                            </div>
+                            {m.pricing && (
+                              <div className="text-[10px] text-[var(--foreground-muted)] shrink-0">
+                                ${m.pricing.input.toFixed(2)}/${m.pricing.output.toFixed(2)} per 1M
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-[var(--foreground-muted)] truncate">
+                            {m.provider} · {m.contextLength ? `${(m.contextLength / 1000).toFixed(0)}k context · ` : ""}<code className="font-mono">{m.id}</code>
+                          </div>
+                          {selected && openRouterKeyMissing && (
+                            <div className="text-[10px] text-[var(--status-warning)] mt-0.5">
+                              No OPENROUTER_API_KEY set — add one to use this model.
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
+                  {OPENROUTER_MODELS.filter((m) => m.compatibleHarnesses.includes(terminalType)).length === 0 && (
+                    <div className="text-[10px] text-[var(--foreground-muted)] italic">
+                      No OpenRouter models are compatible with this harness yet.
+                    </div>
+                  )}
+                </div>
+
+                {/* Custom endpoint section (Ollama / vLLM / self-hosted / BYO) */}
+                <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
+                  <div className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                    Custom endpoint
+                  </div>
+                  {customProviders
+                    .filter((p) => p.compatibleHarnesses.length === 0 || p.compatibleHarnesses.includes(terminalType))
+                    .map((p) => {
+                      const selected =
+                        terminalMeta.modelSelection?.provider === "custom" &&
+                        terminalMeta.modelSelection?.customProviderId === p.id;
+                      return (
+                        <label
+                          key={p.id}
+                          className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[var(--background)] cursor-pointer"
+                        >
+                          <input
+                            type="radio"
+                            name={`model-${id}`}
+                            checked={selected}
+                            onChange={() =>
+                              handleModelChange({
+                                provider: "custom",
+                                model: p.modelId,
+                                contextWindow: p.contextWindow,
+                                maxOutputTokens: p.maxOutputTokens,
+                                customProviderId: p.id,
+                                baseUrl: p.baseUrl,
+                                format: p.format,
+                                secretName: p.secretName,
+                              })
+                            }
+                            className="mt-0.5"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-xs text-[var(--foreground)] truncate">{p.label}</div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  deleteModelProviderMutation.mutate(p.id);
+                                }}
+                                className="text-[10px] text-[var(--foreground-muted)] hover:text-[var(--status-error)] shrink-0"
+                                title="Remove endpoint"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div className="text-[10px] text-[var(--foreground-muted)] truncate">
+                              {p.format} · <code className="font-mono">{p.modelId}</code> · {p.baseUrl}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+
+                  {!showCustomForm ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowCustomForm(true)}
+                      className="h-6 text-[10px] text-[var(--accent-primary)]"
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Add custom endpoint
+                    </Button>
+                  ) : (
+                    <div className="space-y-1.5 p-2 rounded border border-[var(--border)] bg-[var(--background)]">
+                      <input
+                        value={cpLabel}
+                        onChange={(e) => setCpLabel(e.target.value)}
+                        placeholder="Label (e.g. Local Ollama)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <input
+                        value={cpBaseUrl}
+                        onChange={(e) => setCpBaseUrl(e.target.value)}
+                        placeholder="Base URL (e.g. http://localhost:11434/v1)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <input
+                        value={cpModelId}
+                        onChange={(e) => setCpModelId(e.target.value)}
+                        placeholder="Model id (e.g. llama3.3:70b)"
+                        className="w-full px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                      />
+                      <div className="flex gap-1.5">
+                        <select
+                          value={cpFormat}
+                          onChange={(e) => setCpFormat(e.target.value as "openai" | "anthropic")}
+                          className="px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        >
+                          <option value="openai">OpenAI-compatible</option>
+                          <option value="anthropic">Anthropic-compatible</option>
+                        </select>
+                        <SecretInput
+                          value={cpApiKey}
+                          onChange={(e) => setCpApiKey(e.target.value)}
+                          placeholder="API key (optional)"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                      </div>
+                      <div className="flex gap-1.5">
+                        <input
+                          value={cpContextWindow}
+                          onChange={(e) => setCpContextWindow(e.target.value)}
+                          placeholder="Context window"
+                          inputMode="numeric"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                        <input
+                          value={cpMaxOutput}
+                          onChange={(e) => setCpMaxOutput(e.target.value)}
+                          placeholder="Max output"
+                          inputMode="numeric"
+                          className="flex-1 min-w-0 px-2 py-1 text-[11px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                        />
+                      </div>
+                      <div className="text-[10px] text-[var(--foreground-muted)] leading-snug">
+                        This endpoint receives the full conversation context — only add providers you trust.
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={!cpLabel.trim() || !cpBaseUrl.trim() || !cpModelId.trim() || createModelProviderMutation.isPending}
+                          onClick={async () => {
+                            const cw = parseInt(cpContextWindow, 10);
+                            const mo = parseInt(cpMaxOutput, 10);
+                            // Store the raw key as a brokered secret (a valid env-var
+                            // name); the broker injects it server-side. The provider only
+                            // references the name, never the value.
+                            let secretName: string | undefined;
+                            const apiKey = cpApiKey.trim();
+                            if (apiKey) {
+                              secretName = `CUSTOM_KEY_${crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+                              try {
+                                await createSecret({ dashboardId: "_global", name: secretName, value: apiKey });
+                              } catch (e) {
+                                console.error("[custom-endpoint] failed to store API key:", e);
+                                return;
+                              }
+                            }
+                            createModelProviderMutation.mutate(
+                              {
+                                label: cpLabel.trim(),
+                                baseUrl: cpBaseUrl.trim(),
+                                modelId: cpModelId.trim(),
+                                format: cpFormat,
+                                secretName,
+                                contextWindow: Number.isFinite(cw) ? cw : undefined,
+                                maxOutputTokens: Number.isFinite(mo) ? mo : undefined,
+                                compatibleHarnesses: ["claude", "codex", "opencode", "droid", "gemini"],
+                                isLocal: false,
+                              },
+                              {
+                                onSuccess: () => {
+                                  setShowCustomForm(false);
+                                  setCpLabel("");
+                                  setCpBaseUrl("");
+                                  setCpModelId("");
+                                  setCpApiKey("");
+                                  setCpContextWindow("");
+                                  setCpMaxOutput("");
+                                  setCpFormat("openai");
+                                },
+                              }
+                            );
+                          }}
+                          className="h-6 px-2 text-[10px]"
+                        >
+                          {createModelProviderMutation.isPending ? "Saving..." : "Save"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowCustomForm(false)}
+                          className="h-6 px-2 text-[10px]"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* API key hint */}
+                {terminalMeta.modelSelection?.provider === "openrouter" && (
+                  <div className="pt-2 border-t border-[var(--border)]">
+                    {openRouterKeyMissing ? (
+                      <div className="flex items-start gap-1.5 text-[10px] text-[var(--status-warning)]">
+                        <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+                        <span>
+                          Add an <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> in Environment Variables, or this terminal will fail to start the model.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-1.5 text-[10px] text-[var(--foreground-muted)]">
+                        {openRouterKeyResolved && (
+                          <Check className="w-3 h-3 shrink-0 mt-0.5 text-[var(--status-success)]" />
+                        )}
+                        <span>
+                          Uses <code className="px-1 py-0.5 rounded bg-[var(--background)] font-mono">OPENROUTER_API_KEY</code> from Environment Variables{openRouterKeyResolved ? " (set)" : ""}.
+                        </span>
+                      </div>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setNewSecretName("OPENROUTER_API_KEY");
+                        setActivePanel("secrets");
+                        setTimeout(() => secretValueInputRef.current?.focus(), 50);
+                      }}
+                      className={`mt-1.5 h-6 text-[10px] ${
+                        openRouterKeyMissing ? "text-[var(--status-warning)]" : "text-[var(--accent-primary)]"
+                      }`}
+                    >
+                      <Key className="w-3 h-3 mr-1" />
+                      {openRouterKeyMissing ? "Add OPENROUTER_API_KEY" : "Open Environment Variables"}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {activePanel === "tts-voice" && (
             <div className="rounded border border-[var(--border)] bg-[var(--background-elevated)] shadow-md w-72">
               <div className="flex items-center justify-between px-2 py-1 border-b border-[var(--border)]">
@@ -3744,6 +4308,16 @@ export function TerminalBlock({
                 <ListTodo className="w-3 h-3" />
                 <span>Tasks</span>
               </DropdownMenuItem>
+              {/* Model - for agentic terminals that support OpenRouter (Claude, Codex, OpenCode, Droid, Gemini) */}
+              {(terminalType === "claude" || terminalType === "codex" || terminalType === "opencode" || terminalType === "droid" || terminalType === "gemini") && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setActivePanel(activePanel === "model" ? null : "model")} className="gap-2">
+                    <Cpu className="w-3 h-3" />
+                    <span>Model</span>
+                  </DropdownMenuItem>
+                </>
+              )}
               {/* TTS Voice - for Claude Code, Codex, and Gemini */}
               {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
                 <>
@@ -3754,16 +4328,24 @@ export function TerminalBlock({
                   </DropdownMenuItem>
                 </>
               )}
-              {/* Skip Approvals - for Claude Code, Codex, and Gemini */}
+              {/* Skip Permissions - for Claude Code, Codex, and Gemini */}
               {(terminalType === "claude" || terminalType === "codex" || terminalType === "gemini") && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={terminalMeta.skipApprovals ?? false}
-                    onCheckedChange={handleSkipApprovalsChange}
+                  <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleSkipApprovalsChange(!(terminalMeta.skipApprovals ?? false));
+                    }}
+                    className="gap-2"
                   >
-                    Skip Approvals
-                  </DropdownMenuCheckboxItem>
+                    {terminalMeta.skipApprovals ? (
+                      <Check className="w-3 h-3 text-[var(--foreground)]" />
+                    ) : (
+                      <X className="w-3 h-3 text-[var(--foreground-muted)] opacity-40" />
+                    )}
+                    <span>Skip Permissions</span>
+                  </DropdownMenuItem>
                 </>
               )}
               <BlockSettingsFooter nodeId={id} onMinimize={handleMinimize} />
@@ -3809,6 +4391,8 @@ export function TerminalBlock({
       <div
         className="relative flex-1 min-h-0 nodrag"
         style={{ overflow: "visible", pointerEvents: "auto", backgroundColor: terminalTheme.background }}
+        onMouseDown={handleTermPanStart}
+        onContextMenu={handleTermContextMenu}
       >
         <div className="h-full w-full" style={{ contain: "layout", backgroundColor: terminalTheme.background }}>
           <TerminalEmulator

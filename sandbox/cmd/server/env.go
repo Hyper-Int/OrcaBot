@@ -32,11 +32,11 @@ type ApprovedDomainConfig struct {
 }
 
 type envUpdateRequest struct {
-	Set             map[string]string        `json:"set"`              // Regular env vars (set directly)
-	Secrets         map[string]SecretConfig  `json:"secrets"`          // Secrets with broker protection option
-	ApprovedDomains []ApprovedDomainConfig   `json:"approved_domains"` // Pre-approved domains for custom secrets
-	Unset           []string                 `json:"unset"`
-	ApplyNow        bool                     `json:"apply_now"`
+	Set             map[string]string       `json:"set"`              // Regular env vars (set directly)
+	Secrets         map[string]SecretConfig `json:"secrets"`          // Secrets with broker protection option
+	ApprovedDomains []ApprovedDomainConfig  `json:"approved_domains"` // Pre-approved domains for custom secrets
+	Unset           []string                `json:"unset"`
+	ApplyNow        bool                    `json:"apply_now"`
 }
 
 type envUpdateResponse struct {
@@ -105,10 +105,10 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 		// one session from removing another's broker configs.
 		for _, name := range req.Unset {
 			sessionBroker.RemoveConfigForSession(broker.ConfigKey(session.ID, "custom/"+name), session.ID)
-			// Also try removing as built-in provider
-			providerName, _ := broker.GetProviderByEnvKey(name)
-			if providerName != "" {
-				sessionBroker.RemoveConfigForSession(broker.ConfigKey(session.ID, providerName), session.ID)
+			// Remove every provider config that consumes this env key.
+			// REVISION: env-v2-multi-provider-per-key
+			for siblingName := range broker.GetAllProvidersByEnvKey(name) {
+				sessionBroker.RemoveConfigForSession(broker.ConfigKey(session.ID, siblingName), session.ID)
 			}
 		}
 	}
@@ -131,23 +131,35 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 			// Built-in provider: use hardcoded config
 			// Broker URL includes session ID for config isolation
 			effectiveEnvVars[secretName] = broker.GetDummyValue(providerName)
-			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+			// Use 127.0.0.1, not "localhost": the broker listens on 127.0.0.1 only
+			// (IPv4). Node/undici-based harnesses (OpenCode, Droid) resolve
+			// "localhost" to IPv6 ::1 first, get ECONNREFUSED, and retry-storm into
+			// an apparent hang. curl/Go/Python prefer IPv4 so they never hit it.
+			effectiveEnvVars[providerSpec.BrokerEnvKey] = fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s",
 				brokerPort, session.ID, providerName)
 
-			sessionBroker.SetConfig(broker.ConfigKey(session.ID, providerName), &broker.ProviderConfig{
-				Name:          providerName,
-				TargetBaseURL: providerSpec.TargetBaseURL,
-				HeaderName:    providerSpec.HeaderName,
-				HeaderFormat:  providerSpec.HeaderFormat,
-				SecretValue:   config.Value,
-				SessionID:     session.ID,
-			})
+			// Install configs for every provider that consumes this env key. Most
+			// keys map 1:1, but some (e.g. OPENROUTER_API_KEY) drive both an
+			// OpenAI-compatible and an Anthropic-compatible broker entry.
+			// REVISION: env-v2-multi-provider-per-key
+			for siblingName, siblingSpec := range broker.GetAllProvidersByEnvKey(secretName) {
+				sessionBroker.SetConfig(broker.ConfigKey(session.ID, siblingName), &broker.ProviderConfig{
+					Name:          siblingName,
+					TargetBaseURL: siblingSpec.TargetBaseURL,
+					HeaderName:    siblingSpec.HeaderName,
+					HeaderFormat:  siblingSpec.HeaderFormat,
+					SecretValue:   config.Value,
+					SessionID:     session.ID,
+				})
+			}
 		} else {
 			// Custom secret: use dynamic domain approval
 			// Broker URL includes session ID for config isolation
 			customID := "custom/" + secretName
 			effectiveEnvVars[secretName] = broker.GetCustomDummyValue(secretName)
-			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://localhost:%d/broker/%s/%s",
+			// 127.0.0.1 (not "localhost") — see the built-in provider branch above:
+			// IPv6-first Node harnesses can't reach the IPv4-only broker via "localhost".
+			effectiveEnvVars[secretName+"_BROKER"] = fmt.Sprintf("http://127.0.0.1:%d/broker/%s/%s",
 				brokerPort, session.ID, customID)
 
 			sessionBroker.SetConfig(broker.ConfigKey(session.ID, customID), &broker.ProviderConfig{

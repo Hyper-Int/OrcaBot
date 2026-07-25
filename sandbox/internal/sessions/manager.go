@@ -6,11 +6,16 @@ package sessions
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminishim"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
@@ -22,6 +27,10 @@ var (
 // Each sandbox VM runs one broker shared by all sessions.
 const DefaultBrokerPort = 8082
 
+// DefaultGeminiShimPort is the port for the Gemini→OpenRouter translation shim.
+// Each sandbox VM runs one shim shared by all sessions (see internal/geminishim).
+const DefaultGeminiShimPort = 8086
+
 // Manager handles session lifecycle
 type Manager struct {
 	mu            sync.RWMutex
@@ -31,6 +40,9 @@ type Manager struct {
 	// Shared secrets broker for all sessions
 	broker     *broker.SecretsBroker
 	brokerPort int
+
+	// Shared Gemini→OpenRouter translation shim (one per VM).
+	geminiShimPort int
 
 	// Egress proxy port: forwarded to sessions so Chromium is proxied when >0.
 	// Set via SetEgressProxyPort before any sessions are created.
@@ -54,16 +66,27 @@ func NewManagerWithWоrkspace(workspaceBase string) *Manager {
 	b := broker.NewSecretsBroker(brokerPort)
 
 	m := &Manager{
-		sessions:      make(map[string]*Session),
-		workspaceBase: workspaceBase,
-		broker:        b,
-		brokerPort:    brokerPort,
+		sessions:       make(map[string]*Session),
+		workspaceBase:  workspaceBase,
+		broker:         b,
+		brokerPort:     brokerPort,
+		geminiShimPort: DefaultGeminiShimPort,
 	}
 
 	// Start the broker in the background (singleton for all sessions)
 	go func() {
 		if err := b.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Fprintf(os.Stderr, "Warning: failed to start secrets broker: %v\n", err)
+		}
+	}()
+
+	// Start the Gemini→OpenRouter translation shim (singleton for all sessions).
+	// It forwards translated requests through the broker so the OpenRouter key
+	// is injected server-side and never reaches the Gemini CLI.
+	shim := geminishim.New(DefaultGeminiShimPort, brokerPort)
+	go func() {
+		if err := shim.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Fprintf(os.Stderr, "Warning: failed to start gemini shim: %v\n", err)
 		}
 	}()
 
@@ -105,13 +128,71 @@ func (m *Manager) Create(dashboardID string, mcpToken string) (*Session, error) 
 		return nil, err
 	}
 
-	session := NewSessiоn(sessionID, dashboardID, mcpToken, m.workspaceBase, m.broker, m.brokerPort, m.egressProxyPort)
+	// Desktop shares ONE VM across ALL dashboards, so root each dashboard's session at
+	// /workspace/<dashboardID>. Because the whole Session/Workspace (PTY cwd, file APIs)
+	// is built from this root, EVERY dashboard-scoped execution path — UI terminals,
+	// chat run_command, schedules, messaging — is isolated to it with no per-call
+	// working-dir plumbing. Cloud has one VM per dashboard (ORCABOT_DEBUG_EXEC unset),
+	// so it keeps the shared base and is unchanged.
+	// REVISION: workspace-per-dashboard-v1-session-root
+	workspaceRoot := m.workspaceBase
+	if dashboardID != "" && os.Getenv("ORCABOT_DEBUG_EXEC") == "1" && isSafeDirComponent(dashboardID) {
+		workspaceRoot = filepath.Join(m.workspaceBase, dashboardID)
+		if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+			return nil, err
+		}
+	}
+
+	session := NewSessiоn(sessionID, dashboardID, mcpToken, workspaceRoot, m.broker, m.brokerPort, m.egressProxyPort)
+	session.geminiShimPort = m.geminiShimPort
 
 	m.mu.Lock()
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
+	// REVISION: browser-prewarm-v1
+	// Pre-warm chromium in the background so the browser is ready (~instant) when the
+	// user or an agent first opens it, instead of paying chromium's ~25s cold boot on
+	// demand. One sandbox session per VM, so this warms one browser per VM. On by
+	// default; set BROWSER_PREWARM=false to disable (saves ~250-350MB idle RAM/VM).
+	// A short delay yields CPU to the initial terminal/agent launch first (chromium
+	// boot is heavy and the VM has only 2 vCPUs).
+	if browserPrewarmEnabled() {
+		go func(s *Session) {
+			time.Sleep(3 * time.Second)
+			// Skip if the session was deleted during the delay, so we don't start an
+			// orphan chromium on a torn-down session (Session.Close stops the browser,
+			// but only if it was already created).
+			if _, err := m.Get(s.ID); err != nil {
+				return
+			}
+			if _, err := s.StartBrowser(); err != nil {
+				log.Printf("[browser][prewarm] session %s: failed: %v", s.ID, err)
+			} else {
+				log.Printf("[browser][prewarm] session %s: started", s.ID)
+			}
+		}(session)
+	}
+
 	return session, nil
+}
+
+// isSafeDirComponent reports whether s is a single safe path component (no
+// separators or traversal) usable as a per-dashboard workspace subdir.
+func isSafeDirComponent(s string) bool {
+	return s != "" && s != "." && s != ".." &&
+		!strings.ContainsAny(s, "/\\") && !strings.Contains(s, "..")
+}
+
+// browserPrewarmEnabled reports whether chromium should be pre-warmed at session
+// creation. Defaults to ON; BROWSER_PREWARM=false/0/no/off disables it.
+func browserPrewarmEnabled() bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv("BROWSER_PREWARM"))) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 // Get retrieves a session by ID
@@ -136,6 +217,14 @@ func (m *Manager) Delete(id string) error {
 	}
 	delete(m.sessions, id)
 	m.mu.Unlock()
+
+	// REVISION: manager-v2-evict-logged-routes
+	// Release this session's per-session state on the shared broker so it doesn't
+	// accumulate over the VM's lifetime (loggedRoutes dedup keys are never
+	// otherwise evicted).
+	if m.broker != nil {
+		m.broker.EvictLoggedRoutesForSession(id)
+	}
 
 	// Close PTYs and agent
 	if err := session.Clоse(); err != nil {

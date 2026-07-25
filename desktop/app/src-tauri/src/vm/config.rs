@@ -19,6 +19,11 @@ pub struct VMConfig {
     /// Port to expose from VM to host for sandbox service
     pub sandbox_port: u16,
 
+    /// Host-side TCP port the guest→host reverse bridge forwards to (the real
+    /// control-plane port). The GUEST side of the bridge stays fixed at 8787
+    /// (baked into the image); only this host target follows a dynamic port.
+    pub controlplane_host_port: u16,
+
     /// Environment variables to pass to sandbox process inside VM
     pub env: HashMap<String, String>,
 
@@ -44,6 +49,7 @@ impl VMConfig {
             cpus: 2,
             memory_bytes: 2 * 1024 * 1024 * 1024, // 2GB
             sandbox_port: 8080,
+            controlplane_host_port: 8787,
             env: HashMap::new(),
             kernel_path: None,
             initrd_path: None,
@@ -67,6 +73,12 @@ impl VMConfig {
     /// Set the sandbox port.
     pub fn with_port(mut self, port: u16) -> Self {
         self.sandbox_port = port;
+        self
+    }
+
+    /// Set the host-side control-plane port for the guest→host reverse bridge.
+    pub fn with_controlplane_host_port(mut self, port: u16) -> Self {
+        self.controlplane_host_port = port;
         self
     }
 
@@ -114,6 +126,7 @@ impl Default for VMConfig {
             cpus: 2,
             memory_bytes: 2 * 1024 * 1024 * 1024,
             sandbox_port: 8080,
+            controlplane_host_port: 8787,
             env: HashMap::new(),
             kernel_path: None,
             initrd_path: None,

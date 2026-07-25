@@ -375,7 +375,14 @@ export class FlyMachinesClient {
     image: string;
     region: string;
     env: Record<string, string>;
+    // Fly proxy autostop behavior when the machine is idle:
+    //  - 'off'     : never auto-stop (used for the warm pool — keep it genuinely warm)
+    //  - 'suspend' : pause + snapshot RAM, resume in ~sub-second (used for dashboard VMs)
+    //  - 'stop'    : full shutdown, cold-boot on resume (legacy default)
+    // Defaults to 'suspend' so a forgotten caller gets fast-resume, not cold-boot churn.
+    autostop?: 'off' | 'stop' | 'suspend';
   }): FlyCreateMachineRequest {
+    const autostop = opts.autostop ?? 'suspend';
     return {
       name: `orcabot-${opts.dashboardId.slice(0, 8)}-${crypto.randomUUID().slice(0, 6)}`,
       region: opts.region,
@@ -404,7 +411,7 @@ export class FlyMachinesClient {
               hard_limit: 100,
             },
             autostart: true,
-            autostop: 'stop',
+            autostop,
           },
         ],
         mounts: [

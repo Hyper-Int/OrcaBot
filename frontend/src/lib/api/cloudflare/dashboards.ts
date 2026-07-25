@@ -1,9 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: dashboards-api-v1-surface-token-ws
+
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiPut, apiDelete } from "../client";
 import { useAuthStore } from "@/stores/auth-store";
+import { getCachedSurfaceToken } from "@/lib/tauri-bridge";
 import type {
   Dashboard,
   DashboardItem,
@@ -25,6 +28,7 @@ interface DashboardResponse {
   edges?: DashboardEdge[];
   role?: DashboardRole;
   viewport?: { x: number; y: number; zoom: number };
+  hasSetupGuide?: boolean;
 }
 
 interface DashboardCreateRequest {
@@ -107,13 +111,16 @@ export async function getDashboard(id: string): Promise<{
  */
 export async function createDashboard(
   name: string,
-  templateId?: string
-): Promise<{ dashboard: Dashboard; viewport?: { x: number; y: number; zoom: number } }> {
+  templateId?: string,
+  cloudId?: string
+): Promise<{ dashboard: Dashboard; viewport?: { x: number; y: number; zoom: number }; hasSetupGuide?: boolean }> {
   const response = await apiPost<DashboardResponse>(API.cloudflare.dashboards, {
     name,
     templateId,
-  } as DashboardCreateRequest);
-  return { dashboard: response.dashboard, viewport: response.viewport };
+    // Set when materializing a downloaded cloud dashboard (desktop sync).
+    cloudId,
+  } as DashboardCreateRequest & { cloudId?: string });
+  return { dashboard: response.dashboard, viewport: response.viewport, hasSetupGuide: response.hasSetupGuide };
 }
 
 /**
@@ -242,7 +249,18 @@ export async function updateSessionEnv(
   payload: { set?: Record<string, string>; unset?: string[]; applyNow?: boolean }
 ): Promise<void> {
   const base = API.cloudflare.base.replace(/^http/, "ws");
-  const wsUrl = `${base}/sessions/${sessionId}/control`;
+  // Desktop/dev-auth can't send auth headers over a WebSocket, so pass identity
+  // + the surface token as query params (ignored by cookie-authed web).
+  let wsUrl = `${base}/sessions/${sessionId}/control`;
+  const user = useAuthStore.getState()?.user;
+  const surface = getCachedSurfaceToken();
+  if (user?.id || surface) {
+    const params = new URLSearchParams();
+    if (user?.id) params.set("user_id", user.id);
+    if (user?.email) params.set("user_email", user.email);
+    if (surface) params.set("surface", surface);
+    wsUrl += `?${params.toString()}`;
+  }
   const applyNow = Boolean(payload.applyNow);
   const message = {
     type: "env",
@@ -411,6 +429,15 @@ export async function getDashboardBrowserStatus(
   return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/browser/status`);
 }
 
+export type SandboxState = "ready" | "starting" | "asleep" | "unknown";
+
+/** Read-only VM status for the dashboard traffic light (does not provision). */
+export async function getDashboardSandboxStatus(
+  dashboardId: string
+): Promise<{ state: SandboxState; flyState: string | null; machineId: string | null }> {
+  return apiGet(`${API.cloudflare.dashboards}/${dashboardId}/sandbox/status`);
+}
+
 export async function openDashboardBrowser(dashboardId: string, url: string): Promise<void> {
   await apiPost(`${API.cloudflare.dashboards}/${dashboardId}/browser/open`, { url });
 }
@@ -546,6 +573,12 @@ export function getCollaborationWsUrl(
   const email = useAuthStore.getState()?.user?.email;
   if (email) {
     url += `&user_email=${encodeURIComponent(email)}`;
+  }
+  // Desktop gates dev-auth on the surface token; WebSockets can't send the
+  // header, so pass it as a query param (null → omitted on web).
+  const surface = getCachedSurfaceToken();
+  if (surface) {
+    url += `&surface=${encodeURIComponent(surface)}`;
   }
   return url;
 }

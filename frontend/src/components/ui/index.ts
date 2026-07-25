@@ -6,6 +6,7 @@ export { Button, buttonVariants, type ButtonProps } from "./button";
 export { Badge, badgeVariants, type BadgeProps } from "./badge";
 export { Avatar, AvatarGroup, avatarVariants, type AvatarProps, type AvatarGroupProps } from "./avatar";
 export { Input, Textarea, type InputProps, type TextareaProps } from "./input";
+export { SecretInput } from "./SecretInput";
 export {
   Tooltip,
   TooltipProvider,

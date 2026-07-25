@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v19-help-docs-grounding
+// REVISION: chat-v23-list-secret-names
 
 /**
  * Orcabot Chat Handler
@@ -14,23 +14,18 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v19-help-docs-grounding loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v23-list-secret-names loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
-import {
-  streamChat,
-  buildTextMessage,
-  buildFunctionCallMessage,
-  buildFunctionResponse,
-  type GeminiMessage,
-  type GeminiTool,
-} from '../gemini/client';
+import { type GeminiTool } from '../gemini/client';
+import { selectChatProvider } from './providers/select';
+import type { CanonMsg, CanonToolCall, CanonToolResult, ChatToolDef } from './providers/types';
 import { UI_TOOLS, callTool as callUiTool } from '../mcp-ui/handler';
 import * as dashboards from '../dashboards/handler';
 import * as secrets from '../secrets/handler';
 import * as integrationPolicies from '../integration-policies/handler';
 import { SandboxClient } from '../sandbox/client';
-import { decryptSecret, getEncryptionKey, hasEncryptionKey, isEncryptedValue } from '../crypto/secrets';
+import { sandboxFetch } from '../sandbox/fetch';
 import { HELP_DOCS_GROUNDING } from './help-docs';
 
 // System prompt for Orcabot
@@ -70,6 +65,7 @@ When working with dashboards, use dashboard_list first to find existing ones, or
 
 AI PROVIDER SETUP (when user has NO stored keys and wants to set one up):
 - The three supported coding agents are: Claude Code (needs ANTHROPIC_API_KEY), Gemini CLI (needs GEMINI_API_KEY), and Codex (needs OPENAI_API_KEY).
+- NEVER ask the user to add a key without checking first: call list_secret_names (names only, no values) and see if it is already set. If it IS listed, say so and proceed — do not ask them to add it again.
 - If no keys are stored, ask which provider they want and use secrets_create to store it with dashboard_id="_global".
 - Keys are stored encrypted and are never visible to AI agents (secrets broker protection).
 - After storing the key, offer to create a terminal with the chosen agent.
@@ -317,6 +313,23 @@ const SECRETS_TOOLS: GeminiTool[] = [
     },
   },
   {
+    name: 'list_secret_names',
+    description:
+      'List the NAMES of secrets/env vars already configured for a dashboard (plus global ones). ' +
+      'Returns names only — never values. Use this to check whether a required key (e.g. ' +
+      'OPENROUTER_API_KEY) is already set BEFORE asking the user to add it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: {
+          type: 'string',
+          description: 'The dashboard ID whose secrets to list (global "_global" secrets are always included).',
+        },
+      },
+      required: ['dashboard_id'],
+    },
+  },
+  {
     name: 'secrets_create',
     description: 'Create a new secret or environment variable',
     inputSchema: {
@@ -376,6 +389,20 @@ const GUIDANCE_TOOLS: GeminiTool[] = [
         },
       },
       required: ['message'],
+    },
+  },
+  {
+    name: 'complete_setup_walkthrough',
+    description: 'Mark this dashboard\'s setup walkthrough as complete so it is no longer injected. Call ONLY after the user confirms setup is done (e.g. the first job ran successfully). Only relevant when an ACTIVE SETUP WALKTHROUGH is present.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: {
+          type: 'string',
+          description: 'The dashboard whose setup walkthrough is complete',
+        },
+      },
+      required: ['dashboard_id'],
     },
   },
   {
@@ -487,6 +514,58 @@ function convertMcpToGeminiTools(mcpTools: typeof UI_TOOLS): GeminiTool[] {
 }
 
 // Get all available tools for Orcabot
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', anthropic: 'Anthropic', openai: 'OpenAI' };
+
+/**
+ * Turn a raw provider error into a short, user-actionable message. Keeps the
+ * common self-serviceable cases (quota, bad key, rate limit) distinct from the
+ * generic fallback, without leaking the raw provider JSON.
+ */
+function friendlyProviderError(raw: string | undefined, providerId: string): string {
+  const label = PROVIDER_LABEL[providerId] || 'The model provider';
+  const s = (raw || '').toLowerCase();
+  if (s.includes('insufficient_quota') || s.includes('exceeded your current quota') || s.includes('quota')) {
+    return `${label}: quota exceeded — check your plan and billing.`;
+  }
+  if (s.includes('invalid_api_key') || s.includes('incorrect api key') || s.includes('invalid api key') ||
+      s.includes('authentication_error') || s.includes('invalid x-api-key')) {
+    return `${label}: API key rejected — check the key.`;
+  }
+  if (s.includes('rate_limit') || s.includes('rate limit')) {
+    return `${label}: rate-limited — try again in a moment.`;
+  }
+  return 'Something went wrong — please try again.';
+}
+
+const WORKSPACE_TOOLS: GeminiTool[] = [
+  {
+    name: 'read_file',
+    description: 'Read a text file from the dashboard sandbox workspace (read-only). Use this to check on running work — progress logs, results, or anything an agent/benchmark wrote (e.g. ".scb-run.log", ".scb_tmux/runs.jsonl", "outputs/<run>/result.json"). This is how you answer "how is it going?" with real data instead of guessing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox workspace to read from' },
+        path: { type: 'string', description: 'Workspace-relative path (e.g. ".scb-run.log"). Absolute "/workspace/..." is also accepted.' },
+        max_bytes: { type: 'number', description: 'Return only the LAST N bytes (tail) — useful for large/live logs. Default 8000.' },
+      },
+      required: ['dashboard_id', 'path'],
+    },
+  },
+  {
+    name: 'run_command',
+    description: 'Run a shell command in the dashboard sandbox workspace and WAIT for it to finish, returning its exit code and output. Use this for finite setup/operational steps where you need the result before continuing (git clone, uv sync, installs, checks) — unlike terminal_send_input (fire-and-forget), this blocks until the command exits, so you can sequence dependent steps automatically. Do NOT use it to start long-running processes (a benchmark run, a server) — those will time out; launch those with create_terminal and check progress with read_file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dashboard_id: { type: 'string', description: 'The dashboard whose sandbox to run in' },
+        command: { type: 'string', description: 'The shell command to run (bash). Starts in /workspace; cd as needed.' },
+        timeout_s: { type: 'number', description: 'Max seconds to wait (default 120, max 300). Exceeding this returns timed_out=true.' },
+      },
+      required: ['dashboard_id', 'command'],
+    },
+  },
+];
+
 function getOrcabotTools(): GeminiTool[] {
   return [
     ...DASHBOARD_TOOLS,
@@ -494,6 +573,7 @@ function getOrcabotTools(): GeminiTool[] {
     ...TERMINAL_TOOLS,
     ...SECRETS_TOOLS,
     ...GUIDANCE_TOOLS,
+    ...WORKSPACE_TOOLS,
     ...convertMcpToGeminiTools(UI_TOOLS),
   ];
 }
@@ -577,6 +657,7 @@ async function executeTool(
   requestOrigin?: string
 ): Promise<{ result: Record<string, unknown>; isError: boolean }> {
   try {
+    console.log(`[executeTool] tool=${toolName} argKeys=${JSON.stringify(Object.keys(args))} dashboard_id=${args.dashboard_id ?? '(none)'}`);
     // ==========================================
     // Phase 2: Dashboard Management Tools
     // ==========================================
@@ -599,6 +680,18 @@ async function executeTool(
       const response = await dashboards.getDashbоard(env, args.dashboard_id as string, userId);
       const data = await response.json();
       return { result: data as Record<string, unknown>, isError: !response.ok };
+    }
+
+    if (toolName === 'complete_setup_walkthrough') {
+      // Clear the dashboard's setup guide so streamMessage stops injecting it.
+      try {
+        await env.DB.prepare(`UPDATE dashboards SET setup_guide = NULL WHERE id = ?`)
+          .bind(args.dashboard_id as string)
+          .run();
+        return { result: { ok: true }, isError: false };
+      } catch {
+        return { result: { ok: false }, isError: false };
+      }
     }
 
     if (toolName === 'dashboard_rename') {
@@ -749,20 +842,194 @@ async function executeTool(
     // Phase 4: Terminal Control Tools
     // ==========================================
 
+    if (toolName === 'read_file') {
+      const dashboardId = args.dashboard_id as string;
+      const rawPath = String(args.path || '').trim();
+      const maxBytes = typeof args.max_bytes === 'number' && args.max_bytes > 0
+        ? Math.min(args.max_bytes, 200_000)
+        : 8000;
+
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access) {
+        return { result: { error: 'Access denied. User does not have access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal or benchmark first.' }, isError: true };
+      }
+
+      // Workspace-scoped, no traversal.
+      if (!rawPath || rawPath.includes('..')) {
+        return { result: { error: 'Invalid path.' }, isError: true };
+      }
+      // The sandbox file API resolves `path` RELATIVE to the workspace root
+      // (/workspace): it does Join(root, TrimPrefix(path, "/")). Passing an
+      // absolute /workspace/... path therefore double-nests to
+      // /workspace/workspace/... and never resolves. Strip to a relative path.
+      const relPath = rawPath.replace(/^\/+workspace\/+/, '').replace(/^\/+/, '');
+
+      try {
+        const res = await sandboxFetch(
+          env,
+          `/sessions/${sb.sandbox_session_id}/file?path=${encodeURIComponent(relPath)}`,
+          { machineId: sb.sandbox_machine_id || undefined }
+        );
+        if (!res.ok) {
+          return { result: { error: `Could not read ${rawPath} (status ${res.status}). It may not exist yet.` }, isError: true };
+        }
+        let content = await res.text();
+        let truncated = false;
+        if (content.length > maxBytes) {
+          content = content.slice(-maxBytes);
+          truncated = true;
+        }
+        return { result: { path: `/workspace/${relPath}`, truncated, bytes: content.length, content }, isError: false };
+      } catch (error) {
+        return { result: { error: `Read failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
+
+    if (toolName === 'run_command') {
+      const dashboardId = args.dashboard_id as string;
+      const command = String(args.command || '');
+      const timeoutS = Math.min(
+        typeof args.timeout_s === 'number' && args.timeout_s > 0 ? args.timeout_s : 120,
+        300
+      );
+      console.log(`[run_command] enter dashboard=${dashboardId} timeoutS=${timeoutS} cmdLen=${command.length} cmd=${JSON.stringify(command.slice(0, 200))}`);
+      if (!command.trim()) {
+        return { result: { error: 'command is required' }, isError: true };
+      }
+
+      // Executing shell commands mutates the shared workspace, so require write
+      // access (owner/editor) — matching session creation. A viewer must not be
+      // able to run_command.
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+        console.log(`[run_command] DENIED role=${access?.role ?? 'none'} dashboard=${dashboardId} user=${userId}`);
+        return { result: { error: 'Access denied. run_command requires owner or editor access to this dashboard.' }, isError: true };
+      }
+
+      const sb = await env.DB.prepare(`
+        SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+      `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
+      if (!sb) {
+        console.log(`[run_command] NO SANDBOX row in dashboard_sandboxes for dashboard=${dashboardId}`);
+        return { result: { error: 'No sandbox is running for this dashboard yet. Start a terminal first.' }, isError: true };
+      }
+
+      const sessionId = sb.sandbox_session_id;
+      const machineId = sb.sandbox_machine_id || undefined;
+      const runId = generateId();
+      // Relative names for BOTH the shell redirect and the file API. The run PTY cwds
+      // into the session workspace root, and the file API resolves relative to that
+      // same root — so a relative name lands in one place regardless of whether the
+      // root is /workspace (cloud) or /workspace/<dashboardId> (desktop's per-dashboard
+      // session root). An absolute /workspace/... would miss the desktop root and the
+      // marker would never be found (command times out).
+      const outRel = `.orc-run-${runId}.out`;
+      const exitRel = `.orc-run-${runId}.exit`;
+
+      // base64 the command so arbitrary quoting/metachars can't break the wrapper.
+      const bytes = new TextEncoder().encode(command);
+      let bin = '';
+      for (const b of bytes) bin += String.fromCharCode(b);
+      const b64 = btoa(bin);
+      // Run it, capture stdout+stderr to .out, then write the exit code to .exit
+      // last (so the marker never appears before the output is flushed).
+      const wrapped = `echo ${b64} | base64 -d | bash > ${outRel} 2>&1; echo $? > ${exitRel}`;
+
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      // rel = path relative to the workspace root (/workspace).
+      const readMarker = async (rel: string) => {
+        const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { machineId });
+        return res.ok ? await res.text() : null;
+      };
+
+      let pty: { id: string } | null = null;
+      try {
+        pty = await client.createPty(sessionId, '', wrapped, machineId);
+        console.log(`[run_command] pty created id=${pty?.id} session=${sessionId} machine=${machineId ?? '(none)'} — polling ${exitRel}`);
+
+        // Poll the (internal-token) file API for the exit marker — no new sandbox
+        // endpoint needed. Interval kept at 2s to bound subrequest count.
+        const started = Date.now();
+        let exitRaw: string | null = null;
+        let polls = 0;
+        while (Date.now() - started < timeoutS * 1000) {
+          await new Promise((r) => setTimeout(r, 2000));
+          polls++;
+          exitRaw = await readMarker(exitRel);
+          if (exitRaw !== null) break;
+          // Heartbeat every ~10s so a slow command is visibly still alive in logs.
+          if (polls % 5 === 0) {
+            console.log(`[run_command] still polling elapsed=${Math.round((Date.now() - started) / 1000)}s (marker not yet present)`);
+          }
+        }
+        console.log(`[run_command] poll done polls=${polls} exitMarker=${exitRaw === null ? 'MISSING(timeout)' : JSON.stringify(exitRaw.trim())}`);
+
+        let output = (await readMarker(outRel)) || '';
+        console.log(`[run_command] output bytes=${output.length}`);
+        const truncated = output.length > 8000;
+        if (truncated) output = output.slice(-8000);
+
+        // Best-effort cleanup: marker files + the headless PTY (it self-reaps when
+        // the wrapper exits, but delete to be tidy).
+        for (const rel of [outRel, exitRel]) {
+          try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
+        }
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+
+        if (exitRaw === null) {
+          // The cleanup above deleted the PTY, which kills the process group — so
+          // the command was TERMINATED at the timeout, not left running. Report
+          // that accurately (and as an error, since it did not complete).
+          return {
+            result: {
+              timed_out: true,
+              terminated: true,
+              message: `Command exceeded the ${timeoutS}s limit and was terminated. For a long-running process, launch it with create_terminal instead and check progress with read_file.`,
+              output,
+              truncated,
+            },
+            isError: true,
+          };
+        }
+        const exitCode = Number.parseInt(exitRaw.trim(), 10);
+        return {
+          result: { exit_code: Number.isNaN(exitCode) ? null : exitCode, output, truncated },
+          isError: !Number.isNaN(exitCode) && exitCode !== 0,
+        };
+      } catch (error) {
+        console.error(`[run_command] THREW: ${error instanceof Error ? error.stack || error.message : String(error)}`);
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+        return { result: { error: `run_command failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
+      }
+    }
+
     if (toolName === 'terminal_send_input') {
       const dashboardId = args.dashboard_id as string;
       const terminalItemId = args.terminal_item_id as string;
       const input = args.input as string;
       const pressEnter = args.press_enter !== false;
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
@@ -823,14 +1090,16 @@ async function executeTool(
         };
       }
 
-      // Verify user has access to the dashboard
+      // Driving a terminal (sending input / starting an agent) executes commands
+      // in the shared VM — require write access (owner/editor), not merely
+      // membership. A viewer must not be able to drive terminals.
       const access = await env.DB.prepare(`
         SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
       `).bind(dashboardId, userId).first<{ role: string }>();
 
-      if (!access) {
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
         return {
-          result: { error: 'Access denied. User does not have access to this dashboard.' },
+          result: { error: 'Access denied. Driving a terminal requires owner or editor access to this dashboard.' },
           isError: true,
         };
       }
@@ -959,6 +1228,58 @@ async function executeTool(
       }
 
       return { result: data as Record<string, unknown>, isError: !response.ok };
+    }
+
+    if (toolName === 'list_secret_names') {
+      const dashboardId = args.dashboard_id as string;
+      if (!dashboardId) {
+        return { result: { error: 'dashboard_id is required' }, isError: true };
+      }
+
+      // Enumerating configured key names is metadata, not credentials — but it still
+      // reveals which providers/services a dashboard is wired to, so require write
+      // access (owner/editor) like the other non-read-only tools. A viewer must not
+      // be able to enumerate.
+      const access = await env.DB.prepare(`
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(dashboardId, userId).first<{ role: string }>();
+      if (!access || (access.role !== 'owner' && access.role !== 'editor')) {
+        console.log(`[list_secret_names] DENIED role=${access?.role ?? 'none'} dashboard=${dashboardId} user=${userId}`);
+        return {
+          result: { error: 'Access denied. list_secret_names requires owner or editor access to this dashboard.' },
+          isError: true,
+        };
+      }
+
+      // NAMES ONLY. Never select `value` — not even a prefix/suffix: a "helpful"
+      // preview like sk-ant-api03-abc… is a real leak. The result is strictly
+      // set/not-set metadata, so the broker's guarantee (LLM never sees values)
+      // is preserved.
+      const rows = await env.DB.prepare(`
+        SELECT name, type, broker_protected, dashboard_id
+        FROM user_secrets
+        WHERE user_id = ? AND dashboard_id IN (?, '_global')
+        ORDER BY name
+      `).bind(userId, dashboardId).all<{
+        name: string; type: string; broker_protected: number; dashboard_id: string;
+      }>();
+
+      const secrets_ = (rows.results ?? []).map((r) => ({
+        name: r.name,
+        type: r.type,
+        broker_protected: !!r.broker_protected,
+        scope: r.dashboard_id === '_global' ? 'global' : 'dashboard',
+      }));
+
+      return {
+        result: {
+          names: secrets_.map((s) => s.name),
+          secrets: secrets_,
+          count: secrets_.length,
+          note: 'Names only — values are never exposed. A listed name means the key IS set.',
+        },
+        isError: false,
+      };
     }
 
     if (toolName === 'secrets_create') {
@@ -1221,55 +1542,45 @@ async function loadHistory(
  * Note: Gemini 3 requires thoughtSignature for function calls.
  * We skip any function call/response pairs without thoughtSignature (legacy data).
  */
-function historyToGeminiMessages(history: ChatMessage[], dashboardId?: string, baseSystemPrompt?: string): GeminiMessage[] {
-  const messages: GeminiMessage[] = [];
+function historyToCanon(history: ChatMessage[]): CanonMsg[] {
+  const out: CanonMsg[] = [];
 
-  // Add system prompt as first user message (Gemini doesn't have system role)
-  let systemPrompt = baseSystemPrompt ?? ORCABOT_SYSTEM_PROMPT;
-  if (dashboardId) {
-    systemPrompt += `\n\nCURRENT CONTEXT:\n- The user is viewing dashboard_id: "${dashboardId}". Use this as the dashboard_id for all tool calls unless the user explicitly refers to a different dashboard.`;
-  }
-  messages.push(buildTextMessage('user', systemPrompt));
-  messages.push(buildTextMessage('model', 'Ready.'));
-
-  // Build a lookup of tool results from legacy 'tool' role rows,
-  // so we can fall back when assistant rows don't have toolResults (old data).
+  // Legacy 'tool' rows hold results for older data where assistant rows lacked
+  // toolResults; index them by toolCallId so we can pair them below.
   const legacyToolResults = new Map<string, ChatToolResult>();
   for (const msg of history) {
     if (msg.role === 'tool' && msg.toolResults) {
-      for (const tr of msg.toolResults) {
-        legacyToolResults.set(tr.toolCallId, tr);
-      }
+      for (const tr of msg.toolResults) legacyToolResults.set(tr.toolCallId, tr);
     }
   }
 
   for (const msg of history) {
     if (msg.role === 'user') {
-      messages.push(buildTextMessage('user', msg.content));
+      out.push({ role: 'user', text: msg.content });
     } else if (msg.role === 'assistant') {
-      // Add text content if present
-      if (msg.content) {
-        messages.push(buildTextMessage('model', msg.content));
+      const toolCalls: CanonToolCall[] = (msg.toolCalls || []).map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args,
+        // thoughtSignature is Gemini-only; carried as opaque meta and ignored by
+        // the other providers. The Gemini provider drops calls lacking it.
+        meta: tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : undefined,
+      }));
+      if (msg.content || toolCalls.length) {
+        out.push({ role: 'assistant', text: msg.content || undefined, toolCalls: toolCalls.length ? toolCalls : undefined });
       }
-      // Add tool calls with thoughtSignatures
-      if (msg.toolCalls && msg.toolCalls.length > 0) {
-        for (const tc of msg.toolCalls) {
-          if (tc.thoughtSignature) {
-            messages.push(buildFunctionCallMessage(tc.name, tc.args, tc.thoughtSignature));
-            // Look for result on assistant row first, then fall back to legacy tool rows
-            const result = msg.toolResults?.find(tr => tr.toolCallId === tc.id)
-              || legacyToolResults.get(tc.id);
-            if (result) {
-              messages.push(buildFunctionResponse(tc.name, result.result));
-            }
-          }
-        }
+      // Pair each call with its result (assistant row first, then legacy rows).
+      const results: CanonToolResult[] = [];
+      for (const tc of msg.toolCalls || []) {
+        const r = msg.toolResults?.find(tr => tr.toolCallId === tc.id) || legacyToolResults.get(tc.id);
+        if (r) results.push({ id: tc.id, name: tc.name, result: r.result, isError: r.isError });
       }
+      if (results.length) out.push({ role: 'tool', toolResults: results });
     }
-    // Skip 'tool' role messages - results are consumed above via legacyToolResults fallback
+    // 'tool' rows consumed via legacyToolResults above
   }
 
-  return messages;
+  return out;
 }
 
 // ============================================
@@ -1294,12 +1605,10 @@ export async function streamMessage(
   env: Env,
   userId: string
 ): Promise<Response> {
-  if (!env.GEMINI_ORCABOT_KEY) {
-    return Response.json(
-      { error: 'Orcabot Gemini API key not configured' },
-      { status: 500 }
-    );
-  }
+  // NOTE: don't hard-require GEMINI_ORCABOT_KEY here. On desktop no system key
+  // ships, but the user can bring their own GEMINI_API_KEY (used below). The key
+  // is resolved after we load the user's stored keys; if neither exists we return
+  // a distinct CHAT_NO_KEY error the client turns into an "add a key" prompt.
 
   let body: { message: string; dashboardId?: string };
   try {
@@ -1327,6 +1636,31 @@ export async function streamMessage(
 
   // Build dynamic system prompt addendum so Orcabot knows which agent to use
   let systemPrompt = ORCABOT_SYSTEM_PROMPT + '\n\n' + HELP_DOCS_GROUNDING;
+
+  // Template-driven setup walkthrough: if the active dashboard was created from
+  // a template that carries a setup guide, inject it so Orcabot can walk the
+  // user through setup using its tools (terminal_input, secrets_create, etc.).
+  if (dashboardId) {
+    try {
+      const dashRow = await env.DB.prepare(
+        `SELECT setup_guide FROM dashboards WHERE id = ?`
+      ).bind(dashboardId).first<{ setup_guide: string | null }>();
+      const guide = dashRow?.setup_guide?.trim();
+      if (guide) {
+        systemPrompt += `\n\nACTIVE SETUP WALKTHROUGH (dashboard ${dashboardId}):
+Follow this guide to help the user get set up. Use your tools to do the work
+(terminal_input to run commands, secrets_create for keys, create_terminal/
+create_browser as needed) and confirm each step briefly before moving on. Ask
+the user to choose where a choice is offered; never paste or echo secret values.
+When the user confirms setup is finished (e.g. the first job ran successfully),
+call complete_setup_walkthrough with dashboard_id="${dashboardId}" so this guide
+stops being shown.
+
+${guide}`;
+      }
+    } catch { /* dashboards.setup_guide not migrated yet — skip */ }
+  }
+
   if (userKeyNames.length > 0 && bestProvider) {
     const available = userKeyNames.map(k => `${AI_PROVIDER_LABELS[k]?.agent ?? k} (${k})`).join(', ');
     systemPrompt += `\n\nUSER'S AI PROVIDER KEYS (already stored — do NOT ask for them again):
@@ -1335,19 +1669,18 @@ When they ask to set up a coding agent or terminal, automatically use ${bestProv
 If they explicitly name a different provider they have a key for, use that one instead.`;
   }
 
-  // ---- Use user's Gemini key for Orcabot chat if available (saves system quota) ----
-  let apiKey = env.GEMINI_ORCABOT_KEY;
-  const geminiKeyRow = (userKeyRows.results || []).find(r => r.name === 'GEMINI_API_KEY');
-  if (geminiKeyRow && hasEncryptionKey(env)) {
-    try {
-      const encKey = await getEncryptionKey(env);
-      const decrypted = isEncryptedValue(geminiKeyRow.value)
-        ? await decryptSecret(geminiKeyRow.value, encKey)
-        : geminiKeyRow.value;
-      if (decrypted) apiKey = decrypted;
-    } catch {
-      // Fall back to system key if decryption fails
-    }
+  // Pick the chat provider + key. Cloud stays on Gemini (system key, or the
+  // user's own Gemini key to save quota); desktop uses whichever provider key the
+  // user brought (Gemini → Anthropic → OpenAI). None → CHAT_NO_KEY prompt.
+  const provider = await selectChatProvider(env, (userKeyRows.results || []) as { name: string; value: string }[]);
+  if (!provider) {
+    return Response.json(
+      {
+        error: 'E79230: Orcabot chat needs an API key. Add a supported provider key (Claude, Gemini, or OpenAI) to continue.',
+        code: 'CHAT_NO_KEY',
+      },
+      { status: 400 }
+    );
   }
 
   // Load conversation history
@@ -1356,12 +1689,21 @@ If they explicitly name a different provider they have a key for, use that one i
   // Save user message
   await saveMessage(env, userId, dashboardId || null, 'user', message);
 
-  // Build Gemini messages (inject dashboardId as context so model knows the active dashboard)
-  const geminiMessages = historyToGeminiMessages(history, dashboardId, systemPrompt);
-  geminiMessages.push(buildTextMessage('user', message));
+  // Build canonical conversation + system prompt (each provider converts these to
+  // its own wire format). Inject the active dashboard as context.
+  let system = systemPrompt;
+  if (dashboardId) {
+    system += `\n\nCURRENT CONTEXT:\n- The user is viewing dashboard_id: "${dashboardId}". Use this as the dashboard_id for all tool calls unless the user explicitly refers to a different dashboard.`;
+  }
+  const convo: CanonMsg[] = historyToCanon(history);
+  convo.push({ role: 'user', text: message });
 
-  // Get available tools
-  const tools = getOrcabotTools();
+  // Get available tools (canonical form: name + description + JSON-schema params)
+  const tools: ChatToolDef[] = getOrcabotTools().map(t => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.inputSchema,
+  }));
 
   // Derive the control plane origin from the incoming request for OAuth URLs
   const requestOrigin = new URL(request.url).origin;
@@ -1373,55 +1715,54 @@ If they explicitly name a different provider they have a key for, use that one i
       try {
         let fullContent = '';
         const toolCalls: (ChatToolCall & { result?: Record<string, unknown>; isError?: boolean })[] = [];
-        let currentMessages = geminiMessages;
+        let convoState: CanonMsg[] = convo;
 
         // Loop to handle multi-turn tool calls
         let maxTurns = 10; // Increased for complex workflows
         while (maxTurns > 0) {
           maxTurns--;
           let hasToolCall = false;
+          let turnText = '';
+          const turnToolCalls: CanonToolCall[] = [];
+          const turnToolResults: CanonToolResult[] = [];
 
-          for await (const chunk of streamChat(apiKey, currentMessages, tools, {
-            model: 'gemini-3-flash',
-            thinkingLevel: 'low',
-            temperature: 1.0,
-            maxOutputTokens: 4096,
-          })) {
+          for await (const chunk of provider.streamTurn(system, convoState, tools)) {
             if (chunk.type === 'text' && chunk.text) {
               fullContent += chunk.text;
+              turnText += chunk.text;
               const event: ChatStreamEvent = { type: 'text', content: chunk.text };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-            } else if (chunk.type === 'function_call' && chunk.functionCall) {
+            } else if (chunk.type === 'tool_call') {
               hasToolCall = true;
-              const tcId = `tc_${generateId()}`;
-              const thoughtSignature = chunk.thoughtSignature || chunk.functionCall.thoughtSignature;
+              const tcId = chunk.id;
+              const sig = typeof chunk.meta?.thoughtSignature === 'string' ? chunk.meta.thoughtSignature : undefined;
 
               // Send tool call event
               const tcEvent: ChatStreamEvent = {
                 type: 'tool_call',
                 id: tcId,
-                name: chunk.functionCall.name,
-                args: chunk.functionCall.args,
+                name: chunk.name,
+                args: chunk.args,
               };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(tcEvent)}\n\n`));
 
               // Auto-fill dashboard_id from request context if the model omitted it
-              const toolArgs = { ...chunk.functionCall.args };
+              const toolArgs = { ...chunk.args };
               if (!toolArgs.dashboard_id && dashboardId) {
                 toolArgs.dashboard_id = dashboardId;
               }
 
               // Execute the tool
-              const { result, isError } = await executeTool(env, userId, chunk.functionCall.name, toolArgs, requestOrigin);
+              const { result, isError } = await executeTool(env, userId, chunk.name, toolArgs, requestOrigin);
 
               // Store the tool call with result for persistence (use toolArgs which includes auto-filled dashboard_id)
               const tc: ChatToolCall & { result?: Record<string, unknown>; isError?: boolean; thoughtSignature?: string } = {
                 id: tcId,
-                name: chunk.functionCall.name,
+                name: chunk.name,
                 args: toolArgs,
                 result,
                 isError,
-                thoughtSignature: thoughtSignature,
+                thoughtSignature: sig,
               };
               toolCalls.push(tc);
 
@@ -1454,24 +1795,28 @@ If they explicitly name a different provider they have a key for, use that one i
                 }
               }
 
-              // Add tool call and result to messages for next turn
-              // Include thoughtSignature as required by Gemini 3
-              currentMessages = [
-                ...currentMessages,
-                buildFunctionCallMessage(tc.name, tc.args, thoughtSignature),
-                buildFunctionResponse(tc.name, result),
-              ];
+              // Collect this call + result for the next turn's canonical messages
+              turnToolCalls.push({ id: tcId, name: chunk.name, args: toolArgs, meta: chunk.meta });
+              turnToolResults.push({ id: tcId, name: chunk.name, result, isError });
             } else if (chunk.type === 'error') {
-              console.error(`[chat] Gemini API error (raw) (dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
-              const errorEvent: ChatStreamEvent = { type: 'error', error: 'Something went wrong — please try again.' };
+              console.error(`[chat] provider error (provider=${provider.id} dashboardId=${dashboardId || 'N/A'}):`, chunk.error);
+              const errorEvent: ChatStreamEvent = { type: 'error', error: friendlyProviderError(chunk.error, provider.id) };
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
             }
+            // chunk.type === 'done' — end of this turn's stream
           }
 
           // If no tool call, we're done
           if (!hasToolCall) {
             break;
           }
+
+          // Append this turn's assistant tool calls + results for the next turn.
+          convoState = [
+            ...convoState,
+            { role: 'assistant', text: turnText || undefined, toolCalls: turnToolCalls },
+            { role: 'tool', toolResults: turnToolResults },
+          ];
         }
 
         // Save assistant message with tool calls AND results on the same row

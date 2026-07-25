@@ -31,6 +31,9 @@ export interface Env {
   INTERNAL_API_TOKEN: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
+  /** Desktop per-boot token: when set, dev-auth is only honored for requests
+   *  carrying a matching X-Orcabot-Surface header (blocks VM-origin spoofing). */
+  SURFACE_TOKEN?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   AUTH_ALLOWED_EMAILS?: string;
@@ -60,6 +63,8 @@ export interface Env {
   /** WhatsApp Business phone number in E.164 digits-only (e.g., "15551234567") for hybrid mode */
   WHATSAPP_BUSINESS_PHONE?: string;
   OAUTH_REDIRECT_BASE?: string;
+  /** "true" on the desktop build → OAuth uses the public-client (PKCE) flow. */
+  OAUTH_PUBLIC_CLIENT?: string;
   FRONTEND_URL?: string;
   /** Comma-separated list of allowed CORS origins. If not set, allows all origins (dev mode). */
   ALLOWED_ORIGINS?: string;
@@ -161,12 +166,15 @@ export interface Dashboard {
   ownerId: string;
   createdAt: string;
   updatedAt: string;
+  /** Desktop: source cloud dashboard id when this was downloaded from a cloud
+   *  account; null/absent for cloud-native and purely-local dashboards. */
+  cloudId?: string | null;
 }
 
 export interface DashboardItem {
   id: string;
   dashboardId: string;
-  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook';
+  type: 'note' | 'todo' | 'terminal' | 'link' | 'browser' | 'workspace' | 'prompt' | 'schedule' | 'gmail' | 'calendar' | 'contacts' | 'sheets' | 'forms' | 'slack' | 'discord' | 'telegram' | 'whatsapp' | 'teams' | 'matrix' | 'google_chat' | 'twitter' | 'outlook' | 'benchmark';
   content: string;
   position: { x: number; y: number };
   size: { width: number; height: number };
@@ -202,6 +210,22 @@ export interface UserSubagent {
   prompt: string;
   tools: string[];
   source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserModelProvider {
+  id: string;
+  userId: string;
+  label: string;
+  baseUrl: string;
+  format: 'openai' | 'anthropic';
+  modelId: string;
+  secretName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  compatibleHarnesses: string[];
+  isLocal: boolean;
   createdAt: string;
   updatedAt: string;
 }

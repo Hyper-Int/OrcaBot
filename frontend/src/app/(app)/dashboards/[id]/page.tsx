@@ -15,6 +15,7 @@ import {
   StickyNote,
   CheckSquare,
   Globe,
+  FlaskConical,
   SquareTerminal,
   Users,
   Settings,
@@ -76,15 +77,17 @@ import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog"
 import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
 import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
 import { Canvas } from "@/components/canvas";
+import { findAvailableSpace } from "@/lib/canvas/placement";
+import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
 import { PaywallDialog } from "@/components/subscription/PaywallDialog";
-import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance } from "@/hooks";
+import { useCollaboration, useDebouncedCallback, useUICommands, useUndoRedo, useUIGuidance, useIsMobile } from "@/hooks";
 import { UIGuidanceOverlay } from "@/components/ui/UIGuidanceOverlay";
 import { getDashboard, createItem, updateItem, deleteItem, createEdge, deleteEdge, getDashboardMetrics, startDashboardBrowser, stopDashboardBrowser, sendUICommandResult, sandboxKeepalive, listPendingEgressApprovals } from "@/lib/api/cloudflare";
 import { apiGet } from "@/lib/api/client";
 import { trackEvent } from "@/lib/analytics";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
 import { generateId } from "@/lib/utils";
 import type { DashboardItem, Dashboard, Session, DashboardEdge, DashboardItemType } from "@/types/dashboard";
 import type { PresenceUser } from "@/types/collaboration";
@@ -113,6 +116,7 @@ import {
 import { PolicyEditorDialog } from "@/components/blocks/PolicyEditorDialog";
 import { EgressApprovalDialog } from "@/components/EgressApprovalDialog";
 import { EgressAllowlistPanel } from "@/components/EgressAllowlistPanel";
+import { SandboxStatusLight } from "@/components/SandboxStatusLight";
 import { WorkspaceSidebar } from "@/components/workspace";
 import { ChatPanel } from "@/components/chat";
 import { getUserSetup, dismissAiSetup } from "@/lib/api/cloudflare/user-setup";
@@ -167,6 +171,7 @@ const blockTools: BlockTool[] = [
   { type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
   { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
   { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
+  { type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
   // Recipe is not in DB schema yet - uncomment when added:
   // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
@@ -188,13 +193,20 @@ const microsoftTools: BlockTool[] = [
 ];
 
 // Messaging integrations in their own section
-const messagingTools: BlockTool[] = [
+const messagingToolsAll: BlockTool[] = [
   { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
   { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
   { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
   { type: "twitter", icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>, label: "X" },
   // Telegram, Matrix, Google Chat hidden until ready
 ];
+
+// Slack, Discord, and X use confidential OAuth client secrets we don't ship in
+// the desktop build; WhatsApp needs the Baileys bridge which desktop doesn't
+// bundle. Hide them on desktop (cloud keeps them).
+const messagingTools: BlockTool[] = messagingToolsAll.filter(
+  (t) => !(DESKTOP_MODE && ["slack", "discord", "twitter", "whatsapp"].includes(t.type))
+);
 
 const terminalTools: BlockTool[] = [
   {
@@ -215,7 +227,8 @@ const terminalTools: BlockTool[] = [
     icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "codex", agentic: true },
   },
-  // OpenCode - temporarily hidden until connection issues are resolved
+  // OpenCode - temporarily hidden: its newer "opentui" TUI crashes/garbles in the
+  // xterm.js terminal and exits back to the shell. Re-enable in a later PR once fixed.
   // {
   //   type: "terminal",
   //   label: "OpenCode",
@@ -252,6 +265,7 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   link: { width: 260, height: 140 },
   terminal: { width: 480, height: 500 },
   browser: { width: 800, height: 500 },
+  benchmark: { width: 340, height: 470 },
   workspace: { width: 620, height: 130 },
   recipe: { width: 320, height: 200 },
   gmail: { width: 280, height: 280 },
@@ -271,7 +285,6 @@ const defaultSizes: Record<string, { width: number; height: number }> = {
   outlook_calendar: { width: 280, height: 280 },
 };
 
-const PLACEMENT_GAP = 32; // gap between items when finding space
 const COLLAPSED_SIDEBAR_WIDTH = 36; // w-9 = 2.25rem ≈ 36px
 const SIDEBAR_WIDTH_KEY = "orcabot:sidebar-width";
 const DEFAULT_SIDEBAR_WIDTH = 200;
@@ -287,83 +300,6 @@ function getSidebarWidth(collapsed: boolean): number {
   }
 }
 
-/**
- * Find available space for a new component that doesn't overlap existing items.
- * Strategy:
- * 1. Try to place within the visible viewport area, scanning positions on a grid.
- * 2. If no space in viewport, place to the right of all existing items.
- * Returns a snapped position (16px grid).
- *
- * @param sidebarInset  Pixels of the left edge occluded by the workspace sidebar.
- */
-function findAvailableSpace(
-  existingItems: Array<{ position: { x: number; y: number }; size: { width: number; height: number } }>,
-  newSize: { width: number; height: number },
-  viewport: { x: number; y: number; zoom: number },
-  containerWidth: number,
-  containerHeight: number,
-  sidebarInset: number,
-): { x: number; y: number } {
-  // Convert viewport to flow coordinates (visible area)
-  const zoom = viewport.zoom || 1;
-  const viewLeft = (-viewport.x + sidebarInset) / zoom; // shift right past sidebar
-  const viewTop = -viewport.y / zoom;
-  const viewWidth = (containerWidth - sidebarInset) / zoom;
-  const viewHeight = containerHeight / zoom;
-
-  // Check if a candidate position overlaps any existing item
-  function overlaps(cx: number, cy: number): boolean {
-    for (const item of existingItems) {
-      const ax = item.position.x;
-      const ay = item.position.y;
-      const aw = item.size.width;
-      const ah = item.size.height;
-
-      if (
-        cx < ax + aw + PLACEMENT_GAP &&
-        cx + newSize.width + PLACEMENT_GAP > ax &&
-        cy < ay + ah + PLACEMENT_GAP &&
-        cy + newSize.height + PLACEMENT_GAP > ay
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Snap to 16px grid
-  const snap = (v: number) => Math.round(v / 16) * 16;
-
-  // 1. Try to place within the visible viewport with some margin
-  const margin = 48;
-  const stepX = Math.max(64, snap(newSize.width / 2));
-  const stepY = Math.max(64, snap(newSize.height / 2));
-
-  for (let y = snap(viewTop + margin); y + newSize.height < viewTop + viewHeight - margin; y += stepY) {
-    for (let x = snap(viewLeft + margin); x + newSize.width < viewLeft + viewWidth - margin; x += stepX) {
-      if (!overlaps(x, y)) {
-        return { x, y };
-      }
-    }
-  }
-
-  // 2. No space in viewport — place to the right of all existing items
-  if (existingItems.length === 0) {
-    return { x: snap(viewLeft + margin), y: snap(viewTop + margin) };
-  }
-
-  let maxRight = -Infinity;
-  let topAtMaxRight = 0;
-  for (const item of existingItems) {
-    const right = item.position.x + item.size.width;
-    if (right > maxRight) {
-      maxRight = right;
-      topAtMaxRight = item.position.y;
-    }
-  }
-
-  return { x: snap(maxRight + PLACEMENT_GAP * 2), y: snap(topAtMaxRight) };
-}
 
 /**
  * Bridge component that watches for inbound messaging events (WhatsApp/Slack/Discord)
@@ -417,6 +353,7 @@ export default function DashboardPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const { user, isAuthenticated, isAuthResolved } = useAuthStore();
+  const isMobile = useIsMobile();
 
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
@@ -451,8 +388,8 @@ export default function DashboardPage() {
   const [toolbarMessagingCollapsed, setToolbarMessagingCollapsed] = React.useState(false);
   const [drivePortalEl, setDrivePortalEl] = React.useState<HTMLDivElement | null>(null);
 
-  // Workspace sidebar state
-  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  // Workspace sidebar state — start minimized on mobile
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(isMobile);
   const [workspaceCwd, setWorkspaceCwd] = React.useState("/");
   const [terminalCwds, setTerminalCwds] = React.useState<Record<string, string>>({});
 
@@ -514,11 +451,28 @@ export default function DashboardPage() {
       const { request_id } = (e as CustomEvent).detail;
       setEgressPending(prev => prev.filter(p => p.request_id !== request_id));
     };
+    // Upstream model-provider errors (OpenRouter rate limit / out-of-credits / bad
+    // key) — surface a toast with the fix so the user doesn't think it's broken.
+    const handleModelError = (e: Event) => {
+      const { title, message, hint, status } = (e as CustomEvent).detail as {
+        title: string;
+        message: string;
+        hint: string;
+        status: number;
+      };
+      const show = status === 429 || status >= 500 ? toast.warning : toast.error;
+      show(title || "Model provider error", {
+        description: [message, hint].filter(Boolean).join(" — "),
+        duration: 12000,
+      });
+    };
     window.addEventListener("egress_approval_needed", handleNeeded);
     window.addEventListener("egress_approval_resolved", handleResolved);
+    window.addEventListener("model_provider_error", handleModelError);
     return () => {
       window.removeEventListener("egress_approval_needed", handleNeeded);
       window.removeEventListener("egress_approval_resolved", handleResolved);
+      window.removeEventListener("model_provider_error", handleModelError);
     };
   }, []);
 
@@ -779,9 +733,13 @@ export default function DashboardPage() {
 
   // Workspace sidebar session: pick the first active session from any terminal
   const workspaceSessionId = React.useMemo(() => {
+    // Only browse the workspace through a LIVE session — a stopped session's sandbox
+    // is gone, so proxying files to it 404s ("E79709: session not found") and the
+    // sidebar shows a raw "Request failed with status 404". Never fall back to a
+    // stopped sessions[0]; if none is live, return undefined so the sidebar renders
+    // its empty state instead of polling a dead session.
     const session = sessions.find((s) => s.status === "active")
-      ?? sessions.find((s) => s.status === "creating")
-      ?? sessions[0];
+      ?? sessions.find((s) => s.status === "creating");
     return session?.id;
   }, [sessions]);
   // Build mapping from real IDs to stable keys for nodes that have them
@@ -871,6 +829,15 @@ export default function DashboardPage() {
   }, [dashboardId, isAuthenticated, isAuthResolved]);
 
   // Compute a non-overlapping position for a new block and ensure it's visible
+  // Placements handed out in the last few seconds. `items` comes from React state, so
+  // blocks created in quick succession (scb-visualize surfacing several agent viewers,
+  // or chat creating a terminal then a browser) would all be placed against the SAME
+  // stale list and land on top of each other. Reserving each returned rect until the
+  // real item shows up in `items` makes back-to-back placement collision-free.
+  const recentPlacementsRef = React.useRef<
+    Array<{ position: { x: number; y: number }; size: { width: number; height: number }; at: number }>
+  >([]);
+
   const computePlacement = React.useCallback(
     (newSize: { width: number; height: number }) => {
       const container = canvasContainerRef.current;
@@ -878,14 +845,20 @@ export default function DashboardPage() {
       const containerHeight = container?.clientHeight ?? 800;
       const sidebarInset = getSidebarWidth(sidebarCollapsed);
 
-      return findAvailableSpace(
-        items,
+      const now = Date.now();
+      recentPlacementsRef.current = recentPlacementsRef.current.filter((p) => now - p.at < 5000);
+
+      const position = findAvailableSpace(
+        [...items, ...recentPlacementsRef.current],
         newSize,
         viewportRef.current,
         containerWidth,
         containerHeight,
         sidebarInset,
       );
+
+      recentPlacementsRef.current.push({ position, size: newSize, at: now });
+      return position;
     },
     [items, sidebarCollapsed],
   );
@@ -2567,7 +2540,11 @@ export default function DashboardPage() {
       return;
     }
 
-    const defaultContent = tool.type === "todo" ? "[]" : "";
+    const defaultContent =
+      tool.type === "todo" ? "[]"
+      : tool.type === "benchmark"
+        ? JSON.stringify({ harnesses: ["opencode"], skills: ["baseline"], models: ["openrouter/kimi-k2.6"], problems: [], workers: 1, prompt: "just-solve", thinking: "low", evaluate: false })
+        : "";
     // workspaceCwd is a file-tree-relative path like "/test" or "/src/lib".
     // The PTY starts in the workspace root (~), so use a relative cd.
     const relCwd = workspaceCwd !== "/" ? workspaceCwd.replace(/^\//, "") : "";
@@ -2603,9 +2580,22 @@ export default function DashboardPage() {
   };
 
   const handleCreateBrowserBlock = React.useCallback(
-    (url: string, anchor?: { x: number; y: number }, sourceId?: string) => {
+    (
+      url: string,
+      anchor?: { x: number; y: number },
+      sourceId?: string,
+      sizeOverride?: { width: number; height: number },
+    ) => {
       if (!url) return;
-      const size = defaultSizes.browser;
+      // Reuse an existing browser on the same URL rather than stacking duplicates
+      // (e.g. a run launched twice, or chat and the panel both opening the results
+      // view). A browser block navigates once, so a second one is pure clutter.
+      const existing = items.find((i) => i.type === "browser" && i.content === url);
+      if (existing) {
+        ensureVisible(existing.position, existing.size);
+        return;
+      }
+      const size = sizeOverride ?? defaultSizes.browser;
       const position = anchor
         ? { x: Math.round(anchor.x), y: Math.round(anchor.y) }
         : computePlacement(size);
@@ -2617,6 +2607,23 @@ export default function DashboardPage() {
         sourceId,
         sourceHandle: "right-out",
         targetHandle: "left-in",
+      });
+      ensureVisible(position, size);
+    },
+    [createItemMutation, computePlacement, ensureVisible, items]
+  );
+
+  // Benchmark block "Run": create a terminal that runs the pipeline boot command
+  // (same shape as the chat's create_terminal — the backend only reads bootCommand).
+  const handleCreateTerminalBlock = React.useCallback(
+    (name: string, bootCommand: string) => {
+      const size = defaultSizes.terminal;
+      const position = computePlacement(size);
+      createItemMutation.mutate({
+        type: "terminal",
+        content: JSON.stringify({ name, subagentIds: [], skillIds: [], agentic: false, bootCommand }),
+        position,
+        size,
       });
       ensureVisible(position, size);
     },
@@ -3494,7 +3501,7 @@ export default function DashboardPage() {
     return (
       <div className="h-screen flex flex-col bg-[var(--background)]">
         {/* Header skeleton */}
-        <div className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
+        <div className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
           <Skeleton className="w-8 h-8" />
           <Skeleton className="w-32 h-5" />
           <div className="flex-1" />
@@ -3517,7 +3524,7 @@ export default function DashboardPage() {
 
     return (
       <div className="h-screen flex flex-col bg-[var(--background)]">
-        <div className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
+        <div className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] flex items-center px-4 gap-4">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -3554,7 +3561,7 @@ export default function DashboardPage() {
         </div>
       )}
       {/* Header */}
-      <header className="h-12 border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
+      <header className="h-[66px] border-b border-[var(--border)] bg-[var(--background-elevated)] px-4 relative z-30 pointer-events-none">
         <div className="grid grid-cols-[1fr_auto_1fr] items-center h-full pointer-events-auto">
           <div className="flex items-center gap-2">
             <Tooltip content="Back to dashboards" side="bottom">
@@ -3571,13 +3578,14 @@ export default function DashboardPage() {
               alt="Orcabot"
               className="w-6 h-6 object-contain"
             />
-            <span className="text-sm font-medium text-[var(--foreground)]">
+            <span className="text-lg font-bold text-[var(--foreground)]">
               OrcaBot
             </span>
+            <DesktopVersionBadge />
           </div>
 
           <div className="flex items-center gap-2 justify-center min-w-0">
-            <h1 className="text-sm font-medium text-[var(--foreground)] truncate max-w-[40vw] text-center">
+            <h1 className="text-base font-semibold text-[var(--foreground)] truncate max-w-[40vw] text-center">
               {dashboard?.name}
             </h1>
             {role !== "owner" && (
@@ -3588,32 +3596,39 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3 justify-end">
-            {/* Presence indicators */}
-            <div className="flex items-center gap-2">
-              <Tooltip
-                content={
-                  isCollaborationConnected
-                    ? `${presenceUsers.length} online`
-                    : "Connecting..."
-                }
-              >
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
-                  <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
-                  <span className="text-xs text-[var(--foreground-muted)]">
-                    {presenceUsers.length}
-                  </span>
-                  {/* Connection status dot */}
-                  <div
-                    className={`w-2 h-2 rounded-full ${
-                      isCollaborationConnected
-                        ? "bg-[var(--status-success)]"
-                        : "bg-[var(--status-warning)] animate-pulse"
-                    }`}
-                  />
-                </div>
-              </Tooltip>
-              <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
+            {/* Sandbox VM traffic light */}
+            <div className="flex items-center px-1.5 py-1 bg-[var(--background)] rounded">
+              <SandboxStatusLight dashboardId={dashboardId} />
             </div>
+
+            {/* Presence indicators — hidden on desktop (always a single local user) */}
+            {!DESKTOP_MODE && (
+              <div className="flex items-center gap-2">
+                <Tooltip
+                  content={
+                    isCollaborationConnected
+                      ? `${presenceUsers.length} online`
+                      : "Connecting..."
+                  }
+                >
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-[var(--background)] rounded">
+                    <Users className="w-3.5 h-3.5 text-[var(--foreground-subtle)]" />
+                    <span className="text-xs text-[var(--foreground-muted)]">
+                      {presenceUsers.length}
+                    </span>
+                    {/* Connection status dot */}
+                    <div
+                      className={`w-2 h-2 rounded-full ${
+                        isCollaborationConnected
+                          ? "bg-[var(--status-success)]"
+                          : "bg-[var(--status-warning)] animate-pulse"
+                      }`}
+                    />
+                  </div>
+                </Tooltip>
+                <PresenceList users={presenceUsers} maxVisible={4} size="sm" />
+              </div>
+            )}
 
             {/* Dev-only sandbox metrics (inline in title bar) */}
             {process.env.NODE_ENV === "development" && (
@@ -3714,9 +3729,12 @@ export default function DashboardPage() {
                     Export as Template
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem disabled>
+                  <DropdownMenuItem onClick={() => {
+                    navigator.clipboard.writeText(window.location.href);
+                    toast.success("Link copied");
+                  }}>
                     <Link className="w-4 h-4 mr-2" />
-                    Copy Link (coming soon)
+                    Copy Link
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -3884,7 +3902,8 @@ export default function DashboardPage() {
                 ))}
               </div>
 
-              {/* Messaging integrations section */}
+              {/* Messaging integrations section (hidden when empty, e.g. desktop) */}
+              {messagingTools.length > 0 && (
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
                 <Tooltip content={toolbarMessagingCollapsed ? "Expand Messaging" : "Collapse Messaging"} side="bottom">
                   <Button
@@ -3910,6 +3929,7 @@ export default function DashboardPage() {
                   </Tooltip>
                 ))}
               </div>
+              )}
 
               {/* Connect mode */}
               <div className="flex items-center border border-[var(--border)] bg-[var(--background-elevated)] rounded-lg px-2 py-1">
@@ -4007,6 +4027,7 @@ export default function DashboardPage() {
               edges={edgesToRender}
               onEdgesChange={onEdgesChange}
               onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+              onCreateTerminalBlock={role === "viewer" ? undefined : handleCreateTerminalBlock}
               onViewportChange={(next) => {
                 viewportRef.current = next;
               }}

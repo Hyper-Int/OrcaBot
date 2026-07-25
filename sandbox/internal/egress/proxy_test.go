@@ -4,6 +4,7 @@
 package egress
 
 import (
+	"context"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -60,6 +61,46 @@ func TestExtractHTTPDestination_HostSpoofRejected(t *testing.T) {
 	_, _, _, err := extractHTTPDestination(req)
 	if err == nil || !strings.Contains(err.Error(), "host mismatch") {
 		t.Fatalf("expected host mismatch error, got: %v", err)
+	}
+}
+
+// TestProxy_DecideHonorsDenyAndTracker guards the unified decision ladder: every
+// interception point (incl. CheckAndHold used for browser navigation and the
+// transparent/kernel path) must block permanent-denies and trackers, not just
+// fall back to allowlist-or-hold. These cases return immediately (no hold).
+func TestProxy_DecideHonorsDenyAndTracker(t *testing.T) {
+	al := NewAllowlist()
+	al.AddDeniedDomain("blocked.example.com", "deny-1")
+	proxy := NewEgressProxy(0, al)
+
+	cases := []struct {
+		name string
+		host string
+		want bool // permitted?
+	}{
+		{"localhost bypass", "127.0.0.1", true},
+		{"default allowlisted", "github.com", true},
+		{"permanent deny", "blocked.example.com", false},
+		{"known tracker (GTM)", "www.googletagmanager.com", false},
+		{"known tracker (GA wildcard)", "region1.google-analytics.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := permitted(proxy.decide(context.Background(), tc.host, 443))
+			if got != tc.want {
+				t.Errorf("decide(%q) permitted=%v, want %v", tc.host, got, tc.want)
+			}
+			// CheckAndHold (browser-navigation gate) must agree with decide.
+			if permitted(proxy.CheckAndHold(tc.host, 443)) != tc.want {
+				t.Errorf("CheckAndHold(%q) disagreed with decide", tc.host)
+			}
+		})
+	}
+
+	// A user "Always Allow" must override the tracker denylist.
+	al.AddUserDomain("www.googletagmanager.com", "user-1")
+	if !permitted(proxy.decide(context.Background(), "www.googletagmanager.com", 443)) {
+		t.Error("expected user-approved tracker to be permitted (user allow wins)")
 	}
 }
 
@@ -173,7 +214,7 @@ func TestProxy_Coalescing(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			decisions[idx] = proxy.holdForApproval("coalesce-test.com", 443)
+			decisions[idx] = proxy.holdForApproval(context.Background(), "coalesce-test.com", 443)
 		}(i)
 	}
 

@@ -35,6 +35,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -46,13 +47,14 @@ import {
   syncGmail,
   performGmailAction,
   setupGmailMirror,
-  unlinkGmailMirror,
+  disconnectGmail,
   type GmailIntegration,
   type GmailStatus,
   type GmailMessage,
   type GmailActionType,
 } from "@/lib/api/cloudflare";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import type { DashboardItem } from "@/types/dashboard";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -205,6 +207,22 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   // Connect Gmail
   const handleConnect = () => {
     if (!dashboardId) return;
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${API.cloudflare.base}/integrations/google/gmail/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getGmailIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            try { await setupGmailMirror(dashboardId); } catch { /* ignore */ }
+            await loadIntegration();
+            await loadMessages();
+          })();
+        },
+      });
+      return;
+    }
     const connectUrl = `${API.cloudflare.base}/integrations/google/gmail/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(connectUrl, "gmail-connect", "width=600,height=700");
 
@@ -252,7 +270,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
   const handleDisconnect = async () => {
     if (!dashboardId) return;
     try {
-      await unlinkGmailMirror(dashboardId);
+      await disconnectGmail();
       setIntegration(null);
       setStatus(null);
       setMessages([]);
@@ -311,12 +329,33 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
 
   const isUnread = (message: GmailMessage) => message.labels.includes("UNREAD");
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountEmail = integration?.emailAddress || status?.emailAddress;
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {accountEmail && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-[10px] text-[var(--foreground-muted)] truncate">{accountEmail}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Gmail
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={handleConnect}>
+      <Mail className="w-3.5 h-3.5 mr-2" />
+      Connect Gmail
+    </DropdownMenuItem>
+  );
+
   // Header
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <GmailIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.emailAddress || status?.emailAddress || "Gmail"}
+        Gmail
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={gmailDoc} />
@@ -353,18 +392,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-40">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Gmail
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={handleConnect}>
-                <Mail className="w-3.5 h-3.5 mr-2" />
-                Connect Gmail
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -391,18 +419,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Gmail
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={handleConnect}>
-            <Mail className="w-3.5 h-3.5 mr-2" />
-            Connect Gmail
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -414,7 +431,7 @@ export function GmailBlock({ id, data, selected }: NodeProps<GmailNode>) {
         nodeId={id}
         selected={selected}
         icon={<GmailIcon className="w-14 h-14" />}
-        label={integration?.emailAddress || "Gmail"}
+        label="Gmail"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}

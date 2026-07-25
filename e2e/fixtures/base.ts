@@ -1,4 +1,4 @@
-// REVISION: e2e-base-v1-diagnostics-env
+// REVISION: e2e-base-v2-diagnostics-env
 import { test as base, expect } from "@playwright/test";
 import { login, devModeLoginViaUI, logout } from "./auth";
 import {
@@ -13,10 +13,11 @@ import {
   waitForOutput,
 } from "./terminal";
 import { OrcabotAPI } from "../helpers/api";
+import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 import { createDiagnostics, type E2EDiagnostics } from "../helpers/diagnostics";
-import { requireEnv, requiredEnvReport } from "../helpers/env";
+import { getEnv, requiredEnvReport } from "../helpers/env";
 
-const MODULE_REVISION = "e2e-base-v1-diagnostics-env";
+const MODULE_REVISION = "e2e-base-v2-diagnostics-env";
 console.log(
   `[e2e-base] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -100,11 +101,10 @@ export const test = base.extend<{
     });
 
     // Auto-cleanup: attempt API-based delete for all tracked dashboards
-    const cpUrl = requireEnv("CONTROLPLANE_URL");
     if (trackedIds.length > 0) {
-      const email = requireEnv("E2E_USER_EMAIL");
-      const name = requireEnv("E2E_USER_NAME");
-      const api = new OrcabotAPI(page.request, cpUrl, email, name);
+      const email = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
+      const name = getEnv("E2E_USER_NAME", "E2E Test User")!;
+      const api = new OrcabotAPI(page.request, CONTROLPLANE_URL, email, name);
       for (const id of trackedIds) {
         try {
           await api.deleteDashboard(id);
@@ -125,22 +125,35 @@ export const test = base.extend<{
   },
 
   api: async ({ page }, use) => {
-    const email = requireEnv("E2E_USER_EMAIL");
-    const name = requireEnv("E2E_USER_NAME");
-    const cpUrl = requireEnv("CONTROLPLANE_URL");
-    const client = new OrcabotAPI(page.request, cpUrl, email, name);
+    const email = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
+    const name = getEnv("E2E_USER_NAME", "E2E Test User")!;
+    const client = new OrcabotAPI(page.request, CONTROLPLANE_URL, email, name);
     await use({ client });
   },
 });
 
 test.beforeAll(() => {
   const report = requiredEnvReport();
+
+  // Only the smoke tier is fatal, and it holds just the values that cannot be
+  // defaulted or derived. Everything else is reported so a run that skips
+  // optional tiers says why, instead of failing a run that would have worked.
   if (!report.smoke.ready) {
     throw new Error(
       `Smoke-tier E2E env is incomplete. Missing: ${report.smoke.missing.join(
         ", "
       )}. Set them in e2e/.env.test.local.`
     );
+  }
+
+  for (const tier of ["google", "gemini"] as const) {
+    if (!report[tier].ready) {
+      console.log(
+        `[e2e-base] ${tier} tier unavailable — missing ${report[tier].missing.join(
+          ", "
+        )}. Tests needing it will skip.`
+      );
+    }
   }
 });
 

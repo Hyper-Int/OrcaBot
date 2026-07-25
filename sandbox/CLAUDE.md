@@ -217,6 +217,22 @@ Built-in providers (hardcoded allowlist):
 - Anthropic, OpenAI, Google, Gemini
 - ElevenLabs, Deepgram
 - Groq, Together, Fireworks, Mistral, Cohere, Replicate, Hugging Face
+- OpenRouter — two sibling entries share `OPENROUTER_API_KEY`:
+  - `openrouter` → `https://openrouter.ai/api/v1` (OpenAI-compatible)
+    - **OpenCode/Droid** route here via `OPENAI_BASE_URL`.
+    - **Codex** routes here too, but the Rust Codex CLI **ignores** `OPENAI_BASE_URL`/`OPENAI_MODEL`; `buildCodexOpenRouterCommand` (in `internal/sessions/model_selection.go`) injects per-invocation `-c` flags instead: `model_provider="openrouter"`, `base_url=<broker>`, `env_key="OPENAI_API_KEY"`, `wire_api="responses"` (Codex POSTs `{base_url}/responses`), plus `-c model_context_window`/`model_max_output_tokens` from the catalog.
+    - **Gemini** routes here via the local translation shim (see Gemini→OpenRouter shim below).
+  - `openrouter-anthropic` → `https://openrouter.ai/api` (Anthropic-compatible, used by Claude Code via `ANTHROPIC_BASE_URL`; the SDK appends `/v1/messages`)
+
+  Adding the key installs both broker configs in one go via `broker.GetAllProvidersByEnvKey`. Per-PTY model selection is set by the frontend Model panel and forwarded as `model_selection` (provider/model + `contextWindow`/`maxOutputTokens`) to `CreatePTYWithOptions`.
+
+  **Provider error surfacing**: when an OpenRouter request returns 429/402/401/5xx, the broker (`classifyProviderError` + `SetOnProviderError` in `secrets_broker.go`) buffers the error, forwards it unchanged to the harness, and fires a callback that broadcasts a `model_provider_error` WS event so the dashboard shows a toast with a fix (e.g. rate-limited → adjust provider routing).
+
+### Gemini → OpenRouter translation shim
+
+The official Gemini CLI speaks the Gemini `:generateContent` wire format (via `@google/genai`), which OpenRouter doesn't serve. `internal/geminishim/` is a localhost server (one per VM, port 8086, started in `manager.go`) that:
+- Accepts Gemini `generateContent`/`streamGenerateContent`/`countTokens`, translates to OpenAI Chat Completions, forwards through the broker's `openrouter` provider, and translates the response back (incl. SSE streaming + tool calls).
+- `applyOpenRouterEnv`'s `AgentTypeGemini` case sets `GOOGLE_GEMINI_BASE_URL` to the shim URL (with the model id encoded in the path) and a dummy `GEMINI_API_KEY`. `agenthooks.SetGeminiOpenRouterAuth` writes `security.auth.selectedType="gateway"` + `useExternal=true` so the CLI's GATEWAY auth engages without a blocking dialog.
 
 Custom secrets use dynamic domain approval:
 - Route: `/broker/{sessionID}/custom/{secretName}?target=https://...`
@@ -250,17 +266,18 @@ An HTTP/HTTPS forward proxy on `localhost:8083` that acts as "Little Snitch for 
 - **CONNECT** (HTTPS): Extracts domain from `CONNECT host:port`, checks allowlist
 - **Regular HTTP**: Extracts domain from Host header, checks allowlist
 - **Allowed domains**: Connection proceeds immediately
-- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny.
+- **Permanently denied domains** ("deny always"): Connection rejected immediately (403), no prompt. Deny takes precedence over the allowlist.
+- **Unknown domains**: Connection is **held** (goroutine blocks on channel). Frontend shows approval dialog. User chooses Allow Once / Always Allow / Deny / Deny Always.
 - **Timeout**: 60 seconds with no response = deny (fail-closed)
 - **Coalescing**: Multiple connections to the same unknown domain share one approval prompt
 
 ### Default Allowlist
-Hardcoded in `internal/egress/allowlist.go`:
+Defined in `internal/egress/defaults.json` (embedded into `allowlist.go` via `//go:embed`; includes `openrouter.ai`):
 - Package registries (npm, PyPI, crates.io, Maven, Gradle, etc.)
 - Git hosting (GitHub, GitLab, Bitbucket + subdomains)
 - System packages (Debian, Ubuntu, Alpine)
 - CDNs (Cloudflare, CloudFront, Fastly, jsDelivr, unpkg)
-- LLM APIs (Anthropic, OpenAI, ChatGPT, Google, Groq, Together, etc.)
+- LLM APIs (Anthropic, OpenAI, ChatGPT, Google, Groq, Together, OpenRouter, etc.)
 - Telemetry (Datadog, Sentry)
 - Common dev tools (Node.js, Google storage)
 
@@ -284,7 +301,7 @@ Localhost traffic (`localhost`, `127.0.0.1`, `::1`) always bypasses the proxy:
 
 ### Sandbox Endpoints
 - `POST /egress/approve` — Control plane delivers user decision
-- `POST /egress/revoke` — Remove domain from runtime allowlist
+- `POST /egress/revoke` — Remove domain from runtime allow/deny sets (clears both an "always allow" and a "deny always")
 - `GET /egress/pending` — List pending approvals (for UI sync on reconnect)
 - `GET /egress/allowlist` — Current allowlist (default + user)
 
@@ -347,6 +364,10 @@ GET    /sessions/:id/file
 PUT    /sessions/:id/file
 DELETE /sessions/:id/file
 POST   /sessions/:id/upload
+POST   /sessions/:id/workspace/import      # bulk tar.gz import (used by `orcabot push`/import)
+
+- `PUT /sessions/:id/file` writes atomically (`internal/fs/workspace.go` `Workspace.Write` = CreateTemp + rename) so a reader never sees a half-written file.
+- `POST /sessions/:id/workspace/import` extracts a tar.gz into `/workspace`: regular files only (`tar.TypeReg`), traversal entries skipped, per-file 10s write timeout (guards against a host-held file hanging over virtiofs on the desktop VM). Path scoping is enforced by `resolvePath`.
 
 ### Broker (session-local, localhost:8082)
 /broker/{sessionID}/{provider}/{path}         # Built-in provider (anthropic, openai, etc.)
@@ -386,8 +407,10 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 - `OpenURL()` reuses blank tabs or deduplicates existing URLs via Chrome DevTools Protocol
 - Port waiting with timeouts (10–20s per process)
 - Status returns: `Running`, `Ready`, `WSPort`, `Display`, `DebugPort`
+- **Readiness re-probe**: `Ready` is re-evaluated on every `Status()` poll (cold chromium boot can exceed the short startup budget), so the browser flips to ready as soon as DevTools answers instead of latching `false` until an `OpenURL`.
+- **Pre-warm**: chromium is started in the background at sandbox session creation (`Manager.Create`) so the browser is ready (~instant) when first opened, instead of paying the ~25s cold boot on demand. One sandbox session per VM ⇒ one pre-warmed browser per VM (~250–350 MB idle on the 4 GB VMs). **On by default; set `BROWSER_PREWARM=false` to disable.** Future: idle auto-stop to reclaim RAM when unused.
 
-**Key file:** `internal/browser/browser.go`
+**Key file:** `internal/browser/browser.go`, pre-warm hook in `internal/sessions/manager.go`
 
 ---
 
@@ -436,7 +459,7 @@ The sandbox exposes an HTTP-based MCP server at `/sessions/:id/mcp/*`.
 via JSON-RPC over stdin/stdout; the bridge translates to HTTP calls.
 
 - Advertises `listChanged: true` capability
-- Background goroutine polls for tool list changes every 5s
+- Background goroutine polls for tool list changes every 10s (raised from 5s to avoid control-plane rate-limit spam)
 - Sends `notifications/tools/list_changed` when integrations are attached/detached
 - This allows LLMs to discover new tools without restarting
 
@@ -458,21 +481,28 @@ sandbox/
 ├── internal/
 │   ├── sessions/
 │   │   ├── manager.go
-│   │   ├── session.go       // PTY creation, env var injection, token storage
-│   │   └── lifecycle.go
+│   │   ├── session.go            // PTY creation, env var injection, token storage
+│   │   └── model_selection.go    // OpenRouter per-PTY routing (env + Codex CLI flags)
+│   ├── geminishim/               // Gemini wire-format → OpenAI Chat Completions proxy
+│   │   ├── shim.go
+│   │   └── translate.go
 │   ├── pty/
 │   │   ├── pty.go
 │   │   ├── hub.go           // fan-out, broadcast, output redaction, agent state
 │   │   └── turn.go
 │   ├── mcp/
 │   │   ├── settings.go          // MCP settings generation per agent type
-│   │   ├── integration_tools.go // Tool definitions (Gmail, GitHub, Drive, Calendar)
+│   │   ├── integration_tools.go // Tool definitions (Gmail, GitHub, Drive, Calendar, Twitter)
 │   │   └── gateway_client.go    // HTTP client for control plane gateway
 │   ├── agenthooks/
 │   │   └── hooks.go         // Stop hook generation for all agent types
 │   ├── broker/
-│   │   ├── secrets_broker.go
+│   │   ├── secrets_broker.go     // proxy + provider-error detection
 │   │   └── providers.go
+│   ├── egress/
+│   │   ├── proxy.go
+│   │   ├── allowlist.go
+│   │   └── defaults.json    // embedded default allowlist (//go:embed)
 │   ├── ws/
 │   │   ├── handler.go
 │   │   └── client.go
@@ -482,8 +512,6 @@ sandbox/
 │   │   └── controller.go
 │   └── auth/
 │       └── auth.go
-├── api/
-│   └── openapi.yaml
 └── go.mod
 
 ## Package-by-package
@@ -497,7 +525,7 @@ cmd/mcp-bridge/
   stdio-to-HTTP bridge for MCP. Claude Code and Gemini use stdio transport;
   this translates JSON-RPC over stdin/stdout to HTTP calls to the sandbox MCP server.
   - Passes PTY token for integration tool discovery
-  - Monitors for tool list changes (polls every 5s) and sends `notifications/tools/list_changed`
+  - Monitors for tool list changes (polls every 10s) and sends `notifications/tools/list_changed`
     so LLMs discover newly attached integrations without restarting
   - Uses `GEMINI_CLI_SYSTEM_SETTINGS_PATH` for durable Gemini config
 
@@ -545,6 +573,16 @@ internal/agent/
 
 internal/auth/
   WS auth, role checking (viewer vs controller), session ownership.
+
+---
+
+## Desktop-only: debug exec
+
+When the sandbox runs inside the local desktop VM, `POST /debug/exec` runs a shell
+command in the guest from the host (the primitive the `orcabot` CLI's `exec` uses for
+live debugging). It is **off in production** and authenticated with a **per-boot random
+token** written to `/dev/console` (surfaced at `/tmp/vz-console.log` when
+`VZ_CONSOLE_DIRECT=1`). See `desktop/CLAUDE.md` for the host side.
 
 ---
 

@@ -11,6 +11,7 @@
 
 import type { Env } from '../types';
 import { scrubItemContent, type DashboardItemType } from './scrubber';
+import starterTemplates from './starter-templates.json';
 
 /**
  * Ensure the status and viewport_json columns exist on dashboard_templates.
@@ -27,6 +28,11 @@ async function ensureTemplateColumns(env: Env): Promise<void> {
   try {
     await env.DB.prepare(
       `ALTER TABLE dashboard_templates ADD COLUMN status TEXT NOT NULL DEFAULT 'approved'`
+    ).run();
+  } catch { /* already exists */ }
+  try {
+    await env.DB.prepare(
+      `ALTER TABLE dashboard_templates ADD COLUMN setup_guide TEXT`
     ).run();
   } catch { /* already exists */ }
   migrated = true;
@@ -52,6 +58,72 @@ export interface TemplateEdge {
   targetPlaceholderId: string;
   sourceHandle?: string;
   targetHandle?: string;
+}
+
+// Starter templates seeded into a fresh desktop DB — verbatim copies of the
+// curated prod templates (the cloud has real user-submitted templates; desktop
+// starts empty). Block/edge/viewport data lives in starter-templates.json.
+
+/**
+ * Seed the curated starter templates into a fresh desktop DB. Desktop only
+ * (SURFACE_TOKEN is set only by the desktop app) and once per DB (a schema
+ * marker, so a user who deletes them isn't re-seeded). Called from /init-db.
+ */
+export async function seedStarterTemplates(env: Env): Promise<void> {
+  if (!env.SURFACE_TOKEN) return;
+  await ensureTemplateColumns(env);
+
+  // Two markers on purpose. The v2 marker still guards the ORIGINAL catalog, so a
+  // user who deliberately deleted one of those starters keeps it deleted. Bumping a
+  // single marker to v3 would have re-inserted the whole catalog and resurrected
+  // them. Newly-added starters get their own marker and are seeded on their own.
+  const baseMarker = 'seed_desktop_starter_templates_v2';
+  const seededBase = await env.DB.prepare(
+    `SELECT 1 FROM schema_migrations WHERE name = ?`
+  ).bind(baseMarker).first();
+
+  // Starters introduced after the v2 catalog — seeded independently so they reach
+  // existing DBs without touching what the user has already curated.
+  const LATER_STARTERS = new Set(['starter-slopcodebench']);
+  const laterMarker = 'seed_desktop_starter_slopcodebench_v1';
+  const seededLater = await env.DB.prepare(
+    `SELECT 1 FROM schema_migrations WHERE name = ?`
+  ).bind(laterMarker).first();
+
+  if (seededBase && seededLater) return;
+
+  if (!seededBase) {
+    // Drop the earlier hand-made starters, superseded by these prod copies.
+    await env.DB.prepare(
+      `DELETE FROM dashboard_templates WHERE id IN
+       ('starter-agentic-coding', 'starter-automation', 'starter-documentation')`
+    ).run();
+  }
+
+  const now = new Date().toISOString();
+  for (const t of starterTemplates) {
+    const isLater = LATER_STARTERS.has(t.id);
+    if (isLater ? seededLater : seededBase) continue; // already handled for this group
+    await env.DB.prepare(
+      `INSERT INTO dashboard_templates
+       (id, name, description, category, author_id, author_name,
+        items_json, edges_json, viewport_json, setup_guide, item_count, is_featured, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'orcabot', 'Orcabot', ?, ?, ?, ?, ?, 1, 'approved', ?, ?)
+       ON CONFLICT(id) DO NOTHING`
+    ).bind(
+      t.id, t.name, t.description, t.category,
+      JSON.stringify(t.items), JSON.stringify(t.edges),
+      t.viewport ? JSON.stringify(t.viewport) : null,
+      (t as { setupGuide?: string }).setupGuide ?? null,
+      t.itemCount, now, now
+    ).run();
+  }
+  if (!seededBase) {
+    await env.DB.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(baseMarker).run();
+  }
+  if (!seededLater) {
+    await env.DB.prepare(`INSERT INTO schema_migrations (name) VALUES (?)`).bind(laterMarker).run();
+  }
 }
 
 /**
@@ -80,6 +152,12 @@ export interface DashboardTemplateWithData extends DashboardTemplate {
   items: TemplateItem[];
   edges: TemplateEdge[];
   viewport?: { x: number; y: number; zoom: number };
+  /**
+   * Optional guided-setup script. When present, it is copied onto a dashboard
+   * created from this template; the Orcabot chat injects it so it can walk the
+   * user through setup (clone a repo, sync deps, add keys, run a first job).
+   */
+  setupGuide?: string;
 }
 
 function generateId(): string {
@@ -122,6 +200,7 @@ function formatTemplateWithData(
     items: JSON.parse((row.items_json as string) || '[]'),
     edges: JSON.parse((row.edges_json as string) || '[]'),
     ...(viewport && { viewport }),
+    ...(row.setup_guide ? { setupGuide: row.setup_guide as string } : {}),
   };
 }
 
@@ -427,12 +506,13 @@ export async function populateFromTemplate(
   env: Env,
   dashboardId: string,
   templateId: string
-): Promise<{ viewport?: { x: number; y: number; zoom: number } } | undefined> {
+): Promise<{ viewport?: { x: number; y: number; zoom: number }; hasSetupGuide?: boolean } | undefined> {
+  await ensureTemplateColumns(env);
   const template = await env.DB.prepare(
-    `SELECT items_json, edges_json, viewport_json FROM dashboard_templates WHERE id = ?`
+    `SELECT items_json, edges_json, viewport_json, setup_guide FROM dashboard_templates WHERE id = ?`
   )
     .bind(templateId)
-    .first<{ items_json: string; edges_json: string; viewport_json: string | null }>();
+    .first<{ items_json: string; edges_json: string; viewport_json: string | null; setup_guide: string | null }>();
 
   if (!template) return;
 
@@ -498,6 +578,19 @@ export async function populateFromTemplate(
     }
   }
 
+  // Copy the template's setup guide onto the dashboard so the Orcabot chat can
+  // walk the user through setup for this dashboard (best-effort; column added
+  // by migration). Skipped silently if the column isn't present yet.
+  if (template.setup_guide) {
+    try {
+      await env.DB.prepare(
+        `UPDATE dashboards SET setup_guide = ? WHERE id = ?`
+      )
+        .bind(template.setup_guide, dashboardId)
+        .run();
+    } catch { /* dashboards.setup_guide not migrated yet */ }
+  }
+
   // Increment template use count
   await env.DB.prepare(
     `UPDATE dashboard_templates SET use_count = use_count + 1 WHERE id = ?`
@@ -508,5 +601,5 @@ export async function populateFromTemplate(
   const viewport = template.viewport_json
     ? JSON.parse(template.viewport_json)
     : undefined;
-  return { viewport };
+  return { viewport, hasSetupGuide: !!template.setup_guide };
 }

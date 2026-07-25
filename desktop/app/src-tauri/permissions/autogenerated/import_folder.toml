@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-folder"
+description = "Enables the import_folder command without any pre-configured scope."
+commands.allow = ["import_folder"]
+
+[[permission]]
+identifier = "deny-import-folder"
+description = "Denies the import_folder command without any pre-configured scope."
+commands.deny = ["import_folder"]

@@ -9,6 +9,7 @@ package egress
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -182,16 +183,14 @@ func (p *EgressProxy) handleTransparent(conn net.Conn) {
 	}
 	domain = strings.ToLower(domain)
 
-	// Allowlist check + hold for user approval (same flow as CONNECT path)
-	if !isLocalhost(domain) {
-		if p.allowlist.IsAllowed(domain) {
-			p.emitAudit(domain, origPort, "", DecisionDefault)
-		} else {
-			decision := p.holdForApproval(domain, origPort)
-			if decision != DecisionAllowOnce && decision != DecisionAllowAlways {
-				return // denied or timed out
-			}
-		}
+	// Full egress decision ladder (same source of truth as the CONNECT/HTTP paths):
+	// localhost → deny → allowlist → tracker → hold. decide() handles localhost and
+	// emits the allow audit.
+	// The transparent path is a raw redirected conn with no request context, so it
+	// keeps its original behavior (no held-connection cancel-on-disconnect; that
+	// applies to the CONNECT/HTTP proxy paths which carry r.Context()).
+	if !permitted(p.decide(context.Background(), domain, origPort)) {
+		return // denied (permanent/tracker/user) or timed out
 	}
 
 	// Dial the declared domain (not origIP). Using origIP here would allow a PTY

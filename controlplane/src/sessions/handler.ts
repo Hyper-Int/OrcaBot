@@ -19,7 +19,7 @@ import { createDashboardToken } from '../auth/dashboard-token';
 import { createPtyToken } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
-import { FlyMachinesClient, FlyMachineNotFoundError } from '../sandbox/fly-machines';
+import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
 import { detectAgentType, logServerEvent } from '../analytics/handler';
 
 // Whitelist of valid mirror table names (prevents SQL injection via table name interpolation)
@@ -93,17 +93,31 @@ export function nearestFlyRegion(cfContinent: string | undefined, warmPoolRegion
   return warmPoolRegions[0];
 }
 
+interface ModelSelection {
+  provider: 'default' | 'openrouter' | 'custom';
+  model?: string;
+  // Catalog-resolved limits, forwarded to the sandbox for Codex context flags.
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  // Custom endpoint fields (provider === 'custom').
+  baseUrl?: string;
+  format?: 'openai' | 'anthropic';
+  secretName?: string;
+}
+
 interface TerminalContent {
   bootCommand?: string;
   ttsProvider?: string;
   ttsVoice?: string;
   workingDir?: string;
   skipApprovals?: boolean;
+  modelSelection?: ModelSelection;
 }
 
 interface ParsedTerminalConfig {
   bootCommand: string;
   workingDir?: string;
+  modelSelection?: ModelSelection;
 }
 
 // ElevenLabs voice name to ID mapping
@@ -190,7 +204,21 @@ function parseTerminalConfig(content: unknown): ParsedTerminalConfig {
       bootCommand = talkitoArgs.join(' ');
     }
 
-    return { bootCommand, workingDir };
+    const ms = parsed.modelSelection;
+    const modelSelection: ModelSelection | undefined =
+      ms && (ms.provider === 'default' || ms.provider === 'openrouter' || ms.provider === 'custom')
+        ? {
+            provider: ms.provider,
+            model: typeof ms.model === 'string' ? ms.model : undefined,
+            contextWindow: typeof ms.contextWindow === 'number' ? ms.contextWindow : undefined,
+            maxOutputTokens: typeof ms.maxOutputTokens === 'number' ? ms.maxOutputTokens : undefined,
+            baseUrl: typeof ms.baseUrl === 'string' ? ms.baseUrl : undefined,
+            format: ms.format === 'anthropic' ? 'anthropic' : ms.format === 'openai' ? 'openai' : undefined,
+            secretName: typeof ms.secretName === 'string' ? ms.secretName : undefined,
+          }
+        : undefined;
+
+    return { bootCommand, workingDir, modelSelection };
   } catch {
     return { bootCommand: '' };
   }
@@ -225,6 +253,85 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
     fly_volume_id: string;
     machine_state: string;
   }>();
+}
+
+// ── Fly machine-state cache (anti-429) ─────────────────────────────────
+// REVISION: fly-getmachine-cache-v1-anti-429
+// Every browser asset request (noVNC loads 20+ assets at once: svg/css/js) and
+// every PTY/session establishment independently calls ensureDashboardSandbox →
+// fly.getMachine. Without throttling, a single browser block load fans out to
+// dozens of Fly API calls in one second and trips Fly's rate limit (429), which
+// then blocks legitimate provisioning (terminal stuck "Connecting to sandbox...").
+//
+// Two layers of defense, both per-isolate (module scope is shared across
+// concurrent requests in the same Worker isolate):
+//  1. In-flight coalescing — simultaneous checks for the same machine share one
+//     Fly call (handles the initial 20-asset burst).
+//  2. Short TTL result cache — once a machine is confirmed 'started', skip the
+//     Fly call entirely for a few seconds (handles sustained polling).
+type MachineStateCacheEntry = { state: string; checkedAt: number };
+const machineStateCache = new Map<string, MachineStateCacheEntry>();
+const inflightMachineChecks = new Map<string, Promise<string>>();
+const MACHINE_STATE_TTL_MS = 10_000;
+
+/**
+ * Returns a machine's current state, collapsing concurrent/repeated checks into
+ * a single Fly API call to avoid self-inflicted 429s. Returns the cached state on
+ * a fresh hit; coalesces an in-flight Fly call otherwise. On a 429 it serves the
+ * last-known state if available (the machine was healthy moments ago), else
+ * rethrows so the caller can fall through to the direct sandbox health check.
+ * Caches only positive ('started') results long-term; transient states are
+ * cached briefly so wake/reprovision logic still re-checks promptly.
+ */
+async function getMachineStateCached(fly: FlyMachinesClient, machineId: string): Promise<string> {
+  const cached = machineStateCache.get(machineId);
+  const now = Date.now();
+  if (cached && cached.state === 'started' && (now - cached.checkedAt) < MACHINE_STATE_TTL_MS) {
+    return cached.state;
+  }
+
+  let inflight = inflightMachineChecks.get(machineId);
+  if (!inflight) {
+    inflight = (async () => {
+      const machine = await fly.getMachine(machineId);
+      machineStateCache.set(machineId, { state: machine.state, checkedAt: Date.now() });
+      return machine.state;
+    })().finally(() => inflightMachineChecks.delete(machineId));
+    inflightMachineChecks.set(machineId, inflight);
+  }
+
+  try {
+    return await inflight;
+  } catch (err) {
+    // Rate-limited: this is self-inflicted fan-out, not a dead machine. Serve the
+    // last-known state so we don't reprovision a healthy VM or spam Fly further.
+    if (err instanceof FlyApiError && err.status === 429 && cached) {
+      console.warn(`[ensureDashboardSandbox] Fly getMachine 429 for ${machineId}; using cached state '${cached.state}'`);
+      return cached.state;
+    }
+    throw err;
+  }
+}
+
+// Cached sandbox /health probe for the status light, so polling doesn't round-trip
+// to the VM every time. A machine can be Fly-'started' while the server is still
+// booting — this is what distinguishes "warmed up" (green) from "starting" (orange).
+const sandboxHealthCache = new Map<string, { healthy: boolean; checkedAt: number }>();
+const SANDBOX_HEALTH_TTL_MS = 8000;
+
+async function getSandbоxHealthCached(env: EnvWithDriveCache, machineId: string): Promise<boolean> {
+  const cached = sandboxHealthCache.get(machineId);
+  const now = Date.now();
+  if (cached && now - cached.checkedAt < SANDBOX_HEALTH_TTL_MS) return cached.healthy;
+  let healthy = false;
+  try {
+    const res = await sandboxFetch(env, '/health', { machineId, timeoutMs: 2500, retries: 0 });
+    healthy = res.ok;
+  } catch {
+    healthy = false;
+  }
+  sandboxHealthCache.set(machineId, { healthy, checkedAt: now });
+  return healthy;
 }
 
 /**
@@ -267,21 +374,23 @@ export async function ensureDashbоardSandbоx(
     if (flyProvisioningEnabled && existingSandbox.sandbox_machine_id) {
       const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
       try {
-        const machine = await fly.getMachine(existingSandbox.sandbox_machine_id);
-        if (machine.state === 'stopped' || machine.state === 'suspended') {
+        const machineState = await getMachineStateCached(fly, existingSandbox.sandbox_machine_id);
+        if (machineState === 'stopped' || machineState === 'suspended') {
           // Wake the stopped machine
           console.log(`[ensureDashboardSandbox] Starting stopped machine ${existingSandbox.sandbox_machine_id} for dashboard ${dashboardId}`);
           await fly.startMachine(existingSandbox.sandbox_machine_id);
           await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 30);
+          machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
           await env.DB.prepare(`
             UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
           `).bind(dashboardId).run();
         }
-        if (machine.state === 'created' || machine.state === 'starting' || machine.state === 'replacing') {
+        if (machineState === 'created' || machineState === 'starting' || machineState === 'replacing') {
           // Machine is mid-replacement or mid-boot — wait for it instead of reprovisioning
-          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} in state '${machine.state}', waiting for started (up to 90s)...`);
+          console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} in state '${machineState}', waiting for started (up to 90s)...`);
           try {
             await fly.waitForState(existingSandbox.sandbox_machine_id, 'started', 90);
+            machineStateCache.set(existingSandbox.sandbox_machine_id, { state: 'started', checkedAt: Date.now() });
             await env.DB.prepare(`
               UPDATE dashboard_sandboxes SET machine_state = 'started' WHERE dashboard_id = ?
             `).bind(dashboardId).run();
@@ -307,11 +416,19 @@ export async function ensureDashbоardSandbоx(
           // Fall through to provisioning below
           return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
         }
-        // For other Fly API errors, mark state as stale and fall through to session validation
-        console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
-        await env.DB.prepare(`
-          UPDATE dashboard_sandboxes SET machine_state = 'unknown' WHERE dashboard_id = ?
-        `).bind(dashboardId).run().catch(() => {});
+        // Rate-limited with no cached state to fall back on: this is transient and
+        // self-inflicted, NOT a dead machine. Don't mark the VM 'unknown' (which can
+        // cascade into needless reprovisioning) — just fall through to the direct
+        // sandbox health check below, which talks to the VM and doesn't touch Fly.
+        if (err instanceof FlyApiError && err.status === 429) {
+          console.warn(`[ensureDashboardSandbox] Fly getMachine rate-limited (429) for ${existingSandbox.sandbox_machine_id}; skipping machine check, validating session directly`);
+        } else {
+          // For other Fly API errors, mark state as stale and fall through to session validation
+          console.error(`[ensureDashboardSandbox] Fly API error checking machine: ${err}`);
+          await env.DB.prepare(`
+            UPDATE dashboard_sandboxes SET machine_state = 'unknown' WHERE dashboard_id = ?
+          `).bind(dashboardId).run().catch(() => {});
+        }
       }
     }
 
@@ -409,7 +526,36 @@ async function ensureDashbоardSandbоxCreate(
   }
 
   // ── Legacy path: shared SANDBOX_URL ──────────────────────────────
-  const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+  // On desktop this is the local VM, which may still be booting on a cold app launch
+  // (the window loads immediately and fires session-create before the VM is up). Retry
+  // for up to ~30s — but ONLY connection/transient failures ("fetch error:" from the
+  // client, i.e. the VM isn't listening yet), never deterministic HTTP errors like a
+  // 4xx auth mismatch. Bounded by an overall deadline so a hung connection can't stack
+  // up 12×15s of client timeouts.
+  let sandboxSession: { id: string; machineId?: string } | undefined;
+  let lastCreateErr: unknown;
+  const retryDeadline = Date.now() + 30_000;
+  while (Date.now() < retryDeadline) {
+    try {
+      sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken);
+      break;
+    } catch (createErr) {
+      lastCreateErr = createErr;
+      const msg = createErr instanceof Error ? createErr.message : String(createErr);
+      // Only "fetch error:" (connection refused/reset/timeout) is transient; an HTTP
+      // status error (createSession throws "<status> <statusText>") is deterministic.
+      if (!msg.includes('fetch error:') || Date.now() + 3000 >= retryDeadline) {
+        throw createErr;
+      }
+      console.warn(
+        `[ensureDashboardSandboxCreate] createSession failed (sandbox may still be booting), retrying in 3s: ${msg}`
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  if (!sandboxSession) {
+    throw lastCreateErr instanceof Error ? lastCreateErr : new Error('Failed to create sandbox session');
+  }
   const insertResult = await env.DB.prepare(`
     INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
     VALUES (?, ?, ?, ?)
@@ -557,9 +703,9 @@ async function claimWarmMachine(
       return null;
     }
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine.
-    // Warm pool machines have autostop:'stop' for hibernation; once claimed, disable it.
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // Warm machines are created with autostop:'off' (genuinely warm), so there's no
+    // hibernation to disable on claim — and avoiding a config update here means no
+    // machine restart right when the user claims it.
 
     // Create sandbox session pinned to this machine
     const sandboxSession = await sandbox.createSessiоn(dashboardId, mcpToken, machineId);
@@ -651,6 +797,10 @@ async function coldProvisionMachine(
       volumeId,
       image,
       region,
+      // Dashboard VMs suspend (RAM snapshot, ~sub-second resume) when idle instead of
+      // cold-stopping, so coming back to a dashboard doesn't cold-boot ("stuck
+      // connecting"). The cron escalates long-idle VMs from suspended → stopped.
+      autostop: 'suspend',
       env: {
         SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -667,8 +817,10 @@ async function coldProvisionMachine(
     // Step 3: Wait for machine to be ready
     await fly.waitForState(machineId, 'started', 90);
 
-    // Disable autostop so Fly doesn't hibernate this active dashboard machine
-    await fly.disableAutostop(machineId); // best-effort, non-throwing
+    // NOTE: do NOT force autostop off here. Dashboard VMs are created with
+    // autostop:'suspend' (fast RAM-snapshot resume) so idle dashboards suspend
+    // instead of cold-stopping. A config update here would (a) override that and
+    // (b) trigger a machine restart right after provisioning.
 
     // Step 4: Create sandbox session with retry (server may not be listening immediately after started)
     let sandboxSession!: { id: string; machineId?: string };
@@ -1106,7 +1258,38 @@ async function isExistingSessionReusable(
 }
 
 // Create a session for a terminal item
+// Per-item in-flight gate: coalesce concurrent session creates for the same
+// terminal. The reuse check in the impl is check-then-act, so concurrent first
+// creates race past it and each provisions a PTY (duplicate PTYs/leak). This
+// serializes creates per item within the worker isolate (desktop = single
+// isolate, so fully effective). The while-loop has no await between the final
+// has()-check and set(), so exactly one caller becomes the leader at a time;
+// waiters fall through to the impl's reuse check and return the existing session.
+const sessionCreateGates = new Map<string, Promise<void>>();
+
 export async function createSessiоn(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  itemId: string,
+  userId: string,
+  userName: string,
+  preferredRegion?: string,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>
+): Promise<Response> {
+  while (sessionCreateGates.has(itemId)) {
+    await sessionCreateGates.get(itemId)!.catch(() => {});
+  }
+  let release!: () => void;
+  sessionCreateGates.set(itemId, new Promise<void>((r) => { release = r; }));
+  try {
+    return await createSessionImpl(env, dashboardId, itemId, userId, userName, preferredRegion, ctx);
+  } finally {
+    sessionCreateGates.delete(itemId);
+    release();
+  }
+}
+
+async function createSessionImpl(
   env: EnvWithDriveCache,
   dashboardId: string,
   itemId: string,
@@ -1206,7 +1389,11 @@ export async function createSessiоn(
 
   try {
     const terminalConfig = parseTerminalConfig(item.content);
-    const { bootCommand, workingDir } = terminalConfig;
+    const { bootCommand, workingDir, modelSelection } = terminalConfig;
+    // NOTE: per-dashboard workspace isolation on desktop is handled in the SANDBOX
+    // (manager.Create roots each session at /workspace/<dashboardID>), so it applies
+    // uniformly to every dashboard-scoped execution path, not just this UI-terminal
+    // one. `workingDir` here is only the terminal's own relative sub-path (if any).
     let appliedSecretNames: string[] = [];
 
     const applyDashboardSecretsBeforePtyStart = async (
@@ -1237,7 +1424,11 @@ export async function createSessiоn(
     // Use ensureDashboardSandbox which checks machine health via Fly API,
     // handles destroyed machines (FlyMachineNotFoundError → reprovision),
     // and validates the session is still reachable on the sandbox.
+    // Perf: this is the "first connect to sandbox" cost (warm-pool claim is fast,
+    // cold provision is slow). Logged so we can attribute terminal startup latency.
+    const ensureStart = Date.now();
     const sandboxResult = await ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
+    console.log(`[perf][createSession] ensureDashboardSandbox=${Date.now() - ensureStart}ms dashboard=${dashboardId}`);
     if (sandboxResult instanceof Response) {
       // Access denied or other error — clean up the creating session record
       await env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
@@ -1274,6 +1465,7 @@ export async function createSessiоn(
           ptyId,
           integrationToken,
           workingDir,
+          modelSelection,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1281,6 +1473,7 @@ export async function createSessiоn(
           pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
             ptyId,
             integrationToken,
+            modelSelection,
           });
         } else {
           throw wdErr;
@@ -1332,6 +1525,7 @@ export async function createSessiоn(
       pty = await sandbox.createPty(sandboxSessionId, userId, bootCommand, sandboxMachineId, {
         ptyId,
         integrationToken: freshIntegrationToken,
+        modelSelection,
       });
     }
 
@@ -1342,19 +1536,148 @@ export async function createSessiоn(
 
     // Migrate terminal integrations from previous session(s) to the new PTY ID.
     // Integrations are keyed by terminal_id (PTY ID) which changes each session,
-    // but item_id (dashboard item ID) is stable. This ensures integrations + policies
-    // persist across session boundaries for the same terminal block.
+    // but item_id (dashboard item ID) is stable. This ensures integrations +
+    // policies persist across session boundaries for the same terminal block.
+    //
+    // Two collision sources to handle:
+    //
+    // 1. Multi-stale old-PTY rows for the same provider. Migration is best-effort
+    //    (catch block tolerates failure), so a previous failed migration can
+    //    leave more than one active old-PTY row for the same item+provider.
+    //    A blind `UPDATE ... SET terminal_id = newPty` would point both rows at
+    //    the same (newPty, provider) and violate the partial unique index.
+    //
+    // 2. Frontend concurrent POST /terminals/:newPtyId/integrations (e.g.
+    //    handleStorageLinked auto-attach) inserting a new-PTY row before this
+    //    migration runs. The migration UPDATE then collides on the same index.
+    //
+    // SECURITY: on collision an OLD row wins. Old rows carry the user's actual
+    // policy, audit history, and high-risk confirmations. The frontend's
+    // auto-attach calls attachIntegration without a policy, falling back to
+    // createDefaultFullAccessPolicy() — keeping it would silently widen
+    // permissions and discard restrictive policies set by the user.
+    //
+    // Strategy:
+    //   a) Read all old-PTY rows for this item once, ordered to put the most
+    //      authoritative row per provider first. Authority is proxied by
+    //      evidence of user interaction, NOT recency — a fresh row created
+    //      seconds ago by attachIntegration() with a default full-access
+    //      policy must NOT outrank an older row with restrictive policy edits.
+    //      Ranking signals (in order):
+    //        1. audit_count DESC      — row has been used by the LLM
+    //        2. hrc_count DESC        — user explicitly approved capabilities
+    //        3. policy_version DESC   — user has edited the policy past v1
+    //        4. created_at ASC        — oldest row = original attachment
+    //                                   (later rows in the same item are most
+    //                                   likely race-attached defaults)
+    //        5. id ASC                — deterministic tiebreaker
+    //   b) Per provider keep the first row as the winner; the rest are losers.
+    //   c) In a single atomic D1 batch:
+    //        - Soft-delete losers (preserves audit history of older rows).
+    //        - Hard-delete new-PTY race-attached rows + their dependents
+    //          (no audit value — created seconds ago in the race window;
+    //          D1 has no FK cascade so dependents need explicit deletion).
+    //        - UPDATE the surviving winners to the new PTY ID.
+    //
+    // Concurrent attach landing between (a) and (c) is handled by the colliders
+    // subquery inside the batch, which re-evaluates new-PTY rows at exec time.
     try {
-      const migrated = await env.DB.prepare(`
-        UPDATE terminal_integrations
-        SET terminal_id = ?, updated_at = datetime('now')
-        WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
-          AND terminal_id != ?
-      `).bind(pty.id, itemId, dashboardId, pty.id).run();
+      const oldRows = await env.DB.prepare(`
+        SELECT
+          ti.id,
+          ti.provider,
+          (SELECT COUNT(*) FROM integration_audit_log
+             WHERE terminal_integration_id = ti.id) AS audit_count,
+          (SELECT COUNT(*) FROM high_risk_confirmations
+             WHERE terminal_integration_id = ti.id) AS hrc_count,
+          COALESCE((SELECT MAX(version) FROM integration_policies
+             WHERE terminal_integration_id = ti.id), 1) AS policy_version
+        FROM terminal_integrations ti
+        WHERE ti.item_id = ? AND ti.dashboard_id = ? AND ti.deleted_at IS NULL
+          AND ti.terminal_id != ?
+        ORDER BY
+          ti.provider ASC,
+          audit_count DESC,
+          hrc_count DESC,
+          policy_version DESC,
+          ti.created_at ASC,
+          ti.id ASC
+      `).bind(itemId, dashboardId, pty.id).all<{ id: string; provider: string }>();
 
-      // migrated.meta.changes integration(s) updated
+      const seen = new Set<string>();
+      const losers: string[] = [];
+      for (const row of oldRows.results ?? []) {
+        if (seen.has(row.provider)) {
+          losers.push(row.id);
+        } else {
+          seen.add(row.provider);
+        }
+      }
+
+      const collidersSubquery = `
+        SELECT id FROM terminal_integrations
+        WHERE terminal_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+          AND provider IN (
+            SELECT provider FROM terminal_integrations
+            WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+              AND terminal_id != ?
+          )
+      `;
+      const collidersBind = [pty.id, dashboardId, itemId, dashboardId, pty.id];
+
+      const stmts: D1PreparedStatement[] = [];
+
+      // Soft-delete losers first so the colliders subquery (run by subsequent
+      // statements within this same atomic batch) sees only the per-provider
+      // winners as old-PTY rows. This also ensures the final UPDATE migrates
+      // exactly one row per provider, never violating the unique index.
+      if (losers.length > 0) {
+        const placeholders = losers.map(() => '?').join(',');
+        stmts.push(
+          env.DB.prepare(`
+            UPDATE terminal_integrations
+            SET deleted_at = datetime('now')
+            WHERE id IN (${placeholders})
+          `).bind(...losers),
+        );
+      }
+
+      stmts.push(
+        env.DB.prepare(`
+          DELETE FROM integration_audit_log
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM high_risk_confirmations
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM integration_policies
+          WHERE terminal_integration_id IN (${collidersSubquery})
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          DELETE FROM terminal_integrations
+          WHERE terminal_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+            AND provider IN (
+              SELECT provider FROM terminal_integrations
+              WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+                AND terminal_id != ?
+            )
+        `).bind(...collidersBind),
+        env.DB.prepare(`
+          UPDATE terminal_integrations
+          SET terminal_id = ?, updated_at = datetime('now')
+          WHERE item_id = ? AND dashboard_id = ? AND deleted_at IS NULL
+            AND terminal_id != ?
+        `).bind(pty.id, itemId, dashboardId, pty.id),
+      );
+
+      await env.DB.batch(stmts);
     } catch (err) {
-      // Non-fatal: if migration fails, integrations will need to be re-attached manually.
+      // Non-fatal: if migration fails old rows stay under their previous PTY
+      // IDs (unreachable from the new session) and the user can re-attach
+      // manually. No privilege widening — we never delete the old-PTY row
+      // except via the migration UPDATE above.
       console.error('[createSession] Failed to migrate integrations:', err);
     }
 
@@ -1549,6 +1872,97 @@ export async function stоpDashbоardBrowser(
   return new Response(null, { status: 204 });
 }
 
+// REVISION: sandbox-status-light-v1
+// Read-only VM status for the dashboard "traffic light". Does NOT provision —
+// reports the current Fly machine state, mapped to a small status enum:
+//   ready    (green)  — machine started/running
+//   starting (orange) — booting/transitioning (created/starting/replacing)
+//   asleep   (red)    — stopped/suspended, or no VM provisioned yet
+//   unknown  (orange) — couldn't determine (transient Fly error / provisioning off)
+// Uses getMachineStateCached so polling doesn't hammer the Fly API (anti-429).
+export async function getDashbоardSandbоxStatus(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+): Promise<Response> {
+  const access = await env.DB.prepare(
+    `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, userId).first<{ role: string }>();
+  if (!access) {
+    return Response.json({ error: 'E79201: Not found or no access' }, { status: 404 });
+  }
+
+  const sandbox = await getDashbоardSandbоx(env, dashboardId);
+  // "No sandbox yet" keys on the SESSION id, not the machine id: on desktop the local
+  // VM has no Fly machine, so sandbox_machine_id is empty even when the VM is up. Using
+  // machine id here made a healthy desktop sandbox show red "Sandbox asleep".
+  if (!sandbox?.sandbox_session_id) {
+    // No VM yet — asleep until the first terminal/browser opens.
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
+  }
+
+  const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
+    && Boolean(env.FLY_API_TOKEN) && Boolean(env.FLY_APP_NAME);
+  if (!flyProvisioningEnabled) {
+    // Can't query Fly (e.g. local/desktop). The dashboard_sandboxes row PERSISTS across
+    // app restarts / sandbox crashes, but the actual sandbox session is in-memory — so
+    // trusting the row alone shows green while the VM is still booting or has crashed.
+    // Probe the local sandbox /health instead; not-yet-serving reads as "starting".
+    const localSandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const healthy = await localSandbox.health(undefined, 3000);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState: null,
+      machineId: sandbox.sandbox_machine_id || null,
+    });
+  }
+
+  // Fly path needs a machine id to query; if we somehow have a session without one,
+  // treat it as asleep so the code below can reprovision.
+  if (!sandbox.sandbox_machine_id) {
+    return Response.json({ state: 'asleep', flyState: null, machineId: null });
+  }
+
+  const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
+  let flyState: string;
+  try {
+    flyState = await getMachineStateCached(fly, sandbox.sandbox_machine_id);
+  } catch (err) {
+    if (err instanceof FlyMachineNotFoundError) {
+      return Response.json({ state: 'asleep', flyState: 'not_found', machineId: sandbox.sandbox_machine_id });
+    }
+    // Transient (e.g. 429) — report in-between rather than failing the poll.
+    return Response.json({ state: 'unknown', flyState: null, machineId: sandbox.sandbox_machine_id });
+  }
+
+  // Machine running at the Fly level — but only call it "ready" (green) once the
+  // sandbox server actually answers /health. Started-but-not-yet-serving = orange.
+  if (flyState === 'started') {
+    const healthy = await getSandbоxHealthCached(env, sandbox.sandbox_machine_id);
+    return Response.json({
+      state: healthy ? 'ready' : 'starting',
+      flyState,
+      machineId: sandbox.sandbox_machine_id,
+    });
+  }
+
+  let state: 'starting' | 'asleep' | 'unknown';
+  switch (flyState) {
+    case 'starting':
+    case 'created':
+    case 'replacing':
+      state = 'starting';
+      break;
+    case 'stopped':
+    case 'suspended':
+      state = 'asleep';
+      break;
+    default:
+      state = 'unknown';
+  }
+  return Response.json({ state, flyState, machineId: sandbox.sandbox_machine_id });
+}
+
 export async function getDashbоardBrowserStatus(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -1625,7 +2039,11 @@ export async function openBrowserFromSandbоxSessionInternal(
   url: string,
   ptyId?: string
 ): Promise<Response> {
+  // REVISION: browser-autoopen-diag-v1
+  console.log(`[browserOpen] internal notify received sandboxSessionId=${sandboxSessionId || '(empty)'} ptyId=${ptyId || '(none)'} urlHost=${(() => { try { return new URL(url).host; } catch { return '(invalid)'; } })()}`);
+
   if (!sandboxSessionId || !url) {
+    console.warn('[browserOpen] missing session or url — returning 400');
     return Response.json({ error: 'E79821: Missing session or URL' }, { status: 400 });
   }
 
@@ -1649,8 +2067,10 @@ export async function openBrowserFromSandbоxSessionInternal(
   }
 
   if (!session?.dashboard_id) {
+    console.warn(`[browserOpen] no session row for sandboxSessionId=${sandboxSessionId} ptyId=${ptyId || '(none)'} — returning 404 (browser block will NOT appear)`);
     return Response.json({ error: 'E79820: Session not found' }, { status: 404 });
   }
+  console.log(`[browserOpen] resolved dashboardId=${session.dashboard_id} terminalItemId=${session.item_id}`);
 
   const dashboardId = session.dashboard_id;
   const terminalItemId = session.item_id;
@@ -1792,6 +2212,7 @@ export async function openBrowserFromSandbоxSessionInternal(
       body: JSON.stringify(formattedEdge),
     }));
   }
+  console.log(`[browserOpen] ${existingBrowser ? 'updated existing' : 'created new'} browser item ${browserItemId} for dashboard ${dashboardId}; broadcasting browser_open`);
   await stub.fetch(new Request('http://do/browser', {
     method: 'POST',
     body: JSON.stringify({ url }),

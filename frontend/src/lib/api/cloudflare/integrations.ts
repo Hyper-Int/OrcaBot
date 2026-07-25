@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-api-v3-github-history
-const MODULE_REVISION = "integrations-api-v3-github-history";
+// REVISION: integrations-api-v4-outlook-mirror
+const MODULE_REVISION = "integrations-api-v4-outlook-mirror";
 console.log(`[integrations-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import { apiFetch, apiGet, apiPost } from "@/lib/api/client";
@@ -221,6 +221,38 @@ export async function getGithubIntegration(
     url.searchParams.set("dashboard_id", dashboardId);
   }
   return apiGet<GithubIntegration>(url.toString());
+}
+
+export interface GithubDeviceStart {
+  state: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** Desktop public-client GitHub connect (device flow): start → returns a user
+ *  code to enter at github.com/login/device (no secret, no redirect). */
+export async function startGithubDevice(
+  dashboardId?: string
+): Promise<GithubDeviceStart> {
+  return apiPost<GithubDeviceStart>(
+    `${API.cloudflare.base}/integrations/github/device/start`,
+    { dashboard_id: dashboardId ?? null }
+  );
+}
+
+export interface GithubDevicePoll {
+  status: "pending" | "slow_down" | "complete" | "error";
+  error?: string;
+}
+
+/** Poll the GitHub device flow until it returns complete/error. */
+export async function pollGithubDevice(state: string): Promise<GithubDevicePoll> {
+  return apiPost<GithubDevicePoll>(
+    `${API.cloudflare.base}/integrations/github/device/poll`,
+    { state }
+  );
 }
 
 export async function listGithubRepos(): Promise<{ connected: boolean; repos: GithubRepo[]; error?: string }> {
@@ -631,6 +663,90 @@ export async function stopGmailWatch(
 
 export async function disconnectGmail(): Promise<{ ok: boolean }> {
   return apiFetch<{ ok: boolean }>(API.cloudflare.gmailDisconnect, {
+    method: "DELETE",
+  });
+}
+
+// ============================================
+// Outlook Mirror Integration
+// ============================================
+
+export interface OutlookMessage {
+  messageId: string;
+  conversationId: string | null;
+  receivedDate: string;
+  fromAddress: string | null;
+  fromName: string | null;
+  toAddresses: string[];
+  subject: string | null;
+  bodyPreview: string | null;
+  isRead: boolean;
+  hasAttachments: boolean;
+}
+
+export interface OutlookMirrorStatus {
+  connected: boolean;
+  emailAddress?: string;
+  folderId?: string;
+  status?: string;
+  lastSyncedAt?: string | null;
+  syncError?: string | null;
+  messageCount?: number;
+}
+
+export type OutlookActionType = "archive" | "delete" | "mark_read" | "mark_unread";
+
+export async function setupOutlookMirror(dashboardId: string): Promise<{ ok: boolean; emailAddress?: string }> {
+  return apiFetch<{ ok: boolean; emailAddress?: string }>(API.cloudflare.outlookSetup, {
+    method: "POST",
+    body: JSON.stringify({ dashboardId }),
+  });
+}
+
+export async function getOutlookMirrorStatus(dashboardId: string): Promise<OutlookMirrorStatus> {
+  const url = new URL(API.cloudflare.outlookStatus);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiGet<OutlookMirrorStatus>(url.toString());
+}
+
+export async function syncOutlook(dashboardId: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.outlookSync, {
+    method: "POST",
+    body: JSON.stringify({ dashboardId }),
+  });
+}
+
+export async function getOutlookMessages(
+  dashboardId: string,
+  limit = 50,
+  offset = 0
+): Promise<{ messages: OutlookMessage[]; total: number; limit: number; offset: number }> {
+  const url = new URL(API.cloudflare.outlookMessages);
+  url.searchParams.set("dashboard_id", dashboardId);
+  url.searchParams.set("limit", limit.toString());
+  url.searchParams.set("offset", offset.toString());
+  return apiGet<{ messages: OutlookMessage[]; total: number; limit: number; offset: number }>(url.toString());
+}
+
+export async function performOutlookAction(
+  dashboardId: string,
+  messageId: string,
+  action: OutlookActionType
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(API.cloudflare.outlookAction, {
+    method: "POST",
+    body: JSON.stringify({ dashboardId, messageId, action }),
+  });
+}
+
+export async function unlinkOutlookMirror(dashboardId: string): Promise<{ ok: boolean }> {
+  const url = new URL(API.cloudflare.outlookMirror);
+  url.searchParams.set("dashboard_id", dashboardId);
+  return apiFetch<{ ok: boolean }>(url.toString(), { method: "DELETE" });
+}
+
+export async function disconnectOutlook(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`${API.cloudflare.base}/integrations/outlook/disconnect`, {
     method: "DELETE",
   });
 }

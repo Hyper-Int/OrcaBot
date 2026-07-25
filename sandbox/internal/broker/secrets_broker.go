@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// REVISION: broker-v5-get-anthropic-key
-const brokerRevision = "broker-v5-get-anthropic-key"
+// REVISION: broker-v7-evict-logged-routes
+const brokerRevision = "broker-v7-evict-logged-routes"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
@@ -59,6 +59,24 @@ type SecretsBroker struct {
 	// Callback for notifying owner of pending domain approvals
 	// Takes (sessionID, secretName, domain) so we know which session to notify
 	onApprovalNeeded func(sessionID, secretName, domain string)
+
+	// Callback for surfacing notable upstream model-provider errors (OpenRouter
+	// 429/402/401/5xx) to the user as a dashboard toast. Fire-and-forget.
+	onProviderError func(ProviderError)
+
+	// Dedup for the once-per-(session,provider) routing log line.
+	loggedRoutes sync.Map
+}
+
+// ProviderError describes an upstream model-provider failure worth surfacing to
+// the user (vs. silently failing inside the harness).
+type ProviderError struct {
+	SessionID string
+	Provider  string
+	Status    int
+	Title     string
+	Message   string
+	Hint      string
 }
 
 // NewSecretsBroker creates a new broker listening on the given port.
@@ -107,6 +125,20 @@ func (b *SecretsBroker) ClearConfigsForSession(sessionID string) {
 	}
 }
 
+// EvictLoggedRoutesForSession removes the per-(session,provider) routing-log dedup
+// entries for a session. loggedRoutes is a sync.Map keyed "sessionID:provider" that
+// otherwise grows unbounded as sessions are created and deleted over a VM's lifetime;
+// call this on session teardown to release those keys.
+func (b *SecretsBroker) EvictLoggedRoutesForSession(sessionID string) {
+	prefix := sessionID + ":"
+	b.loggedRoutes.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok && strings.HasPrefix(k, prefix) {
+			b.loggedRoutes.Delete(k)
+		}
+		return true
+	})
+}
+
 // RemoveConfig removes a specific provider configuration.
 // Use this to remove individual secrets without clearing all configs.
 func (b *SecretsBroker) RemoveConfig(providerID string) {
@@ -138,10 +170,92 @@ func (b *SecretsBroker) GetAnthropicKey(sessionID string) string {
 	return ""
 }
 
+// GetCustomSecretValue returns the plaintext value of a brokered custom secret for
+// the session, or "" if not configured. Used to resolve the API key for a custom
+// model endpoint at PTY creation (PLAN-custom-endpoints.md).
+func (b *SecretsBroker) GetCustomSecretValue(sessionID, secretName string) string {
+	key := ConfigKey(sessionID, "custom/"+secretName)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if config, exists := b.configs[key]; exists {
+		return config.SecretValue
+	}
+	return ""
+}
+
 // SetOnApprovalNeeded sets the callback for domain approval notifications.
 // The callback receives (sessionID, secretName, domain) so it knows which session to notify.
 func (b *SecretsBroker) SetOnApprovalNeeded(fn func(sessionID, secretName, domain string)) {
 	b.onApprovalNeeded = fn
+}
+
+// SetOnProviderError sets the callback used to surface upstream model-provider
+// errors (e.g. OpenRouter rate limits) to the user.
+func (b *SecretsBroker) SetOnProviderError(fn func(ProviderError)) {
+	b.onProviderError = fn
+}
+
+// isModelRoutingProvider reports whether the provider routes LLM model traffic
+// (OpenRouter, OpenAI-compat or Anthropic-compat). Only these surface toasts —
+// we don't want to alert on every TTS/ASR key error.
+func isModelRoutingProvider(provider string) bool {
+	return provider == "openrouter" || provider == "openrouter-anthropic"
+}
+
+// classifyProviderError turns an upstream error response into a user-facing
+// title/message/hint. The message is extracted from the OpenRouter/OpenAI error
+// envelope when present.
+func classifyProviderError(status int, body []byte) (title, message, hint string) {
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	message = parsed.Error.Message
+
+	switch {
+	case status == 429:
+		// NOT a credit problem — OpenRouter routed to its cheapest provider for
+		// this model, whose rate limit is a shared pool across all OpenRouter users.
+		// Lead with OpenRouter's verbatim message, then the provider-routing fix.
+		title = "Model rate-limited upstream (not a credit issue)"
+		hint = "OpenRouter picked its lowest-cost provider for this model; that rate limit is shared across all users, independent of your balance. Fix: set Default Provider Routing to prioritize throughput/performance over price at openrouter.ai/settings, add your own provider key, or pick a better-provisioned model."
+		if message == "" {
+			message = "The selected model is temporarily rate-limited by its upstream provider."
+		}
+	case status == 402:
+		title = "Out of OpenRouter credits"
+		hint = "Add credits at openrouter.ai/credits, then retry."
+		if message == "" {
+			message = "Your OpenRouter account is out of credits for this model."
+		}
+	case status == 401 || status == 403:
+		title = "OpenRouter key rejected"
+		hint = "Check the OPENROUTER_API_KEY in Environment Variables."
+		if message == "" {
+			message = "OpenRouter rejected the API key for this request."
+		}
+	case status == 404:
+		title = "Model unavailable"
+		hint = "This model id may be unavailable on OpenRouter — pick another in the Model panel."
+		if message == "" {
+			message = "The selected model was not found on OpenRouter."
+		}
+	case status >= 500:
+		title = "Upstream provider error"
+		hint = "The provider had a temporary error. Retry, or switch model."
+		if message == "" {
+			message = "The upstream provider returned a server error."
+		}
+	default:
+		title = "Model request failed"
+		hint = "Retry, or switch model in the Model panel."
+		if message == "" {
+			message = "The model request failed."
+		}
+	}
+	return title, message, hint
 }
 
 // AddApprovedDomain adds a single approved domain for a custom secret.
@@ -207,6 +321,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		headerName   string
 		headerFormat string
 		secretValue  string
+		providerName string // built-in provider name; "" for custom secrets
 	)
 
 	if providerParts[0] == "custom" && len(providerParts) >= 2 {
@@ -265,7 +380,7 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		// Built-in provider: /broker/{sessionID}/{provider}/path
-		providerName := providerParts[0]
+		providerName = providerParts[0]
 		configKey = ConfigKey(sessionID, providerName)
 		pathRemainder := ""
 		if len(providerParts) > 1 {
@@ -327,9 +442,36 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Inject auth header
-	authValue := fmt.Sprintf(headerFormat, secretValue)
-	outReq.Header.Set(headerName, authValue)
+	// Inject auth header. A custom-provider config with no key leaves headerName
+	// empty (no-auth endpoint) — skip injection rather than send an empty Bearer.
+	if headerName != "" {
+		outReq.Header.Set(headerName, fmt.Sprintf(headerFormat, secretValue))
+	}
+
+	// Always log the FIRST brokered call per (session, LLM-provider) — the
+	// zero-config way to confirm e.g. Claude Code is on `openrouter-anthropic`
+	// (OpenRouter) vs `anthropic` (native). Once-per-session so it isn't spammy.
+	// Only "agent" (LLM) providers; "tool" providers (TTS/ASR) are skipped.
+	spec, isBuiltin := Providers[providerName]
+	if (isBuiltin && spec.Category == "agent") || providerName == "customprovider" {
+		if _, seen := b.loggedRoutes.LoadOrStore(sessionID+":"+providerName, true); !seen {
+			host := targetURL
+			if parsed, perr := url.Parse(targetURL); perr == nil {
+				host = parsed.Host
+			}
+			log.Printf("[broker] session=%s routing provider=%s → %s", sessionID, providerName, host)
+		}
+	}
+
+	// Verbose per-request trace (every call, all providers). No secret is logged
+	// (auth lives in headers). Enable with ORCABOT_DEBUG_BROKER=1.
+	if os.Getenv("ORCABOT_DEBUG_BROKER") == "1" {
+		prov := providerName
+		if prov == "" {
+			prov = "custom"
+		}
+		log.Printf("[broker] forward session=%s provider=%s %s %s", sessionID, prov, r.Method, targetURL)
+	}
 
 	// Forward request with timeout
 	client := &http.Client{
@@ -372,6 +514,27 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Surface notable model-provider errors (OpenRouter 429/402/…) to the user as a
+	// toast, then forward the body unchanged. Only error statuses are buffered (they
+	// are small JSON, never SSE streams), so streaming success paths are untouched.
+	if isModelRoutingProvider(providerName) && resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		if b.onProviderError != nil {
+			title, message, hint := classifyProviderError(resp.StatusCode, errBody)
+			go b.onProviderError(ProviderError{
+				SessionID: sessionID,
+				Provider:  providerName,
+				Status:    resp.StatusCode,
+				Title:     title,
+				Message:   message,
+				Hint:      hint,
+			})
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(errBody)
+		return
+	}
+
 	w.WriteHeader(resp.StatusCode)
 
 	// Stream response with flush support for SSE/streaming responses
@@ -397,6 +560,20 @@ func isLocalhostHTTPAllowed() bool {
 	return os.Getenv("DEV_MODE") == "true" || os.Getenv("ALLOW_HTTP_BROKER_LOCALHOST") == "true"
 }
 
+// allowHTTPCustomEndpoint reports whether http is allowed to a custom model endpoint.
+// Set by the desktop app, where a local model server (Ollama/LM Studio) is reached
+// over plain http via the VM's host gateway (e.g. http://10.0.2.2:11434). Never set
+// in the cloud, so cloud custom endpoints remain https-only.
+func allowHTTPCustomEndpoint() bool {
+	return os.Getenv("ALLOW_HTTP_CUSTOM_ENDPOINT") == "true"
+}
+
+// isCustomProviderConfigKey reports whether a broker config key is a custom model
+// endpoint (the session-scoped "customprovider" entry installed in session.go).
+func isCustomProviderConfigKey(providerID string) bool {
+	return strings.HasSuffix(providerID, ":customprovider")
+}
+
 // isLocalhost checks if a host is localhost
 func isLocalhost(host string) bool {
 	// Strip port if present
@@ -416,9 +593,14 @@ func (b *SecretsBroker) hostAllowed(providerID string, targetURL string) bool {
 		return false
 	}
 
-	// Check scheme: HTTPS required, except HTTP allowed for localhost in dev mode
+	// Check scheme: HTTPS required, except (a) HTTP for localhost in dev mode, and
+	// (b) HTTP to a custom model endpoint on desktop (local Ollama via the VM host
+	// gateway). The host-match check below still restricts (b) to the exact
+	// configured host, so this can't be used to reach an arbitrary http target.
 	if parsed.Scheme == "http" {
-		if !isLocalhost(parsed.Host) || !isLocalhostHTTPAllowed() {
+		localhostOK := isLocalhost(parsed.Host) && isLocalhostHTTPAllowed()
+		desktopCustomOK := isCustomProviderConfigKey(providerID) && allowHTTPCustomEndpoint()
+		if !localhostOK && !desktopCustomOK {
 			return false
 		}
 	} else if parsed.Scheme != "https" {

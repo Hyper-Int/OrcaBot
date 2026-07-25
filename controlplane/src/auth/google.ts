@@ -1,12 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: popup-login-v1-oauth-popup
-const moduleRevision = "popup-login-v1-oauth-popup";
+// REVISION: desktop-login-v1-google-nonce-poll
+const moduleRevision = "desktop-login-v1-google-nonce-poll";
 console.log(`[auth/google] REVISION: ${moduleRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
 import { buildSessionCookie, createUserSession } from './sessions';
+import { createApiToken } from './api-token';
 import { processPendingInvitations } from '../members/handler';
 
 const GOOGLE_LOGIN_SCOPE = [
@@ -201,11 +202,30 @@ export async function loginWithGoogle(
   }
 
   const requestUrl = new URL(request.url);
-  const isPopupMode = requestUrl.searchParams.get('mode') === 'popup';
+  const mode = requestUrl.searchParams.get('mode');
+  const isPopupMode = mode === 'popup';
+  // Desktop login: the app opens this in the OS browser and polls for the result
+  // by a nonce (the OS browser can't hand a session back to the Tauri webview).
+  // The result is a PAT (full credential), so it's protected with PKCE: the app
+  // sends the code_challenge here and the matching verifier when it polls. Works on
+  // any deployment; web popup/redirect login is untouched.
+  // Desktop login uses a LOOPBACK redirect (RFC 8252): the app runs a temporary
+  // 127.0.0.1 listener and passes it as redirect_uri. After sign-in we redirect the
+  // browser to that loopback with a one-time code — so the credential is delivered
+  // only to a listener on the machine that started the flow. A phished victim's
+  // browser hits THEIR own loopback, not the attacker's, which closes the earlier
+  // pollable-rendezvous hole. `state` is the app's CSRF token for its listener.
+  const isDesktopMode = mode === 'desktop';
+  const desktopLoopback = isDesktopMode ? requestUrl.searchParams.get('redirect_uri') : null;
+  const desktopState = isDesktopMode ? requestUrl.searchParams.get('state') : null;
+  // PKCE (S256): binds the one-time code to a verifier the native app never puts on
+  // the wire. Even a browser extension / local process that observes the loopback
+  // callback URL (which carries the code) can't exchange it without the verifier.
+  const desktopChallenge = isDesktopMode ? requestUrl.searchParams.get('challenge') : null;
 
   // Validate Turnstile bot verification token (skip if not configured, e.g. dev)
-  // Skip Turnstile in popup mode — Google OAuth consent screen provides bot protection
-  if (env.TURNSTILE_SECRET_KEY && !isPopupMode) {
+  // Skip Turnstile in popup/desktop mode — Google's consent screen provides bot protection
+  if (env.TURNSTILE_SECRET_KEY && !isPopupMode && !isDesktopMode) {
     const turnstileToken = requestUrl.searchParams.get('turnstile_token');
     if (!turnstileToken) {
       return renderErrorPage('Bot verification required. Please try again.');
@@ -220,11 +240,27 @@ export async function loginWithGoogle(
     }
   }
 
+  if (isDesktopMode && (!desktopLoopback || !desktopState || !desktopChallenge || !isLoopbackRedirect(desktopLoopback))) {
+    return renderErrorPage('Desktop sign-in requires a loopback redirect and PKCE challenge.');
+  }
+
   const state = crypto.randomUUID();
   const redirectUri = `${getRedirectBase(request, env)}/auth/google/callback`;
-  // In popup mode, store sentinel "popup" so callback knows to render completion page
-  const postLoginRedirect = isPopupMode ? 'popup' : resolvePostLoginRedirect(request, env);
+  // Sentinel in the state's redirect slot tells the callback how to finish:
+  //  - "popup"                       → postMessage completion page (web popup login)
+  //  - "desktoplb:<base64 json>"     → mint a one-time code, redirect to the app's
+  //                                    loopback so it can exchange the code for a PAT
+  //  - a URL                         → normal 302 redirect + session cookie
+  const postLoginRedirect = isPopupMode
+    ? 'popup'
+    : isDesktopMode
+      ? `desktoplb:${btoa(JSON.stringify({ uri: desktopLoopback, st: desktopState, ch: desktopChallenge }))}`
+      : resolvePostLoginRedirect(request, env);
 
+  // Sweep abandoned desktop codes on every sign-in start (no scheduler needed).
+  if (isDesktopMode) {
+    await cleanupStaleDesktopCodes(env);
+  }
   await createAuthState(env, state, postLoginRedirect);
 
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -320,6 +356,50 @@ export async function callbackGoogle(
   // Process any pending dashboard invitations for this email
   await processPendingInvitations(env, userId, userInfo.email);
 
+  // Desktop login (loopback): mint a one-time code, stash the identity (short
+  // expiry), and redirect the browser to the app's 127.0.0.1 listener with the
+  // code. The PAT is minted only when the app exchanges the code (exchangeDesktopCode)
+  // — so an abandoned flow never creates a token, and the code reaches only a
+  // listener on the machine that started the flow (not a global poll an attacker
+  // could hit). Re-validate the loopback target before redirecting.
+  if (postLoginRedirect.startsWith('desktoplb:')) {
+    let uri: string;
+    let st: string;
+    let ch: string;
+    try {
+      const dec = JSON.parse(atob(postLoginRedirect.slice('desktoplb:'.length))) as {
+        uri: string;
+        st: string;
+        ch: string;
+      };
+      uri = dec.uri;
+      st = dec.st;
+      ch = dec.ch;
+    } catch {
+      return renderErrorPage('Desktop sign-in state was corrupt.');
+    }
+    if (!isLoopbackRedirect(uri)) {
+      return renderErrorPage('Invalid desktop redirect target.');
+    }
+    const code = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, '');
+    // Store ONLY the opaque userId (+ PKCE challenge + expiry) — no email/name — so
+    // an abandoned/never-swept row on an inactive install holds no PII. The identity
+    // is fetched from the users table at exchange time.
+    await createAuthState(
+      env,
+      `desktopcode:${code}`,
+      JSON.stringify({
+        userId,
+        challenge: ch, // PKCE S256 — exchanged only with the matching verifier
+        expiresAt: Date.now() + 5 * 60 * 1000, // 5 min to exchange
+      })
+    );
+    const dest = new URL(uri);
+    dest.searchParams.set('code', code);
+    dest.searchParams.set('state', st);
+    return Response.redirect(dest.toString(), 302);
+  }
+
   const session = await createUserSession(env, userId);
   const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
@@ -341,6 +421,122 @@ export async function callbackGoogle(
       Location: postLoginRedirect,
       'Set-Cookie': cookie,
     },
+  });
+}
+
+
+/** A redirect target usable by the desktop loopback flow: http on 127.0.0.1/::1/
+ *  localhost only. Enforced at login AND before the callback redirect so a crafted
+ *  redirect_uri can't send a signed-in victim's code anywhere but their own machine. */
+function isLoopbackRedirect(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    if (u.protocol !== 'http:') return false;
+    return u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
+/** Desktop-minted cloud PATs get a bounded lifetime so a leaked/orphaned one dies
+ *  on its own even if logout's server-side revoke never runs (offline logout). */
+const DESKTOP_PAT_TTL_DAYS = 90;
+
+/** Best-effort sweep of abandoned desktop auth codes (cancelled sign-in / loopback
+ *  timeout), which hold userId/email/name. The code TTL is 5 min; delete rows older
+ *  than 15 min by created_at so PII doesn't linger indefinitely. Called on the hot
+ *  paths (login start, exchange) so no scheduler is needed. */
+async function cleanupStaleDesktopCodes(env: Env): Promise<void> {
+  try {
+    await env.DB.prepare(
+      "DELETE FROM auth_states WHERE state LIKE 'desktopcode:%' AND created_at < datetime('now','-15 minutes')"
+    ).run();
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** base64url(SHA-256(input)) — PKCE S256 challenge computation. */
+async function sha256Base64Url(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  let bin = '';
+  for (const b of new Uint8Array(digest)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Desktop app exchanges the one-time `code` it received on its 127.0.0.1 listener
+ * (from the OAuth callback redirect) for its cloud PAT + identity. The code alone is
+ * NOT sufficient — the app must also present the PKCE `verifier` whose S256 hash
+ * matches the challenge sent at login, so a local observer of the loopback callback
+ * URL can't exchange the code it saw. Atomically single-use (DELETE … RETURNING) and
+ * short-lived; the PAT is bounded by a TTL.
+ */
+export async function exchangeDesktopCode(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+
+  let body: { code?: string; verifier?: string };
+  try {
+    body = (await request.json()) as { code?: string; verifier?: string };
+  } catch {
+    return json({ error: 'bad_request' }, 400);
+  }
+  const { code, verifier } = body;
+  if (!code || !verifier) {
+    return json({ error: 'missing_code_or_verifier' }, 400);
+  }
+  await cleanupStaleDesktopCodes(env);
+
+  const key = `desktopcode:${code}`;
+  // Peek first — do NOT consume on a bad verifier, or a local observer who saw the
+  // code could invalidate every legit sign-in by exchanging first with a bogus
+  // verifier. Only after PKCE passes do we atomically consume (compare-and-delete on
+  // the exact stored value, so concurrent success requests still can't double-mint).
+  const rec = await env.DB
+    .prepare('SELECT redirect_url as v FROM auth_states WHERE state = ?')
+    .bind(key)
+    .first<{ v: string }>();
+  if (!rec) {
+    return json({ error: 'not_found' }, 404);
+  }
+  let parsed: { userId: string; challenge?: string; expiresAt?: number };
+  try {
+    parsed = JSON.parse(rec.v);
+  } catch {
+    // Corrupt row — consume it so it can't wedge, then report.
+    await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
+    return json({ error: 'corrupt' }, 500);
+  }
+  if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
+    await env.DB.prepare('DELETE FROM auth_states WHERE state = ?').bind(key).run();
+    return json({ error: 'expired' }, 410);
+  }
+  if (!parsed.challenge || (await sha256Base64Url(verifier)) !== parsed.challenge) {
+    return json({ error: 'forbidden' }, 403); // wrong verifier — leave the code intact
+  }
+  // PKCE verified — atomically consume this exact record. A concurrent request that
+  // already deleted it makes this affect 0 rows → treat as already used.
+  const consumed = await env.DB
+    .prepare('DELETE FROM auth_states WHERE state = ? AND redirect_url = ? RETURNING redirect_url as v')
+    .bind(key, rec.v)
+    .first<{ v: string }>();
+  if (!consumed) {
+    return json({ error: 'not_found' }, 404);
+  }
+  const { token } = await createApiToken(env, parsed.userId, 'Orcabot Desktop', DESKTOP_PAT_TTL_DAYS);
+  // Fetch the identity now (it wasn't stored in the temporary record).
+  const user = await env.DB
+    .prepare('SELECT email, name FROM users WHERE id = ?')
+    .bind(parsed.userId)
+    .first<{ email: string; name: string }>();
+  return json({
+    token,
+    email: user?.email ?? '',
+    name: user?.name || user?.email?.split('@')[0] || '',
   });
 }
 

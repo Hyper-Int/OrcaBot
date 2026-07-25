@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-surface-token"
+description = "Enables the get_surface_token command without any pre-configured scope."
+commands.allow = ["get_surface_token"]
+
+[[permission]]
+identifier = "deny-get-surface-token"
+description = "Denies the get_surface_token command without any pre-configured scope."
+commands.deny = ["get_surface_token"]

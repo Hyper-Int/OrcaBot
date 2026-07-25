@@ -277,6 +277,21 @@ export interface EgressApprovalResolvedEvent {
 }
 
 /**
+ * Model provider error event (server -> client)
+ * Broadcast when an upstream model provider (e.g. OpenRouter) returns a notable
+ * error (rate limit, out-of-credits, bad key) so the dashboard can surface a
+ * toast with a fix instead of the harness failing silently.
+ */
+export interface ModelProviderErrorEvent {
+  type: "model_provider_error";
+  provider: string;
+  status: number;
+  title: string;
+  message: string;
+  hint: string;
+}
+
+/**
  * Session expired event (server -> client)
  * Sent by the control plane when the sandbox session no longer exists
  * (e.g., sandbox machine restarted). The frontend should automatically
@@ -307,4 +322,5 @@ export type IncomingControlEvent =
   | ToolsChangedEvent
   | EgressApprovalNeededEvent
   | EgressApprovalResolvedEvent
+  | ModelProviderErrorEvent
   | SessionExpiredEvent;

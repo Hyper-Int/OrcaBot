@@ -1,11 +1,11 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: teams-block-v8-stale-team-reset-popup-cleanup
+// REVISION: teams-block-v10-secret-input
 
 "use client";
 
-const MODULE_REVISION = "teams-block-v7-stable-team-selection";
+const MODULE_REVISION = "teams-block-v10-secret-input";
 console.log(`[TeamsBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -25,15 +25,18 @@ import { BlockWrapper } from "./BlockWrapper";
 import { ConnectionHandles } from "./ConnectionHandles";
 import { MinimizedBlockView, MINIMIZED_SIZE } from "./MinimizedBlockView";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/SecretInput";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { API } from "@/config/env";
+import { API, DESKTOP_MODE } from "@/config/env";
+import { connectViaBrowser } from "@/lib/oauth-connect";
 import { apiFetch, apiGet } from "@/lib/api/client";
 import { TeamsIcon } from "@/components/icons";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
@@ -364,6 +367,20 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
   const handleConnectOAuth = () => {
     if (!dashboardId) return;
     const base = API.cloudflare.base.replace(/\/$/, "");
+    if (DESKTOP_MODE) {
+      // window.open is a no-op in the Tauri webview — open the OS browser and
+      // poll for the connection instead of the popup/postMessage handshake.
+      connectViaBrowser({
+        url: `${base}/integrations/teams/connect?dashboard_id=${dashboardId}`,
+        checkConnected: async () => Boolean((await getTeamsIntegration(dashboardId))?.connected),
+        onConnected: () => {
+          void (async () => {
+            await loadIntegration();
+          })();
+        },
+      });
+      return;
+    }
     const url = `${base}/integrations/teams/connect?dashboard_id=${dashboardId}&mode=popup`;
     const popup = window.open(url, "teams-auth", "width=600,height=700");
     if (!popup) return;
@@ -453,11 +470,31 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
     }
   };
 
+  // Account details + connect/disconnect — one section, shown in every settings menu.
+  const accountMenuSection = integration?.connected ? (
+    <>
+      {integration?.accountName && (
+        <DropdownMenuLabel className="font-normal">
+          <div className="text-xs font-medium text-[var(--foreground)] truncate">{integration.accountName}</div>
+        </DropdownMenuLabel>
+      )}
+      <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
+        <LogOut className="w-3.5 h-3.5 mr-2" />
+        Disconnect Teams
+      </DropdownMenuItem>
+    </>
+  ) : (
+    <DropdownMenuItem onClick={() => { /* focus token input */ }}>
+      <TeamsIcon className="w-3.5 h-3.5 mr-2" />
+      Connect Teams
+    </DropdownMenuItem>
+  );
+
   const header = (
     <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border)] bg-[var(--background)]">
       <TeamsIcon className="w-3.5 h-3.5" />
       <div className="text-xs text-[var(--foreground-muted)] truncate flex-1">
-        {integration?.accountName || "Teams"}
+        Teams
       </div>
       <div className="flex items-center gap-1">
         <HelpButton doc={teamsDoc} />
@@ -476,18 +513,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
-            {integration?.connected && (
-              <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-                <LogOut className="w-3.5 h-3.5 mr-2" />
-                Disconnect Teams
-              </DropdownMenuItem>
-            )}
-            {!integration?.connected && (
-              <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-                <TeamsIcon className="w-3.5 h-3.5 mr-2" />
-                Connect Teams
-              </DropdownMenuItem>
-            )}
+            {accountMenuSection}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => data.onDuplicate?.()} className="gap-2">
               <Copy className="w-3 h-3" />
@@ -508,18 +534,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {integration?.connected && (
-          <DropdownMenuItem onClick={handleDisconnect} className="text-red-500">
-            <LogOut className="w-3.5 h-3.5 mr-2" />
-            Disconnect Teams
-          </DropdownMenuItem>
-        )}
-        {!integration?.connected && (
-          <DropdownMenuItem onClick={() => { /* focus token input */ }}>
-            <TeamsIcon className="w-3.5 h-3.5 mr-2" />
-            Connect Teams
-          </DropdownMenuItem>
-        )}
+        {accountMenuSection}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -530,7 +545,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
         nodeId={id}
         selected={selected}
         icon={<TeamsIcon className="w-14 h-14" />}
-        label={integration?.accountName || "Teams"}
+        label="Teams"
         onExpand={handleExpand}
         settingsMenu={settingsMenu}
         connectorsVisible={connectorsVisible}
@@ -607,8 +622,7 @@ export function TeamsBlock({ id, data, selected }: NodeProps<TeamsNode>) {
                     placeholder="Bot App ID (from Azure Bot Service)"
                     className="w-full px-2 py-1.5 text-xs rounded border border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-[#6264A7]"
                   />
-                  <input
-                    type="password"
+                  <SecretInput
                     value={tokenInput}
                     onChange={(e) => setTokenInput(e.target.value)}
                     placeholder="Bot App Secret"

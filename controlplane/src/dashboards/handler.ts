@@ -28,6 +28,7 @@ function fоrmatDashbоard(row: Record<string, unknown>): Dashboard & { secretsC
     updatedAt: row.updated_at as string,
     secretsCount: row.secrets_count !== undefined ? Number(row.secrets_count) : undefined,
     linkedCount: row.linked_count !== undefined ? Number(row.linked_count) : undefined,
+    cloudId: (row.cloud_id as string | null) ?? null,
   };
 }
 
@@ -177,18 +178,26 @@ export async function getDashbоard(
 export async function createDashbоard(
   env: Env,
   userId: string,
-  data: { name: string; templateId?: string },
+  data: { name: string; templateId?: string; cloudId?: string },
   ctx?: Pick<ExecutionContext, 'waitUntil'>,
   preferredRegion?: string,
 ): Promise<Response> {
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Create dashboard
+  // Create dashboard. cloud_id (desktop downloads only) is set via a follow-up
+  // UPDATE rather than in this INSERT, so the INSERT never references the column —
+  // keeps working on a deployment whose schema migration hasn't added it yet, and
+  // the UPDATE only runs on desktop where the column exists.
   await env.DB.prepare(`
     INSERT INTO dashboards (id, name, owner_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
   `).bind(id, data.name, userId, now, now).run();
+  if (data.cloudId) {
+    await env.DB.prepare(`UPDATE dashboards SET cloud_id = ? WHERE id = ?`)
+      .bind(data.cloudId, id)
+      .run();
+  }
 
   // Add owner as member
   await env.DB.prepare(`
@@ -198,9 +207,11 @@ export async function createDashbоard(
 
   // If templateId provided, populate dashboard from template
   let templateViewport: { x: number; y: number; zoom: number } | undefined;
+  let hasSetupGuide = false;
   if (data.templateId) {
     const result = await populateFromTemplate(env, id, data.templateId);
     templateViewport = result?.viewport;
+    hasSetupGuide = !!result?.hasSetupGuide;
   }
 
   // Eagerly claim a warm VM so terminals open instantly.
@@ -227,6 +238,7 @@ export async function createDashbоard(
   return Response.json({
     dashboard,
     ...(templateViewport && { viewport: templateViewport }),
+    ...(hasSetupGuide && { hasSetupGuide: true }),
   }, { status: 201 });
 }
 
@@ -268,6 +280,23 @@ export async function deleteDashbоard(
   const role = await getDashbоardRole(env, dashboardId, userId);
   if (!hasDashbоardRole(role, ['owner'])) {
     return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
+  }
+
+  // Stop any active sessions first so their PTYs are killed in the sandbox.
+  // CASCADE-deleting the session rows would otherwise orphan live processes
+  // (shells, and agent children like node/chromium) in the VM. Mirrors deleteItem.
+  try {
+    const activeSessions = await env.DB.prepare(`
+      SELECT id FROM sessions WHERE dashboard_id = ? AND status IN ('creating', 'active')
+    `).bind(dashboardId).all<{ id: string }>();
+    if (activeSessions.results.length > 0) {
+      const { stоpSessiоn } = await import('../sessions/handler');
+      for (const session of activeSessions.results) {
+        await stоpSessiоn(env as EnvWithDriveCache, session.id, userId);
+      }
+    }
+  } catch {
+    // Best-effort — don't block dashboard deletion if session cleanup fails.
   }
 
   // Delete dependent records that don't have ON DELETE CASCADE
@@ -342,6 +371,16 @@ export async function deleteDashbоard(
   // forms_mirrors, gmail_messages, gmail_actions, calendar_events, contacts,
   // form_responses, terminal_integrations)
   await env.DB.prepare(`DELETE FROM dashboards WHERE id = ?`).bind(dashboardId).run();
+
+  // Purge the DO after D1 is gone (D1 delete doesn't touch it, and DOs can't be
+  // swept later). Best-effort.
+  try {
+    const doId = env.DASHBOARD.idFromName(dashboardId);
+    const stub = env.DASHBOARD.get(doId);
+    await stub.fetch(new Request('http://do/destroy', { method: 'POST' }));
+  } catch (e) {
+    console.error(`[deleteDashboard] DashboardDO purge failed for ${dashboardId}: ${e}`);
+  }
 
   return new Response(null, { status: 204 });
 }

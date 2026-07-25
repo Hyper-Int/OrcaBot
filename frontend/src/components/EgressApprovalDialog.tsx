@@ -3,8 +3,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-dialog-v3-request-id-resolution
-const EGRESS_DIALOG_REVISION = "egress-dialog-v3-request-id-resolution";
+// REVISION: egress-dialog-v4-deny-always
+const EGRESS_DIALOG_REVISION = "egress-dialog-v4-deny-always";
 console.log(`[EgressApprovalDialog] REVISION: ${EGRESS_DIALOG_REVISION} loaded at ${new Date().toISOString()}`);
 
 import { useState } from "react";
@@ -49,6 +49,7 @@ export function EgressApprovalDialog({
         allow_once: "Allowed once",
         allow_always: "Always allowed",
         deny: "Denied",
+        deny_always: "Always denied",
       };
       toast.success(`${labels[decision]}: ${current.domain}`);
       onResolved(current.request_id);
@@ -91,7 +92,17 @@ export function EgressApprovalDialog({
             </p>
           )}
 
-          <div className="flex gap-2 justify-end">
+          <div className="flex flex-wrap gap-2 justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleDecision("deny_always")}
+              disabled={submitting !== null}
+              className="text-destructive hover:text-destructive"
+              title="Permanently block this domain — it will be denied without prompting again"
+            >
+              Deny Always
+            </Button>
             <Button
               variant="secondary"
               size="sm"

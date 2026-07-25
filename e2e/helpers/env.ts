@@ -1,5 +1,5 @@
-// REVISION: e2e-env-v1-tiered-requirements
-const MODULE_REVISION = "e2e-env-v1-tiered-requirements";
+// REVISION: e2e-env-v2-tiered-requirements
+const MODULE_REVISION = "e2e-env-v2-tiered-requirements";
 console.log(
   `[e2e-env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -7,7 +7,11 @@ console.log(
 export type E2ETier = "smoke" | "google" | "gemini";
 
 export const E2E_ENV_REQUIREMENTS: Record<E2ETier, readonly string[]> = {
-  smoke: ["ORCABOT_URL", "CONTROLPLANE_URL", "E2E_USER_EMAIL", "E2E_USER_NAME"],
+  // Only what cannot be derived or defaulted. CONTROLPLANE_URL is derived from
+  // ORCABOT_URL (helpers/controlplane-url.ts) and is an override, not a
+  // requirement; E2E_USER_EMAIL / E2E_USER_NAME have working defaults. Demanding
+  // those would break invocations that pass ORCABOT_URL alone and work fine.
+  smoke: ["ORCABOT_URL"],
   google: [
     "GOOGLE_TEST_EMAIL",
     "GOOGLE_TEST_PASSWORD",

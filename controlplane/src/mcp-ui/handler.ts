@@ -537,6 +537,7 @@ export async function callTool(
       break;
 
     case 'create_terminal':
+      console.log(`[mcp-ui] create_terminal name=${JSON.stringify(args.name)} agentic=${args.agentic} boot_command=${JSON.stringify(args.boot_command)}`);
       command = {
         type: 'create_terminal',
         command_id: commandId,

@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: canvas-v17-stable-resize-sanitization
-console.log(`[canvas] REVISION: canvas-v17-stable-resize-sanitization loaded at ${new Date().toISOString()}`);
+// REVISION: canvas-v22-browser-canvas-zspace
+console.log(`[canvas] REVISION: canvas-v22-browser-canvas-zspace loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import {
@@ -29,6 +29,12 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { IntegrationEdge, EdgeLabelClickContext, EdgeDeleteContext, EdgeConnectorModeContext, EdgeReverseContext } from "@/components/canvas/IntegrationEdge";
+import {
+  applyLocalPositionOverrides,
+  applyLocalSizeOverrides,
+  type PositionOverride,
+  type SizeOverride,
+} from "@/components/canvas/positionOverrides";
 import { ConnectedHandlesContext } from "@/contexts/ConnectedHandlesContext";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
@@ -56,10 +62,12 @@ import { GoogleChatBlock } from "@/components/blocks/GoogleChatBlock";
 import { TwitterBlock } from "@/components/blocks/TwitterBlock";
 import OutlookBlock from "@/components/blocks/OutlookBlock";
 import { OutlookCalendarBlock } from "@/components/blocks/OutlookCalendarBlock";
+import { BenchmarkBlock } from "@/components/blocks/BenchmarkBlock";
 import { CursorNode } from "@/components/canvas/CursorNode";
 import type { DashboardItem, Session } from "@/types/dashboard";
 import type { TerminalHandle } from "@/components/terminal";
 import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
+import { useIsMobile } from "@/hooks";
 
 // Register custom node types
 const nodeTypes: NodeTypes = {
@@ -88,6 +96,7 @@ const nodeTypes: NodeTypes = {
   twitter: TwitterBlock,
   outlook: OutlookBlock,
   outlook_calendar: OutlookCalendarBlock,
+  benchmark: BenchmarkBlock,
   cursor: CursorNode,
 };
 
@@ -105,7 +114,8 @@ function itemsToNodes(
   onCreateBrowserBlock?: (
     url: string,
     anchor?: { x: number; y: number },
-    sourceId?: string
+    sourceId?: string,
+    size?: { width: number; height: number }
   ) => void,
   onConnectorClick?: (nodeId: string, handleId: string, kind: "source" | "target") => void,
   connectorMode?: boolean,
@@ -115,7 +125,8 @@ function itemsToNodes(
   onStorageLinked?: (workspaceItemId: string, provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onStorageDisconnected?: (provider: "google_drive" | "onedrive" | "box" | "github") => void,
   onDuplicate?: (itemId: string) => void,
-  onTerminalCwdChange?: (itemId: string, cwd: string) => void
+  onTerminalCwdChange?: (itemId: string, cwd: string) => void,
+  onCreateTerminalBlock?: (name: string, bootCommand: string) => void
 ): Node[] {
   const workspaceSession =
     sessions.find((s) => s.status === "active")
@@ -153,7 +164,9 @@ function itemsToNodes(
         dashboardId: item.dashboardId,
         itemId: item.id, // Pass actual item ID for API calls
         session, // Pass session to terminal blocks
-        sessionId: item.type === "workspace" ? workspaceSession?.id : undefined,
+        sessionId: item.type === "workspace" || item.type === "benchmark" ? workspaceSession?.id : undefined,
+        // For benchmark blocks: launch a run by creating a terminal (same path as chat create_terminal)
+        onCreateTerminal: item.type === "benchmark" ? onCreateTerminalBlock : undefined,
         color, // Note color from metadata
         metadata: item.metadata, // Pass full metadata for type-specific use
         onRegisterTerminal,
@@ -207,7 +220,9 @@ interface CanvasProps {
   onItemDelete?: (itemId: string) => void;
   /** Called when multiple items are deleted at once (e.g. multi-select delete) */
   onItemsDelete?: (itemIds: string[]) => void;
-  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string) => void;
+  onCreateBrowserBlock?: (url: string, anchor?: { x: number; y: number }, sourceId?: string, size?: { width: number; height: number }) => void;
+  /** Benchmark blocks call this to launch a run (creates a terminal with a boot command). */
+  onCreateTerminalBlock?: (name: string, bootCommand: string) => void;
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
   onCursorMove?: (point: { x: number; y: number }) => void;
   onCanvasClick?: () => void;
@@ -256,6 +271,7 @@ export function Canvas({
   onItemDelete,
   onItemsDelete,
   onCreateBrowserBlock,
+  onCreateTerminalBlock,
   onViewportChange,
   onCursorMove,
   onCanvasClick,
@@ -281,6 +297,7 @@ export function Canvas({
   onTerminalCwdChange,
   reactFlowRef,
 }: CanvasProps) {
+  const isMobile = useIsMobile();
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const [overlayRoot, setOverlayRoot] = React.useState<HTMLDivElement | null>(null);
   const [viewport, setViewport] = React.useState({ x: 0, y: 0, zoom: 1 });
@@ -291,11 +308,13 @@ export function Canvas({
     (nextNodes: Node[]) =>
       nextNodes.map((node) => {
         const base = getZIndex(node.id);
-        const zIndex = node.type === "browser"
-          ? base + 12000
-          : node.type === "terminal"
-            ? base + 10000
-            : base;
+        // Terminals render their xterm in a separate overlay layer (z-10, above the
+        // whole canvas) so it stays crisp under zoom — so the terminal *node* keeps a
+        // high band to match "terminals live on their own level".
+        // Everything else (browser — now a native in-canvas noVNC node — plus notes,
+        // prompts, todos, …) shares the normal canvas z-space and orders freely via
+        // bringToFront, so any of them can be clicked to the front of the others.
+        const zIndex = node.type === "terminal" ? base + 10000 : base;
         return {
           ...node,
           style: {
@@ -330,7 +349,8 @@ export function Canvas({
         onStorageLinked,
         onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
-        onTerminalCwdChange
+        onTerminalCwdChange,
+        onCreateTerminalBlock
       )
     );
     return [...baseNodes, ...extraNodes];
@@ -352,10 +372,47 @@ export function Canvas({
   const isResizingRef = React.useRef(false);
   const pendingNodeRebuildRef = React.useRef(false);
 
+  // Wrapper around <ReactFlow>. While a pan or node-drag is in progress we add
+  // `canvas-interacting`, which disables pointer events on embedded iframes
+  // (e.g. the BrowserBlock noVNC view). Otherwise an iframe under the cursor
+  // swallows the mouseup that ends the gesture, leaving the canvas stuck panning.
+  const flowWrapperRef = React.useRef<HTMLDivElement>(null);
+  const setCanvasInteracting = React.useCallback((active: boolean) => {
+    flowWrapperRef.current?.classList.toggle("canvas-interacting", active);
+  }, []);
+  // Safety net: any button release or focus loss ends a gesture, so always clear
+  // the guard then. Guarantees the canvas can never get permanently stuck even if
+  // a React Flow move/drag end callback is missed.
+  React.useEffect(() => {
+    const clear = () => setCanvasInteracting(false);
+    window.addEventListener("pointerup", clear);
+    window.addEventListener("mouseup", clear);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("pointerup", clear);
+      window.removeEventListener("mouseup", clear);
+      window.removeEventListener("blur", clear);
+    };
+  }, [setCanvasInteracting]);
+
   // Track drag start position for undo
   const dragStartPositionRef = React.useRef<{ x: number; y: number } | null>(null);
   // Track resize start state for undo
   const resizeStartRef = React.useRef<{ itemId: string; position: { x: number; y: number }; size: { width: number; height: number } } | null>(null);
+  // Optimistic post-drag positions, keyed by node id (stableKey || id). After a drag
+  // ends we persist via a batched mutation, so the item cache lags by a few frames.
+  // A rebuild in that window would otherwise rebuild the node at its pre-drag position
+  // (visible "blink back to start, then jump to drop point"). We hold the dropped
+  // position here and apply it during rebuilds until the cache catches up (positions
+  // match) or a short max-age elapses (so concurrent remote moves still recover).
+  const localPositionsRef = React.useRef<Map<string, PositionOverride>>(new Map());
+  // Same idea for resize: hold the new size after a resize ends so a rebuild during
+  // the debounced persist doesn't revert to the previous size (~1s later). Position
+  // had this protection; resize did not — the "components revert their size" bug.
+  const localSizesRef = React.useRef<Map<string, SizeOverride>>(new Map());
+  // Must comfortably exceed the position/size mutation's debounce (~500ms) + server
+  // round-trip + any in-flight refetch, so a stale revert in that window is masked.
+  const LOCAL_POSITION_MAX_AGE_MS = 2500;
 
   // Rebuild nodes from items - extracted so it can be called from effect and drag-stop
   const rebuildNodes = React.useCallback(() => {
@@ -385,17 +442,33 @@ export function Canvas({
         onStorageLinked,
         onStorageDisconnected,
         readOnly ? undefined : onDuplicate,
-        onTerminalCwdChange
+        onTerminalCwdChange,
+        onCreateTerminalBlock
       )
     );
     // Preserve selection state from current nodes when rebuilding
     setNodes((currentNodes) => {
       const selectedIds = new Set(currentNodes.filter(n => n.selected).map(n => n.id));
-      const newNodes = [...baseNodes, ...extraNodes];
+      // Apply optimistic post-drag positions so a rebuild before the drag is durably
+      // persisted doesn't flash the node back to its pre-drag position. See
+      // positionOverrides.ts for the full rationale (and its unit tests).
+      const now = Date.now();
+      const newNodes = applyLocalSizeOverrides(
+        applyLocalPositionOverrides(
+          [...baseNodes, ...extraNodes],
+          localPositionsRef.current,
+          now,
+          LOCAL_POSITION_MAX_AGE_MS,
+        ),
+        localSizesRef.current,
+        now,
+        LOCAL_POSITION_MAX_AGE_MS,
+      );
+
       if (selectedIds.size === 0) return newNodes;
       return newNodes.map(n => selectedIds.has(n.id) ? { ...n, selected: true } : n);
     });
-  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onStorageDisconnected, onDuplicate, onTerminalCwdChange]);
+  }, [items, sessions, setNodes, onItemChange, readOnly, onCreateBrowserBlock, onCreateTerminalBlock, onConnectorClick, connectorMode, applyZIndex, extraNodes, bringToFront, onPolicyUpdate, onIntegrationAttached, onIntegrationDetached, onStorageLinked, onStorageDisconnected, onDuplicate, onTerminalCwdChange]);
 
   // Update nodes when items or sessions change from server
   // Deferred during active drag to prevent mid-drag position jumps
@@ -478,6 +551,21 @@ export function Canvas({
                   width: Math.round(change.dimensions.width),
                   height: Math.round(change.dimensions.height),
                 };
+                // Hold the new size (and position — a top/left resize also moves the
+                // node) locally until the item cache reflects the resize, so a rebuild
+                // during the debounced persist doesn't revert to the previous size.
+                // Keyed by node.id to match rebuildNodes / applyLocal*Overrides.
+                const at = Date.now();
+                localSizesRef.current.set(node.id, {
+                  width: afterSize.width,
+                  height: afterSize.height,
+                  at,
+                });
+                localPositionsRef.current.set(node.id, {
+                  x: node.position.x,
+                  y: node.position.y,
+                  at,
+                });
                 // When resizing from top/left edges, position also changes
                 // Include both size and position to keep the correct corner anchored
                 onItemChange(itemId, {
@@ -515,21 +603,26 @@ export function Canvas({
   const handleNodeDragStart: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = true;
+      setCanvasInteracting(true);
       onDragStateChange?.(true);
       bringToFront(node.id);
       // Capture position before drag for undo
       dragStartPositionRef.current = node.position ? { ...node.position } : null;
     },
-    [bringToFront, onDragStateChange]
+    [bringToFront, onDragStateChange, setCanvasInteracting]
   );
 
   // Handle node drag END - sync to server only when drag stops
   const handleNodeDragStop: OnNodeDrag = React.useCallback(
     (_event, node) => {
       isDraggingRef.current = false;
+      setCanvasInteracting(false);
       onDragStateChange?.(false);
 
       if (onItemChange && node.position) {
+        // Hold the dropped position locally (keyed by node id) until the item cache
+        // reflects it, so any rebuild in the interim doesn't blink back to start.
+        localPositionsRef.current.set(node.id, { x: node.position.x, y: node.position.y, at: Date.now() });
         // Use itemId (real ID) for API calls, not node.id (which may be stable key)
         const itemId = (node.data as { itemId?: string })?.itemId || node.id;
         onItemChange(itemId, { position: node.position });
@@ -560,7 +653,7 @@ export function Canvas({
         terminalRefs.current.get(node.id)?.fit();
       }
     },
-    [onItemChange, onDragComplete, rebuildNodes, onDragStateChange]
+    [onItemChange, onDragComplete, rebuildNodes, onDragStateChange, setCanvasInteracting]
   );
 
   // Handle node deletion
@@ -594,6 +687,33 @@ export function Canvas({
     setViewport(nextViewport);
     onViewportChange?.(nextViewport);
   }, [onViewportChange, reactFlowRef]);
+
+  // Cmd/Ctrl +/- zooms the CANVAS rather than the whole webview, which is what you
+  // actually want on a dashboard. Cmd+0 resets to 100%. We only intercept when the
+  // user isn't typing, so the shortcut can't hijack text fields.
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      const inst = instanceRef.current;
+      if (!inst) return;
+      // "=" is the unshifted "+" key; also accept the numpad variants.
+      if (e.key === "+" || e.key === "=" || e.code === "NumpadAdd") {
+        e.preventDefault();
+        inst.zoomIn({ duration: 120 });
+      } else if (e.key === "-" || e.key === "_" || e.code === "NumpadSubtract") {
+        e.preventDefault();
+        inst.zoomOut({ duration: 120 });
+      } else if (e.key === "0") {
+        e.preventDefault();
+        const vp = inst.getViewport();
+        inst.setViewport({ ...vp, zoom: 1 }, { duration: 120 });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const handlePaneMouseMove = React.useCallback(
     (event: React.MouseEvent) => {
@@ -636,6 +756,7 @@ export function Canvas({
       <EdgeLabelClickContext.Provider value={onEdgeLabelClick ?? null}>
       <EdgeReverseContext.Provider value={onEdgeReverse ?? null}>
       <div
+        ref={flowWrapperRef}
         className="w-full h-full bg-[var(--background)] relative"
         onMouseMoveCapture={handlePaneMouseMove}
       >
@@ -656,10 +777,12 @@ export function Canvas({
             if (target?.closest("[data-connector=\"true\"]")) return;
             onCanvasClick?.();
           }}
+          onMoveStart={() => setCanvasInteracting(true)}
           onMove={(_event, nextViewport) => {
             setViewport(nextViewport);
             onViewportChange?.(nextViewport);
           }}
+          onMoveEnd={() => setCanvasInteracting(false)}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView={fitViewEnabled}
@@ -670,8 +793,8 @@ export function Canvas({
           nodesConnectable={false}
           elementsSelectable={!readOnly}
           panOnScroll
-          selectionOnDrag
-          panOnDrag={[1, 2]} // Middle and right mouse buttons for panning
+          selectionOnDrag={!isMobile}
+          panOnDrag={isMobile ? [0, 1, 2] : [1, 2]}
           selectNodesOnDrag={false}
           autoPanOnNodeDrag={false}
           deleteKeyCode={["Backspace", "Delete"]}

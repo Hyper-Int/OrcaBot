@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v7-proxy-server
+// REVISION: browser-v11-status-kill-wait-reap
 package browser
 
 import (
@@ -44,8 +44,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v7-proxy-server
-const browserRevision = "browser-v7-proxy-server"
+// REVISION: browser-v10-no-sandbox-warning
+const browserRevision = "browser-v10-no-sandbox-warning"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -62,7 +62,7 @@ func NewController(workspace string) *Controller {
 // that redirects, XHR, and subresource loads are subject to the same
 // CheckAndHold approval flow as the initial navigation URL.
 // Loopback addresses bypass the proxy so the CDP debug connection is unaffected.
-// REVISION: browser-v7-proxy-server
+// REVISION: browser-v10-no-sandbox-warning
 func NewControllerWithEgress(workspace string, egressProxyPort int) *Controller {
 	return &Controller{workspace: workspace, egressProxyPort: egressProxyPort}
 }
@@ -74,6 +74,9 @@ func (c *Controller) Start() (Status, error) {
 	if c.running {
 		return c.statusLocked(), nil
 	}
+
+	// Perf: time the full cold browser bring-up (dominated by chromium boot).
+	startTime := time.Now()
 
 	if err := ensureBinary("chromium"); err != nil {
 		return Status{}, err
@@ -148,7 +151,11 @@ func (c *Controller) Start() (Status, error) {
 	webArgs := []string{
 		"--heartbeat", "30",
 		strconv.Itoa(wsPort),
-		fmt.Sprintf("localhost:%d", vncPort),
+		// 127.0.0.1, not "localhost": the VM's /etc/hosts may lack a localhost
+		// entry, in which case websockify's name resolution of "localhost:<port>"
+		// fails and it closes every VNC client with 1011 "Failed to connect to
+		// downstream server". x11vnc listens on 127.0.0.1, so target it directly.
+		fmt.Sprintf("127.0.0.1:%d", vncPort),
 	}
 	if _, err := os.Stat("/usr/share/novnc/vnc.html"); err == nil {
 		webArgs = append([]string{"--web", "/usr/share/novnc"}, webArgs...)
@@ -158,6 +165,11 @@ func (c *Controller) Start() (Status, error) {
 
 	chromiumArgs := []string{
 		"--no-sandbox",
+		// Suppress chromium's yellow "You are using an unsupported command-line
+		// flag: --no-sandbox" infobar (--disable-infobars does NOT hide this one in
+		// current chromium). --no-sandbox is required here (chromium runs as root in
+		// the VM), so the warning is noise that just clutters the browser-block view.
+		"--test-type",
 		"--disable-dev-shm-usage",
 		"--no-first-run",
 		"--no-default-browser-check",
@@ -180,7 +192,7 @@ func (c *Controller) Start() (Status, error) {
 	// Chromium runs as root and is outside the iptables UID range, so without
 	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
 	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
-	// REVISION: browser-v7-proxy-server
+	// REVISION: browser-v10-no-sandbox-warning
 	if c.egressProxyPort > 0 {
 		chromiumArgs = append(chromiumArgs,
 			"--proxy-server=http://127.0.0.1:"+strconv.Itoa(c.egressProxyPort),
@@ -239,9 +251,18 @@ func (c *Controller) Start() (Status, error) {
 	c.debugPort = debugPort
 	c.processes = processes
 	c.running = true
-	c.ready = waitForDebugReady(debugPort, 10*time.Second)
+	spawnElapsed := time.Since(startTime)
+	readyStart := time.Now()
+	// Short readiness budget under the lock — warm/fast browsers report ready right
+	// away; cold chromium boot (can exceed 20s) is picked up by the Status() re-probe
+	// instead of blocking Start() (and the mutex) for the whole boot.
+	c.ready = waitForDebugReady(debugPort, 3*time.Second)
 
-	log.Printf("browser started display=%d wsPort=%d vncPort=%d", display, wsPort, vncPort)
+	// Perf: spawn = time to launch all 4 processes; debugReady = time waiting for
+	// chromium's DevTools endpoint to answer; total = full cold bring-up.
+	log.Printf("[browser][perf] started display=%d wsPort=%d vncPort=%d spawn=%dms debugReady=%dms total=%dms ready=%t",
+		display, wsPort, vncPort,
+		spawnElapsed.Milliseconds(), time.Since(readyStart).Milliseconds(), time.Since(startTime).Milliseconds(), c.ready)
 	return c.statusLocked(), nil
 }
 
@@ -289,7 +310,11 @@ func shouldSuppressProcessLine(proc, line string) bool {
 		if strings.Contains(line, "ERROR:dbus/") ||
 			strings.Contains(line, "Failed to connect to the bus") ||
 			strings.Contains(line, "org.freedesktop.DBus") ||
-			strings.Contains(line, "org.freedesktop.UPower") {
+			strings.Contains(line, "org.freedesktop.UPower") ||
+			// GCM/push registration phones home to a retired Google endpoint and
+			// fails with DEPRECATED_ENDPOINT. Harmless — the sandbox never uses push.
+			strings.Contains(line, "google_apis/gcm") ||
+			strings.Contains(line, "DEPRECATED_ENDPOINT") {
 			return true
 		}
 	case "x11vnc":
@@ -352,6 +377,8 @@ func (c *Controller) Status() Status {
 				for _, p := range c.processes {
 					if p.Process != nil {
 						_ = p.Process.Kill()
+						// Reap so killed children don't linger as zombies (matches Stop()).
+						_, _ = p.Process.Wait()
 					}
 				}
 				c.processes = nil
@@ -360,6 +387,23 @@ func (c *Controller) Status() Status {
 			}
 			c.mu.Unlock()
 		}
+	}
+
+	// Re-evaluate readiness. c.ready may have been false at Start() time if chromium's
+	// DevTools hadn't answered within the short startup budget (cold boot can take
+	// >20s). Probe again here so the browser flips to ready on a later status poll,
+	// instead of staying stuck until an OpenURL call happens to set it.
+	c.mu.Lock()
+	stillRunning := c.running
+	alreadyReady := c.ready
+	debugPort := c.debugPort
+	c.mu.Unlock()
+	if stillRunning && !alreadyReady && debugPort > 0 && probeDebugReady(debugPort) {
+		c.mu.Lock()
+		if c.running && c.debugPort == debugPort {
+			c.ready = true
+		}
+		c.mu.Unlock()
 	}
 
 	c.mu.Lock()
@@ -574,6 +618,22 @@ func waitForPort(port int, timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
+}
+
+// probeDebugReady does a single quick check of chromium's DevTools endpoint.
+// Unlike waitForDebugReady (which loops until a deadline), this returns immediately,
+// so it's safe to call on every Status() poll without blocking.
+func probeDebugReady(port int) bool {
+	if port == 0 {
+		return false
+	}
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/version", port))
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode < 300
 }
 
 func waitForDebugReady(port int, timeout time.Duration) bool {

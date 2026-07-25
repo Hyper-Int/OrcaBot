@@ -2203,13 +2203,17 @@ export async function getAuditLog(
     return Response.json({ error: 'E79735: Terminal not found or does not belong to this dashboard' }, { status: 404 });
   }
 
+  // Clamp limit/offset to a finite, bounded page (a NaN would 500 on the D1 bind).
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 0), 1000) : 100;
+  const safeOffset = Number.isFinite(offset) ? Math.max(Math.trunc(offset), 0) : 0;
+
   const rows = await env.DB.prepare(`
     SELECT * FROM integration_audit_log
     WHERE dashboard_id = ? AND terminal_id = ? AND provider = ?
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
   `)
-    .bind(dashboardId, terminalId, provider, limit, offset)
+    .bind(dashboardId, terminalId, provider, safeLimit, safeOffset)
     .all();
 
   return Response.json({
@@ -2242,13 +2246,17 @@ export async function getDashboardAuditLog(
     return Response.json({ error: 'E79734: Not found or no access' }, { status: 404 });
   }
 
+  // Clamp limit/offset to a finite, bounded page (a NaN would 500 on the D1 bind).
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 0), 1000) : 100;
+  const safeOffset = Number.isFinite(offset) ? Math.max(Math.trunc(offset), 0) : 0;
+
   const rows = await env.DB.prepare(`
     SELECT * FROM integration_audit_log
     WHERE dashboard_id = ?
     ORDER BY created_at DESC
     LIMIT ? OFFSET ?
   `)
-    .bind(dashboardId, limit, offset)
+    .bind(dashboardId, safeLimit, safeOffset)
     .all();
 
   return Response.json({

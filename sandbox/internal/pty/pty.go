@@ -339,22 +339,32 @@ func (p *PTY) Close() error {
 	}
 	p.closed = true
 
-	// Kill the process if still running
+	// Kill the process if still running. Target the whole process group (negative
+	// PID) so agent children (node, chromium, etc.) die too — the PTY leader is a
+	// session/group leader via creack/pty, so pid == pgid. Fall back to the single
+	// process if it isn't a group leader.
 	if p.cmd.Process != nil {
-		p.cmd.Process.Kill()
+		pid := p.cmd.Process.Pid
+		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+			_ = p.cmd.Process.Kill()
+		}
 	}
 
-	// Return the pool slot only after cmd.Wait() has reaped the zombie.
+	// Reap the process so it doesn't linger as a zombie. Done() starts cmd.Wait()
+	// via doneOnce (idempotent). This MUST run in all modes — previously it was
+	// gated behind the pool-slot path, so non-pool PTYs (e.g. desktop, or any
+	// non-egress deployment) leaked a zombie on every delete.
+	doneCh := p.Done()
+
+	// For pool slots, return the slot only after cmd.Wait() has reaped the zombie.
 	// pool.Release() uses hasProcessesForUID(/proc scan) to decide whether the slot
-	// is clean; a zombie remains in /proc until waited on, so calling Release()
-	// before Wait() permanently contaminates the slot.
-	// Done() starts cmd.Wait() via doneOnce (idempotent); we wait for it here.
+	// is clean; a zombie remains in /proc until waited on, so releasing before the
+	// reap would permanently contaminate the slot.
 	if p.slotUID != 0 {
 		if pool := GetPool(); pool != nil {
 			uid := p.slotUID
-			doneCh := p.Done() // starts cmd.Wait() goroutine — idempotent
 			go func() {
-				<-doneCh        // zombie reaped; /proc entry gone
+				<-doneCh // zombie reaped; /proc entry gone
 				pool.Release(uid)
 			}()
 		}

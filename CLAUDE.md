@@ -41,7 +41,7 @@ This is non-negotiable. Never speculate about deployment issues - add logs that 
 - `controlplane` — Cloudflare Worker control plane
 - `sandbox` — Go sandbox server
 - `bridge` — Node.js messaging bridge service (WhatsApp via Baileys), deployed on Fly
-- `desktop` — Tauri native desktop app (bundles entire stack locally with VM sandbox)
+- `desktop` — Tauri native desktop app (bundles entire stack locally with VM sandbox); also ships the `orcabot` CLI (a 2nd binary in the same crate) that runs the stack headlessly and drives it from the terminal
 - `e2e` — Playwright end-to-end tests (external, against running instance)
 
 ## App Guides
@@ -86,6 +86,7 @@ npx wrangler dev
 - Frontend never talks directly to sandbox; all traffic goes through the control plane
 - Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`
 - Internal sandbox auth uses `SANDBOX_INTERNAL_TOKEN` (do not reuse Cloudflare API keys)
+- **Personal access tokens (PATs)** authenticate the `orcabot` CLI / scripts against a remote control plane: prefix `orca_pat_`, sent as `Authorization: Bearer`, only the SHA-256 hash is stored (`api_tokens` table). Middleware is prefix-gated (no collision with PTY JWT bearers) and **method-gated** — a PAT cannot mint/list/revoke other PATs (`rejectPatAuth`). See `controlplane/CLAUDE.md`.
 
 ### Secrets Protection (Security-Critical)
 Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
@@ -100,7 +101,7 @@ Orcabot has a layered defense system to prevent LLMs from exfiltrating API keys:
 
 5. **PTY Token Fail-Closed** - `INTERNAL_API_TOKEN` must be non-empty. If it's missing, PTY token verification rejects all tokens rather than accepting them.
 
-6. **Network Egress Proxy** ("Little Snitch for AI Agents") - An HTTP/HTTPS forward proxy on `localhost:8083` intercepts all outbound network requests from PTY processes. Known domains (package registries, git hosting, CDNs, LLM APIs) are allowed automatically. Unknown domains are **held** (the connection hangs) while a toast + approval dialog is shown to the user. Options: Allow Once, Always Allow, or Deny. 60-second timeout = deny (fail-closed). User-approved "Always Allow" domains persist per-dashboard in D1.
+6. **Network Egress Proxy** ("Little Snitch for AI Agents") - An HTTP/HTTPS forward proxy on `localhost:8083` intercepts all outbound network requests from PTY processes. Known domains (package registries, git hosting, CDNs, LLM APIs) are allowed automatically. Unknown domains are **held** (the connection hangs) while a toast + approval dialog is shown to the user. Options: Allow Once, Always Allow, Deny, or Deny Always. 60-second timeout = deny (fail-closed). User-approved "Always Allow" domains persist per-dashboard in D1; "Deny Always" domains (e.g. trackers) persist per-dashboard in D1 too (`egress_blocklist`) and are then blocked immediately without prompting (deny takes precedence over the allowlist).
 
 Security invariants (non-negotiable):
 - Broker configs keyed by `sessionID:provider` — never global provider name
@@ -209,6 +210,16 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 - PTY cwd is set to the session workspace
 - Multiple PTYs per sandbox with turn-taking
 
+### Desktop, the `orcabot` CLI & Surface Switching
+- The `desktop` Tauri app bundles the whole stack locally: control plane on `workerd`, a SQLite "D1" shim, and a sandbox VM (Apple Virtualization.framework on macOS / QEMU on Linux).
+- The same crate ships a 2nd binary, **`orcabot`** — a terminal CLI that boots the stack *headlessly* and drives it (interactive TUI + scriptable subcommands: `up`/`down`/`status`/`exec`/`ls`/`tail`/`new`/`connect`/`attach`, plus `export`/`import`/`push`/`pull`).
+- **Owned-session lifecycle**: whoever starts the stack tears it down on exit; there is no always-on daemon. `up`/`down` are the explicit persist-mode escape hatch.
+- **Surface switching** moves a live session between `cli` ↔ `desktop` ↔ `web`. The GUI's "Switch to CLI" button (Tauri `switch_to_cli` command) hands off to the terminal; the TUI can launch the desktop GUI. Desktop boot, the vsock bridges, `/debug/exec`, and the full CLI reference live in `desktop/CLAUDE.md`.
+
+### Session Packaging
+- A dashboard + its workspace can be packaged for transfer. **Locally**: `orcabot export`/`import` produce/consume an `.orcabot` bundle. **Remotely**: `orcabot push`/`pull` sync against a remote control plane, authenticated with a PAT.
+- File transfer goes through the control plane file proxy (`GET`/`PUT /sessions/:id/file`, `POST /sessions/:id/workspace/import`), never directly to a sandbox. Pull writes are path-guarded (`safe_workspace_dest`) so a malicious remote can't escape the workspace.
+
 ### Browser Block
 - Browser block checks embeddability via control plane `/embed-check`
 - If embedding is blocked, UI collapses to a small "open in new tab" panel
@@ -221,6 +232,19 @@ sandbox so it can broadcast `agent_stopped` WebSocket events to all connected cl
 ### Subagents
 - Saved subagents persist per user in control plane
 - Catalog lives in `frontend/src/data/claude-subagents.json`
+
+### Model Selection (OpenRouter)
+- Per-terminal model picker in the terminal settings dropdown (Claude/Codex/OpenCode/Droid/Gemini)
+- Default = harness's native API; OpenRouter routes through the local secrets broker. Three paths, by harness:
+  - **OpenCode/Droid**: OpenAI-compatible `openrouter` provider via `OPENAI_BASE_URL`
+  - **Codex**: per-invocation `-c` CLI flags injected by `buildCodexOpenRouterCommand` (`model_provider`/`base_url`=broker/`wire_api="responses"`) — the Rust Codex CLI ignores `OPENAI_BASE_URL`/`OPENAI_MODEL`
+  - **Claude Code**: Anthropic-compatible `openrouter-anthropic` provider via `ANTHROPIC_BASE_URL`
+  - **Gemini**: official CLI GATEWAY auth → local translation shim (`sandbox/internal/geminishim/`, port 8086) that converts the Gemini wire format to OpenAI Chat Completions → broker → OpenRouter
+- Selection lives in `terminalContent.modelSelection` (provider/model + catalog-resolved `contextWindow`/`maxOutputTokens`) and triggers the existing "restart to apply" banner. Limits flow frontend→controlplane→sandbox to set Codex's `-c model_context_window`/`model_max_output_tokens`.
+- Catalog: `frontend/src/data/openrouter-models.json` (curated, per-model pricing + context + `maxOutputTokens` + compatibleHarnesses)
+- Drift check: `npm run check-catalogs` validates pricing, context length, and max output tokens vs upstream (also runs weekly via `.github/workflows/check-catalogs.yml`)
+- Upstream provider errors (OpenRouter 429/402/401/5xx) are detected in the broker and surfaced as a dashboard toast via a `model_provider_error` WS event (see `classifyProviderError` in `sandbox/internal/broker/secrets_broker.go`)
+- Key files: `sandbox/internal/sessions/model_selection.go`, `sandbox/internal/geminishim/`, `sandbox/internal/broker/providers.go`, `frontend/src/components/blocks/TerminalBlock.tsx` (Model panel)
 
 ### Workspace Sidebar
 - File tree is populated via control plane proxy of sandbox filesystem APIs

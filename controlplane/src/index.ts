@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v15-linked-dashboards
-console.log(`[controlplane] REVISION: controlplane-v15-linked-dashboards loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v18-idor-input-validation
+console.log(`[controlplane] REVISION: controlplane-v18-idor-input-validation loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -11,7 +11,7 @@ console.log(`[controlplane] REVISION: controlplane-v15-linked-dashboards loaded 
  */
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
-import { authenticate, requireAuth, requireInternalAuth, validateMcpAuth, type AuthContext } from './auth/middleware';
+import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, devAuthSurfaceTrusted, type AuthContext } from './auth/middleware';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -26,6 +26,7 @@ import { nearestFlyRegion } from './sessions/handler';
 import * as recipes from './recipes/handler';
 import * as schedules from './schedules/handler';
 import * as subagents from './subagents/handler';
+import * as modelProviders from './model-providers/handler';
 import * as secrets from './secrets/handler';
 import * as agentSkills from './agent-skills/handler';
 import * as mcpTools from './mcp-tools/handler';
@@ -47,9 +48,11 @@ import { isAdminEmail } from './auth/admin';
 import { getSubscriptionStatus, hasActiveAccess, isExemptEmail } from './subscriptions/check';
 import * as subscriptions from './subscriptions/handler';
 import { buildSessionCookie, createUserSession } from './auth/sessions';
+import { createApiToken, listApiTokens, revokeApiToken, revokeSelfApiToken } from './auth/api-token';
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
+import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
 // Export Durable Objects
@@ -59,7 +62,7 @@ export { ASRStreamProxy } from './asr/ASRStreamProxy';
 
 // CORS headers (base - origin is added dynamically)
 const CORS_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
-const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name';
+const CORS_ALLOWED_HEADERS = 'Content-Type, X-User-ID, X-User-Email, X-User-Name, X-Orcabot-Surface';
 
 /**
  * Parse allowed origins from env. Returns null if all origins allowed (dev mode).
@@ -352,6 +355,8 @@ async function prоxySandbоxWebSоcket(
 ): Promise<Response> {
   const sandboxUrlValue = sandboxUrl(env, `/sessions/${sandboxSessionId}/ptys/${ptyId}/ws`);
   sandboxUrlValue.searchParams.set('user_id', userId);
+  const requestUrl = new URL(request.url);
+  const origin = request.headers.get('Origin') || '';
 
   const headers = sandboxHeaders(env, request.headers, machineId);
   headers.delete('Host');
@@ -359,14 +364,45 @@ async function prоxySandbоxWebSоcket(
   const body = ['POST', 'PUT', 'PATCH'].includes(request.method)
     ? request.clone().body
     : undefined;
-  const proxyRequest = new Request(sandboxUrlValue.toString(), {
+  const makeRequest = () => new Request(sandboxUrlValue.toString(), {
     method: request.method,
     headers,
     body,
     redirect: 'manual',
   });
 
-  return fetch(proxyRequest);
+  // REVISION: ws-proxy-v2-readiness-retry-no-premature-reconcile
+  // Readiness retry: right after createPty — or when an autostop:suspend machine
+  // is resuming — the PTY isn't registered on the sandbox yet, so the upstream
+  // upgrade 404s. That's a *timing* miss, not a dead PTY. Retry the upgrade for a
+  // few seconds so the client gets a clean 101 instead of a 404 that triggers a
+  // disruptive session recreate (the "stuck connecting" / "disappearing terminal"
+  // first-PTY flake). Only a bodyless (GET) upgrade is safe to replay.
+  let response = await fetch(makeRequest());
+  let attempts = 0;
+  const maxRetries = body ? 0 : 6; // ~3s total (6 × 500ms)
+  while (response.status === 404 && attempts < maxRetries) {
+    attempts++;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    response = await fetch(makeRequest());
+  }
+
+  if (response.status !== 101) {
+    console.warn(
+      `[ws-proxy] upstream PTY WS failed status=${response.status} attempts=${attempts} dashboardPath=${requestUrl.pathname} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+    );
+    // Do NOT reconcile-to-stopped here. A 404 that's a genuinely dead PTY vs. one
+    // that's merely not-ready-yet is indistinguishable at this layer, and the sole
+    // caller already reconciles WITH a creation-age grace period. The previous
+    // unconditional UPDATE ran *before* that grace check and marked freshly-created
+    // sessions stopped during the provisioning race — defeating the grace period
+    // and causing the first-PTY disappear/stuck bug.
+  } else {
+    console.log(
+      `[ws-proxy] upstream PTY WS upgraded attempts=${attempts} sandboxSessionId=${sandboxSessionId} ptyId=${ptyId} machineId=${machineId || ''} origin=${origin}`
+    );
+  }
+  return response;
 }
 
 async function prоxySandbоxControlWebSоcket(
@@ -433,6 +469,15 @@ async function prоxySandbоxWebSоcketPath(
   return fetch(proxyRequest);
 }
 
+async function resolveDashboardSandboxForBrowser(
+  env: EnvWithDriveCache,
+  dashboardId: string,
+  userId: string,
+  preferredRegion?: string
+): Promise<{ sandboxSessionId: string; sandboxMachineId: string } | Response> {
+  return sessions.ensureDashbоardSandbоx(env, dashboardId, userId, preferredRegion);
+}
+
 type EnvWithBindings = EnvWithDb & EnvWithDriveCache;
 
 async function getSessiоnWithAccess(
@@ -484,6 +529,15 @@ export default {
         return cоrsRespоnse(Response.json(
           { error: 'Desktop feature disabled', message: (error as Error).message },
           { status: 501 }
+        ), origin, allowedOrigins);
+      }
+      // Malformed request body (SyntaxError from request.json()) is client error →
+      // 400, not 500. Logged so a stray internal parse error isn't silent.
+      if (error instanceof SyntaxError) {
+        console.warn('Request body parse error (400):', error.message);
+        return cоrsRespоnse(Response.json(
+          { error: 'E40001: Invalid JSON body' },
+          { status: 400 }
         ), origin, allowedOrigins);
       }
       console.error('Request error:', error);
@@ -656,6 +710,11 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         volumeId,
         image,
         region,
+        // Warm pool stays genuinely warm — Fly must NOT auto-stop idle warm machines,
+        // otherwise they cold-cycle (stop→autostart→stop) and a claim hits a stopped
+        // machine that must cold-boot ("stuck connecting"). The pool is small
+        // (WARM_POOL_TARGET) so the always-on cost is bounded.
+        autostop: 'off',
         env: {
           SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
@@ -796,6 +855,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   const path = url.pathname;
   const method = request.method;
 
+  // GET /releases/latest - latest desktop release, edge-cached from GitHub
+  // (public, no auth — powers the on-site /download page)
+  if (path === '/releases/latest' && method === 'GET') {
+    return releases.getLatest();
+  }
+
   // Health check - uses cached status (no outbound calls, prevents amplification)
   if (path === '/health' && method === 'GET') {
     let sandboxHealth;
@@ -850,6 +915,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     try {
       await initializeDatabase(env.DB);
+      // Seed curated starter templates on desktop (no-op on cloud + after first run).
+      await templates.seedStarterTemplates(env);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[init-db] FAILED:', msg, err);
@@ -951,6 +1018,18 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // GET /auth/google/callback - Google OAuth callback
   if (segments[0] === 'auth' && segments[1] === 'google' && segments[2] === 'callback' && method === 'GET') {
     return googleAuth.callbackGoogle(request, env);
+  }
+
+  // POST /auth/desktop/exchange - desktop app exchanges the one-time code it
+  // received on its loopback listener (from the OAuth callback redirect) for a PAT.
+  if (segments[0] === 'auth' && segments[1] === 'desktop' && segments[2] === 'exchange' && method === 'POST') {
+    return googleAuth.exchangeDesktopCode(request, env);
+  }
+
+  // POST /auth/api-token/revoke-self - a PAT revokes ITSELF (desktop logout). Self-
+  // authorized by the presented bearer; can only revoke the token it presents.
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments[2] === 'revoke-self' && method === 'POST') {
+    return revokeSelfApiToken(request, env);
   }
 
   // POST /register-interest - Register interest (no auth required)
@@ -1106,24 +1185,97 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return authLogout.logout(request, env);
   }
 
-  // POST /auth/dev/session - create session cookie in dev mode
+  // POST /auth/dev/session - mint a session cookie for the DEV-AUTH-HEADER identity.
+  // Deliberately does NOT use the cookie-first `auth`: the desktop app calls this
+  // to say "I'm now this user" (via X-User-* headers), and if we minted from an
+  // existing (stale) cookie instead, switching identity — Free ↔ Google ↔ token —
+  // would re-mint the OLD user and the session would get stuck. Gated by the same
+  // surface token as dev-auth so a VM process can't spoof it.
   if (segments[0] === 'auth' && segments[1] === 'dev' && segments[2] === 'session' && method === 'POST') {
     if (env.DEV_AUTH_ENABLED !== 'true') {
       return Response.json({ error: 'E79406: Dev auth disabled' }, { status: 403 });
     }
+    if (!devAuthSurfaceTrusted(request, env)) {
+      return Response.json({ error: 'E79407: Untrusted surface' }, { status: 403 });
+    }
 
-    const authError = requireAuth(auth);
-    if (authError) return authError;
+    const headerUserId = request.headers.get('X-User-ID');
+    const userEmail = request.headers.get('X-User-Email');
+    const userName = request.headers.get('X-User-Name') || 'Anonymous';
+    if (!headerUserId || !userEmail) {
+      return Response.json({ error: 'E79408: Missing dev-auth identity' }, { status: 400 });
+    }
 
-    const session = await createUserSession(env, auth.user!.id);
+    // Dev-auth is email-keyed: resolve an existing user by email (reconciling a
+    // client-generated id), else create one — same rule as authenticateDevMode.
+    const existing = await env.DB
+      .prepare('SELECT id FROM users WHERE email = ?')
+      .bind(userEmail)
+      .first<{ id: string }>();
+    let resolvedId = existing?.id;
+    if (!resolvedId) {
+      const now = new Date().toISOString();
+      await env.DB
+        .prepare('INSERT INTO users (id, email, name, created_at, trial_started_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(headerUserId, userEmail, userName, now, now)
+        .run();
+      resolvedId = headerUserId;
+    }
+
+    const session = await createUserSession(env, resolvedId);
     const cookie = buildSessionCookie(request, session.id, session.expiresAt);
 
-    return new Response(null, {
-      status: 204,
+    return new Response(JSON.stringify({ id: resolvedId, email: userEmail }), {
+      status: 200,
       headers: {
+        'Content-Type': 'application/json',
         'Set-Cookie': cookie,
       },
     });
+  }
+
+  // Personal access tokens for the CLI (orcabot push/pull). Issuance sits behind
+  // the normal user auth (CF Access in prod, dev-auth locally). Paywall-exempt
+  // (auth/*) — a PAT inherits the user's subscription when it's later used.
+
+  // POST /auth/api-token - mint a PAT (plaintext returned once)
+  if (segments[0] === 'auth' && segments[1] === 'api-token' && segments.length === 2 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    // A PAT must not mint another PAT (else a leaked token survives revocation).
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    let body: { name?: string; ttlDays?: number } = {};
+    try {
+      body = (await request.json()) as { name?: string; ttlDays?: number };
+    } catch {
+      // empty body is fine — use defaults
+    }
+    const name = (body.name || 'cli').toString().slice(0, 100);
+    const ttlDays = typeof body.ttlDays === 'number' ? body.ttlDays : undefined;
+    const { token, meta } = await createApiToken(env, auth.user!.id, name, ttlDays);
+    return Response.json({ token, ...meta }, { status: 201 });
+  }
+
+  // GET /auth/api-tokens - list PAT metadata (no values)
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 2 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const tokens = await listApiTokens(env, auth.user!.id);
+    return Response.json({ tokens });
+  }
+
+  // DELETE /auth/api-tokens/:id - revoke a PAT
+  if (segments[0] === 'auth' && segments[1] === 'api-tokens' && segments.length === 3 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+    const ok = await revokeApiToken(env, auth.user!.id, segments[2]);
+    if (!ok) return Response.json({ error: 'E79410: Token not found' }, { status: 404 });
+    return new Response(null, { status: 204 });
   }
 
   // POST /dev/workspace/clear - dev-only workspace reset
@@ -1182,6 +1334,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError && env.DEV_AUTH_ENABLED !== 'true') {
       return authError;
     }
+    // embed-check makes a server-side GET of a caller-supplied URL — an
+    // exfil/SSRF-shaped surface. A leaked PAT (full user authority) must not be
+    // able to drive it, and private hosts are already blocked below.
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
 
     const targetUrlParam = url.searchParams.get('url');
     if (!targetUrlParam) {
@@ -1284,7 +1441,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 1 && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as { name: string; templateId?: string };
+    const data = await request.json() as { name: string; templateId?: string; cloudId?: string };
     return dashboards.createDashbоard(env, auth.user!.id, data, ctx, preferredRegion);
   }
 
@@ -1333,7 +1490,21 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 3 && segments[2] === 'items' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as Partial<DashboardItem>;
+    let data: Partial<DashboardItem>;
+    try {
+      data = await request.json() as Partial<DashboardItem>;
+    } catch {
+      return Response.json({ error: 'E79305: Invalid JSON body' }, { status: 400 });
+    }
+    const VALID_ITEM_TYPES = new Set([
+      'note', 'todo', 'terminal', 'link', 'browser', 'workspace', 'prompt', 'schedule',
+      'decision', 'gmail', 'calendar', 'contacts', 'sheets', 'forms', 'slack', 'discord',
+      'telegram', 'whatsapp', 'teams', 'matrix', 'google_chat', 'twitter', 'outlook',
+      'outlook_calendar', 'benchmark',
+    ]);
+    if (!data || typeof data.type !== 'string' || !VALID_ITEM_TYPES.has(data.type)) {
+      return Response.json({ error: 'E79306: Missing or invalid item type' }, { status: 400 });
+    }
     return dashboards.upsertItem(env, segments[1], auth.user!.id, data);
   }
 
@@ -1357,6 +1528,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json() as { sourceItemId: string; targetItemId: string; sourceHandle?: string; targetHandle?: string };
+    if (typeof data?.sourceItemId !== 'string' || typeof data?.targetItemId !== 'string' || !data.sourceItemId || !data.targetItemId) {
+      return Response.json({ error: 'E40002: sourceItemId and targetItemId are required' }, { status: 400 });
+    }
     return dashboards.createEdge(env, segments[1], auth.user!.id, data);
   }
 
@@ -1509,7 +1683,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return egress.handleApproveEgress(request, env, segments[1], auth.user!.id);
   }
 
-  // GET /dashboards/:id/egress/allowlist - List user-approved domains
+  // GET /dashboards/:id/egress/allowlist - List canonical defaults and user-approved domains
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'allowlist' && method === 'GET') {
     const authError = requireAuth(auth);
     if (authError) return authError;
@@ -1542,6 +1716,39 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return egress.handleRevokeEgressDomain(request, env, segments[1], segments[4]);
   }
 
+  // DELETE /dashboards/:id/egress/blocklist/:entryId - Lift a permanent deny ("deny always")
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'egress' && segments[3] === 'blocklist' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79886: Not found or no access' }, { status: 404 });
+    return egress.handleRevokeEgressDenied(request, env, segments[1], segments[4]);
+  }
+
+  // POST /dashboards/:id/egress/blocked-defaults - Override a built-in default pattern
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'blocked-defaults' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleBlockDefault(request, env, segments[1], auth.user!.id);
+  }
+
+  // DELETE /dashboards/:id/egress/blocked-defaults/:pattern - Restore a built-in default pattern
+  if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'egress' && segments[3] === 'blocked-defaults' && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const access = await env.DB.prepare(
+      'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ? AND role IN (\'owner\', \'editor\')'
+    ).bind(segments[1], auth.user!.id).first();
+    if (!access) return Response.json({ error: 'E79873: Not found or no access' }, { status: 404 });
+    return egress.handleUnblockDefault(request, env, segments[1], decodeURIComponent(segments[4]));
+  }
+
   // GET /dashboards/:id/egress/audit - List recent egress decisions
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'egress' && segments[3] === 'audit' && method === 'GET') {
     const authError = requireAuth(auth);
@@ -1569,6 +1776,9 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     const data = await request.json() as { email: string; role: 'editor' | 'viewer' };
+    if (typeof data?.email !== 'string' || !data.email.trim()) {
+      return Response.json({ error: 'E40003: email is required' }, { status: 400 });
+    }
     return members.addMember(env, segments[1], auth.user!.id, data);
   }
 
@@ -1630,14 +1840,31 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 5 && segments[2] === 'terminals' && segments[4] === 'integrations' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
-    const data = await request.json() as {
+    let data: {
       provider: string;
       userIntegrationId?: string;
       policy?: Record<string, unknown>;
       accountLabel?: string;
       highRiskConfirmations?: string[];
     };
-    return integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    try {
+      data = await request.json() as typeof data;
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    if (!data || typeof data.provider !== 'string' || !data.provider) {
+      return Response.json({ error: 'Missing or invalid provider' }, { status: 400 });
+    }
+    try {
+      return await integrationPolicies.attachIntegration(env, segments[1], segments[3], auth.user!.id, data as Parameters<typeof integrationPolicies.attachIntegration>[4]);
+    } catch (e) {
+      // attachIntegration throws on an unknown provider (unguarded switch) — that's
+      // bad input, not a server fault. Surface as 400 rather than 500.
+      return Response.json(
+        { error: `Invalid integration request: ${e instanceof Error ? e.message : 'unknown'}` },
+        { status: 400 }
+      );
+    }
   }
 
   // PUT /dashboards/:id/terminals/:terminalId/integrations/:provider - Update integration policy
@@ -1863,6 +2090,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'POST google/drive/sync/large': integrations.syncGооgleDriveLargeFiles,
       'GET github/connect': integrations.cоnnectGithub,
       'GET github/callback': (request, env) => integrations.callbackGithub(request, env),
+      'POST github/device/start': integrations.deviceStartGithub,
+      'POST github/device/poll': integrations.devicePollGithub,
       'GET github': integrations.getGithubIntegratiоn,
       'GET github/repos': integrations.getGithubRepоs,
       'GET github/history': integrations.getGithubRepoHistory,
@@ -2012,6 +2241,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       'GET outlook/callback': integrations.callbackOutlook,
       'GET outlook': integrations.getOutlookIntegration,
       'DELETE outlook': integrations.disconnectOutlook,
+      'POST outlook/setup': integrations.setupOutlookMirror,
+      'DELETE outlook/mirror': integrations.unlinkOutlookMirror,
+      'GET outlook/status': integrations.getOutlookStatus,
+      'POST outlook/sync': integrations.syncOutlookMirror,
+      'GET outlook/messages': integrations.getOutlookMessages,
+      'POST outlook/action': integrations.performOutlookAction,
       // Outlook Calendar (OAuth — Microsoft Graph Calendar API)
       'GET outlook/calendar/connect': integrations.connectOutlookCalendar,
       'GET outlook/calendar/callback': integrations.callbackOutlookCalendar,
@@ -2046,6 +2281,28 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = requireAuth(auth);
     if (authError) return authError;
     return subagents.deleteSubagent(env, auth.user!.id, segments[1]);
+  }
+
+  // GET /model-providers - List saved custom model endpoints
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.listModelProviders(env, auth.user!.id);
+  }
+
+  // POST /model-providers - Create custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 1 && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    const data = await request.json() as Record<string, unknown>;
+    return modelProviders.createModelProvider(env, auth.user!.id, data);
+  }
+
+  // DELETE /model-providers/:id - Delete custom model endpoint
+  if (segments[0] === 'model-providers' && segments.length === 2 && method === 'DELETE') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return modelProviders.deleteModelProvider(env, auth.user!.id, segments[1]);
   }
 
   // DELETE /secrets/:id - Delete secret
@@ -2277,16 +2534,15 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
     }
 
-    const sandbox = await env.DB.prepare(`
-      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
-    if (!sandbox?.sandbox_session_id) {
-      return Response.json({ error: 'E79816: Browser session not found' }, { status: 404 });
+    const sandboxInfo = await resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion);
+    if (sandboxInfo instanceof Response) {
+      return sandboxInfo;
     }
+    const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
 
     const suffix = segments.slice(3).join('/');
-    const path = `/sessions/${sandbox.sandbox_session_id}/browser/${suffix}`;
-    return prоxySandbоxRequest(request, env, path, sandbox.sandbox_machine_id);
+    const path = `/sessions/${sandboxSessionId}/browser/${suffix}`;
+    return prоxySandbоxRequest(request, env, path, sandboxMachineId);
   }
 
   // GET /dashboards/:id/browser/* - Proxy browser UI
@@ -2320,17 +2576,20 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       }
     }
 
-    const sandbox = await env.DB.prepare(`
-      SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(segments[1]).first<{ sandbox_session_id: string; sandbox_machine_id: string }>();
-    if (!sandbox?.sandbox_session_id) {
-      return Response.json({ error: 'E79816: Browser session not found' }, { status: 404 });
+    if (allowDevBypass) {
+      return Response.json({ error: 'E79818: Browser dev bypass requires authenticated user' }, { status: 401 });
     }
+
+    const sandboxInfo = await resolveDashboardSandboxForBrowser(env, segments[1], auth.user!.id, preferredRegion);
+    if (sandboxInfo instanceof Response) {
+      return sandboxInfo;
+    }
+    const { sandboxSessionId, sandboxMachineId } = sandboxInfo;
 
     const suffix = segments.slice(3).join('/');
     const path = suffix
-      ? `/sessions/${sandbox.sandbox_session_id}/browser/${suffix}`
-      : `/sessions/${sandbox.sandbox_session_id}/browser`;
+      ? `/sessions/${sandboxSessionId}/browser/${suffix}`
+      : `/sessions/${sandboxSessionId}/browser`;
 
     const upgradeHeader = request.headers.get('Upgrade');
     if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
@@ -2338,7 +2597,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         request,
         env,
         path,
-        sandbox.sandbox_machine_id
+        sandboxMachineId
       );
     }
 
@@ -2346,7 +2605,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       request,
       env,
       path,
-      sandbox.sandbox_machine_id
+      sandboxMachineId
     );
 
     if (proxyResponse.status === 101) {
@@ -2361,6 +2620,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     }
     headers.delete('X-Frame-Options');
     return framedResponse;
+  }
+
+  // GET /dashboards/:id/sandbox/status - Read-only VM status for the traffic light
+  if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'sandbox' && segments[3] === 'status' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    return sessions.getDashbоardSandbоxStatus(env, segments[1], auth.user!.id);
   }
 
   // GET /dashboards/:id/metrics - Dashboard-scoped sandbox metrics
@@ -2510,6 +2776,75 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     );
   }
 
+  // GET /sessions/:id/file - Read a single file's content from the sandbox workspace.
+  // (Mirror of the list/delete proxies above. Used by `orcabot pull` to fetch
+  // workspace files over the API when the sandbox is remote and not host-mounted.)
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'GET') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // PUT /sessions/:id/file - Write a single file into the sandbox workspace.
+  // Owner-only (like DELETE). Used by `orcabot push` to upload workspace files
+  // over the API when the sandbox is remote and not host-mounted.
+  if (segments[0] === 'sessions' && segments.length === 3 && segments[2] === 'file' && method === 'PUT') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/file`,
+      session.sandbox_machine_id as string
+    );
+  }
+
+  // POST /sessions/:id/workspace/import - bulk-extract a tar.gz into the workspace.
+  // Owner-only (writes files). Used by `orcabot push` to upload the whole workspace
+  // in one request instead of one PUT per file.
+  if (segments[0] === 'sessions' && segments.length === 4 && segments[2] === 'workspace' && segments[3] === 'import' && method === 'POST') {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+
+    const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
+
+    if (!session) {
+      return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
+    }
+    if (session.owner_user_id !== auth.user!.id) {
+      return Response.json({ error: 'E79738: Only the owner can write files' }, { status: 403 });
+    }
+
+    return prоxySandbоxRequest(
+      request,
+      env,
+      `/sessions/${session.sandbox_session_id as string}/workspace/import`,
+      session.sandbox_machine_id as string
+    );
+  }
+
   // GET /users/me - Get current user (dev auth bootstrap)
   if (segments[0] === 'users' && segments.length === 2 && segments[1] === 'me' && method === 'GET') {
     const authError = requireAuth(auth);
@@ -2589,22 +2924,45 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // WebSocket /sessions/:id/ptys/:ptyId/ws - Terminal streaming (proxied)
   if (segments[0] === 'sessions' && segments.length === 5 && segments[2] === 'ptys' && segments[4] === 'ws' && method === 'GET') {
+    const wsOrigin = request.headers.get('Origin') || '';
+    const cookieHeader = request.headers.get('Cookie') || '';
+    const hasSessionCookie = cookieHeader.includes('orcabot_session=');
+    const hasCfAccessCookie = cookieHeader.includes('CF_Authorization=');
+    const hasCfAccessJwtHeader = Boolean(request.headers.get('Cf-Access-Jwt-Assertion'));
+    const upgradeHeader = request.headers.get('Upgrade') || '';
+    const connectionHeader = request.headers.get('Connection') || '';
+    const requestedSessionId = segments[1];
+    const requestedPtyId = segments[3];
     const authError = requireAuth(auth);
-    if (authError) return authError;
+    if (authError) {
+      console.warn(
+        `[pty-ws] auth rejected sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} upgrade=${upgradeHeader} connection=${connectionHeader} isAuthenticated=${auth.isAuthenticated} userId=${auth.user?.id || ''}`
+      );
+      return authError;
+    }
     // Subscription gate — PTY WS is GET so the centralized POST gate doesn't cover it
     const ptySkipBilling = env.DEV_AUTH_ENABLED === 'true'
       || (env.AUTH_LOGIN_RESTRICTED === 'true' && isExemptEmail(env, auth.user!.email));
     if (!ptySkipBilling && !(await hasActiveAccess(env, auth.user!.id, auth.user!.email, auth.user!.createdAt))) {
+      console.warn(
+        `[pty-ws] subscription rejected sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'Subscription required', code: 'SUBSCRIPTION_REQUIRED' }, { status: 403 });
     }
 
     const session = await getSessiоnWithAccess(env, segments[1], auth.user!.id);
 
     if (!session) {
+      console.warn(
+        `[pty-ws] session lookup failed sessionId=${requestedSessionId} ptyId=${requestedPtyId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'E79737: Session not found or no access' }, { status: 404 });
     }
 
     if (session.pty_id !== segments[3]) {
+      console.warn(
+        `[pty-ws] pty mismatch sessionId=${requestedSessionId} requestedPtyId=${requestedPtyId} actualPtyId=${session.pty_id as string} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} userId=${auth.user!.id}`
+      );
       return Response.json({ error: 'E79739: PTY not found' }, { status: 404 });
     }
 
@@ -2625,6 +2983,10 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const proxyUserId = session.owner_user_id === auth.user!.id
       ? auth.user!.id
       : '';
+
+    console.log(
+      `[pty-ws] proxy start sessionId=${requestedSessionId} ptyId=${requestedPtyId} sandboxSessionId=${session.sandbox_session_id as string} machineId=${session.sandbox_machine_id as string} ownerUserId=${session.owner_user_id as string} authUserId=${auth.user!.id} proxyUserId=${proxyUserId} origin=${wsOrigin} hasSessionCookie=${hasSessionCookie} hasCfAccessCookie=${hasCfAccessCookie} hasCfAccessJwtHeader=${hasCfAccessJwtHeader} upgrade=${upgradeHeader} connection=${connectionHeader}`
+    );
 
     const proxyResponse = await prоxySandbоxWebSоcket(
       request,
@@ -2692,6 +3054,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
         status: 101,
         webSocket: client,
       });
+    }
+
+    if (proxyResponse.status !== 101) {
+      console.warn(
+        `[pty-ws] proxy response status=${proxyResponse.status} sessionId=${requestedSessionId} ptyId=${requestedPtyId} sandboxSessionId=${session.sandbox_session_id as string} origin=${wsOrigin}`
+      );
     }
 
     return proxyResponse;

@@ -10,9 +10,12 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+*.p12
+*.p8
 secrets.json
 credentials.json
 .watermark-lint.sh
+desktop/.dev-secrets-encryption-key
 
 # Rust/Tauri
 desktop/app/src-tauri/target/
@@ -50,3 +53,30 @@ e2e/node_modules/
 
 # Claude Code settings
 .claude/
+
+# Local dev scratch / artifacts at repo root (anchored to root so they don't
+# shadow tracked assets in subdirs, e.g. frontend/public/*.png, *.mp4).
+# Screen recordings / scratch media
+/*.mkv
+/*.mov
+/*.mp4
+/*.webm
+/*.png
+# Scratch plans / docs
+/PLAN-*.md
+/EGRESS_HARDENING.md
+/GMAIL.md
+# Local logs / scratch output
+/logs/
+/sandboxlogs.txt
+/reference/
+# Local-only scripts and root node scratch
+/deploy_dev.sh
+/package.json
+/package-lock.json
+
+# Planning docs — keep locally, never publish to the repo
+/PLAN-*
+# Python bytecode (interpreter-generated)
+__pycache__/
+*.pyc

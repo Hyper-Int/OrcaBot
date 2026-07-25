@@ -133,7 +133,7 @@ async function installPerformanceObservers(page: Page): Promise<void> {
 }
 
 function summarizePerformance(
-  perfData: Window["__orcabotE2EPerf"],
+  perfData: Window["__orcabotE2EPerf"] | null,
   navigationTiming: Record<string, number> | undefined
 ): PerformanceSummary {
   const longTasks = perfData?.longTasks ?? [];
@@ -215,7 +215,10 @@ export async function createDiagnostics(page: Page): Promise<E2EDiagnostics> {
         .catch(() => undefined),
     ]);
 
-    const performance = summarizePerformance(perfData, navigationTiming);
+    // Deliberately NOT named `performance`: that shadows the global inside the
+    // page.evaluate callbacks above, so `performance.getEntriesByType` would
+    // resolve to this summary object instead of the browser's Performance API.
+    const perfSummary = summarizePerformance(perfData, navigationTiming);
 
     return {
       revision: MODULE_REVISION,
@@ -224,15 +227,15 @@ export async function createDiagnostics(page: Page): Promise<E2EDiagnostics> {
       console: [...consoleMessages],
       pageErrors: [...pageErrors],
       requestFailures: [...requestFailures],
-      performance,
+      performance: perfSummary,
       heuristics: {
         consoleErrors: consoleMessages.filter(
           (message) => classifyConsoleType(message.type) === "error"
         ).length,
         pageErrors: pageErrors.length,
         requestFailures: requestFailures.length,
-        longTaskMaxMs: performance.longTaskMaxMs,
-        cumulativeLayoutShift: performance.cumulativeLayoutShift,
+        longTaskMaxMs: perfSummary.longTaskMaxMs,
+        cumulativeLayoutShift: perfSummary.cumulativeLayoutShift,
       },
     };
   }

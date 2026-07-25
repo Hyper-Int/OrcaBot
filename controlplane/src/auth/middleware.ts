@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: auth-middleware-v1-email-fallback
+// REVISION: auth-middleware-v2-pat-method-gate
 
 /**
  * Auth Middleware
@@ -14,10 +14,17 @@
 import type { Env, User } from '../types';
 import { validateCfAccessTоken, cfAccessUserIdFrоmSub } from './cf-access';
 import { getUserForSession } from './sessions';
+import { getUserForApiToken, PAT_PREFIX } from './api-token';
+
+/** How the request authenticated. Used to gate sensitive routes (e.g. token
+ * management must not be reachable with a PAT — a leaked PAT could otherwise mint
+ * a replacement and survive revocation). */
+export type AuthMethod = 'session' | 'pat' | 'cf-access' | 'dev';
 
 export interface AuthContext {
   user: User | null;
   isAuthenticated: boolean;
+  method?: AuthMethod;
 }
 
 // Extract user from request
@@ -27,7 +34,22 @@ export async function authenticate(
 ): Promise<AuthContext> {
   const sessionUser = await getUserForSession(request, env);
   if (sessionUser) {
-    return { user: sessionUser, isAuthenticated: true };
+    return { user: sessionUser, isAuthenticated: true, method: 'session' };
+  }
+
+  // Personal access token (CLI / external tools). Prefix-gated so it never
+  // collides with the PTY/gateway JWT bearer tokens (verified elsewhere).
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearer = authHeader.slice('Bearer '.length).trim();
+    if (bearer.startsWith(PAT_PREFIX)) {
+      const patUser = await getUserForApiToken(env, bearer);
+      if (patUser) {
+        return { user: patUser, isAuthenticated: true, method: 'pat' };
+      }
+      // Malformed/expired/revoked PAT: fail closed (don't fall through to other modes).
+      return { user: null, isAuthenticated: false };
+    }
   }
 
   // Try Cloudflare Access first (production mode)
@@ -35,14 +57,35 @@ export async function authenticate(
     return authenticateWithCfAccеss(request, env);
   }
 
-  // Fall back to dev auth if enabled
+  // Fall back to dev auth if enabled. Dev-auth is header-spoofable, and on
+  // desktop a process inside the sandbox VM can reach the control plane — so when
+  // a per-boot SURFACE_TOKEN is provisioned, only honor dev-auth for requests
+  // from the trusted host frontend (matching X-Orcabot-Surface). No token
+  // (cloud, local dev, older builds) = unchanged behavior.
   const devAuthEnabled = env.DEV_AUTH_ENABLED === 'true';
-  if (devAuthEnabled) {
+  if (devAuthEnabled && devAuthSurfaceTrusted(request, env)) {
     return authenticateDevMоde(request, env);
   }
 
   // No auth method available
   return { user: null, isAuthenticated: false };
+}
+
+/**
+ * Desktop trust boundary: dev-auth is header-spoofable and the sandbox VM can
+ * reach the control plane. When a per-boot SURFACE_TOKEN is provisioned, only
+ * the host frontend (which sends the matching X-Orcabot-Surface header) may use
+ * dev-auth. When unset (cloud / local dev / older builds), enforcement is off.
+ */
+export function devAuthSurfaceTrusted(request: Request, env: Env): boolean {
+  const expected = env.SURFACE_TOKEN;
+  if (!expected) return true;
+  // Header for fetch/XHR; query param for top-level browser navigations (OAuth
+  // connect opened in the OS browser), which can't set custom headers.
+  const got =
+    request.headers.get('X-Orcabot-Surface') ||
+    new URL(request.url).searchParams.get('surface');
+  return got === expected;
 }
 
 // Production: Cloudflare Access JWT validation
@@ -96,6 +139,7 @@ async function authenticateWithCfAccеss(
   return {
     user,
     isAuthenticated: true,
+    method: 'cf-access',
   };
 }
 
@@ -179,6 +223,7 @@ async function authenticateDevMоde(
   return {
     user,
     isAuthenticated: true,
+    method: 'dev',
   };
 }
 
@@ -188,6 +233,19 @@ export function requireAuth(ctx: AuthContext): Response | null {
     return Response.json(
       { error: 'E79401: Authentication required' },
       { status: 401 }
+    );
+  }
+  return null;
+}
+
+// Reject requests authenticated by a PAT. Token management (mint/list/revoke)
+// must be done with a real session (browser/CF Access) or dev auth — never with a
+// PAT, or a leaked token could mint a replacement and survive its own revocation.
+export function rejectPatAuth(ctx: AuthContext): Response | null {
+  if (ctx.method === 'pat') {
+    return Response.json(
+      { error: 'E79411: Personal access tokens cannot manage tokens — use the web app' },
+      { status: 403 }
     );
   }
   return null;
@@ -208,7 +266,7 @@ export function requireInternalAuth(
     );
   }
 
-  if (!token || token !== env.INTERNAL_API_TOKEN) {
+  if (!token || !constantTimeEqual(token, env.INTERNAL_API_TOKEN)) {
     const url = new URL(request.url);
     const got = tokenFingerprint(token);
     const want = tokenFingerprint(env.INTERNAL_API_TOKEN);
@@ -220,6 +278,15 @@ export function requireInternalAuth(
   }
 
   return null;
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 function tokenFingerprint(token: string | null): string {
@@ -262,7 +329,7 @@ export async function validateMcpAuth(
         ),
       };
     }
-    if (internalToken === env.INTERNAL_API_TOKEN) {
+    if (constantTimeEqual(internalToken, env.INTERNAL_API_TOKEN)) {
       return { isValid: true, isFullAccess: true };
     }
   }

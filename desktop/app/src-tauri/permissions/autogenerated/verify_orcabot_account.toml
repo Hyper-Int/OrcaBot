@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-verify-orcabot-account"
+description = "Enables the verify_orcabot_account command without any pre-configured scope."
+commands.allow = ["verify_orcabot_account"]
+
+[[permission]]
+identifier = "deny-verify-orcabot-account"
+description = "Denies the verify_orcabot_account command without any pre-configured scope."
+commands.deny = ["verify_orcabot_account"]

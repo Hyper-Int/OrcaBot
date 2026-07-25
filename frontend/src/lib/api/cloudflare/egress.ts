@@ -1,14 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-api-v3-pending-approvals-fetch
-const MODULE_REVISION = "egress-api-v3-pending-approvals-fetch";
+// REVISION: egress-api-v5-deny-always
+const MODULE_REVISION = "egress-api-v5-deny-always";
 console.log(`[egress-api] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import { API } from "@/config/env";
 import { apiGet, apiPost, apiDelete } from "../client";
 
-export type EgressDecision = 'allow_once' | 'allow_always' | 'deny';
+export type EgressDecision = 'allow_once' | 'allow_always' | 'deny' | 'deny_always';
 
 export interface EgressAllowlistEntry {
   id: string;
@@ -30,6 +30,21 @@ export interface PendingEgressApproval {
   domain: string;
   port: number;
   request_id: string;
+}
+
+export interface EgressDefaultEntry {
+  pattern: string;
+  category: string;
+  label: string;
+  rationale: string;
+}
+
+export interface EgressAllowlistResponse {
+  entries: EgressAllowlistEntry[];
+  defaults: EgressDefaultEntry[];
+  blocked: string[];
+  denied: EgressAllowlistEntry[];
+  revision: string;
 }
 
 /**
@@ -64,15 +79,41 @@ export async function listPendingEgressApprovals(
 }
 
 /**
- * List user-approved egress domains for a dashboard.
+ * List built-in defaults, blocked overrides, and user-approved domains for a dashboard.
  */
 export async function listEgressAllowlist(
   dashboardId: string,
-): Promise<EgressAllowlistEntry[]> {
-  const response = await apiGet<{ entries: EgressAllowlistEntry[] }>(
+): Promise<EgressAllowlistResponse> {
+  const response = await apiGet<EgressAllowlistResponse>(
     `${API.cloudflare.base}/dashboards/${dashboardId}/egress/allowlist`
   );
-  return response.entries || [];
+  return {
+    entries: response.entries || [],
+    defaults: response.defaults || [],
+    blocked: response.blocked || [],
+    denied: response.denied || [],
+    revision: response.revision || "",
+  };
+}
+
+/**
+ * Override a built-in default pattern so it requires approval again.
+ */
+export async function blockDefaultDomain(
+  dashboardId: string,
+  pattern: string,
+): Promise<void> {
+  await apiPost(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/blocked-defaults`, { pattern });
+}
+
+/**
+ * Restore a built-in default pattern to the canonical auto-allow set.
+ */
+export async function unblockDefaultDomain(
+  dashboardId: string,
+  pattern: string,
+): Promise<void> {
+  await apiDelete(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/blocked-defaults/${encodeURIComponent(pattern)}`);
 }
 
 /**
@@ -83,6 +124,16 @@ export async function revokeEgressDomain(
   entryId: string,
 ): Promise<void> {
   await apiDelete(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/allowlist/${entryId}`);
+}
+
+/**
+ * Lift a permanent deny ("deny always") so the domain requires approval again.
+ */
+export async function revokeEgressDenied(
+  dashboardId: string,
+  entryId: string,
+): Promise<void> {
+  await apiDelete(`${API.cloudflare.base}/dashboards/${dashboardId}/egress/blocklist/${entryId}`);
 }
 
 /**

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: hub-v5-local-cpr-response
+// REVISION: hub-v6-run-cleanup-all-paths
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const hubRevision = "hub-v5-local-cpr-response"
+const hubRevision = "hub-v6-run-cleanup-all-paths"
 
 func init() {
 	log.Printf("[pty/hub] REVISION: %s loaded at %s", hubRevision, time.Now().Format(time.RFC3339))
@@ -193,7 +193,29 @@ func NewHub(p *PTY, creatorID string) *Hub {
 }
 
 // Run starts the hub's event loop
+// cleanup runs the terminal teardown shared by EVERY exit path of Run: stop
+// turn-taking, cancel the idle timer, and close all client output channels. It is
+// deferred in Run so the self-stop paths (idle timeout, readLoop death) get the
+// same cleanup as an explicit Stop() — otherwise those paths returned before the
+// <-h.stop case ran, leaking client channels and never stopping turn-taking.
+func (h *Hub) cleanup() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.turn.Stop()
+	if h.idleTimer != nil {
+		h.idleTimer.Stop()
+		h.idleTimer = nil
+	}
+	for client := range h.clients {
+		close(client)
+		delete(h.clients, client)
+	}
+}
+
 func (h *Hub) Run() {
+	// All termination paths funnel through cleanup exactly once.
+	defer h.cleanup()
+
 	// Start reading from PTY
 	go h.readLооp()
 
@@ -252,19 +274,7 @@ func (h *Hub) Run() {
 			return
 
 		case <-h.stop:
-			h.mu.Lock()
-			h.turn.Stop()
-			// Cancel idle timer if running
-			if h.idleTimer != nil {
-				h.idleTimer.Stop()
-				h.idleTimer = nil
-			}
-			// Close all client channels
-			for client := range h.clients {
-				close(client)
-				delete(h.clients, client)
-			}
-			h.mu.Unlock()
+			// Cleanup runs via the deferred h.cleanup() (shared by all exit paths).
 			return
 		}
 	}

@@ -1,0 +1,34 @@
+{
+  "_comment": "Importable Orcabot dashboard template for running SWE-bench. Shape matches DashboardTemplateWithData in frontend/src/types/dashboard.ts. Viewer panes (per-instance log tails) are spawned by the orchestrator at runtime, not baked into the template.",
+  "name": "SWE-bench Runner",
+  "description": "Run SWE-bench (Lite/Verified/Full) with a Claude Code orchestrator you drive in English. Inference produces a predictions JSONL on host; evaluation runs Docker-per-task via Modal or a DinD sandbox.",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "orchestrator",
+      "type": "terminal",
+      "content": "{\"name\":\"SWE-bench Orchestrator\",\"agentic\":true,\"bootCommand\":\"claude\",\"workingDir\":\"SWE-bench\",\"skipApprovals\":true}",
+      "position": { "x": 0, "y": 0 },
+      "size": { "width": 640, "height": 520 }
+    },
+    {
+      "placeholderId": "runbook",
+      "type": "note",
+      "content": "# SWE-bench Runner\n\nDrive the **SWE-bench Orchestrator** (Claude Code) in English:\n\n- *\"Run inference on 5 Lite instances with claude.\"* -> writes preds.jsonl\n- *\"Sanity-check the Modal backend with gold.\"*\n- *\"Evaluate preds.jsonl on Lite via Modal.\"*\n- *\"Show me instance astropy__astropy-12345.\"* -> spawns a log viewer pane\n\nTwo phases: inference (host, needs key) -> predictions JSONL -> eval (Docker-per-task, Modal or DinD). Keys live in the secrets broker. Full guide: benchmarks/swebench/orchestrator-runbook.md",
+      "position": { "x": 680, "y": 0 },
+      "size": { "width": 400, "height": 320 }
+    },
+    {
+      "placeholderId": "leaderboard",
+      "type": "browser",
+      "content": "{\"name\":\"SWE-bench Leaderboard\",\"url\":\"https://www.swebench.com\"}",
+      "position": { "x": 680, "y": 360 },
+      "size": { "width": 720, "height": 500 }
+    }
+  ],
+  "edges": [
+    { "sourcePlaceholderId": "orchestrator", "targetPlaceholderId": "leaderboard" }
+  ],
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "setupGuide": "# SWE-bench setup walkthrough\n\nGoal: get this dashboard ready to run SWE-bench, then run one instance end to end.\nBe brief; do each step with your tools and confirm before the next. Keep SWE-bench's\ntwo phases (inference, then evaluation) separate.\n\n1. **Pick variant + eval backend.** Default to **Lite** (cheapest) and the **Modal**\n   eval backend (no local Docker). Confirm with the user, or use those.\n\n2. **Get the harness** (skip if the `SWE-bench` checkout already exists): in a shell\n   terminal `git clone https://github.com/SWE-bench/SWE-bench` then `pip install -e .`\n   in it. Needs network; if a domain is held by the egress proxy, ask the user to approve it.\n\n3. **Provider key.** Ensure the model key the run needs (`ANTHROPIC_API_KEY` or\n   `OPENAI_API_KEY`) exists as a broker-protected secret for this dashboard. If not,\n   ask the user to add it in the secrets panel. Never display or echo a key.\n\n4. **Modal backend (eval phase).** It needs `~/.modal.toml`; if absent, tell the user\n   to run `modal setup` (opens a browser to authenticate). Skip if you're using a\n   local Docker (DinD) sandbox instead.\n\n5. **Phase 1 — inference (one instance).** Produce a `preds.jsonl` with keys\n   `instance_id`, `model_name_or_path`, `model_patch`. Simplest is\n   `python -m swebench.inference.run_api --dataset_name_or_path <Lite dataset> --model_name_or_path <model> --output_dir ./outputs`,\n   or drive an agent that emits the JSONL. No Docker. Report the patch count.\n\n6. **Phase 2 — evaluation.** Sanity-check the backend with gold first:\n   `python -m swebench.harness.run_evaluation --predictions_path gold --max_workers 1 --instance_ids sympy__sympy-20590 --run_id validate-gold`,\n   then evaluate your predictions with `--dataset_name <Lite> --predictions_path preds.jsonl\n   --run_id <id> --cache_level env [--modal true]`. Make it watchable: spawn a viewer\n   terminal (create_terminal) tailing\n   `logs/run_evaluation/<run_id>/<model>/<instance>/run_instance.log` and connect an\n   edge to it. Report the **resolution rate %** and point the user at the report JSON.\n"
+}
