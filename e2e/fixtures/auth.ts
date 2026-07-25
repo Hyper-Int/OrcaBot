@@ -70,14 +70,28 @@ async function isAlreadyAuthenticated(page: Page): Promise<boolean> {
     return false;
   }
 
-  const dashboardsVisible = await page
-    .getByText("New Dashboard")
-    .first()
+  const dashboardsVisible = await dashboardsHeading(page)
     .waitFor({ state: "visible", timeout: 10_000 })
     .then(() => true)
     .catch(() => false);
 
   return dashboardsVisible;
+}
+
+/**
+ * The "New Dashboard" section heading — the marker that we're on the dashboard
+ * picker rather than the splash page.
+ *
+ * Must be an exact heading match. A bare getByText("New Dashboard") is a
+ * case-insensitive SUBSTRING match, so it also matches the splash page's "Sign
+ * in and create a new dashboard — a shared workspace" — which made
+ * isAlreadyAuthenticated() return true while logged out, silently skipping
+ * login and failing the test later with a confusing URL assertion.
+ */
+function dashboardsHeading(page: Page) {
+  return page
+    .getByRole("heading", { name: "New Dashboard", exact: true })
+    .first();
 }
 
 /**
@@ -202,10 +216,12 @@ async function googlePopupLogin(page: Page): Promise<void> {
 
   await page.goto("/");
 
-  // The splash CTA is a link to /go whose onClick opens the Google popup
-  // (window.open on /auth/google/login?mode=popup) instead of navigating.
+  // Both the header "Sign In" link and the "Get Started Free" CTA point at /go
+  // but have an onClick that opens the Google popup (window.open on
+  // /auth/google/login?mode=popup) instead of navigating.
   const signInTrigger = page
-    .getByRole("link", { name: /get started free/i })
+    .getByRole("link", { name: /^sign in$/i })
+    .or(page.getByRole("link", { name: /get started free/i }))
     .or(page.getByRole("button", { name: /get started free/i }))
     .first();
 
@@ -382,9 +398,7 @@ async function waitForDashboardsPage(page: Page): Promise<void> {
 
   // Then wait for dashboard-specific content to confirm we're stable
   // (the "New Dashboard" section heading is always on the dashboard picker)
-  await expect(
-    page.getByText("New Dashboard").first()
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(dashboardsHeading(page)).toBeVisible({ timeout: 10_000 });
 }
 
 /**
@@ -403,6 +417,7 @@ export async function logout(page: Page): Promise<void> {
     page
       .getByRole("button", { name: /dev mode login/i })
       .or(page.getByRole("button", { name: /continue with google/i }))
+      .or(page.getByRole("link", { name: /^sign in$/i }))
       .or(page.getByRole("link", { name: /get started/i }))
       .or(page.getByRole("button", { name: /get started/i }))
       .first()

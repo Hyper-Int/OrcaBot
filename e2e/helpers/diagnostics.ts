@@ -46,8 +46,25 @@ export interface DiagnosticsSnapshot {
 export interface E2EDiagnostics {
   snapshot: () => Promise<DiagnosticsSnapshot>;
   attach: (testInfo: TestInfo) => Promise<void>;
-  assertNoSevereIssues: () => Promise<void>;
+  assertNoSevereIssues: (options?: { ignore?: RegExp[] }) => Promise<void>;
 }
+
+/**
+ * Console errors that are browser-generated noise rather than app defects.
+ *
+ * "Failed to load resource: ... 401" is emitted by Chromium for any non-2xx
+ * response, and the login helpers deliberately probe authenticated endpoints
+ * while logged out (isAlreadyAuthenticated hits /dashboards, which fires
+ * /users/me and correctly gets a 401). Failing on those would make every test
+ * that logs in red for a response the app is designed to produce.
+ *
+ * These are still captured in the attached diagnostics.json — they are excluded
+ * only from the pass/fail decision. Uncaught exceptions (pageErrors) and real
+ * console.error calls from app code are NOT filtered.
+ */
+const DEFAULT_IGNORED_CONSOLE_ERRORS: RegExp[] = [
+  /Failed to load resource: the server responded with a status of 40[13]/i,
+];
 
 declare global {
   interface Window {
@@ -248,17 +265,25 @@ export async function createDiagnostics(page: Page): Promise<E2EDiagnostics> {
     });
   }
 
-  async function assertNoSevereIssues(): Promise<void> {
+  async function assertNoSevereIssues(
+    options: { ignore?: RegExp[] } = {}
+  ): Promise<void> {
     const data = await snapshot();
     if (data.pageErrors.length > 0) {
       throw new Error(
         `Detected page errors:\n${data.pageErrors.map((msg) => `- ${msg}`).join("\n")}`
       );
     }
-    if (data.heuristics.consoleErrors > 0) {
-      const errors = data.console
-        .filter((message) => classifyConsoleType(message.type) === "error")
-        .map((message) => `- ${message.text}`);
+
+    const ignore = [...DEFAULT_IGNORED_CONSOLE_ERRORS, ...(options.ignore ?? [])];
+    const errors = data.console
+      .filter((message) => classifyConsoleType(message.type) === "error")
+      .filter((message) => !ignore.some((pattern) => pattern.test(message.text)))
+      .map((message) =>
+        message.location ? `- ${message.text} (${message.location})` : `- ${message.text}`
+      );
+
+    if (errors.length > 0) {
       throw new Error(`Detected console errors:\n${errors.join("\n")}`);
     }
   }

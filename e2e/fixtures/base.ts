@@ -132,7 +132,16 @@ export const test = base.extend<{
   },
 });
 
-test.beforeAll(() => {
+/**
+ * Validate the environment at import time.
+ *
+ * Deliberately NOT a test.beforeAll(): this module is imported by every spec,
+ * and a hook registered here binds to whichever spec's root suite happens to be
+ * loading, which Playwright rejects outright ("did not expect test.beforeAll()
+ * to be called here"). Plain module scope runs once per worker and fails before
+ * any test starts, which is what we actually want.
+ */
+function checkEnvironment(): void {
   const report = requiredEnvReport();
 
   // Only the smoke tier is fatal, and it holds just the values that cannot be
@@ -155,6 +164,8 @@ test.beforeAll(() => {
       );
     }
   }
-});
+}
+
+checkEnvironment();
 
 export { expect };

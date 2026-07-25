@@ -17,11 +17,25 @@ test.describe("Recipe: Authentication Flow", () => {
     await diagnostics.collector.assertNoSevereIssues();
   });
 
+  // The dev-mode login form was removed from the splash page in "Add new splash
+  // page" (#193) — `loginDevMode` now only runs for desktop auto-login, and the
+  // only UI login left is the Google popup. Skipped rather than deleted so the
+  // coverage comes back with the credentials, instead of silently disappearing.
   test("should log in via dev mode UI form", async ({
     page,
     auth,
     diagnostics,
   }) => {
+    const devFormExists = await page
+      .getByRole("button", { name: /dev mode login/i })
+      .first()
+      .isVisible()
+      .catch(() => false);
+    test.skip(
+      !devFormExists,
+      "No dev-mode login form on this build; UI login requires Google credentials."
+    );
+
     await auth.loginViaUI();
     await expect(page).toHaveURL(/\/dashboards/);
     await diagnostics.collector.assertNoSevereIssues();
@@ -46,10 +60,13 @@ test.describe("Recipe: Authentication Flow", () => {
   }) => {
     await auth.login();
     await auth.logout();
-    // Should be back at splash page with login options visible
+    // Should be back at splash page with login options visible. The splash CTAs
+    // are links ("Sign In", "Get Started Free"), not buttons.
     await expect(
       page
         .getByRole("button", { name: /dev mode login/i })
+        .or(page.getByRole("link", { name: /^sign in$/i }))
+        .or(page.getByRole("link", { name: /get started/i }))
         .or(page.getByRole("button", { name: /get started/i }))
         .first()
     ).toBeVisible({ timeout: 10_000 });
