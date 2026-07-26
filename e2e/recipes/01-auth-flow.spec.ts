@@ -1,7 +1,8 @@
-// REVISION: e2e-auth-flow-v1-diagnostics
+// REVISION: e2e-auth-flow-v2-ui-login-skip
 import { test, expect } from "../fixtures/base";
+import { devLoginFormVisible, googleAuthConfigured } from "../fixtures/auth";
 
-const MODULE_REVISION = "e2e-auth-flow-v1-diagnostics";
+const MODULE_REVISION = "e2e-auth-flow-v2-ui-login-skip";
 console.log(
   `[e2e-auth-flow] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -18,22 +19,17 @@ test.describe("Recipe: Authentication Flow", () => {
   });
 
   // The dev-mode login form was removed from the splash page in "Add new splash
-  // page" (#193) — `loginDevMode` now only runs for desktop auto-login, and the
-  // only UI login left is the Google popup. Skipped rather than deleted so the
-  // coverage comes back with the credentials, instead of silently disappearing.
-  test("should log in via dev mode UI form", async ({
-    page,
-    auth,
-    diagnostics,
-  }) => {
-    const devFormExists = await page
-      .getByRole("button", { name: /dev mode login/i })
-      .first()
-      .isVisible()
-      .catch(() => false);
+  // page" (#193) — `loginDevMode` now only runs for desktop auto-login, so on
+  // most builds the only UI login left is the Google popup. Skip only when
+  // NEITHER strategy is available, rather than deleting the coverage.
+  test("should log in via the UI", async ({ page, auth, diagnostics }) => {
+    // Must navigate first: the page starts on about:blank, where no locator can
+    // ever be visible and the check would skip unconditionally.
+    await page.goto("/");
+
     test.skip(
-      !devFormExists,
-      "No dev-mode login form on this build; UI login requires Google credentials."
+      !(await devLoginFormVisible(page)) && !googleAuthConfigured(),
+      "No dev-mode login form on this build and no Google credentials configured."
     );
 
     await auth.loginViaUI();

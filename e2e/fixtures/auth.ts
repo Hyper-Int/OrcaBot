@@ -1,5 +1,10 @@
 // REVISION: e2e-auth-v4-pat-and-derived-cp-url
-import { type Page, expect, request as playwrightRequest } from "@playwright/test";
+import {
+  type Page,
+  expect,
+  request as playwrightRequest,
+  test as baseTest,
+} from "@playwright/test";
 import { generateUserId } from "../helpers/api";
 import { getEnv } from "../helpers/env";
 // The control-plane origin is derived from ORCABOT_URL (with CONTROLPLANE_URL as
@@ -16,8 +21,58 @@ const DEFAULT_EMAIL = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
 const GOOGLE_TEST_EMAIL = getEnv("GOOGLE_TEST_EMAIL");
 const GOOGLE_TEST_PASSWORD = getEnv("GOOGLE_TEST_PASSWORD");
 
-function googleAuthConfigured(): boolean {
+/** Whether password-based Google login is configured (see also the trace guard). */
+export function googleAuthConfigured(): boolean {
   return Boolean(GOOGLE_TEST_EMAIL && GOOGLE_TEST_PASSWORD);
+}
+
+/**
+ * Whether the splash page is currently offering the dev-mode login form.
+ *
+ * Shared by devModeLoginViaUI and the UI-login spec so the test's skip decision
+ * and the helper's strategy choice can never disagree. Waits briefly rather
+ * than checking instantly, because the splash renders its login controls only
+ * after auth resolves. The caller must already be on a real page — on
+ * about:blank this is always false.
+ */
+export async function devLoginFormVisible(
+  page: Page,
+  timeoutMs = 8_000
+): Promise<boolean> {
+  return page
+    .getByRole("button", { name: /dev mode login/i })
+    .first()
+    .waitFor({ state: "visible", timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/**
+ * Refuse to type the password while Playwright is recording a trace.
+ *
+ * Traces capture action parameters, so a fill() of the password ends up inside
+ * trace.zip and travels with CI artifacts. playwright.config.ts already forces
+ * trace off when GOOGLE_TEST_PASSWORD is set, but `--trace on` from the CLI
+ * overrides config — so check the effective mode here too and fail loudly
+ * rather than leak the credential into an artifact.
+ */
+function assertTracingDisabled(): void {
+  let traceMode: string | undefined;
+  try {
+    const trace = baseTest.info().project.use.trace;
+    traceMode = typeof trace === "string" ? trace : trace?.mode;
+  } catch {
+    // Not inside a running test (or no project config) — nothing to check.
+    return;
+  }
+
+  if (traceMode && traceMode !== "off") {
+    throw new Error(
+      `Refusing to type GOOGLE_TEST_PASSWORD while tracing is enabled (trace="${traceMode}").\n` +
+        "Playwright records fill() parameters, so the password would be stored in trace.zip.\n" +
+        "Run without --trace, or authenticate with E2E_STORAGE_STATE / E2E_API_TOKEN instead."
+    );
+  }
 }
 
 /** Cached across a worker — whether dev auth is usable can't change mid-run. */
@@ -214,6 +269,9 @@ async function googlePopupLogin(page: Page): Promise<void> {
     );
   }
 
+  // Check before doing any work, so a misconfigured run fails fast.
+  assertTracingDisabled();
+
   await page.goto("/");
 
   // Both the header "Sign In" link and the "Get Started Free" CTA point at /go
@@ -323,19 +381,23 @@ export async function devModeLoginViaUI(
     return;
   }
 
-  // The dev-mode form only exists on instances with dev auth enabled. Where it
-  // doesn't, fall back to the real Google UI so the "log in via UI" intent of
-  // this helper is preserved rather than silently skipped.
-  if (!(await devAuthAvailable()) && googleAuthConfigured()) {
-    await googlePopupLogin(page);
-    return;
-  }
-
   await page.goto("/");
 
-  // Wait for auth to resolve (login buttons appear)
+  // Choose the strategy from what the page actually renders, not from whether
+  // dev auth is reachable: an instance can accept dev auth over the API while
+  // the splash offers only Google, and waiting for a form that will never
+  // appear just burns the timeout.
   const devLoginBtn = page.getByRole("button", { name: /dev mode login/i });
-  await devLoginBtn.waitFor({ state: "visible", timeout: 15_000 });
+  if (!(await devLoginFormVisible(page))) {
+    if (googleAuthConfigured()) {
+      await googlePopupLogin(page);
+      return;
+    }
+    throw new Error(
+      "No UI login strategy available: this build has no dev-mode login form, " +
+        "and GOOGLE_TEST_EMAIL / GOOGLE_TEST_PASSWORD are not set."
+    );
+  }
 
   // If already authenticated, we may see "Go to Dashboards" instead
   const alreadyLoggedIn = await page
