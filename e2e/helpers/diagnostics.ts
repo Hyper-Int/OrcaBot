@@ -1,7 +1,7 @@
-// REVISION: e2e-diagnostics-v2-ignore-4xx-noise
+// REVISION: e2e-diagnostics-v3-narrow-expected-errors
 import type { ConsoleMessage, Page, Request, TestInfo } from "@playwright/test";
 
-const MODULE_REVISION = "e2e-diagnostics-v2-ignore-4xx-noise";
+const MODULE_REVISION = "e2e-diagnostics-v3-narrow-expected-errors";
 console.log(
   `[e2e-diagnostics] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -49,27 +49,60 @@ export interface E2EDiagnostics {
   assertNoSevereIssues: (options?: { ignore?: RegExp[] }) => Promise<void>;
 }
 
+interface ExpectedConsoleError {
+  /** Why this specific response is expected, not a defect. */
+  why: string;
+  /** Matched against the console message text (carries the status code). */
+  text: RegExp;
+  /** Matched against the message location URL, when the case is endpoint-specific. */
+  url?: RegExp;
+}
+
 /**
- * Console errors that are browser-generated noise rather than app defects.
+ * The narrow set of console errors that are browser-generated noise rather than
+ * app defects.
  *
  * Chromium emits "Failed to load resource: ... <status>" for EVERY non-2xx
- * response, including ones the app deliberately expects and handles:
- *   - 401 on /users/me — the login helpers probe authenticated endpoints while
- *     logged out (isAlreadyAuthenticated loads /dashboards before logging in)
- *   - 404 on /dashboards/:id/workspace-snapshot — a fresh dashboard has no
- *     cached snapshot; getWorkspaceSnapshot() documents the 404 as expected and
- *     returns null for it
- * Failing on these would make ordinary flows red for responses the app is
- * designed to produce.
+ * response, so a couple of responses the app deliberately provokes and handles
+ * would otherwise fail every test that logs in.
  *
- * 4xx is filtered; 5xx deliberately is NOT — a server error is real breakage.
+ * Deliberately enumerated case by case, scoped by endpoint wherever the status
+ * alone is ambiguous. A blanket 4xx filter would swallow real breakage — 400
+ * (bad request), 409 (conflict), 422 (validation), 429 (rate limited) are all
+ * genuine failures worth failing a test over, as is anything 5xx.
+ *
  * Everything is still captured in the attached diagnostics.json regardless; this
  * only affects the pass/fail decision. Uncaught exceptions (pageErrors) and
  * genuine console.error calls from app code are never filtered.
  */
-const DEFAULT_IGNORED_CONSOLE_ERRORS: RegExp[] = [
-  /Failed to load resource: the server responded with a status of 4\d\d/i,
+const EXPECTED_CONSOLE_ERRORS: ExpectedConsoleError[] = [
+  {
+    why:
+      "The login helpers load authenticated routes while logged out on purpose " +
+      "(isAlreadyAuthenticated opens /dashboards before any login), so the app's " +
+      "auth checks correctly answer 401/403.",
+    text: /the server responded with a status of 40[13]\b/i,
+  },
+  {
+    why:
+      "A dashboard with no cached workspace snapshot answers 404; " +
+      "getWorkspaceSnapshot() documents that as expected and returns null.",
+    text: /the server responded with a status of 404\b/i,
+    url: /\/dashboards\/[^/]+\/workspace-snapshot\b/,
+  },
 ];
+
+/** True when a console error is one of the documented expected responses. */
+function isExpectedConsoleError(message: {
+  text: string;
+  location?: string;
+}): boolean {
+  return EXPECTED_CONSOLE_ERRORS.some(
+    (expected) =>
+      expected.text.test(message.text) &&
+      (!expected.url || expected.url.test(message.location ?? ""))
+  );
+}
 
 declare global {
   interface Window {
@@ -280,10 +313,11 @@ export async function createDiagnostics(page: Page): Promise<E2EDiagnostics> {
       );
     }
 
-    const ignore = [...DEFAULT_IGNORED_CONSOLE_ERRORS, ...(options.ignore ?? [])];
+    const extraIgnores = options.ignore ?? [];
     const errors = data.console
       .filter((message) => classifyConsoleType(message.type) === "error")
-      .filter((message) => !ignore.some((pattern) => pattern.test(message.text)))
+      .filter((message) => !isExpectedConsoleError(message))
+      .filter((message) => !extraIgnores.some((pattern) => pattern.test(message.text)))
       .map((message) =>
         message.location ? `- ${message.text} (${message.location})` : `- ${message.text}`
       );
