@@ -92,12 +92,18 @@ export default defineConfig({
   use: {
     baseURL: ORCABOT_URL,
     storageState,
-    // "retain-on-failure" records every test and discards the passing ones, so
-    // it costs on every test, not just failures. Measured on this suite: trace +
-    // video roughly tripled wall clock (6m -> 19m). Trace already carries DOM
-    // snapshots, network and console, which is what actually gets debugged, so
-    // keep the trace and drop the video. Re-enable with `--video on` when a
-    // visual repro is genuinely needed.
+    // "retain-on-failure" records EVERY test and discards the passing ones, so
+    // the cost lands on all of them. Measured per-test on this suite:
+    //   no artifacts        ~17s   (6.4m / 23 tests)
+    //   trace + video       ~50s   (19.3m / 23 tests)
+    //   trace only          ~45s   (14.3m / 19 tests)
+    // So the trace is the expensive part; dropping video recovered little. Kept
+    // anyway because a failure here is usually a slow/racy UI state that a trace
+    // explains and a video does not.
+    //
+    // If this wall clock becomes the bottleneck, switch to "on-first-retry" and
+    // set retries: 1 — traces then cost nothing on a first-attempt pass, at the
+    // price of reporting flakes as "flaky" rather than failing them.
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
