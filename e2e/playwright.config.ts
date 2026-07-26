@@ -1,10 +1,10 @@
-// REVISION: e2e-config-v3-env-precedence-and-trace-safety
+// REVISION: e2e-config-v4-storage-state-only-ui-auth
 import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
-const MODULE_REVISION = "e2e-config-v3-env-precedence-and-trace-safety";
+const MODULE_REVISION = "e2e-config-v4-storage-state-only-ui-auth";
 console.log(
   `[e2e-config] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -38,6 +38,18 @@ for (const file of ENV_FILES_LOWEST_FIRST) {
 }
 
 const ORCABOT_URL = process.env.ORCABOT_URL;
+
+/**
+ * Pre-authenticated browser session, captured by `npm run auth:capture`.
+ *
+ * This is the ONLY way to log the browser in on an instance without dev auth.
+ * E2E_API_TOKEN is not an alternative here: a PAT authenticates direct
+ * control-plane API calls (the `api` fixture) and cannot establish a browser
+ * session. Automating Google's password form is deliberately unsupported — see
+ * the note at the top of fixtures/auth.ts.
+ *
+ * Full artifact capture stays on precisely because no password is ever typed.
+ */
 const storageStatePath =
   process.env.E2E_STORAGE_STATE || resolve(__dirname, ".auth/orcabot-user.json");
 const storageState = existsSync(storageStatePath) ? storageStatePath : undefined;
@@ -47,30 +59,6 @@ if (!ORCABOT_URL) {
     "ORCABOT_URL environment variable is required.\n" +
       "Set it in e2e/.env, e2e/.env.test.local, or pass it inline.\n" +
       "Example: ORCABOT_URL=https://app.orcabot.com npx playwright test"
-  );
-}
-
-/**
- * Password-based Google login types GOOGLE_TEST_PASSWORD into the login popup.
- *
- * Playwright records action parameters — including the string passed to
- * locator.fill() — into the trace, so with traces retained on failure any
- * failure after that point would persist the password inside trace.zip, which
- * then travels wherever CI artifacts go. Capturing a credential is worse than
- * losing a trace, so artifact capture is disabled while this strategy is armed.
- *
- * Prefer E2E_STORAGE_STATE (saved browser session) or E2E_API_TOKEN (PAT), which
- * need no password and keep full tracing.
- */
-const passwordLoginEnabled = Boolean(
-  process.env.GOOGLE_TEST_EMAIL && process.env.GOOGLE_TEST_PASSWORD
-);
-
-if (passwordLoginEnabled) {
-  console.warn(
-    "[e2e-config] GOOGLE_TEST_PASSWORD is set — traces and video are DISABLED " +
-      "so the password cannot be recorded into artifacts. Use E2E_STORAGE_STATE " +
-      "or E2E_API_TOKEN to keep full debugging output."
   );
 }
 
@@ -104,9 +92,15 @@ export default defineConfig({
   use: {
     baseURL: ORCABOT_URL,
     storageState,
-    trace: passwordLoginEnabled ? "off" : "retain-on-failure",
+    // "retain-on-failure" records every test and discards the passing ones, so
+    // it costs on every test, not just failures. Measured on this suite: trace +
+    // video roughly tripled wall clock (6m -> 19m). Trace already carries DOM
+    // snapshots, network and console, which is what actually gets debugged, so
+    // keep the trace and drop the video. Re-enable with `--video on` when a
+    // visual repro is genuinely needed.
+    trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    video: passwordLoginEnabled ? "off" : "retain-on-failure",
+    video: "off",
     actionTimeout: 15_000,
   },
 

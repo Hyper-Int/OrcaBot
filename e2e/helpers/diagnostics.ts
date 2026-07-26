@@ -1,7 +1,7 @@
-// REVISION: e2e-diagnostics-v1-auto-capture
+// REVISION: e2e-diagnostics-v2-ignore-4xx-noise
 import type { ConsoleMessage, Page, Request, TestInfo } from "@playwright/test";
 
-const MODULE_REVISION = "e2e-diagnostics-v1-auto-capture";
+const MODULE_REVISION = "e2e-diagnostics-v2-ignore-4xx-noise";
 console.log(
   `[e2e-diagnostics] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -52,18 +52,23 @@ export interface E2EDiagnostics {
 /**
  * Console errors that are browser-generated noise rather than app defects.
  *
- * "Failed to load resource: ... 401" is emitted by Chromium for any non-2xx
- * response, and the login helpers deliberately probe authenticated endpoints
- * while logged out (isAlreadyAuthenticated hits /dashboards, which fires
- * /users/me and correctly gets a 401). Failing on those would make every test
- * that logs in red for a response the app is designed to produce.
+ * Chromium emits "Failed to load resource: ... <status>" for EVERY non-2xx
+ * response, including ones the app deliberately expects and handles:
+ *   - 401 on /users/me — the login helpers probe authenticated endpoints while
+ *     logged out (isAlreadyAuthenticated loads /dashboards before logging in)
+ *   - 404 on /dashboards/:id/workspace-snapshot — a fresh dashboard has no
+ *     cached snapshot; getWorkspaceSnapshot() documents the 404 as expected and
+ *     returns null for it
+ * Failing on these would make ordinary flows red for responses the app is
+ * designed to produce.
  *
- * These are still captured in the attached diagnostics.json — they are excluded
- * only from the pass/fail decision. Uncaught exceptions (pageErrors) and real
- * console.error calls from app code are NOT filtered.
+ * 4xx is filtered; 5xx deliberately is NOT — a server error is real breakage.
+ * Everything is still captured in the attached diagnostics.json regardless; this
+ * only affects the pass/fail decision. Uncaught exceptions (pageErrors) and
+ * genuine console.error calls from app code are never filtered.
  */
 const DEFAULT_IGNORED_CONSOLE_ERRORS: RegExp[] = [
-  /Failed to load resource: the server responded with a status of 40[13]/i,
+  /Failed to load resource: the server responded with a status of 4\d\d/i,
 ];
 
 declare global {

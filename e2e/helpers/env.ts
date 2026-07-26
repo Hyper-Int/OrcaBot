@@ -1,5 +1,5 @@
-// REVISION: e2e-env-v2-tiered-requirements
-const MODULE_REVISION = "e2e-env-v2-tiered-requirements";
+// REVISION: e2e-env-v3-no-password-tier
+const MODULE_REVISION = "e2e-env-v3-no-password-tier";
 console.log(
   `[e2e-env] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -12,9 +12,11 @@ export const E2E_ENV_REQUIREMENTS: Record<E2ETier, readonly string[]> = {
   // requirement; E2E_USER_EMAIL / E2E_USER_NAME have working defaults. Demanding
   // those would break invocations that pass ORCABOT_URL alone and work fine.
   smoke: ["ORCABOT_URL"],
+  // Account DATA for integration assertions — not login credentials. Browser
+  // login uses a captured storageState (`npm run auth:capture`); no password is
+  // stored or typed, because Playwright would serialize it into step titles.
   google: [
     "GOOGLE_TEST_EMAIL",
-    "GOOGLE_TEST_PASSWORD",
     "GOOGLE_GMAIL_TEST_EMAIL",
     "GOOGLE_CALENDAR_TEST_ID",
   ],

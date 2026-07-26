@@ -1,30 +1,41 @@
-// REVISION: e2e-auth-v4-pat-and-derived-cp-url
-import {
-  type Page,
-  expect,
-  request as playwrightRequest,
-  test as baseTest,
-} from "@playwright/test";
+// REVISION: e2e-auth-v5-drop-password-login
+import { type Page, expect, request as playwrightRequest } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
 import { getEnv } from "../helpers/env";
 // The control-plane origin is derived from ORCABOT_URL (with CONTROLPLANE_URL as
 // an override) so a single knob points the whole harness at an instance.
 import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
-const MODULE_REVISION = "e2e-auth-v4-pat-and-derived-cp-url";
+const MODULE_REVISION = "e2e-auth-v5-drop-password-login";
 console.log(
   `[e2e-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
 
+/**
+ * There is deliberately NO password-based Google login here.
+ *
+ * Driving Google's form meant calling fill() with the account password, and
+ * Playwright puts action parameters into the step title — literally
+ * `Fill "<password>" locator(...)`. That title is serialized into the HTML
+ * report's embedded data for PASSING tests, independently of trace and video
+ * settings, so any report published as a CI artifact carried the credential.
+ * Suppressing individual sinks (trace, then video, then the report) is
+ * whack-a-mole; the fix is to never type the password.
+ *
+ * For an instance without dev auth, capture a browser session once:
+ *
+ *     npm run auth:capture
+ *
+ * That opens a real browser, you log in by hand (SSO, 2FA, whatever Google
+ * asks), and the resulting storageState is saved to e2e/.auth/orcabot-user.json,
+ * which playwright.config.ts picks up automatically. No secret in env, none in
+ * artifacts.
+ *
+ * E2E_API_TOKEN is NOT an alternative for UI tests — a PAT authenticates direct
+ * control-plane calls only and cannot log the browser in.
+ */
 const DEFAULT_NAME = getEnv("E2E_USER_NAME", "E2E Test User")!;
 const DEFAULT_EMAIL = getEnv("E2E_USER_EMAIL", "e2e-test@orcabot.test")!;
-const GOOGLE_TEST_EMAIL = getEnv("GOOGLE_TEST_EMAIL");
-const GOOGLE_TEST_PASSWORD = getEnv("GOOGLE_TEST_PASSWORD");
-
-/** Whether password-based Google login is configured (see also the trace guard). */
-export function googleAuthConfigured(): boolean {
-  return Boolean(GOOGLE_TEST_EMAIL && GOOGLE_TEST_PASSWORD);
-}
 
 /**
  * Whether the splash page is currently offering the dev-mode login form.
@@ -45,34 +56,6 @@ export async function devLoginFormVisible(
     .waitFor({ state: "visible", timeout: timeoutMs })
     .then(() => true)
     .catch(() => false);
-}
-
-/**
- * Refuse to type the password while Playwright is recording a trace.
- *
- * Traces capture action parameters, so a fill() of the password ends up inside
- * trace.zip and travels with CI artifacts. playwright.config.ts already forces
- * trace off when GOOGLE_TEST_PASSWORD is set, but `--trace on` from the CLI
- * overrides config — so check the effective mode here too and fail loudly
- * rather than leak the credential into an artifact.
- */
-function assertTracingDisabled(): void {
-  let traceMode: string | undefined;
-  try {
-    const trace = baseTest.info().project.use.trace;
-    traceMode = typeof trace === "string" ? trace : trace?.mode;
-  } catch {
-    // Not inside a running test (or no project config) — nothing to check.
-    return;
-  }
-
-  if (traceMode && traceMode !== "off") {
-    throw new Error(
-      `Refusing to type GOOGLE_TEST_PASSWORD while tracing is enabled (trace="${traceMode}").\n` +
-        "Playwright records fill() parameters, so the password would be stored in trace.zip.\n" +
-        "Run without --trace, or authenticate with E2E_STORAGE_STATE / E2E_API_TOKEN instead."
-    );
-  }
 }
 
 /** Cached across a worker — whether dev auth is usable can't change mid-run. */
@@ -262,69 +245,6 @@ export async function devModeLogin(
   await waitForDashboardsPage(page);
 }
 
-async function googlePopupLogin(page: Page): Promise<void> {
-  if (!GOOGLE_TEST_EMAIL || !GOOGLE_TEST_PASSWORD) {
-    throw new Error(
-      "Google OAuth credentials are not configured. Set GOOGLE_TEST_EMAIL and GOOGLE_TEST_PASSWORD in e2e/.env."
-    );
-  }
-
-  // Check before doing any work, so a misconfigured run fails fast.
-  assertTracingDisabled();
-
-  await page.goto("/");
-
-  // Both the header "Sign In" link and the "Get Started Free" CTA point at /go
-  // but have an onClick that opens the Google popup (window.open on
-  // /auth/google/login?mode=popup) instead of navigating.
-  const signInTrigger = page
-    .getByRole("link", { name: /^sign in$/i })
-    .or(page.getByRole("link", { name: /get started free/i }))
-    .or(page.getByRole("button", { name: /get started free/i }))
-    .first();
-
-  await signInTrigger.waitFor({ state: "visible", timeout: 20_000 });
-
-  const popupPromise = page.waitForEvent("popup", { timeout: 20_000 });
-  await signInTrigger.click();
-  const popup = await popupPromise;
-
-  await popup.waitForLoadState("domcontentloaded", { timeout: 20_000 });
-
-  // Google account chooser may show either an email field or an account tile.
-  const emailField = popup.locator('input[type="email"]').first();
-  const accountTile = popup.getByText(GOOGLE_TEST_EMAIL, { exact: false }).first();
-
-  if (await emailField.isVisible().catch(() => false)) {
-    await emailField.fill(GOOGLE_TEST_EMAIL);
-    await popup.getByRole("button", { name: /^next$/i }).click();
-  } else if (await accountTile.isVisible().catch(() => false)) {
-    await accountTile.click();
-  }
-
-  const passwordField = popup
-    .locator('input[name="Passwd"]:not([aria-hidden="true"])')
-    .first();
-  await passwordField.waitFor({ state: "visible", timeout: 30_000 });
-  await passwordField.fill(GOOGLE_TEST_PASSWORD);
-  await popup.getByRole("button", { name: /^next$/i }).click();
-
-  // Consent / continue screens vary slightly by account state.
-  const continueButton = popup
-    .getByRole("button", { name: /continue|allow/i })
-    .first();
-  if (await continueButton.isVisible().catch(() => false)) {
-    await continueButton.click();
-  }
-
-  // Popup callback posts a message back to the opener and closes.
-  await popup.waitForEvent("close", { timeout: 60_000 }).catch(async () => {
-    // Some browsers keep the popup open on the completion page briefly.
-    await popup.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-  });
-
-  await waitForDashboardsPage(page);
-}
 
 /**
  * Log in using whichever strategy the target instance supports.
@@ -332,10 +252,9 @@ async function googlePopupLogin(page: Page): Promise<void> {
  * Order matters — cheapest and least brittle first:
  *   1. Already authenticated (a saved storageState, see E2E_STORAGE_STATE)
  *   2. Dev auth (local / dev instances)
- *   3. Driving Google's real login UI — LAST RESORT. It needs a real password
- *      in the environment and is subject to bot detection, so prefer capturing
- *      a storageState once (or using a PAT for API-only work) over relying on
- *      it in CI.
+ * There is no third strategy: automating Google's password form is deliberately
+ * not supported (see the note at the top of this file). On an instance without
+ * dev auth, capture a session with `npm run auth:capture` so step 1 succeeds.
  */
 export async function login(
   page: Page,
@@ -351,15 +270,14 @@ export async function login(
     return;
   }
 
-  if (googleAuthConfigured()) {
-    await googlePopupLogin(page);
-    return;
-  }
-
   throw new Error(
-    "No usable login strategy found. Either capture a browser session into " +
-      "e2e/.auth/orcabot-user.json (see E2E_STORAGE_STATE), set GOOGLE_TEST_EMAIL " +
-      "and GOOGLE_TEST_PASSWORD, or run against an instance with dev auth enabled."
+    "No usable login strategy found.\n" +
+      "This instance does not accept dev auth, so the browser needs a saved session.\n" +
+      "Run `npm run auth:capture` to log in once by hand — it writes " +
+      "e2e/.auth/orcabot-user.json, which the config picks up automatically " +
+      "(override the path with E2E_STORAGE_STATE).\n" +
+      "Note E2E_API_TOKEN does NOT help here: a PAT authenticates control-plane " +
+      "API calls only and cannot log the browser in."
   );
 }
 
@@ -383,19 +301,17 @@ export async function devModeLoginViaUI(
 
   await page.goto("/");
 
-  // Choose the strategy from what the page actually renders, not from whether
-  // dev auth is reachable: an instance can accept dev auth over the API while
-  // the splash offers only Google, and waiting for a form that will never
-  // appear just burns the timeout.
+  // Decide from what the page actually renders, not from whether dev auth is
+  // reachable: an instance can accept dev auth over the API while the splash
+  // offers only Google, and waiting for a form that will never appear just
+  // burns the timeout.
   const devLoginBtn = page.getByRole("button", { name: /dev mode login/i });
   if (!(await devLoginFormVisible(page))) {
-    if (googleAuthConfigured()) {
-      await googlePopupLogin(page);
-      return;
-    }
     throw new Error(
       "No UI login strategy available: this build has no dev-mode login form, " +
-        "and GOOGLE_TEST_EMAIL / GOOGLE_TEST_PASSWORD are not set."
+        "and Google login is not automated (it would leak the password into " +
+        "Playwright step titles). Use `npm run auth:capture` for a saved session, " +
+        "and let the UI-login spec skip."
     );
   }
 

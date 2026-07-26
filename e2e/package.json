@@ -11,7 +11,9 @@
     "test:terminal": "playwright test recipes/03-terminal-basic.spec.ts recipes/04-terminal-command.spec.ts",
     "test:integration": "playwright test recipes/05-integration-blocks.spec.ts recipes/06-integration-wiring.spec.ts recipes/07-policy-editor.spec.ts",
     "report": "playwright show-report",
-    "install-browsers": "playwright install chromium"
+    "install-browsers": "playwright install chromium",
+    "auth:capture": "node scripts/capture-auth.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
