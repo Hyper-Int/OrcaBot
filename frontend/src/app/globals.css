@@ -690,6 +690,34 @@ input.chat-input-splash:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+/* Wide data tables (benchmark results) would squash or overflow the page on a
+   phone — let them scroll horizontally instead of breaking the layout. */
+@media (max-width: 640px) {
+  .legal-content table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}
+
+/* TOC jump targets: keep headings (and per-post anchors) clear of the sticky
+   site header (66px) when linked to from the Labs side menu — land ~30px below it. */
+.legal-content :is(h1, h2, h3),
+.legal-content [id],
+article[id] {
+  scroll-margin-top: 96px;
+}
+
+/* Body images (e.g. charts) render at natural size by default — keep them
+   responsive and centred with a little breathing room. */
+.legal-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1.75rem auto;
+  border-radius: 12px;
+}
+
 .legal-content .caps-section {
   text-transform: uppercase;
   font-size: 0.8125rem;
