@@ -2,7 +2,7 @@
 title: Free Desktop OrcaBot
 date: 2026-07-18
 description: Announcing free OrcaBot desktop on macOS.
-author: Rob
+author: Rob Macrae
 coverImage: /blog/free_orcabot_desktop.png
 ---
 

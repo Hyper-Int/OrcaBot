@@ -3,7 +3,7 @@
 
 // REVISION: blog-v3-json-bundle
 // Blog posts are bundled into src/data/blog-posts.json at build time by
-// scripts/build-blog.mjs (runs via prebuild). This avoids fs at runtime,
+// scripts/build-content.mjs (runs via prebuild). This avoids fs at runtime,
 // which is unavailable in Cloudflare Workers.
 
 import postsData from "@/data/blog-posts.json";
