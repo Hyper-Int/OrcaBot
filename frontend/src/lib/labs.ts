@@ -22,6 +22,7 @@ export interface LabsPost {
   author?: string | null;
   coverImage?: string | null;
   coverVideo?: string | null;
+  ogImage?: string | null;
   headings: TocHeading[];
   content: string;
 }
@@ -31,7 +32,7 @@ export type LabsPostMeta = Omit<LabsPost, "content">;
 const posts = postsData as LabsPost[];
 
 export function getAllPosts(): LabsPostMeta[] {
-  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo, headings }) => ({
+  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo, ogImage, headings }) => ({
     slug,
     title,
     date,
@@ -39,6 +40,7 @@ export function getAllPosts(): LabsPostMeta[] {
     author,
     coverImage,
     coverVideo,
+    ogImage,
     headings: headings ?? [],
   }));
 }

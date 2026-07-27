@@ -3,11 +3,12 @@ title: Do Skills Improve Coding Agent Accuracy?
 date: 2026-07-21
 description: We ran five public skill collections with Codex 5.5 against SWE benchmarks
 author: Rob Macrae
+ogImage: /labs/og-do-skills.png
 ---
 
-Agent skills were originally designed to allow developers to teach a general AI agent on a specific process or domain expert’s workflow without bloating the agent's prompt or context window. Before agent skills, managing AI behavior was a messy process of swapping and chaining system prompts.
+Agent skills were originally designed to allow developers to teach a general AI agent a specific process or domain expert’s workflow without bloating the agent's prompt or context window. Before agent skills, managing AI behavior was a messy process of swapping and chaining system prompts.
 
-Almost immediately, developers such as Jesse Vincent [^1] were developing skills to improve Claude Code and other harnesses' ability to handle general engineering tasks. Jesse's Superpowers [^2] claimed to impose a professional methodology automatically; Get Shit Done (now Git Ship Done or simply GSD) [^3] would turn an idea into durable specifications and phases; Oh My ClaudeCode[^4] then promised to provide “zero learning curve” orchestration. Andrej Karpathy's tweets [^5] about his coding workflow got quickly turned into another skill [^6] and Addy Osmani released "Agent Skills" [^7], production-grade engineering skills for AI coding agents.
+Almost immediately, developers such as Jesse Vincent [^1] were developing skills to improve Claude Code and other harnesses' ability to handle general engineering tasks. Jesse's Superpowers [^2] claimed to impose a professional methodology automatically; Get Shit Done (now Git Ship Done or simply GSD) [^3] would turn an idea into durable specifications and phases; Oh My ClaudeCode [^4] then promised to provide “zero learning curve” orchestration. Andrej Karpathy's tweets [^5] about his coding workflow got quickly turned into another skill [^6] and Addy Osmani released "Agent Skills" [^7], production-grade engineering skills for AI coding agents.
 
 None of them originally shipped with evidence, other than some demonstrations, that they actually improved end-to-end software-engineering performance. Superpowers came closest, but it tested workflow compliance, not whether the same model solved more coding tasks. And with the AI models and coding harnesses constantly improving, it was an open question whether any gains would survive the next model release.
 
@@ -17,7 +18,7 @@ So I decided to put these skills to the test using similar benchmarks to the one
 
 ### SWE-bench Pro [^8]
 
-731 problems, all complete, single run, model: Codex5.5
+731 problems, all complete, single run, model: Codex 5.5
 
 | # | Arm | Resolve % | Partial % | Tokens/prob | $/prob | Δ vs base |
 |---|-----|----------:|----------:|------------:|-------:|----------:|
@@ -28,7 +29,7 @@ So I decided to put these skills to the test using similar benchmarks to the one
 | 5 | Karpathy Skills | 53.08% | 74.7% | 1.23M | $0.37 | +0.27 |
 | 6 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | — |
 
-SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained open-source repositories; a task may require substantial coordinated changes across several files, but the agent generally gets one issue and one final evaluation
+SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained open-source repositories; a task may require substantial coordinated changes across several files, but the agent generally gets one issue and one final evaluation.
 
 *Note: While these benchmarks were running, Jesse Vincent released Superpowers v6. I will post an updated version of this benchmark soon.*
 
@@ -36,7 +37,7 @@ SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained ope
 
 ### SlopCodeBench [^9]
 
-36 problems / 196 checkpoints, mean of 3 runs, model: Codex5.5
+36 problems / 196 checkpoints, mean of 3 runs, model: Codex 5.5
 
 | # | Arm | Strict | Iso | Core | Partial | $/ckpt | Erosion |
 |---|-----|-------:|----:|-----:|--------:|-------:|--------:|
@@ -55,16 +56,16 @@ SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196
 
 **For SWE-bench Pro, all the skills provide an improvement over baseline.** This effect disappears with SlopCodeBench with all strict scores worse than baseline (although GSD gets higher Iso and Core pass rates).
 
-With the exception of Kaparthy Skills, each collection of skills **costs more to run** than baseline.
+With the exception of Karpathy Skills, each collection of skills **costs more to run** than baseline.
 
-## Potential Explanations
+### Potential Explanations
 
 Many of these frameworks contain procedures intended for navigating and modifying established codebases. Those procedures have limited value during the initial greenfield checkpoint of SlopCodeBench and may impose a context or orchestration cost. SWE-bench Pro's hard part is finding the right 20 lines in a 500k-line unfamiliar repo and making a surgical edit whereas on SCBench the agent wrote the code itself so it will usually already be in context. Additionally all these instructions, routing decisions and procedural constraints add to the context. On a difficult repository task, that additional structure can focus the model. On a small task, it can compete with the actual specification for attention.
 
 In SWE-bench Pro, the repository normally provides existing tests, related test patterns and observable regressions. A TDD or systematic-debugging workflow can use that evidence to localize the issue and protect surrounding functionality.
 SlopCodeBench keeps its evaluator tests hidden. Agents can write tests only from the current external contract and examples. Skills push *"reproduce the failure, write a failing test, then fix."* but on SCBench there's no bug to reproduce.
 
-## So, do skills improve accuracy?
+### So, do skills improve accuracy?
 
 On the evidence: **sometimes, and it depends on the task.**
 
@@ -74,7 +75,6 @@ On the evidence: **sometimes, and it depends on the task.**
 A caveat worth stating plainly: SlopCodeBench ran at n=3 seeds and the spread on several arms (±2.3) is wider than the gaps between them.
 
 ## Methodology
-
 
 ### Try it yourself in OrcaBot
 
@@ -101,7 +101,7 @@ may *understate* skills designed around native multi-agent tooling.
 
 | Skill | Repo | Commit |
 |---|---|---|
-| Get Ship Done | open-gsd/get-shit-done-redux | de73ad9 |
+| Git Ship Done | open-gsd/get-shit-done-redux | de73ad9 |
 | Oh My ClaudeCode | Yeachan-Heo/oh-my-claudecode | a172043 |
 | Superpowers v5 | obra/superpowers (v5.1.0) | f2cbfbe |
 | Karpathy Skills | multica-ai/andrej-karpathy-skills | 2c60614 |

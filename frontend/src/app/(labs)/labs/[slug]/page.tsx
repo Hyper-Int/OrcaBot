@@ -26,12 +26,29 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const post = getPost(slug);
   if (!post) return {};
+  // Social preview image: prefer the dedicated ogImage (a 1200×630 card), fall
+  // back to coverImage. LinkedIn/Twitter only render raster images, so ogImage
+  // must be a PNG/JPG, never an SVG.
+  const images = post.ogImage
+    ? [{ url: post.ogImage, width: 1200, height: 630, alt: post.title }]
+    : post.coverImage
+      ? [{ url: post.coverImage, alt: post.title }]
+      : undefined;
   return {
     title: `${post.title} - OrcaBot Labs`,
     description: post.description,
-    openGraph: post.coverImage
-      ? { images: [{ url: post.coverImage }] }
-      : undefined,
+    openGraph: {
+      type: "article",
+      title: post.title,
+      description: post.description,
+      images,
+    },
+    twitter: {
+      card: images ? "summary_large_image" : "summary",
+      title: post.title,
+      description: post.description,
+      images: images?.map((i) => i.url),
+    },
   };
 }
 

@@ -84,6 +84,9 @@ function buildSection({ name, dir, out }) {
       author: frontmatter.author || null,
       coverImage: frontmatter.coverImage || null,
       coverVideo: frontmatter.coverVideo || null,
+      // Social-card image (Open Graph / Twitter). Kept separate from coverImage
+      // so it drives the link preview WITHOUT injecting a hero into the article.
+      ogImage: frontmatter.ogImage || null,
       headings: extractHeadings(content),
       content,
     };
