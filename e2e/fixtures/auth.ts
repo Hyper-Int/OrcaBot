@@ -1,4 +1,4 @@
-// REVISION: e2e-auth-v5-drop-password-login
+// REVISION: e2e-auth-v6-dismiss-ai-onboarding
 import { type Page, expect, request as playwrightRequest } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
 import { getEnv } from "../helpers/env";
@@ -6,7 +6,7 @@ import { getEnv } from "../helpers/env";
 // an override) so a single knob points the whole harness at an instance.
 import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
-const MODULE_REVISION = "e2e-auth-v5-drop-password-login";
+const MODULE_REVISION = "e2e-auth-v6-dismiss-ai-onboarding";
 console.log(
   `[e2e-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -152,6 +152,41 @@ function devAuthHeaders(email: string, name: string): Record<string, string> {
 }
 
 /**
+ * Dismiss the "Do you have an AI API key?" onboarding card.
+ *
+ * GET /user/setup answers `needsAiSetup: !hasAiKey && !dismissed`, and the test
+ * user has no AI key — so on every dashboard the chat panel expands and its
+ * setup card sits over the canvas as a fixed, centred overlay. It swallows
+ * clicks aimed at terminal and block connectors, which is not a product bug but
+ * makes canvas tests fail with an unhelpful "element intercepts pointer events".
+ *
+ * Dismissed through the real endpoint rather than by stubbing GET /user/setup,
+ * so the app is in a state a real user can actually be in. The flag is stored
+ * per user and this is idempotent, so repeat calls are cheap.
+ *
+ * Best-effort: a failure here must not fail login. If it does fail, the tests
+ * that care will fail loudly on the overlay anyway.
+ *
+ * Note for anyone adding onboarding coverage: a test that WANTS this card must
+ * use a fresh user, since dismissal persists server-side.
+ */
+async function dismissAiSetupPrompt(
+  page: Page,
+  email: string,
+  name: string
+): Promise<void> {
+  await page.request
+    // Cookies from the browser context authenticate this on instances without
+    // dev auth; the dev-auth headers are ignored there because authenticate()
+    // checks the session cookie first.
+    .post(`${CONTROLPLANE_URL}/user/setup/ai-dismissed`, {
+      headers: devAuthHeaders(email, name),
+      data: {},
+    })
+    .catch(() => undefined);
+}
+
+/**
  * Log in by creating a server-side session directly via the control plane API,
  * then injecting the session cookie and auth state into the browser.
  *
@@ -238,10 +273,14 @@ export async function devModeLogin(
     authState
   );
 
-  // Step 5: Navigate to dashboards (full load with auth state already set)
+  // Step 5: Clear the AI onboarding card while we are still off the canvas.
+  // The session cookie is in the context by now, so this call is authenticated.
+  await dismissAiSetupPrompt(page, email, name);
+
+  // Step 6: Navigate to dashboards (full load with auth state already set)
   await page.goto("/dashboards");
 
-  // Step 6: Wait for the dashboards page to stabilize
+  // Step 7: Wait for the dashboards page to stabilize
   await waitForDashboardsPage(page);
 }
 
@@ -262,6 +301,9 @@ export async function login(
   email = DEFAULT_EMAIL
 ): Promise<void> {
   if (await isAlreadyAuthenticated(page)) {
+    // Also needed on this path: a saved session can still have the onboarding
+    // card pending, and it would cover the canvas in every later test.
+    await dismissAiSetupPrompt(page, email, name);
     return;
   }
 
@@ -363,6 +405,10 @@ export async function devModeLoginViaUI(
 
   // Wait for the page to be stable
   await waitForDashboardsPage(page);
+
+  // Same normalization as the API login path, so tests behave identically
+  // regardless of which strategy got us here.
+  await dismissAiSetupPrompt(page, email, name);
 }
 
 /**
