@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v54-ai-setup-prompt
-console.log(`[dashboard] REVISION: dashboard-v54-ai-setup-prompt loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v55-stable-tool-ids
+console.log(`[dashboard] REVISION: dashboard-v55-stable-tool-ids loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -137,6 +137,21 @@ function formatTimeAgo(timestamp: number): string {
 type BlockType = DashboardItem["type"];
 
 type BlockTool = {
+  /**
+   * Stable identifier for this toolbar entry — used for `data-guidance-target`
+   * and as the React key.
+   *
+   * Must be unique across ALL tool arrays. Deliberately explicit rather than
+   * derived from `label`: two different tools can legitimately share a display
+   * label (Google Calendar and Outlook Calendar both read "Calendar"), and a
+   * label-derived target made them indistinguishable — UIGuidanceOverlay
+   * resolves targets with querySelector, so guidance silently pointed at
+   * whichever button came first in the DOM. `type` is not usable either, since
+   * every terminal preset shares type "terminal".
+   *
+   * Renaming a label is a copy change and must not move a guidance target.
+   */
+  id: string;
   type: BlockType;
   icon: React.ReactNode;
   label: string;
@@ -165,39 +180,41 @@ const toFlowEdge = (edge: DashboardEdge): Edge => ({
 
 // Only include types that exist in the DB schema
 const blockTools: BlockTool[] = [
-  { type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
-  { type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
-  { type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
-  { type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
-  { type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
-  { type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
-  { type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
+  { id: "note", type: "note", icon: <StickyNote className="w-4 h-4" />, label: "Note" },
+  { id: "todo", type: "todo", icon: <CheckSquare className="w-4 h-4" />, label: "Todo" },
+  { id: "prompt", type: "prompt", icon: <MessageSquare className="w-4 h-4" />, label: "Prompt" },
+  { id: "decision", type: "decision", icon: <GitBranch className="w-4 h-4" />, label: "Decision" },
+  { id: "schedule", type: "schedule", icon: <Clock className="w-4 h-4" />, label: "Schedule" },
+  { id: "browser", type: "browser", icon: <Globe className="w-4 h-4" />, label: "Browser" },
+  { id: "benchmark", type: "benchmark", icon: <FlaskConical className="w-4 h-4" />, label: "Benchmark" },
   // Recipe is not in DB schema yet - uncomment when added:
-  // { type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
+  // { id: "recipe", type: "recipe", icon: <Workflow className="w-4 h-4" />, label: "Recipe" },
 ];
 
 // Google integrations in their own section
 const googleTools: BlockTool[] = [
-  { type: "gmail", icon: <GmailIcon className="w-4 h-4" />, label: "Gmail" },
-  { type: "calendar", icon: <GoogleCalendarIcon className="w-4 h-4" />, label: "Calendar" },
-  { type: "contacts", icon: <GoogleContactsIcon className="w-4 h-4" />, label: "Contacts" },
-  { type: "sheets", icon: <GoogleSheetsIcon className="w-4 h-4" />, label: "Sheets" },
-  { type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
+  { id: "gmail", type: "gmail", icon: <GmailIcon className="w-4 h-4" />, label: "Gmail" },
+  { id: "calendar", type: "calendar", icon: <GoogleCalendarIcon className="w-4 h-4" />, label: "Calendar" },
+  { id: "contacts", type: "contacts", icon: <GoogleContactsIcon className="w-4 h-4" />, label: "Contacts" },
+  { id: "sheets", type: "sheets", icon: <GoogleSheetsIcon className="w-4 h-4" />, label: "Sheets" },
+  { id: "forms", type: "forms", icon: <GoogleFormsIcon className="w-4 h-4" />, label: "Forms" },
 ];
 
 // Microsoft integrations
 const microsoftTools: BlockTool[] = [
-  { type: "outlook", icon: <OutlookIcon className="w-4 h-4" />, label: "Outlook" },
-  { type: "outlook_calendar", icon: <OutlookCalendarIcon className="w-4 h-4" />, label: "Calendar" },
-  { type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
+  { id: "outlook", type: "outlook", icon: <OutlookIcon className="w-4 h-4" />, label: "Outlook" },
+  // Shares the label "Calendar" with the Google entry above — hence the
+  // explicit, distinct id.
+  { id: "outlook-calendar", type: "outlook_calendar", icon: <OutlookCalendarIcon className="w-4 h-4" />, label: "Calendar" },
+  { id: "teams", type: "teams", icon: <TeamsIcon className="w-4 h-4" />, label: "Teams" },
 ];
 
 // Messaging integrations in their own section
 const messagingToolsAll: BlockTool[] = [
-  { type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
-  { type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
-  { type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
-  { type: "twitter", icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>, label: "X" },
+  { id: "slack", type: "slack", icon: <SlackIcon className="w-4 h-4" />, label: "Slack" },
+  { id: "discord", type: "discord", icon: <DiscordIcon className="w-4 h-4" />, label: "Discord" },
+  { id: "whatsapp", type: "whatsapp", icon: <WhatsAppIcon className="w-4 h-4" />, label: "WhatsApp" },
+  { id: "twitter", type: "twitter", icon: <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>, label: "X" },
   // Telegram, Matrix, Google Chat hidden until ready
 ];
 
@@ -210,18 +227,21 @@ const messagingTools: BlockTool[] = messagingToolsAll.filter(
 
 const terminalTools: BlockTool[] = [
   {
+    id: "claude-code",
     type: "terminal",
     label: "Claude Code",
     icon: <img src="/icons/claude.ico" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "claude", agentic: true },
   },
   {
+    id: "gemini-cli",
     type: "terminal",
     label: "Gemini CLI",
     icon: <img src="/icons/gemini.ico" alt="" className="w-4 h-4 object-contain" />,
     terminalPreset: { command: "gemini", agentic: true },
   },
   {
+    id: "codex",
     type: "terminal",
     label: "Codex",
     icon: <img src="/icons/codex.png" alt="" className="w-4 h-4 object-contain" />,
@@ -230,6 +250,7 @@ const terminalTools: BlockTool[] = [
   // OpenCode - temporarily hidden: its newer "opentui" TUI crashes/garbles in the
   // xterm.js terminal and exits back to the shell. Re-enable in a later PR once fixed.
   // {
+  //   id: "opencode",
   //   type: "terminal",
   //   label: "OpenCode",
   //   icon: <img src="/icons/opencode.ico" alt="" className="w-4 h-4 object-contain" />,
@@ -237,6 +258,7 @@ const terminalTools: BlockTool[] = [
   // },
   // Droid - temporarily hidden until stable release
   // {
+  //   id: "droid",
   //   type: "terminal",
   //   label: "Droid",
   //   icon: <img src="/icons/droid.png" alt="" className="w-4 h-4 object-contain" />,
@@ -244,12 +266,14 @@ const terminalTools: BlockTool[] = [
   // },
   // OpenClaw - temporarily hidden (not installed in sandbox image)
   // {
+  //   id: "openclaw",
   //   type: "terminal",
   //   label: "OpenClaw",
   //   icon: <img src="/icons/moltbot.png" alt="" className="w-4 h-4 object-contain" />,
   //   terminalPreset: { command: "[ -f ~/.openclaw/.env ] && openclaw tui || openclaw onboard", agentic: true },
   // },
   {
+    id: "terminal",
     type: "terminal",
     label: "Terminal",
     icon: <SquareTerminal className="w-4 h-4" />,
@@ -3807,13 +3831,13 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarAgentsCollapsed && terminalTools.map((tool) => (
-                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Tooltip key={tool.id} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
-                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                      data-guidance-target={tool.id}
                     >
                       {tool.icon}
                     </Button>
@@ -3834,13 +3858,13 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarBlocksCollapsed && blockTools.map((tool) => (
-                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Tooltip key={tool.id} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
-                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                      data-guidance-target={tool.id}
                     >
                       {tool.icon}
                     </Button>
@@ -3861,13 +3885,13 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarGoogleCollapsed && googleTools.map((tool) => (
-                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Tooltip key={tool.id} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
-                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                      data-guidance-target={tool.id}
                     >
                       {tool.icon}
                     </Button>
@@ -3888,13 +3912,13 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarMicrosoftCollapsed && microsoftTools.map((tool) => (
-                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Tooltip key={tool.id} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
-                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                      data-guidance-target={tool.id}
                     >
                       {tool.icon}
                     </Button>
@@ -3916,13 +3940,13 @@ export default function DashboardPage() {
                   </Button>
                 </Tooltip>
                 {!toolbarMessagingCollapsed && messagingTools.map((tool) => (
-                  <Tooltip key={`${tool.type}-${tool.label}`} content={tool.label} side="bottom">
+                  <Tooltip key={tool.id} content={tool.label} side="bottom">
                     <Button
                       variant="ghost"
                       size="icon-sm"
                       onClick={() => handleAddBlock(tool)}
                       disabled={createItemMutation.isPending}
-                      data-guidance-target={tool.label.toLowerCase().replace(/\s+/g, "-")}
+                      data-guidance-target={tool.id}
                     >
                       {tool.icon}
                     </Button>

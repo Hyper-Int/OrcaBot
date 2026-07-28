@@ -1180,6 +1180,38 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     return analytics.getAdminMetrics(env, auth.user!.email, request);
   }
 
+  // POST /admin/storage/orphan-sweep - reclaim R2 objects whose dashboard is gone.
+  //
+  // Backfill for dashboards deleted before purgeDashboardStorage swept by
+  // prefix; those removed only manifests and orphaned every cached file.
+  // DRY RUN unless the body carries { "apply": true } — the blast radius is a
+  // whole bucket, so deletion must be asked for explicitly. Optional
+  // { "limit": n } processes a batch at a time.
+  if (
+    segments[0] === 'admin' &&
+    segments[1] === 'storage' &&
+    segments[2] === 'orphan-sweep' &&
+    segments.length === 3 &&
+    method === 'POST'
+  ) {
+    const authError = requireAuth(auth);
+    if (authError) return authError;
+    if (!isAdminEmail(env, auth.user!.email)) {
+      return Response.json({ error: 'E79810: Admin access required' }, { status: 403 });
+    }
+    // A PAT must not be able to mass-delete stored content.
+    const patError = rejectPatAuth(auth);
+    if (patError) return patError;
+
+    const body = await request.json().catch(() => ({})) as { apply?: boolean; limit?: number };
+    const { sweepOrphanedStorage } = await import('./storage/orphan-sweep');
+    const result = await sweepOrphanedStorage(ensureDriveCache(env), {
+      apply: body.apply === true,
+      limit: typeof body.limit === 'number' ? body.limit : undefined,
+    });
+    return Response.json(result);
+  }
+
   // POST /auth/logout - clear session cookie
   if (segments[0] === 'auth' && segments[1] === 'logout' && segments.length === 2 && method === 'POST') {
     return authLogout.logout(request, env);

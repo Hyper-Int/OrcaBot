@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v11-status-kill-wait-reap
+// REVISION: browser-v12-process-group-kill
 package browser
 
 import (
@@ -20,8 +20,34 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
+
+// killProcessTree kills a browser process and the process group it leads, then
+// reaps it.
+//
+// Each browser process is started with Setpgid so it leads its own group.
+// Killing only the direct process leaves Chromium's children (zygote,
+// renderers, GPU, crashpad) running; they are then reparented to PID 1 and
+// linger. Signalling the negative pid delivers to the whole group instead.
+//
+// The Wait() is what actually reaps the direct child — without it a killed
+// process stays a zombie holding its PID. Grandchildren are reaped by tini
+// (see the Dockerfile ENTRYPOINT), which cannot be done from here.
+func killProcessTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	// Negative pid = the process group led by pid. Best-effort: the group may
+	// already be gone, and children that called setsid() escape it (tini still
+	// reaps those once they exit).
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		_ = cmd.Process.Kill()
+	}
+	_, _ = cmd.Process.Wait()
+}
 
 type Status struct {
 	Running   bool `json:"running"`
@@ -44,8 +70,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v10-no-sandbox-warning
-const browserRevision = "browser-v10-no-sandbox-warning"
+// REVISION: browser-v12-process-group-kill
+const browserRevision = "browser-v12-process-group-kill"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -206,9 +232,7 @@ func (c *Controller) Start() (Status, error) {
 	processes := []*exec.Cmd{xvfbCmd, vncCmd, websockifyCmd, chromiumCmd}
 	killAll := func() {
 		for _, cmd := range processes {
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
+			killProcessTree(cmd)
 		}
 	}
 	for i, cmd := range processes {
@@ -217,6 +241,10 @@ func (c *Controller) Start() (Status, error) {
 		logWriter := newProcessLogWriter(procName)
 		cmd.Stdout = logWriter
 		cmd.Stderr = logWriter
+		// Lead a process group so teardown can signal the whole tree, not just
+		// this pid — Chromium's children would otherwise survive and be
+		// reparented to PID 1.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			log.Printf("browser failed to start %s: %v", cmd.Path, err)
 			killAll()
@@ -345,11 +373,7 @@ func (c *Controller) Stop() {
 	}
 
 	for i := len(c.processes) - 1; i >= 0; i-- {
-		cmd := c.processes[i]
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
+		killProcessTree(c.processes[i])
 	}
 
 	c.processes = nil
@@ -375,11 +399,8 @@ func (c *Controller) Status() Status {
 			if c.running && c.wsPort == wsPort {
 				log.Printf("[browser] websockify port %d gone, processes exited unexpectedly — clearing state", wsPort)
 				for _, p := range c.processes {
-					if p.Process != nil {
-						_ = p.Process.Kill()
-						// Reap so killed children don't linger as zombies (matches Stop()).
-						_, _ = p.Process.Wait()
-					}
+					// Kill the group and reap, same as Stop().
+					killProcessTree(p)
 				}
 				c.processes = nil
 				c.running = false

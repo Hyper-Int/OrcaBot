@@ -39,6 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     git \
+    # Minimal init, used as PID 1 so orphaned processes get reaped (see ENTRYPOINT)
+    tini \
     # Build essentials (needed for some npm packages)
     build-essential \
     # Python (useful for user scripts)
@@ -272,6 +274,21 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 # The sandbox user is used for spawned shell processes, not the server itself
 # NOTE: Consider using capability-based approach (CAP_SYS_PTRACE, CAP_SETUID) in future
 USER root
+
+# Run under tini as PID 1 so orphaned processes are reaped.
+#
+# Chromium forks a tree (zygote, renderers, GPU, crashpad) that are grandchildren
+# of the server. When their parent is killed at session teardown they are
+# reparented to PID 1, and PID 1 was the Go server, which has no SIGCHLD reaper —
+# so they accumulated as zombies, one batch per browser session. Measured: 500
+# zombies / 519 PIDs after ~35 dashboards, all with PPID 1. That leaks PID slots
+# until the container cannot fork.
+#
+# A blanket wait4(-1) reaper inside the server is NOT the fix: internal/pty
+# relies on cmd.Wait() reaping its own children to recycle pool slots, and a
+# competing reaper would steal those exit statuses. tini reaps only what gets
+# reparented to it, leaving the server's direct children alone.
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Start the Go server
 CMD ["/usr/local/bin/orcabot-server"]

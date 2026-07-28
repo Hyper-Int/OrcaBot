@@ -3,6 +3,12 @@
 
 "use client";
 
+// REVISION: xterm-terminal-v2-clip-overflow
+const MODULE_REVISION = "xterm-terminal-v2-clip-overflow";
+console.log(
+  `[xterm-terminal] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
+
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import type { TerminalHandle, TerminalProps, TerminalTheme } from "./types";
@@ -230,8 +236,22 @@ export const XtermTerminal = React.forwardRef<TerminalHandle, TerminalProps>(
       );
     }
 
+    // overflow-hidden keeps xterm's own layers inside the block.
+    //
+    // fit() only runs once the terminal connects, so a terminal that fails to
+    // get a session stays at xterm's 80x24 default. In a block narrower than
+    // ~454px the .xterm-rows layer then renders wider than its viewport and,
+    // being pointer-events:auto with overflow:visible, spills onto the canvas
+    // and swallows clicks meant for whatever sits to its right — a neighbouring
+    // block's connector, for example. Clipping means one terminal failing to
+    // connect can't make the rest of the canvas unusable.
+    //
+    // A no-op when the terminal is sized correctly, since there is then nothing
+    // outside the box. Deliberately applied here and NOT to the portal wrapper
+    // in TerminalBlock: that wrapper also holds ConnectionMarkers, which are
+    // positioned outside the block edges on purpose and must not be clipped.
     return (
-      <div className={cn("relative w-full h-full", className)}>
+      <div className={cn("relative w-full h-full overflow-hidden", className)}>
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center text-[var(--foreground-muted)] text-sm">
             Loading terminal...

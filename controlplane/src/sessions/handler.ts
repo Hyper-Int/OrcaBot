@@ -926,6 +926,108 @@ function workspaceSnapshotKey(dashboardId: string): string {
   return `workspace/${dashboardId}/snapshot.json`;
 }
 
+/** Mirror providers with a known key namespace; see discoverMirrorProviders. */
+const MIRROR_PROVIDERS = ['github', 'box', 'onedrive'] as const;
+
+/** Bounds the delete loop at 1M objects rather than spinning forever. */
+const MAX_PURGE_ROUNDS = 1000;
+
+/**
+ * Delete every object under an R2 prefix.
+ *
+ * list() caps at 1000 keys, so anything with more cached files than that needs
+ * repeating — otherwise the tail is silently left behind, the same class of bug
+ * as deleting only manifests.
+ *
+ * Deliberately re-lists from the start each round instead of paging with a
+ * cursor: we delete the very keys we just listed, and a cursor that encodes a
+ * position rather than a key skips survivors once earlier keys disappear. (An
+ * earlier cursor version of this passed by hand and failed the 2500-object
+ * test.) Every round removes everything it saw, so this always terminates.
+ */
+async function purgeR2Prefix(bucket: R2Bucket, prefix: string): Promise<number> {
+  let deleted = 0;
+
+  for (let round = 0; round < MAX_PURGE_ROUNDS; round++) {
+    const listed = await bucket.list({ prefix, limit: 1000 });
+    const keys = listed.objects.map((object) => object.key);
+    if (keys.length === 0) {
+      return deleted;
+    }
+    await bucket.delete(keys);
+    deleted += keys.length;
+  }
+
+  console.error(
+    `[purgeDashboardStorage] Hit the ${MAX_PURGE_ROUNDS}-round cap for ${prefix}; objects may remain`
+  );
+  return deleted;
+}
+
+/**
+ * Mirror keys are namespaced by provider, so purging a dashboard needs the set
+ * of providers. Discovered from the bucket rather than trusted from a constant:
+ * a provider added later would otherwise keep leaking files with nothing to
+ * signal it. Falls back to (and always includes) the known list, so this still
+ * works if delimited listing returns nothing.
+ */
+async function discоverMirrorPrоviders(bucket: R2Bucket): Promise<string[]> {
+  const providers = new Set<string>(MIRROR_PROVIDERS);
+  try {
+    const listed = await bucket.list({ prefix: 'mirror/', delimiter: '/' });
+    for (const prefix of listed.delimitedPrefixes ?? []) {
+      // "mirror/<provider>/" -> "<provider>"
+      const provider = prefix.slice('mirror/'.length).replace(/\/$/, '');
+      if (provider) providers.add(provider);
+    }
+  } catch {
+    // Delimited listing unsupported or failed — the known list still applies.
+  }
+  return [...providers];
+}
+
+/**
+ * Delete every R2 object belonging to a dashboard.
+ *
+ * These live outside D1, so nothing cascades them: deleting a dashboard used to
+ * leave its cached content in the bucket forever.
+ *
+ * Purges by PREFIX rather than by known key. Each family stores per-file objects
+ * alongside its manifest —
+ *   workspace/<id>/snapshot.json
+ *   drive/<id>/manifest.json          + drive/<id>/files/<fileId>
+ *   mirror/<provider>/<id>/manifest.json + mirror/<provider>/<id>/files/<fileId>
+ * — so deleting just the manifests orphaned every uploaded and mirrored file,
+ * indefinitely, and left the dashboard's content unreferenced but billable.
+ * Sweeping the prefix also means a new key shape under it is covered
+ * automatically, instead of quietly leaking until someone notices.
+ *
+ * Callers: the dev clear-workspace endpoint, and deleteDashboard.
+ */
+export async function purgeDashbоardStorage(
+  env: EnvWithDriveCache,
+  dashboardId: string
+): Promise<void> {
+  const bucket = env.DRIVE_CACHE;
+  const prefixes = [`workspace/${dashboardId}/`, `drive/${dashboardId}/`];
+  for (const provider of await discоverMirrorPrоviders(bucket)) {
+    prefixes.push(`mirror/${provider}/${dashboardId}/`);
+  }
+
+  let total = 0;
+  for (const prefix of prefixes) {
+    try {
+      total += await purgeR2Prefix(bucket, prefix);
+    } catch (e) {
+      // Best-effort per prefix: one failure must not strand the others.
+      console.error(`[purgeDashboardStorage] Failed to purge ${prefix}: ${e}`);
+    }
+  }
+  if (total > 0) {
+    console.log(`[purgeDashboardStorage] Deleted ${total} object(s) for dashboard ${dashboardId}`);
+  }
+}
+
 export async function clearWorkspaceDev(
   request: Request,
   env: EnvWithDriveCache,
@@ -952,11 +1054,7 @@ export async function clearWorkspaceDev(
     return Response.json({ error: 'E79792: Not found or no access' }, { status: 404 });
   }
 
-  await env.DRIVE_CACHE.delete(workspaceSnapshotKey(data.dashboardId));
-  await env.DRIVE_CACHE.delete(driveManifestKey(data.dashboardId));
-  for (const provider of ['github', 'box', 'onedrive']) {
-    await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, data.dashboardId));
-  }
+  await purgeDashbоardStorage(env, data.dashboardId);
 
   const now = new Date().toISOString();
   await env.DB.prepare(`
