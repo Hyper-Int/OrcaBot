@@ -70,8 +70,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v10-no-sandbox-warning
-const browserRevision = "browser-v10-no-sandbox-warning"
+// REVISION: browser-v12-process-group-kill
+const browserRevision = "browser-v12-process-group-kill"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))

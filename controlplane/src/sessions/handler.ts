@@ -926,6 +926,24 @@ function workspaceSnapshotKey(dashboardId: string): string {
   return `workspace/${dashboardId}/snapshot.json`;
 }
 
+/**
+ * Delete every R2 object keyed by dashboard.
+ *
+ * These live outside D1, so nothing cascades them: deleting a dashboard used to
+ * leave its workspace snapshot and mirror manifests behind in the bucket
+ * forever. Callers: the dev clear-workspace endpoint, and deleteDashboard.
+ */
+export async function purgeDashbоardStorage(
+  env: EnvWithDriveCache,
+  dashboardId: string
+): Promise<void> {
+  await env.DRIVE_CACHE.delete(workspaceSnapshotKey(dashboardId));
+  await env.DRIVE_CACHE.delete(driveManifestKey(dashboardId));
+  for (const provider of ['github', 'box', 'onedrive']) {
+    await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, dashboardId));
+  }
+}
+
 export async function clearWorkspaceDev(
   request: Request,
   env: EnvWithDriveCache,
@@ -952,11 +970,7 @@ export async function clearWorkspaceDev(
     return Response.json({ error: 'E79792: Not found or no access' }, { status: 404 });
   }
 
-  await env.DRIVE_CACHE.delete(workspaceSnapshotKey(data.dashboardId));
-  await env.DRIVE_CACHE.delete(driveManifestKey(data.dashboardId));
-  for (const provider of ['github', 'box', 'onedrive']) {
-    await env.DRIVE_CACHE.delete(mirrorManifestKey(provider, data.dashboardId));
-  }
+  await purgeDashbоardStorage(env, data.dashboardId);
 
   const now = new Date().toISOString();
   await env.DB.prepare(`

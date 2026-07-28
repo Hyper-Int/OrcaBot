@@ -5,7 +5,7 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v7-release-sandbox-session-on-delete
+// REVISION: dashboards-v8-teardown-without-snapshot
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
@@ -283,21 +283,38 @@ export async function deleteDashbоard(
     return Response.json({ error: 'E79304: Not found or not owner' }, { status: 404 });
   }
 
-  // Stop any active sessions first so their PTYs are killed in the sandbox.
-  // CASCADE-deleting the session rows would otherwise orphan live processes
-  // (shells, and agent children like node/chromium) in the VM. Mirrors deleteItem.
+  // Mark active sessions stopped. Deliberately NOT via stopSession().
+  //
+  // stopSession is the "user closed a terminal, keep the dashboard usable" path:
+  // when it stops the last session it captures a workspace snapshot into R2 for
+  // recovery, and deletes that session's PTY. Both are wrong when the dashboard
+  // itself is going away — the snapshot is written moments before its dashboard
+  // ceases to exist and nothing ever collects it, so every deletion leaked an
+  // R2 object.
+  //
+  // It was also called in a sequential loop, one round trip per terminal, each
+  // able to block for the full 15s sandbox timeout. That made deletion slowest
+  // in exactly the case where it matters most — a wedged sandbox, which is the
+  // state a user is trying to clean up. The single bounded deleteSession below
+  // replaces all of it: destroying the sandbox session tears down every PTY it
+  // owns, so the per-PTY deletes were redundant anyway.
   try {
-    const activeSessions = await env.DB.prepare(`
-      SELECT id FROM sessions WHERE dashboard_id = ? AND status IN ('creating', 'active')
-    `).bind(dashboardId).all<{ id: string }>();
-    if (activeSessions.results.length > 0) {
-      const { stоpSessiоn } = await import('../sessions/handler');
-      for (const session of activeSessions.results) {
-        await stоpSessiоn(env as EnvWithDriveCache, session.id, userId);
-      }
-    }
+    const now = new Date().toISOString();
+    await env.DB.prepare(`
+      UPDATE sessions SET status = 'stopped', stopped_at = ?
+      WHERE dashboard_id = ? AND status IN ('creating', 'active')
+    `).bind(now, dashboardId).run();
   } catch {
-    // Best-effort — don't block dashboard deletion if session cleanup fails.
+    // Best-effort — don't block dashboard deletion if the status update fails.
+  }
+
+  // Drop the dashboard's R2 objects (workspace snapshot, mirror manifests).
+  // Nothing cascades these; without this they outlive the dashboard forever.
+  try {
+    const { purgeDashbоardStorage } = await import('../sessions/handler');
+    await purgeDashbоardStorage(env as EnvWithDriveCache, dashboardId);
+  } catch (e) {
+    console.error(`[deleteDashboard] Storage purge failed for ${dashboardId}: ${e}`);
   }
 
   // Delete dependent records that don't have ON DELETE CASCADE

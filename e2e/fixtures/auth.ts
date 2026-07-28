@@ -1,4 +1,4 @@
-// REVISION: e2e-auth-v6-dismiss-ai-onboarding
+// REVISION: e2e-auth-v7-nonmutating-devauth-probe
 import { type Page, expect, request as playwrightRequest } from "@playwright/test";
 import { generateUserId } from "../helpers/api";
 import { getEnv } from "../helpers/env";
@@ -6,7 +6,7 @@ import { getEnv } from "../helpers/env";
 // an override) so a single knob points the whole harness at an instance.
 import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 
-const MODULE_REVISION = "e2e-auth-v6-dismiss-ai-onboarding";
+const MODULE_REVISION = "e2e-auth-v7-nonmutating-devauth-probe";
 console.log(
   `[e2e-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -64,15 +64,22 @@ let devAuthAvailableCache: boolean | undefined;
 /**
  * Probe whether the target honors dev auth.
  *
- * Deliberately uses an ISOLATED request context, not `page.request`: the latter
- * shares the browser context's cookie jar, so probing would mint a real session
- * as a side effect and silently pre-authenticate the very UI login flow that
- * devModeLoginViaUI is meant to exercise.
+ * Reads GET /users/me rather than POSTing /auth/dev/session. Both answer the
+ * question — dev auth is either honored or it isn't — but the POST MINTS A
+ * SESSION, and the probe then threw the cookie away. Every probe therefore left
+ * a 30-day user_sessions row that nothing ever collects, once per worker per
+ * run. /users/me is a plain read: it authenticates via the same dev-auth
+ * headers and writes no session.
  *
- * Accepts any 2xx: the endpoint returned 204 historically but now returns 200
- * with a JSON body ({id, email}). A 403 means either DEV_AUTH_ENABLED is off
- * (E79406) or a SURFACE_TOKEN is provisioned and we aren't the trusted surface
- * (E79407) — both mean "not usable", so fall through to another strategy.
+ * Deliberately uses an ISOLATED request context, not `page.request`: the latter
+ * shares the browser context's cookie jar, so an existing session could answer
+ * the probe and mask whether dev auth actually works — and, with the old
+ * minting probe, would silently pre-authenticate the very UI login flow that
+ * devModeLoginViaUI exists to exercise.
+ *
+ * A 401/403 means dev auth is off (E79406) or a SURFACE_TOKEN is provisioned
+ * and we aren't the trusted surface (E79407) — both mean "not usable", so fall
+ * through to another strategy.
  */
 async function devAuthAvailable(): Promise<boolean> {
   if (devAuthAvailableCache !== undefined) {
@@ -81,7 +88,7 @@ async function devAuthAvailable(): Promise<boolean> {
 
   const probe = await playwrightRequest.newContext();
   try {
-    const response = await probe.post(`${CONTROLPLANE_URL}/auth/dev/session`, {
+    const response = await probe.get(`${CONTROLPLANE_URL}/users/me`, {
       headers: devAuthHeaders(DEFAULT_EMAIL, DEFAULT_NAME),
     });
     devAuthAvailableCache = response.ok();

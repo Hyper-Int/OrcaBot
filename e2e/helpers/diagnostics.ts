@@ -1,7 +1,7 @@
-// REVISION: e2e-diagnostics-v3-narrow-expected-errors
+// REVISION: e2e-diagnostics-v4-scope-401-to-users-me
 import type { ConsoleMessage, Page, Request, TestInfo } from "@playwright/test";
 
-const MODULE_REVISION = "e2e-diagnostics-v3-narrow-expected-errors";
+const MODULE_REVISION = "e2e-diagnostics-v4-scope-401-to-users-me";
 console.log(
   `[e2e-diagnostics] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -79,9 +79,14 @@ const EXPECTED_CONSOLE_ERRORS: ExpectedConsoleError[] = [
   {
     why:
       "The login helpers load authenticated routes while logged out on purpose " +
-      "(isAlreadyAuthenticated opens /dashboards before any login), so the app's " +
-      "auth checks correctly answer 401/403.",
+      "(isAlreadyAuthenticated opens /dashboards before any login), so the auth " +
+      "bootstrap's GET /users/me correctly answers 401/403. Scoped to that one " +
+      "endpoint: the dashboard page's other queries are gated on " +
+      "`isAuthenticated && isAuthResolved` so they never fire while logged out, " +
+      "which means a 401/403 from anywhere ELSE is a real authorization " +
+      "regression and must still fail the test.",
     text: /the server responded with a status of 40[13]\b/i,
+    url: /\/users\/me\b/,
   },
   {
     why:
