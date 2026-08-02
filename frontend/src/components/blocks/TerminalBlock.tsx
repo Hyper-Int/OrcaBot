@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v10-first-connect-no-clear
-const TERMINAL_BLOCK_REVISION = "terminal-block-v10-first-connect-no-clear";
+// REVISION: terminal-block-v11-workdir-picker
+const TERMINAL_BLOCK_REVISION = "terminal-block-v11-workdir-picker";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -123,6 +123,7 @@ import mcpToolsCatalog from "@/data/claude-mcp-tools.json";
 import openrouterModelsCatalog from "@/data/openrouter-models.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { WorkspaceDirPicker } from "./WorkspaceDirPicker";
 import { TasksPanel } from "./TasksPanel";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -698,6 +699,13 @@ export function TerminalBlock({
   // Working directory validation error
   const [workingDirError, setWorkingDirError] = React.useState<string | null>(null);
   const [isValidatingWorkingDir, setIsValidatingWorkingDir] = React.useState(false);
+  // Raw text of the manual working-dir input. Held separately from the persisted
+  // value so we DON'T transform the string on every keystroke — doing so stripped
+  // a leading "/" as the user typed it (the slash "vanished") and, on mobile,
+  // reset the caret and mangled input. null = mirror the persisted value.
+  const [workingDirDraft, setWorkingDirDraft] = React.useState<string | null>(null);
+  // Show dot-prefixed folders (e.g. .git) in the working-dir picker. Off by default.
+  const [showHiddenWorkingDirs, setShowHiddenWorkingDirs] = React.useState(false);
   const onRegisterTerminal = data.onRegisterTerminal;
   const connectorsVisible = selected || Boolean(data.connectorMode);
   const isMinimized = data.metadata?.minimized === true;
@@ -758,6 +766,35 @@ export function TerminalBlock({
     data.session || null
   );
   const isOwner = !!session && user?.id === session.ownerUserId;
+
+  // Persist a workspace-relative working dir (from the picker or the text field).
+  // Leading slashes are stripped HERE (on commit), never mid-typing, so the
+  // sandbox always receives a workspace-relative path.
+  const persistWorkingDir = React.useCallback(
+    (rawPath: string) => {
+      const rel = rawPath.replace(/^\/+/, "");
+      setWorkingDirError(null);
+      data.onItemChange?.({
+        content: JSON.stringify({
+          name: terminalMeta.name,
+          subagentIds: terminalMeta.subagentIds,
+          skillIds: terminalMeta.skillIds,
+          mcpToolIds: terminalMeta.mcpToolIds,
+          agentic: terminalMeta.agentic,
+          bootCommand: terminalMeta.bootCommand,
+          workingDir: rel || undefined,
+          terminalTheme: terminalMeta.terminalTheme,
+          terminalFontSize: terminalMeta.terminalFontSize,
+          ttsProvider: terminalMeta.ttsProvider,
+          ttsVoice: terminalMeta.ttsVoice,
+          skipApprovals: terminalMeta.skipApprovals,
+        }),
+      });
+      if (session?.id) setPendingConfigRestart(true);
+    },
+    [data, terminalMeta, session?.id]
+  );
+
   const upsertDashboardSession = React.useCallback(
     (nextSession: Session) => {
       if (!data.dashboardId) return;
@@ -3889,39 +3926,55 @@ export function TerminalBlock({
                 </Button>
               </div>
               <div className="p-3 space-y-3">
+                {/* Drill-down folder picker (primary way to choose a dir). */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
+                      Choose a folder
+                    </label>
+                    <label className="flex items-center gap-1 text-[10px] text-[var(--foreground-muted)] cursor-pointer nodrag select-none">
+                      <input
+                        type="checkbox"
+                        checked={showHiddenWorkingDirs}
+                        onChange={(e) => setShowHiddenWorkingDirs(e.target.checked)}
+                        className="h-3 w-3 accent-[var(--accent-primary)] cursor-pointer"
+                      />
+                      Show hidden
+                    </label>
+                  </div>
+                  <WorkspaceDirPicker
+                    sessionId={session?.id}
+                    value={terminalMeta.workingDir || (terminalCwd ? terminalCwd.replace(/^\/workspace\/?/, "") : "")}
+                    showHidden={showHiddenWorkingDirs}
+                    onSelect={(rel) => {
+                      persistWorkingDir(rel);
+                      setWorkingDirDraft(null);
+                    }}
+                  />
+                </div>
+                {/* Manual entry (kept for exact/known paths). Fixes the mobile bug
+                    where a leading "/" was stripped mid-typing: we keep the raw
+                    text as a draft and only normalize when committing. */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-medium text-[var(--foreground-muted)] uppercase tracking-wide">
-                    Path (relative to workspace)
+                    Or type a path (relative to workspace)
                   </label>
                   <Input
-                    value={terminalMeta.workingDir || (terminalCwd ? terminalCwd.replace(/^\/workspace\/?/, "") : "")}
+                    value={
+                      workingDirDraft ??
+                      (terminalMeta.workingDir || (terminalCwd ? terminalCwd.replace(/^\/workspace\/?/, "") : ""))
+                    }
                     onChange={(e) => {
-                      // Strip leading slashes to ensure relative path
-                      const newWorkingDir = e.target.value.replace(/^\/+/, "");
-                      // Clear any previous error when user starts typing
-                      setWorkingDirError(null);
-                      data.onItemChange?.({
-                        content: JSON.stringify({
-                          name: terminalMeta.name,
-                          subagentIds: terminalMeta.subagentIds,
-                          skillIds: terminalMeta.skillIds,
-                          mcpToolIds: terminalMeta.mcpToolIds,
-                          agentic: terminalMeta.agentic,
-                          bootCommand: terminalMeta.bootCommand,
-                          workingDir: newWorkingDir || undefined,
-                          terminalTheme: terminalMeta.terminalTheme,
-                          terminalFontSize: terminalMeta.terminalFontSize,
-                          ttsProvider: terminalMeta.ttsProvider,
-                          ttsVoice: terminalMeta.ttsVoice,
-                          skipApprovals: terminalMeta.skipApprovals,
-                        }),
-                      });
-                      if (session?.id) {
-                        setPendingConfigRestart(true);
-                      }
+                      // Keep the raw text visible (don't strip the slash as they
+                      // type); persist a normalized, workspace-relative value.
+                      setWorkingDirDraft(e.target.value);
+                      persistWorkingDir(e.target.value);
                     }}
                     onBlur={async (e) => {
                       const path = e.target.value.replace(/^\/+/, "");
+                      // Snap the draft to the normalized value so the field shows
+                      // exactly what was persisted.
+                      setWorkingDirDraft(null);
                       // Only validate if we have a session and a non-empty path
                       if (!session?.id || !path) {
                         setWorkingDirError(null);

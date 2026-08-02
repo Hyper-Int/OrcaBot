@@ -51,6 +51,7 @@ import { PolicyEditorDialog } from "./PolicyEditorDialog";
 import { AuditLogViewer } from "./AuditLogViewer";
 import { API, DESKTOP_MODE } from "@/config/env";
 import { connectViaBrowser } from "@/lib/oauth-connect";
+import { openAuthPopup } from "@/lib/openAuthPopup";
 
 // OAuth connect URLs by provider
 function getOAuthConnectUrl(provider: IntegrationProvider, dashboardId: string): string | null {
@@ -468,7 +469,10 @@ export const IntegrationsPanel: React.FC<IntegrationsPanelProps> = ({
       return;
     }
 
-    const popup = window.open(connectUrl, `${provider}-connect`, "width=600,height=700");
+    // On mobile, openAuthPopup opens a fresh unnamed tab so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug). The returned
+    // ref still supports the popup.closed poll below.
+    const popup = openAuthPopup(connectUrl, `${provider}-connect`, { width: 600, height: 700 });
     if (!popup) return;
 
     // Poll for popup close and refresh integrations list

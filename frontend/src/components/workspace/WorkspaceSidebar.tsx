@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v26-desktop-oauth-picker
-const MODULE_REVISION = "workspace-sidebar-v26-desktop-oauth-picker";
+// REVISION: workspace-sidebar-v27-mobile-oauth-tab
+const MODULE_REVISION = "workspace-sidebar-v27-mobile-oauth-tab";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -91,6 +91,7 @@ import type { DashboardItem, Session } from "@/types/dashboard";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
 import { connectViaBrowser } from "@/lib/oauth-connect";
+import { openAuthPopup } from "@/lib/openAuthPopup";
 import { GithubDeviceDialog } from "@/components/blocks/GithubDeviceDialog";
 import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
@@ -649,11 +650,10 @@ export function WorkspaceSidebar({
     url.searchParams.set("user_id", user.id);
     url.searchParams.set("user_email", user.email);
     url.searchParams.set("user_name", user.name);
-    const w = 520, h = 680;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
-    // NOTE: Do NOT use noopener - it breaks window.opener.postMessage which is needed for OAuth callback
-    window.open(url.toString(), name, `width=${w},height=${h},left=${left},top=${top}`);
+    // NOTE: no noopener — window.opener.postMessage drives the OAuth callback.
+    // openAuthPopup opens a fresh unnamed tab on mobile so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug).
+    openAuthPopup(url.toString(), name, { width: 520, height: 680 });
   }, [dashboardId, user]);
 
   // onConnected fires only on the desktop (connectViaBrowser) path — the web popup

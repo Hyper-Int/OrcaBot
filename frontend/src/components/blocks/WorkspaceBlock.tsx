@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-block-v16-desktop-oauth-picker
-const MODULE_REVISION = "workspace-block-v16-desktop-oauth-picker";
+// REVISION: workspace-block-v17-mobile-oauth-tab
+const MODULE_REVISION = "workspace-block-v17-mobile-oauth-tab";
 console.log(`[WorkspaceBlock] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 console.log(`[WorkspaceBlock] DEV_MODE_ENABLED=${DEV_MODE_ENABLED} loaded at ${new Date().toISOString()}`);
 
@@ -78,6 +78,7 @@ import { workspaceDoc } from "@/docs/content/workspace";
 import { useAuthStore } from "@/stores/auth-store";
 import { API, DEV_MODE_ENABLED, DESKTOP_MODE } from "@/config/env";
 import { connectViaBrowser } from "@/lib/oauth-connect";
+import { openAuthPopup } from "@/lib/openAuthPopup";
 import { GithubDeviceDialog } from "./GithubDeviceDialog";
 
 // Module-level cache to prevent integration reload storms across component remounts
@@ -293,15 +294,9 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     if (data.dashboardId) {
       url.searchParams.set("dashboard_id", data.dashboardId);
     }
-    const width = 520;
-    const height = 680;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-    window.open(
-      url.toString(),
-      "orcabot-drive-auth",
-      `width=${width},height=${height},left=${left},top=${top},noopener,noreferrer`
-    );
+    // On mobile, openAuthPopup opens a fresh unnamed tab so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug).
+    openAuthPopup(url.toString(), "orcabot-drive-auth", { width: 520, height: 680, noopener: true });
   }, [data.dashboardId, user]);
 
   const handleGithubConnect = React.useCallback(() => {
@@ -317,15 +312,9 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     if (data.dashboardId) {
       url.searchParams.set("dashboard_id", data.dashboardId);
     }
-    const width = 520;
-    const height = 680;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-    window.open(
-      url.toString(),
-      "orcabot-github-auth",
-      `width=${width},height=${height},left=${left},top=${top},noopener,noreferrer`
-    );
+    // On mobile, openAuthPopup opens a fresh unnamed tab so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug).
+    openAuthPopup(url.toString(), "orcabot-github-auth", { width: 520, height: 680, noopener: true });
   }, [data.dashboardId, user]);
 
   const handleBoxConnect = React.useCallback(() => {
@@ -353,15 +342,9 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     if (data.dashboardId) {
       url.searchParams.set("dashboard_id", data.dashboardId);
     }
-    const width = 520;
-    const height = 680;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-    window.open(
-      url.toString(),
-      "orcabot-box-auth",
-      `width=${width},height=${height},left=${left},top=${top},noopener,noreferrer`
-    );
+    // On mobile, openAuthPopup opens a fresh unnamed tab so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug).
+    openAuthPopup(url.toString(), "orcabot-box-auth", { width: 520, height: 680, noopener: true });
   }, [data.dashboardId, user]);
 
   const handleOnedriveConnect = React.useCallback(() => {
@@ -389,15 +372,9 @@ export function WorkspaceBlock({ id, data, selected }: NodeProps<WorkspaceNode>)
     if (data.dashboardId) {
       url.searchParams.set("dashboard_id", data.dashboardId);
     }
-    const width = 520;
-    const height = 680;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-    window.open(
-      url.toString(),
-      "orcabot-onedrive-auth",
-      `width=${width},height=${height},left=${left},top=${top},noopener,noreferrer`
-    );
+    // On mobile, openAuthPopup opens a fresh unnamed tab so Safari can't focus a
+    // stale same-named OAuth tab (the "jumps to the wrong tab" bug).
+    openAuthPopup(url.toString(), "orcabot-onedrive-auth", { width: 520, height: 680, noopener: true });
   }, [data.dashboardId, user]);
 
   const loadFiles = React.useCallback(
