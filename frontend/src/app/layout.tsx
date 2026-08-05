@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -16,6 +16,20 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
+
+// minimumScale 1 stops iOS zooming OUT below fit (which left the app at ~2/3
+// width with dead space on the right). We deliberately DO keep user zoom-in
+// enabled (maximumScale 5 / userScalable) so accessibility pinch-zoom works —
+// including on Android, which honors user-scalable=no. The iOS "auto-zoom on
+// input focus" that clipped the full-screen terminal is fixed at its root in
+// globals.css instead (the xterm hidden textarea gets a 16px font).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  minimumScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://orcabot.com"),

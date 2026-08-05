@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v11-workdir-picker
-const TERMINAL_BLOCK_REVISION = "terminal-block-v11-workdir-picker";
+// REVISION: terminal-block-v12-fullscreen-actions
+const TERMINAL_BLOCK_REVISION = "terminal-block-v12-fullscreen-actions";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -44,6 +44,7 @@ import {
   ListTodo,
   Cpu,
   Check,
+  Maximize2,
 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -124,6 +125,8 @@ import openrouterModelsCatalog from "@/data/openrouter-models.json";
 import { useConnectionDataFlow } from "@/contexts/ConnectionDataFlowContext";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { WorkspaceDirPicker } from "./WorkspaceDirPicker";
+import { useEnterFullscreen } from "@/components/canvas/FullscreenActionContext";
+import { useFullscreenNav } from "@/components/mobile/FullscreenNavContext";
 import { TasksPanel } from "./TasksPanel";
 import { BlockSettingsFooter } from "./BlockSettingsFooter";
 import { HelpButton } from "@/components/help/HelpDialog";
@@ -632,6 +635,8 @@ export function TerminalBlock({
   const { theme } = useThemeStore();
   const queryClient = useQueryClient();
   const { deleteElements, getViewport, setViewport } = useReactFlow();
+  const enterFullscreen = useEnterFullscreen();
+  const fullscreenNav = useFullscreenNav();
 
   // Right-drag pans the canvas even while the pointer is over the terminal.
   // xterm captures normal (left) drags, so a large PTY is otherwise a pan trap;
@@ -2679,10 +2684,18 @@ export function TerminalBlock({
         overflow: "visible",
       }}
     >
-      {/* Panel overlay - shows to the right of terminal when a panel is open */}
+      {/* Panel overlay. On the canvas it sits to the RIGHT of the terminal
+          (left-full). In mobile full-screen the terminal is one viewport wide, so
+          left-full would render offscreen and be clipped by the pager's
+          overflow-hidden — there, overlay the panels inside the viewport instead. */}
       {(activePanel !== null || showAttachedList || showSavedSkills || showSavedMcp) && (
         <div
-          className="absolute top-0 left-full ml-2 flex flex-col gap-2"
+          className={cn(
+            "absolute flex flex-col gap-2",
+            fullscreenNav
+              ? "top-12 left-2 right-2 z-50 max-h-[75vh] overflow-y-auto"
+              : "top-0 left-full ml-2"
+          )}
           style={{ pointerEvents: "auto" }}
         >
           {/* Attached Agents List */}
@@ -4243,14 +4256,15 @@ export function TerminalBlock({
             </Badge>
           )}
 
-          {/* Minimize button */}
+          {/* Minimize button. In full-screen view mode, minimizing is meaningless —
+              it instead returns to the dashboard (home). */}
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={handleMinimize}
+            onClick={() => (fullscreenNav ? fullscreenNav.goHome() : handleMinimize())}
             className="h-7 w-7 nodrag"
             style={{ pointerEvents: "auto" }}
-            title="Minimize"
+            title={fullscreenNav ? "Back to dashboard" : "Minimize"}
           >
             <Minimize2 className="w-5 h-5" />
           </Button>
@@ -4272,6 +4286,15 @@ export function TerminalBlock({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
+              {enterFullscreen && (
+                <>
+                  <DropdownMenuItem onClick={() => enterFullscreen(id)} className="gap-2">
+                    <Maximize2 className="w-3 h-3" />
+                    <span>Enter full-screen</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onClick={() => setActivePanel(activePanel === "secrets" ? null : "secrets")} className="gap-2">
                 <Key className="w-3 h-3" />
                 <span>Environment Variables</span>
@@ -4645,7 +4668,12 @@ export function TerminalBlock({
             </div>,
             overlay.root
           )
-        : terminalContent}
+        : (
+          // No overlay (e.g. the mobile full-screen pager): render inline, but
+          // absolutely fill the node — otherwise terminalContent would flow AFTER
+          // the full-height invisible placeholder above and be pushed off-screen.
+          <div className="absolute inset-0">{terminalContent}</div>
+        )}
 
       {/* Disable Protection Confirmation Dialog */}
       <Dialog

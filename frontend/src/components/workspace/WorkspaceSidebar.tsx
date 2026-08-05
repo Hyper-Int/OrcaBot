@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v27-mobile-oauth-tab
-const MODULE_REVISION = "workspace-sidebar-v27-mobile-oauth-tab";
+// REVISION: workspace-sidebar-v29-drawer-width
+const MODULE_REVISION = "workspace-sidebar-v29-drawer-width";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -97,6 +97,7 @@ import { revealWorkspace } from "@/lib/tauri-bridge";
 import { cn } from "@/lib/utils";
 import { getAgentType, getAgentIconSrc, getAgentDisplayName } from "@/lib/agent-icons";
 import { useFolderImport } from "@/hooks/useFolderImport";
+import { useIsMobile } from "@/hooks";
 import { FolderImportButton } from "./FolderImportButton";
 import { DragDropOverlay } from "./DragDropOverlay";
 import { ImportProgressBar } from "./ImportProgressBar";
@@ -175,6 +176,7 @@ export function WorkspaceSidebar({
 }: WorkspaceSidebarProps) {
   const { user } = useAuthStore();
   const folderImport = useFolderImport();
+  const isMobile = useIsMobile();
   const [selectedPath, setSelectedPath] = React.useState<string>("/");
 
   const handleSelectPath = React.useCallback((path: string) => {
@@ -1262,22 +1264,38 @@ export function WorkspaceSidebar({
   if (collapsed) {
     return (
       <>
-        <div className="flex flex-col items-center w-9 border-r border-[var(--border)] bg-[var(--background)] absolute left-0 top-[55px] bottom-0 z-10 shadow-sm">
+        {/* On mobile the whole strip is a tappable "Files" button (a 36px icon is
+            too easy to miss), and opens the full-height drawer below. */}
+        <div
+          className={cn(
+            "flex flex-col items-center w-9 border-r border-[var(--border)] bg-[var(--background)] absolute left-0 top-[55px] bottom-0 z-10 shadow-sm",
+            isMobile && "cursor-pointer active:bg-[var(--background-elevated)]"
+          )}
+          onClick={isMobile ? onToggleCollapse : undefined}
+          role={isMobile ? "button" : undefined}
+          aria-label={isMobile ? "Open workspace files" : undefined}
+        >
           <Tooltip content="Expand workspace" side="right">
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={onToggleCollapse}
+              onClick={(e) => { if (isMobile) e.stopPropagation(); onToggleCollapse(); }}
               className="mt-2"
             >
               <PanelLeftOpen className="w-4 h-4" />
             </Button>
           </Tooltip>
-          <Tooltip content="Workspace" side="right">
-            <div className="mt-2">
-              <Folder className="w-4 h-4 text-[var(--foreground-muted)]" />
-            </div>
-          </Tooltip>
+          <div className="mt-2">
+            <Folder className="w-4 h-4 text-[var(--foreground-muted)]" />
+          </div>
+          {isMobile && (
+            <span
+              className="mt-2 text-[9px] font-semibold uppercase tracking-wider text-[var(--foreground-muted)]"
+              style={{ writingMode: "vertical-rl" }}
+            >
+              Files
+            </span>
+          )}
         </div>
         {/* Drive buttons portal */}
         {drivePortalTarget && createPortal(driveButtonsJSX, drivePortalTarget)}
@@ -1288,9 +1306,23 @@ export function WorkspaceSidebar({
   // ── Expanded view ───────────────────────────────────────────────
   return (
     <>
+      {/* Mobile: dim + tap-to-close backdrop behind the drawer. Both start below
+          the 55px app menu bar so it stays visible/usable (not covered). */}
+      {isMobile && (
+        <div
+          className="fixed left-0 right-0 bottom-0 top-[55px] z-30 bg-black/50"
+          onClick={onToggleCollapse}
+          aria-hidden="true"
+        />
+      )}
       <div
-        className="flex flex-col border-r border-[var(--border)] bg-[var(--background)] absolute left-0 top-[55px] bottom-0 z-10 select-none shadow-lg"
-        style={{ width: `${width}px` }}
+        className={cn(
+          "flex flex-col border-r border-[var(--border)] bg-[var(--background)] select-none shadow-lg",
+          isMobile
+            ? "fixed left-0 bottom-0 top-[55px] z-40 shadow-2xl"
+            : "absolute left-0 top-[55px] bottom-0 z-10"
+        )}
+        style={isMobile ? { width: "min(72vw, 280px)" } : { width: `${width}px` }}
       >
         {/* Header */}
         <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">

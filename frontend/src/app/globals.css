@@ -844,3 +844,15 @@ article[id] {
 .canvas-interacting iframe {
   pointer-events: none !important;
 }
+
+/* iOS Safari auto-zooms the page when a focused input has a font smaller than
+   16px. xterm's hidden helper textarea uses the (small) terminal font, so
+   focusing a terminal — especially in mobile full-screen — zoomed and clipped
+   it. Force 16px on that invisible input on touch devices to suppress the zoom
+   without changing the visible terminal grid (which renders on its own canvas).
+   Preferred over locking the viewport, which would disable accessibility zoom. */
+@media (pointer: coarse) {
+  .xterm-helper-textarea {
+    font-size: 16px !important;
+  }
+}
