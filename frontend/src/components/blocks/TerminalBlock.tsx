@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v11-workdir-picker
-const TERMINAL_BLOCK_REVISION = "terminal-block-v11-workdir-picker";
+// REVISION: terminal-block-v12-fullscreen-actions
+const TERMINAL_BLOCK_REVISION = "terminal-block-v12-fullscreen-actions";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 

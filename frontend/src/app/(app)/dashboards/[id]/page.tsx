@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v55-stable-tool-ids
-console.log(`[dashboard] REVISION: dashboard-v55-stable-tool-ids loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v56-mobile-fullscreen
+console.log(`[dashboard] REVISION: dashboard-v56-mobile-fullscreen loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -4273,7 +4273,7 @@ export default function DashboardPage() {
                       components={orderedComponents}
                       activeIndex={fsIndex - 1}
                       sessions={sessions}
-                      onItemChange={handleItemChange}
+                      onItemChange={role === "viewer" ? undefined : handleItemChange}
                       onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
                       onPolicyUpdate={handlePolicyUpdate}
                       onIntegrationAttached={handleIntegrationAttached}

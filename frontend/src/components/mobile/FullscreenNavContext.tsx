@@ -11,6 +11,11 @@
 
 import * as React from "react";
 
+const MODULE_REVISION = "fullscreen-nav-context-v1";
+if (typeof window !== "undefined") {
+  console.log(`[fullscreen-nav-context] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+}
+
 export interface FullscreenNav {
   goHome: () => void;
 }

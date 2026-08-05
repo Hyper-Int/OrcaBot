@@ -12,6 +12,11 @@
 
 import * as React from "react";
 
+const MODULE_REVISION = "fullscreen-action-context-v1";
+if (typeof window !== "undefined") {
+  console.log(`[fullscreen-action-context] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+}
+
 export type EnterFullscreenFn = (nodeId: string) => void;
 
 export const FullscreenActionContext = React.createContext<EnterFullscreenFn | null>(null);

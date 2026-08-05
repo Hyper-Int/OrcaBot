@@ -27,9 +27,10 @@ import {
 } from "@xyflow/react";
 import { itemsToNodes, nodeTypes } from "@/components/canvas/Canvas";
 import { FullscreenNavContext } from "@/components/mobile/FullscreenNavContext";
+import { MINIMIZED_SIZE } from "@/components/blocks/MinimizedBlockView";
 import type { DashboardItem, Session } from "@/types/dashboard";
 
-const MODULE_REVISION = "mobile-fullscreen-canvas-v2-ios-dvh-touch-maxscale";
+const MODULE_REVISION = "mobile-fullscreen-canvas-v3-dvh-touch-minimize-viewer";
 if (typeof window !== "undefined") {
   console.log(`[mobile-fullscreen-canvas] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -81,6 +82,27 @@ function InnerFilmstrip({
   onGoHome,
 }: MobileFullscreenCanvasProps) {
   const navValue = React.useMemo(() => (onGoHome ? { goHome: onGoHome } : null), [onGoHome]);
+
+  // A block's minimize sets size→MINIMIZED_SIZE then metadata.minimized=true.
+  // Minimizing is meaningless full-screen, and most blocks' header minimize
+  // buttons call it directly (not via the settings menu we already redirect), so
+  // intercept it here at the single onItemChange choke point → go home instead.
+  const handleItemChange = React.useCallback(
+    (itemId: string, changes: Partial<DashboardItem>) => {
+      const meta = changes.metadata as { minimized?: boolean } | undefined;
+      const isMinimize =
+        (!!changes.size &&
+          changes.size.width === MINIMIZED_SIZE.width &&
+          changes.size.height === MINIMIZED_SIZE.height) ||
+        meta?.minimized === true;
+      if (isMinimize) {
+        onGoHome?.();
+        return;
+      }
+      onItemChange?.(itemId, changes);
+    },
+    [onItemChange, onGoHome]
+  );
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const instanceRef = React.useRef<ReactFlowInstance | null>(null);
   const [size, setSize] = React.useState<{ w: number; h: number }>(() => ({
@@ -111,7 +133,7 @@ function InnerFilmstrip({
     const base = itemsToNodes(
       components,
       sessions,
-      onItemChange,
+      handleItemChange,
       undefined, // onRegisterTerminal: the block self-fits from data.size (= viewport), no parent registry needed
       onCreateBrowserBlock,
       undefined, // onConnectorClick: no edge wiring in full-screen
@@ -143,7 +165,7 @@ function InnerFilmstrip({
     sessions,
     size.w,
     size.h,
-    onItemChange,
+    handleItemChange,
     onCreateBrowserBlock,
     onPolicyUpdate,
     onIntegrationAttached,

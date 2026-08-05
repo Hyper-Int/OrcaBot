@@ -17,17 +17,18 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
-// Lock the layout scale on mobile. minimumScale 1 stops iOS zooming OUT below
-// fit (dead space on the right); maximumScale 1 stops iOS AUTO-zooming IN when a
-// small-font input (e.g. the terminal's textarea) gains focus, which left the
-// full-screen terminal zoomed and clipped. iOS still permits accessibility
-// pinch-zoom regardless of these values; they only suppress the broken auto-zoom.
+// minimumScale 1 stops iOS zooming OUT below fit (which left the app at ~2/3
+// width with dead space on the right). We deliberately DO keep user zoom-in
+// enabled (maximumScale 5 / userScalable) so accessibility pinch-zoom works —
+// including on Android, which honors user-scalable=no. The iOS "auto-zoom on
+// input focus" that clipped the full-screen terminal is fixed at its root in
+// globals.css instead (the xterm hidden textarea gets a 16px font).
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   minimumScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
 };
 
 export const metadata: Metadata = {

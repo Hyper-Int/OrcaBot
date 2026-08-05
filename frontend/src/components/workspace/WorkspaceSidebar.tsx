@@ -1306,10 +1306,11 @@ export function WorkspaceSidebar({
   // ── Expanded view ───────────────────────────────────────────────
   return (
     <>
-      {/* Mobile: dim + tap-to-close backdrop behind a full-height drawer. */}
+      {/* Mobile: dim + tap-to-close backdrop behind the drawer. Both start below
+          the 55px app menu bar so it stays visible/usable (not covered). */}
       {isMobile && (
         <div
-          className="fixed inset-0 z-30 bg-black/50"
+          className="fixed left-0 right-0 bottom-0 top-[55px] z-30 bg-black/50"
           onClick={onToggleCollapse}
           aria-hidden="true"
         />
@@ -1318,14 +1319,10 @@ export function WorkspaceSidebar({
         className={cn(
           "flex flex-col border-r border-[var(--border)] bg-[var(--background)] select-none shadow-lg",
           isMobile
-            ? "fixed inset-y-0 left-0 z-40 shadow-2xl"
+            ? "fixed left-0 bottom-0 top-[55px] z-40 shadow-2xl"
             : "absolute left-0 top-[55px] bottom-0 z-10"
         )}
-        style={
-          isMobile
-            ? { width: "min(88vw, 340px)", paddingTop: "env(safe-area-inset-top)" }
-            : { width: `${width}px` }
-        }
+        style={isMobile ? { width: "min(88vw, 340px)" } : { width: `${width}px` }}
       >
         {/* Header */}
         <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">
