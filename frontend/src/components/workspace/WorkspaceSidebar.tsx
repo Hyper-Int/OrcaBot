@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: workspace-sidebar-v28-mobile-drawer
-const MODULE_REVISION = "workspace-sidebar-v28-mobile-drawer";
+// REVISION: workspace-sidebar-v29-drawer-width
+const MODULE_REVISION = "workspace-sidebar-v29-drawer-width";
 console.log(`[WorkspaceSidebar] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
@@ -1322,7 +1322,7 @@ export function WorkspaceSidebar({
             ? "fixed left-0 bottom-0 top-[55px] z-40 shadow-2xl"
             : "absolute left-0 top-[55px] bottom-0 z-10"
         )}
-        style={isMobile ? { width: "min(88vw, 340px)" } : { width: `${width}px` }}
+        style={isMobile ? { width: "min(72vw, 280px)" } : { width: `${width}px` }}
       >
         {/* Header */}
         <div className="flex items-center gap-1 px-2 py-1.5 border-b border-[var(--border)]">
