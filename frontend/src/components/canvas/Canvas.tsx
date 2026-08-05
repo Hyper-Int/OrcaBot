@@ -36,6 +36,7 @@ import {
   type SizeOverride,
 } from "@/components/canvas/positionOverrides";
 import { ConnectedHandlesContext } from "@/contexts/ConnectedHandlesContext";
+import { FullscreenActionContext, type EnterFullscreenFn } from "@/components/canvas/FullscreenActionContext";
 
 import { NoteBlock } from "@/components/blocks/NoteBlock";
 import { TodoBlock } from "@/components/blocks/TodoBlock";
@@ -69,8 +70,9 @@ import type { TerminalHandle } from "@/components/terminal";
 import { TerminalOverlayProvider, useTerminalZIndex } from "@/components/terminal";
 import { useIsMobile } from "@/hooks";
 
-// Register custom node types
-const nodeTypes: NodeTypes = {
+// Register custom node types. Exported so the mobile full-screen pager renders
+// the exact same block components.
+export const nodeTypes: NodeTypes = {
   note: NoteBlock,
   todo: TodoBlock,
   link: LinkBlock,
@@ -105,8 +107,9 @@ const edgeTypes: EdgeTypes = {
   integration: IntegrationEdge,
 };
 
-// Convert dashboard items to React Flow nodes
-function itemsToNodes(
+// Convert dashboard items to React Flow nodes. Exported so the mobile
+// full-screen pager reuses the exact same data wiring for each block.
+export function itemsToNodes(
   items: DashboardItem[],
   sessions: Session[],
   onItemChange?: (itemId: string, changes: Partial<DashboardItem>) => void,
@@ -261,6 +264,8 @@ interface CanvasProps {
   onTerminalCwdChange?: (itemId: string, cwd: string) => void;
   /** Ref populated with the ReactFlow instance for programmatic viewport control */
   reactFlowRef?: React.MutableRefObject<ReactFlowInstance | null>;
+  /** A block's settings menu calls this (with its node id) to enter mobile full-screen view mode. */
+  onEnterFullscreen?: EnterFullscreenFn;
 }
 
 export function Canvas({
@@ -296,6 +301,7 @@ export function Canvas({
   onResizeComplete,
   onTerminalCwdChange,
   reactFlowRef,
+  onEnterFullscreen,
 }: CanvasProps) {
   const isMobile = useIsMobile();
   const overlayRef = React.useRef<HTMLDivElement>(null);
@@ -750,6 +756,7 @@ export function Canvas({
 
   return (
     <TerminalOverlayProvider value={overlayContextValue}>
+      <FullscreenActionContext.Provider value={onEnterFullscreen ?? null}>
       <ConnectedHandlesContext.Provider value={connectedHandlesMap}>
       <EdgeConnectorModeContext.Provider value={connectorMode}>
       <EdgeDeleteContext.Provider value={onEdgeDelete ?? null}>
@@ -855,6 +862,7 @@ export function Canvas({
       </EdgeDeleteContext.Provider>
       </EdgeConnectorModeContext.Provider>
       </ConnectedHandlesContext.Provider>
+      </FullscreenActionContext.Provider>
     </TerminalOverlayProvider>
   );
 }

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -16,6 +16,19 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
 });
+
+// Lock the layout scale on mobile. minimumScale 1 stops iOS zooming OUT below
+// fit (dead space on the right); maximumScale 1 stops iOS AUTO-zooming IN when a
+// small-font input (e.g. the terminal's textarea) gains focus, which left the
+// full-screen terminal zoomed and clipped. iOS still permits accessibility
+// pinch-zoom regardless of these values; they only suppress the broken auto-zoom.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  minimumScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://orcabot.com"),

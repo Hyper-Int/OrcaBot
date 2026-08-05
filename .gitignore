@@ -72,6 +72,7 @@ e2e/node_modules/
 /reference/
 # Local-only scripts and root node scratch
 /deploy_dev.sh
+/deploy_prod.sh
 /package.json
 /package-lock.json
 

@@ -7,11 +7,13 @@
 "use client";
 
 import { useReactFlow } from "@xyflow/react";
-import { Minimize2, Trash2 } from "lucide-react";
+import { Maximize2, Minimize2, Trash2 } from "lucide-react";
 import {
   DropdownMenuSeparator,
   DropdownMenuItem,
 } from "@/components/ui";
+import { useEnterFullscreen } from "@/components/canvas/FullscreenActionContext";
+import { useFullscreenNav } from "@/components/mobile/FullscreenNavContext";
 
 /**
  * Renders Minimize + Delete items at the bottom of a block's settings dropdown.
@@ -25,12 +27,23 @@ export function BlockSettingsFooter({
   onMinimize: () => void;
 }) {
   const { deleteElements } = useReactFlow();
+  const enterFullscreen = useEnterFullscreen();
+  const fullscreenNav = useFullscreenNav();
   return (
     <>
       <DropdownMenuSeparator />
-      <DropdownMenuItem onClick={onMinimize} className="gap-2">
+      {enterFullscreen && (
+        <DropdownMenuItem onClick={() => enterFullscreen(nodeId)} className="gap-2">
+          <Maximize2 className="w-3 h-3" />
+          <span>Enter full-screen</span>
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem
+        onClick={() => (fullscreenNav ? fullscreenNav.goHome() : onMinimize())}
+        className="gap-2"
+      >
         <Minimize2 className="w-3 h-3" />
-        <span>Minimize</span>
+        <span>{fullscreenNav ? "Back to dashboard" : "Minimize"}</span>
       </DropdownMenuItem>
       <DropdownMenuItem
         onClick={() => deleteElements({ nodes: [{ id: nodeId }] })}

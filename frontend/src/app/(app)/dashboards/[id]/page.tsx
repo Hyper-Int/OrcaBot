@@ -76,7 +76,11 @@ import { ExportTemplateDialog } from "@/components/dialogs/ExportTemplateDialog"
 import { ShareDashboardDialog } from "@/components/dialogs/ShareDashboardDialog";
 import { BugReportDialog } from "@/components/dialogs/BugReportDialog";
 import { OnboardingDialog } from "@/components/dialogs/OnboardingDialog";
+import { createPortal } from "react-dom";
 import { Canvas } from "@/components/canvas";
+import { MobileFullscreenCanvas } from "@/components/mobile/MobileFullscreenCanvas";
+import { FullscreenControlBar } from "@/components/mobile/FullscreenControlBar";
+import { isCoarsePointerDevice } from "@/lib/openAuthPopup";
 import { findAvailableSpace } from "@/lib/canvas/placement";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
@@ -324,6 +328,47 @@ function getSidebarWidth(collapsed: boolean): number {
   }
 }
 
+// Mobile full-screen auto-enter opt-out. Once the user exits full-screen mode we
+// remember it and stop auto-entering; entering again manually clears the opt-out.
+const MOBILE_FS_OPTOUT_KEY = "orcabot:mobile-fs-optout";
+function isMobileFsOptedOut(): boolean {
+  try {
+    return localStorage.getItem(MOBILE_FS_OPTOUT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function setMobileFsOptedOut(optedOut: boolean): void {
+  try {
+    if (optedOut) localStorage.setItem(MOBILE_FS_OPTOUT_KEY, "1");
+    else localStorage.removeItem(MOBILE_FS_OPTOUT_KEY);
+  } catch {
+    // ignore storage failures (private mode, etc.)
+  }
+}
+// Auto-enter full-screen only on touch devices, and only if not opted out.
+function shouldAutoFullscreen(): boolean {
+  return isCoarsePointerDevice() && !isMobileFsOptedOut();
+}
+
+/** React Flow node id for an item (stable key during temp→real id swap). */
+function itemNodeKey(it: DashboardItem): string {
+  return it._stableKey || it.id;
+}
+
+/** Short human label for a component (used in the full-screen control bar). */
+function getItemDisplayLabel(item?: DashboardItem): string | undefined {
+  if (!item) return undefined;
+  try {
+    const c = JSON.parse(item.content) as { name?: string; title?: string };
+    if (c?.name) return c.name;
+    if (c?.title) return c.title;
+  } catch {
+    // content isn't JSON (e.g. a link/browser URL) — fall through to type label
+  }
+  return item.type.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 
 /**
  * Bridge component that watches for inbound messaging events (WhatsApp/Slack/Discord)
@@ -378,6 +423,16 @@ export default function DashboardPage() {
 
   const { user, isAuthenticated, isAuthResolved } = useAuthStore();
   const isMobile = useIsMobile();
+
+  // Mobile full-screen view mode: page through components one at a time.
+  // fsIndex 0 = the live dashboard canvas (home); 1..N = the Nth ordered component.
+  const [fsActive, setFsActive] = React.useState(false);
+  const [fsIndex, setFsIndex] = React.useState(0);
+  // Snapshot of existing terminal node ids taken when a terminal is created; the
+  // FIRST terminal that appears outside this set is the new one to auto-open
+  // full-screen (mobile-only). Snapshot-based (not id-based) so it works whether
+  // or not optimistic updates are enabled — the optimistic item may never exist.
+  const pendingFsCreateRef = React.useRef<Set<string> | null>(null);
 
   // Dialog states
   const [isAddLinkOpen, setIsAddLinkOpen] = React.useState(false);
@@ -2594,6 +2649,12 @@ export default function DashboardPage() {
 
     const size = defaultSizes[tool.type] || { width: 200, height: 120 };
     const position = computePlacement(size);
+    // On mobile, a new terminal auto-opens in full-screen view mode. Snapshot the
+    // current terminals so the auto-enter effect can spot the newly added one.
+    if (tool.type === "terminal" && shouldAutoFullscreen()) {
+      pendingFsCreateRef.current = new Set(items.filter((i) => i.type === "terminal").map(itemNodeKey));
+      window.setTimeout(() => { pendingFsCreateRef.current = null; }, 20000);
+    }
     createItemMutation.mutate({
       type: tool.type,
       content,
@@ -2643,6 +2704,11 @@ export default function DashboardPage() {
     (name: string, bootCommand: string) => {
       const size = defaultSizes.terminal;
       const position = computePlacement(size);
+      // Mobile: auto-open this terminal full-screen once it appears (unless opted out).
+      if (shouldAutoFullscreen()) {
+        pendingFsCreateRef.current = new Set(items.filter((i) => i.type === "terminal").map(itemNodeKey));
+        window.setTimeout(() => { pendingFsCreateRef.current = null; }, 20000);
+      }
       createItemMutation.mutate({
         type: "terminal",
         content: JSON.stringify({ name, subagentIds: [], skillIds: [], agentic: false, bootCommand }),
@@ -2651,8 +2717,106 @@ export default function DashboardPage() {
       });
       ensureVisible(position, size);
     },
-    [createItemMutation, computePlacement, ensureVisible]
+    [createItemMutation, computePlacement, ensureVisible, items]
   );
+
+  // ── Mobile full-screen view mode ────────────────────────────────
+  // Components paged left→right by spatial position (matches the canvas), so the
+  // filmstrip order feels like the layout. The dashboard/home is slot 0.
+  const orderedComponents = React.useMemo(
+    () => [...items].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y),
+    [items]
+  );
+  const componentCount = orderedComponents.length;
+
+  const enterFullscreenByNodeId = React.useCallback(
+    (nodeId: string) => {
+      const idx = orderedComponents.findIndex((it) => itemNodeKey(it) === nodeId || it.id === nodeId);
+      if (idx < 0) return;
+      // Manually entering signals the user wants full-screen — clear any opt-out
+      // so auto-enter resumes for future terminals.
+      setMobileFsOptedOut(false);
+      setFsIndex(idx + 1);
+      setFsActive(true);
+    },
+    [orderedComponents]
+  );
+
+  const fsPrev = React.useCallback(() => setFsIndex((i) => Math.max(0, i - 1)), []);
+  const fsNext = React.useCallback(() => setFsIndex((i) => Math.min(componentCount, i + 1)), [componentCount]);
+  const fsHome = React.useCallback(() => setFsIndex(0), []);
+  // Exiting is a preference: remember it so we stop auto-entering full-screen.
+  const fsExit = React.useCallback(() => {
+    setMobileFsOptedOut(true);
+    setFsActive(false);
+  }, []);
+  const fsSwipe = React.useCallback(
+    (delta: 1 | -1) => setFsIndex((i) => Math.min(componentCount, Math.max(0, i + delta))),
+    [componentCount]
+  );
+
+  // Auto-open a newly created terminal full-screen (mobile only). At creation we
+  // snapshot the existing terminal ids; the first terminal that appears outside
+  // that set is the new one. Works with optimistic updates on OR off.
+  React.useEffect(() => {
+    const snapshot = pendingFsCreateRef.current;
+    if (!snapshot) return;
+    if (isMobileFsOptedOut()) {
+      pendingFsCreateRef.current = null;
+      return;
+    }
+    const idx = orderedComponents.findIndex(
+      (it) => it.type === "terminal" && !snapshot.has(itemNodeKey(it))
+    );
+    if (idx < 0) return; // the new terminal hasn't appeared yet
+    pendingFsCreateRef.current = null;
+    setFsIndex(idx + 1);
+    setFsActive(true);
+    toast.info("Switching to full screen mode");
+  }, [orderedComponents]);
+
+  // On first load, if the dashboard (e.g. a template) already contains a terminal,
+  // auto-open the first one full-screen (mobile only, unless opted out). Runs once.
+  const initialFsHandledRef = React.useRef(false);
+  React.useEffect(() => {
+    if (initialFsHandledRef.current) return;
+    if (isLoading) return; // wait for the dashboard to finish loading
+    initialFsHandledRef.current = true;
+    if (!shouldAutoFullscreen()) return;
+    const firstTerminalIdx = orderedComponents.findIndex((it) => it.type === "terminal");
+    if (firstTerminalIdx < 0) return;
+    setFsIndex(firstTerminalIdx + 1);
+    setFsActive(true);
+    toast.info("Switching to full screen mode");
+  }, [isLoading, orderedComponents]);
+
+  // Keep the index valid as components are added/removed; exit if none remain.
+  React.useEffect(() => {
+    if (!fsActive) return;
+    if (componentCount === 0) {
+      setFsActive(false);
+      setFsIndex(0);
+    } else if (fsIndex > componentCount) {
+      setFsIndex(componentCount);
+    }
+  }, [fsActive, fsIndex, componentCount]);
+
+  // Returning to the canvas (from a full-screen component) can leave the React
+  // Flow pane mis-sized on iOS. Nudge a resize so it (and xterm) re-measure.
+  const canvasVisible = !fsActive || fsIndex === 0;
+  const prevCanvasVisibleRef = React.useRef(canvasVisible);
+  React.useEffect(() => {
+    const wasVisible = prevCanvasVisibleRef.current;
+    prevCanvasVisibleRef.current = canvasVisible;
+    if (canvasVisible && !wasVisible) {
+      const t1 = window.setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
+      const t2 = window.setTimeout(() => window.dispatchEvent(new Event("resize")), 350);
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+      };
+    }
+  }, [canvasVisible]);
 
   const handleDuplicate = React.useCallback(
     (itemId: string) => {
@@ -4040,6 +4204,11 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+          {/* The live canvas is mounted for the normal view AND the full-screen
+              "home" slot (index 0). It is UNMOUNTED while a component is shown
+              full-screen (index ≥ 1) so terminals never mount twice (which would
+              double their live connections). */}
+          {(!fsActive || fsIndex === 0) && (
           <ConnectionDataFlowProvider edges={edgesToRender}>
             <InboundMessageBridge lastInboundMessage={collabState.lastInboundMessage} items={items} />
             <Canvas
@@ -4078,10 +4247,61 @@ export default function DashboardPage() {
               onResizeComplete={role === "viewer" ? undefined : handleResizeComplete}
               onTerminalCwdChange={handleTerminalCwdChange}
               reactFlowRef={reactFlowInstanceRef}
+              onEnterFullscreen={enterFullscreenByNodeId}
             />
           </ConnectionDataFlowProvider>
-          {/* Remote cursors overlay */}
-          <CursorOverlay users={presenceUsers} />
+          )}
+          {/* Remote cursors overlay (canvas view only) */}
+          {(!fsActive || fsIndex === 0) && <CursorOverlay users={presenceUsers} />}
+
+          {/* Full-screen view mode — portaled to <body> so `position: fixed` is
+              relative to the viewport regardless of any transformed ancestor. */}
+          {fsActive && typeof document !== "undefined" && createPortal(
+            <>
+              {/* Component pager (index ≥ 1). Index 0 shows the live canvas above. */}
+              {fsIndex >= 1 && (
+                <div
+                  className="fixed inset-x-0 top-0 z-[9998] bg-[var(--background)] overflow-hidden"
+                  // 100dvh = the VISIBLE viewport height on iOS (inset-0/100vh is the
+                  // larger layout viewport, so the terminal ran under Safari's toolbar
+                  // and read as "too zoomed in"). touch-action/overscroll-none stop iOS
+                  // from rubber-band scrolling or panning the overlay on drag.
+                  style={{ height: "100dvh", touchAction: "none", overscrollBehavior: "none" }}
+                >
+                  <ConnectionDataFlowProvider edges={edgesToRender}>
+                    <MobileFullscreenCanvas
+                      components={orderedComponents}
+                      activeIndex={fsIndex - 1}
+                      sessions={sessions}
+                      onItemChange={handleItemChange}
+                      onCreateBrowserBlock={role === "viewer" ? undefined : handleCreateBrowserBlock}
+                      onPolicyUpdate={handlePolicyUpdate}
+                      onIntegrationAttached={handleIntegrationAttached}
+                      onIntegrationDetached={handleIntegrationDetached}
+                      onStorageLinked={handleStorageLinked}
+                      onStorageDisconnected={handleStorageDisconnected}
+                      onDuplicate={role === "viewer" ? undefined : handleDuplicate}
+                      onTerminalCwdChange={handleTerminalCwdChange}
+                      onCreateTerminalBlock={role === "viewer" ? undefined : handleCreateTerminalBlock}
+                      onItemDelete={role === "viewer" ? undefined : handleItemDelete}
+                      onSwipeNavigate={fsSwipe}
+                      onGoHome={fsHome}
+                    />
+                  </ConnectionDataFlowProvider>
+                </div>
+              )}
+              <FullscreenControlBar
+                index={fsIndex}
+                componentCount={componentCount}
+                onPrev={fsPrev}
+                onHome={fsHome}
+                onNext={fsNext}
+                onExit={fsExit}
+                currentLabel={fsIndex >= 1 ? getItemDisplayLabel(orderedComponents[fsIndex - 1]) : undefined}
+              />
+            </>,
+            document.body
+          )}
         </main>
       </div>
 
