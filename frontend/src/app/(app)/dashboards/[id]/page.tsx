@@ -2780,7 +2780,10 @@ export default function DashboardPage() {
   const initialFsHandledRef = React.useRef(false);
   React.useEffect(() => {
     if (initialFsHandledRef.current) return;
-    if (isLoading) return; // wait for the dashboard to finish loading
+    // Gate on actual data, NOT isLoading: while the dashboard query is disabled
+    // awaiting cookie auth, React Query reports isLoading=false with no data — so
+    // an isLoading gate fired (and latched the ref) before items ever arrived.
+    if (!data) return;
     initialFsHandledRef.current = true;
     if (!shouldAutoFullscreen()) return;
     const firstTerminalIdx = orderedComponents.findIndex((it) => it.type === "terminal");
@@ -2788,7 +2791,7 @@ export default function DashboardPage() {
     setFsIndex(firstTerminalIdx + 1);
     setFsActive(true);
     toast.info("Switching to full screen mode");
-  }, [isLoading, orderedComponents]);
+  }, [data, orderedComponents]);
 
   // Keep the index valid as components are added/removed; exit if none remain.
   React.useEffect(() => {

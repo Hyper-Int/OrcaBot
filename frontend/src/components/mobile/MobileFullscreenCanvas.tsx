@@ -103,6 +103,13 @@ function InnerFilmstrip({
     },
     [onItemChange, onGoHome]
   );
+  // Read-only (viewer): the page passes onItemChange=undefined. Pass undefined
+  // through to blocks too, so they render as non-editable — wrapping it in our
+  // (truthy) minimize interceptor would make blocks believe editing is enabled.
+  const nodeItemChange = React.useMemo(
+    () => (onItemChange ? handleItemChange : undefined),
+    [onItemChange, handleItemChange]
+  );
   const wrapperRef = React.useRef<HTMLDivElement>(null);
   const instanceRef = React.useRef<ReactFlowInstance | null>(null);
   const [size, setSize] = React.useState<{ w: number; h: number }>(() => ({
@@ -133,7 +140,7 @@ function InnerFilmstrip({
     const base = itemsToNodes(
       components,
       sessions,
-      handleItemChange,
+      nodeItemChange,
       undefined, // onRegisterTerminal: the block self-fits from data.size (= viewport), no parent registry needed
       onCreateBrowserBlock,
       undefined, // onConnectorClick: no edge wiring in full-screen
@@ -165,7 +172,7 @@ function InnerFilmstrip({
     sessions,
     size.w,
     size.h,
-    handleItemChange,
+    nodeItemChange,
     onCreateBrowserBlock,
     onPolicyUpdate,
     onIntegrationAttached,

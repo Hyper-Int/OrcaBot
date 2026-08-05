@@ -2684,10 +2684,18 @@ export function TerminalBlock({
         overflow: "visible",
       }}
     >
-      {/* Panel overlay - shows to the right of terminal when a panel is open */}
+      {/* Panel overlay. On the canvas it sits to the RIGHT of the terminal
+          (left-full). In mobile full-screen the terminal is one viewport wide, so
+          left-full would render offscreen and be clipped by the pager's
+          overflow-hidden — there, overlay the panels inside the viewport instead. */}
       {(activePanel !== null || showAttachedList || showSavedSkills || showSavedMcp) && (
         <div
-          className="absolute top-0 left-full ml-2 flex flex-col gap-2"
+          className={cn(
+            "absolute flex flex-col gap-2",
+            fullscreenNav
+              ? "top-12 left-2 right-2 z-50 max-h-[75vh] overflow-y-auto"
+              : "top-0 left-full ml-2"
+          )}
           style={{ pointerEvents: "auto" }}
         >
           {/* Attached Agents List */}
