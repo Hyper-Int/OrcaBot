@@ -13,7 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SECTIONS = [
   { name: "blog", dir: "../content/blog", out: "../src/data/blog-posts.json" },
-  { name: "labs", dir: "../content/labs", out: "../src/data/labs-posts.json" },
+  { name: "benchmarks", dir: "../content/benchmarks", out: "../src/data/benchmarks-posts.json" },
 ];
 
 // Extract ## and ### headings for a table-of-contents side menu. Skips fenced

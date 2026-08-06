@@ -1,0 +1,100 @@
+[
+  {
+    "slug": "agent-skills",
+    "title": "Do Skills Improve Coding Agent Accuracy?",
+    "date": "2026-07-31",
+    "description": "Five public skill collections benchmarked against SWE-bench Pro and SlopCodeBench, re-run monthly to track model drift and plugin updates",
+    "author": "Rob Macrae",
+    "coverImage": null,
+    "coverVideo": null,
+    "ogImage": "/benchmarks/og-do-skills.png",
+    "headings": [
+      {
+        "depth": 2,
+        "text": "Run history",
+        "slug": "run-history"
+      },
+      {
+        "depth": 2,
+        "text": "July 2026",
+        "slug": "july-2026"
+      },
+      {
+        "depth": 3,
+        "text": "SWE-bench Pro",
+        "slug": "swe-bench-pro"
+      },
+      {
+        "depth": 3,
+        "text": "SlopCodeBench",
+        "slug": "slopcodebench"
+      },
+      {
+        "depth": 3,
+        "text": "What changed since June",
+        "slug": "what-changed-since-june"
+      },
+      {
+        "depth": 2,
+        "text": "June 2026",
+        "slug": "june-2026"
+      },
+      {
+        "depth": 3,
+        "text": "SWE-bench Pro",
+        "slug": "swe-bench-pro-1"
+      },
+      {
+        "depth": 3,
+        "text": "SlopCodeBench",
+        "slug": "slopcodebench-1"
+      },
+      {
+        "depth": 3,
+        "text": "Verdict",
+        "slug": "verdict"
+      },
+      {
+        "depth": 3,
+        "text": "Potential explanations",
+        "slug": "potential-explanations"
+      },
+      {
+        "depth": 2,
+        "text": "Methodology",
+        "slug": "methodology"
+      },
+      {
+        "depth": 3,
+        "text": "Try it yourself in OrcaBot",
+        "slug": "try-it-yourself-in-orcabot"
+      },
+      {
+        "depth": 3,
+        "text": "Model and harness",
+        "slug": "model-and-harness"
+      },
+      {
+        "depth": 3,
+        "text": "Skills: real, not distilled",
+        "slug": "skills-real-not-distilled"
+      },
+      {
+        "depth": 3,
+        "text": "SWE-bench Pro Configuration",
+        "slug": "swe-bench-pro-configuration"
+      },
+      {
+        "depth": 3,
+        "text": "SlopCodeBench Configuration",
+        "slug": "slopcodebench-configuration"
+      },
+      {
+        "depth": 2,
+        "text": "References",
+        "slug": "references"
+      }
+    ],
+    "content": "\nAgent skills were originally designed to allow developers to teach a general AI agent a specific process or domain expert’s workflow without bloating the agent's prompt or context window. Before agent skills, managing AI behavior was a messy process of swapping and chaining system prompts.\n\nAlmost immediately, developers such as Jesse Vincent [^1] were developing skills to improve Claude Code and other harnesses' ability to handle general engineering tasks. Jesse's Superpowers [^2] claimed to impose a professional methodology automatically; Get Shit Done (now Git Ship Done or simply GSD) [^3] would turn an idea into durable specifications and phases; Oh My ClaudeCode [^4] then promised to provide “zero learning curve” orchestration. Andrej Karpathy's tweets [^5] about his coding workflow got quickly turned into another skill [^6] and Addy Osmani released \"Agent Skills\" [^7], production-grade engineering skills for AI coding agents.\n\nNone of them originally shipped with evidence, other than some demonstrations, that they actually improved end-to-end software-engineering performance. Superpowers came closest, but it tested workflow compliance, not whether the same model solved more coding tasks. And with the AI models and coding harnesses constantly improving, it was an open question whether any gains would survive the next model release.\n\nSo I decided to put these skills to the test using similar benchmarks to the ones that the frontier labs use when they release new models: **SWE-bench Pro** [^8] and **SlopCodeBench** [^9].\n\nThat last point — whether a result survives the next model release — is why this page is not a one-off. **The same arms are re-run every month.** Skill packs ship updates, models drift underneath them, and a number published once decays quietly. Each run below is a dated snapshot with its own config; the methodology is shared, so the months are directly comparable.\n\n## Run history\n\nResolve % on SWE-bench Pro, by run. The right-hand column is each arm's month-over-month\nchange; the bracketed figure is its edge over **that month's own baseline**, which is the\nonly honest way to compare across runs.\n\n| Arm | June 2026 | July 2026 | Δ month | (edge vs base) |\n|-----|----------:|----------:|--------:|---------------:|\n| Oh My ClaudeCode | 54.99% | 57.20% | +2.21 | +2.19 → +1.65 |\n| Superpowers | 54.17% *(v5)* | 57.06% *(v6)* | +2.89 | +1.37 → +1.51 |\n| Karpathy Skills | 53.08% | 56.52% | +3.44 | +0.27 → +0.96 |\n| **baseline** | **52.80%** | **55.56%** | **+2.76** | — |\n| Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |\n| Agent Skills | 54.45% | 54.46% | +0.01 | +1.64 → **−1.10** |\n\nThe single most important number on this page is the **baseline's +2.76**. The model got\nbetter at these tasks in one month by more than any skill pack's advantage over it, in\neither run. Skill effects here are small quantities riding on a much larger moving one —\nwhich is the entire argument for re-running rather than citing a number from a blog post.\n\nThe Superpowers row compares v5 to v6, so its +2.89 mixes drift with a genuine pack\nupdate. Every other row holds the pack constant.\n\n## July 2026\n\nThis run exists to answer two questions the June run couldn't: how much of the June\nresult was **skill quality** versus **model drift** in the underlying model, and whether\nthe packs' own updates — notably Superpowers v6 — change the ranking.\n\nBoth answers turned out to be uncomfortable ones.\n\n### SWE-bench Pro\n\n| # | Arm | Resolve % | Partial % | Tokens/prob | $/prob | Δ vs base |\n|---|-----|----------:|----------:|------------:|-------:|----------:|\n| 1 | Oh My ClaudeCode | 57.20% | 77.4% | 2.19M | $0.53 | +1.65 |\n| 2 | Superpowers-v6 | 57.06% | 77.1% | 1.83M | $0.46 | +1.51 |\n| 3 | Karpathy Skills | 56.52% | 76.9% | 1.37M | $0.37 | +0.96 |\n| 4 | baseline | 55.56% | 76.1% | 1.37M | $0.37 | — |\n| 5 | Git Ship Done | 55.42% | 76.3% | 2.70M | $0.61 | −0.14 |\n| 6 | Agent Skills | 54.46% | 75.7% | 2.07M | $0.52 | −1.10 |\n\n**June's headline result did not survive.** In June every skill collection beat baseline;\nin July two of them are *below* it. Git Ship Done went from +1.64 to −0.14 and Agent\nSkills from +1.64 to −1.10 — neither pack got worse in absolute terms (both scored\nroughly the same or better than in June), they simply failed to keep up with a baseline\nthat improved underneath them.\n\nKarpathy Skills is now the efficiency standout: it matches the baseline's token spend and\ncost per problem *exactly* (1.37M, $0.37) while resolving ~1 point more. Every other pack\nbuys its edge with 1.5–2× the tokens, and the two most expensive arms are the two that\nnow lose to baseline.\n\n### SlopCodeBench\n\n| # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |\n|---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|\n| 1 | Superpowers-v6 | 14.5 ± 2.3 | 26.5 | 62.6 | 40.7 | 0.46 | 0.897 | 1.71 |\n| 2 | baseline | 13.9 ± 0.5 | 27.3 | 67.1 | 46.3 | 0.59 | 0.827 | 1.26 |\n| 3 | Git Ship Done | 13.1 ± 0.5 | 25.9 | 67.5 | 41.7 | 0.53 | 0.895 | 2.02 |\n| 4 | Karpathy Skills | 12.9 ± 1.7 | 25.2 | 67.9 | 43.5 | 0.58 | — | — |\n| 5 | Oh My ClaudeCode | 12.1 ± 1.0 | 25.9 | 65.8 | 44.4 | 0.54 | — | — |\n| 6 | Agent Skills | 11.7 ± 1.5 | 24.8 | 65.1 | 38.9 | 0.47 | — | — |\n\nSuperpowers v6 is the **first skill pack in either run to beat baseline on Strict**\n(14.5 vs 13.9), reversing June's clean sweep in the other direction. Treat it gently: its\n±2.3 spread is wider than its 0.6-point margin, so this is suggestive, not established.\n\nThe baseline moved here too — Strict 12.2 → 13.9 — so the same drift story applies. Note\nalso that baseline still leads on Iso, Core and Partial, meaning v6's Strict win comes\nwith worse regression behaviour on prior checkpoints, not better code overall.\n\n### What changed since June\n\n- **The model.** Baseline resolve rose 52.80% → 55.56% on SWE-bench Pro and 12.2 → 13.9\n  Strict on SlopCodeBench, with no change on our side.\n- **Superpowers v5 → v6**, the only pack version bump in this run.\n- **A new Verbosity metric** on SlopCodeBench, which is why June has no column for it.\n\n## June 2026\n\n731 problems on SWE-bench Pro (single run) and 36 problems / 196 checkpoints on\nSlopCodeBench (mean of 3 runs). Model: Codex 5.5.\n\n### SWE-bench Pro\n\n| # | Arm | Resolve % | Partial % | Tokens/prob | $/prob | Δ vs base |\n|---|-----|----------:|----------:|------------:|-------:|----------:|\n| 1 | Oh My ClaudeCode | 54.99% | 76.1% | 2.09M | $0.54 | +2.19 |\n| 2 | Git Ship Done | 54.45% | 75.3% | 2.46M | $0.60 | +1.64 |\n| 3 | Agent Skills | 54.45% | 75.8% | 2.06M | $0.51 | +1.64 |\n| 4 | Superpowers-v5 | 54.17% | 75.8% | 1.72M | $0.48 | +1.37 |\n| 5 | Karpathy Skills | 53.08% | 74.7% | 1.23M | $0.37 | +0.27 |\n| 6 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | — |\n\nSWE-bench Pro contains long-horizon issues drawn from 11 actively maintained open-source repositories; a task may require substantial coordinated changes across several files, but the agent generally gets one issue and one final evaluation.\n\n*Note: While these benchmarks were running, Jesse Vincent released Superpowers v6 — it is covered in the July run above.*\n\n![SWE-bench Pro accuracy versus cost: all five skill arms sit above the baseline resolve rate, but spending more per problem doesn't buy more accuracy — Karpathy Skills is the cheapest yet beats the baseline, and Git Ship Done is the most expensive without being the most accurate.](/benchmarks/swebench-cost-accuracy.svg)\n\n### SlopCodeBench\n\n| # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |\n|---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|\n| 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | — | 1.32 |\n| 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | — | 2.04 |\n| 3 | Agent Skills | 11.7 ± 1.5 | 24.8 | 65.1 | 38.9 | 0.47 | — | 2.00 |\n| 4 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | — | 1.87 |\n| 5 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | — | 1.67 |\n| 6 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | — | 1.32 |\n\nSlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.\n\n![SlopCodeBench core solve rate by checkpoint: every arm erodes from ~75–82% at checkpoint 1 to ~44–50% by checkpoint 8, and the five skill arms track the baseline the whole way down — none pulls ahead. The problem count shrinks from 36 to 6, so the later checkpoints are noisier.](/benchmarks/slopcodebench-checkpoint-dropoff.svg)\n\n### Verdict\n\n**For SWE-bench Pro, all the skills provide an improvement over baseline.** This effect disappears with SlopCodeBench with all strict scores worse than baseline (although GSD gets higher Iso and Core pass rates).\n\nWith the exception of Karpathy Skills, each collection of skills **costs more to run** than baseline.\n\nOn the evidence: **sometimes, and it depends on the task.**\n\n- On SWE-bench Pro, yes — uniformly. Every skill collection helped.\n- On SlopCodeBench, no — every skill collection actively hurt.\n\nA caveat worth stating plainly: SlopCodeBench ran at n=3 seeds and the spread on several arms (±2.3) is wider than the gaps between them.\n\n### Potential explanations\n\nMany of these frameworks contain procedures intended for navigating and modifying established codebases. Those procedures have limited value during the initial greenfield checkpoint of SlopCodeBench and may impose a context or orchestration cost. SWE-bench Pro's hard part is finding the right 20 lines in a 500k-line unfamiliar repo and making a surgical edit whereas on SCBench the agent wrote the code itself so it will usually already be in context. Additionally all these instructions, routing decisions and procedural constraints add to the context. On a difficult repository task, that additional structure can focus the model. On a small task, it can compete with the actual specification for attention.\n\nIn SWE-bench Pro, the repository normally provides existing tests, related test patterns and observable regressions. A TDD or systematic-debugging workflow can use that evidence to localize the issue and protect surrounding functionality.\nSlopCodeBench keeps its evaluator tests hidden. Agents can write tests only from the current external contract and examples. Skills push *\"reproduce the failure, write a failing test, then fix.\"* but on SCBench there's no bug to reproduce.\n\n## Methodology\n\nThe methodology below is shared by every run above. When it changes, the change is\nnoted in that month's section and the affected months are marked as not directly\ncomparable.\n\n### Try it yourself in OrcaBot\n\nThere is a template for running SlopCodeBench within OrcaBot which acts as the benchmark orchestrator for you with a live browser showing the progress and results.\n\n### Model and harness\nAll runs used OpenAI **Codex 5.5** (`gpt-5.5`, reasoning effort `high`) via the Codex\nCLI (v0.136.0) on a ChatGPT subscription. The agent runs **inside each task's Docker\ncontainer**: the harness starts the container, `docker exec`s Codex into it with the\nskill mounted, and extracts the resulting git diff. No agent logic runs on the host.\n\n- **SlopCodeBench** — [robdmac/slop-code-bench @ `reproduce-public-skills`](https://github.com/robdmac/slop-code-bench/tree/reproduce-public-skills)\n- **SWE-bench Pro** — [robdmac/SWE-bench_Pro-os @ `reproduce-public-skills`](https://github.com/robdmac/SWE-bench_Pro-os/tree/reproduce-public-skills)\n\n### Skills: real, not distilled\nEach skill's **actual upstream repository** was mounted read-only into the container at\na fixed commit (below); the trigger prompt instructs the agent to read the repo's own\nentry file (e.g. OMC's `AGENTS.md`) and follow it. We did **not** paraphrase any skill\ninto the prompt — trajectories confirm the agent read the real skill files (e.g. 730/731\nOMC runs opened `oh-my-claudecode/AGENTS.md` and its rule files). Because Codex is a\nsingle agent, multi-agent frameworks (OMC, Superpowers) were applied as a **single-agent\nsequential pass** rather than orchestrated sub-agents; this is a faithful adaptation but\nmay *understate* skills designed around native multi-agent tooling.\n\nPinned commits, June 2026 run:\n\n| Skill | Repo | Commit |\n|---|---|---|\n| Git Ship Done | open-gsd/get-shit-done-redux | de73ad9 |\n| Oh My ClaudeCode | Yeachan-Heo/oh-my-claudecode | a172043 |\n| Superpowers v5 | obra/superpowers (v5.1.0) | f2cbfbe |\n| Karpathy Skills | multica-ai/andrej-karpathy-skills | 2c60614 |\n| Agent Skills | addyosmani/agent-skills | 70b7506 |\n| Baseline | — (no skill) | — |\n\n### SWE-bench Pro Configuration\n- **Set:** the 731-instance public split, 11 repositories.\n- **Generation:** one attempt per instance (**n = 1 seed**), 30-minute cap.\n- **Evaluation:** the official Docker-based evaluator, run locally. We patched one bug:\n  the Docker SDK's 60-second client read-timeout silently drops output for test suites\n  that run longer than 60s (common in Go/JS repos), mis-scoring them as failures; we set\n  the client timeout to 3600s. Tests were scored serially.\n- **Resolve %** = fraction of instances where **all** required tests pass\n  (`FAIL_TO_PASS ∪ PASS_TO_PASS`). **Partial %** = mean fraction of required tests passing\n  per instance (partial credit).\n\n### SlopCodeBench Configuration\n- **Set:** 36 problems / 196 checkpoints. Each problem is greenfield at checkpoint 1,\n  then iteratively refined; regression tests from prior checkpoints accumulate.\n- **Generation:** **n = 3 seeds** per problem; results are the mean over seeds, ± the\n  run-to-run population standard deviation of the whole-benchmark rate.\n- **Evaluation:** serial (`SCBENCH_PYTEST_WORKERS=1`) to avoid xdist-order flakiness on\n  parallel-sensitive problems.\n- **Strict** = checkpoint solved iff every required test passes; **Iso** = solved ignoring\n  prior-checkpoint regressions; **Core** = core tests only; **Partial** = % of problems\n  with ≥1 strict checkpoint; **Erosion** = degradation of earlier checkpoints as code\n  accretes (lower is better).\n\n## References\n\n[^1]: https://blog.fsck.com/2025/10/09/superpowers/\n[^2]: https://github.com/obra/superpowers\n[^3]: https://github.com/open-gsd/gsd-core\n[^4]: https://ohmyclaudecode.com\n[^5]: https://x.com/karpathy/status/2015883857489522876\n[^6]: https://github.com/multica-ai/andrej-karpathy-skills/blob/main/skills/karpathy-guidelines/SKILL.md\n[^7]: https://github.com/addyosmani/agent-skills\n[^8]: https://labs.scale.com/leaderboard/swe_bench_pro_public\n[^9]: https://www.scbench.ai\n"
+  }
+]

@@ -1,9 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: labs-v1-post
+// REVISION: benchmarks-v1-post
 
-import { getPost, getAllPosts } from "@/lib/labs";
+import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
@@ -11,10 +11,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
-import { LabsToc } from "@/components/LabsToc";
+import { BenchmarkToc } from "@/components/BenchmarkToc";
 
-const MODULE_REVISION = "labs-v1-post";
-console.log(`[labs-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+const MODULE_REVISION = "benchmarks-v1-post";
+console.log(`[benchmarks-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -35,7 +35,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       ? [{ url: post.coverImage, alt: post.title }]
       : undefined;
   return {
-    title: `${post.title} - OrcaBot Labs`,
+    title: `${post.title} - OrcaBot Benchmarks`,
     description: post.description,
     openGraph: {
       type: "article",
@@ -63,7 +63,7 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export default async function LabsPostPage({ params }: Props) {
+export default async function BenchmarkPage({ params }: Props) {
   const { slug } = await params;
   const post = getPost(slug);
   if (!post) notFound();
@@ -78,11 +78,11 @@ export default async function LabsPostPage({ params }: Props) {
     <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
       <style
         dangerouslySetInnerHTML={{
-          __html: `@media (max-width: 1023px) { .labs-toc-aside { display: none !important; } }`,
+          __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
         }}
       />
       <aside
-        className="labs-toc-aside"
+        className="benchmarks-toc-aside"
         style={{
           width: 232,
           flexShrink: 0,
@@ -94,14 +94,14 @@ export default async function LabsPostPage({ params }: Props) {
           padding: "3.5rem 0",
         }}
       >
-        <LabsToc items={tocItems} />
+        <BenchmarkToc items={tocItems} />
       </aside>
 
       <div style={{ flex: 1, minWidth: 0, maxWidth: "44rem" }} className="px-6 py-12 pb-24">
       {/* Back link */}
       <div style={{ marginBottom: "2rem" }}>
         <Link
-          href="/labs"
+          href="/benchmarks"
           style={{
             fontSize: "0.85rem",
             color: "var(--foreground-muted)",
@@ -111,7 +111,7 @@ export default async function LabsPostPage({ params }: Props) {
             gap: "0.35rem",
           }}
         >
-          ← All Labs
+          ← All benchmarks
         </Link>
       </div>
 

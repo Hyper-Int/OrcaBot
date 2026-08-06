@@ -1,24 +1,24 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: labs-v1-index
+// REVISION: benchmarks-v1-index
 
-import { getPost, getAllPosts } from "@/lib/labs";
+import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
-import { LabsToc, type TocItem } from "@/components/LabsToc";
+import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
 
-const MODULE_REVISION = "labs-v1-index";
-console.log(`[labs-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+const MODULE_REVISION = "benchmarks-v1-index";
+console.log(`[benchmarks-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export const metadata: Metadata = {
-  title: "OrcaBot Labs",
+  title: "OrcaBot Benchmarks",
   description:
-    "Deeper technical dives into all things AI",
+    "Reproducible agent benchmarks, re-run every month. Every number links to the config that produced it.",
 };
 
 function formatDate(dateStr: string): string {
@@ -32,7 +32,7 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export default function LabsIndexPage() {
+export default function BenchmarksIndexPage() {
   const metas = getAllPosts();
   const posts = metas.map((m) => getPost(m.slug)).filter(Boolean);
 
@@ -47,12 +47,12 @@ export default function LabsIndexPage() {
     <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
       <style
         dangerouslySetInnerHTML={{
-          __html: `@media (max-width: 1023px) { .labs-toc-aside { display: none !important; } }`,
+          __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
         }}
       />
       {/* Heading side menu */}
       <aside
-        className="labs-toc-aside"
+        className="benchmarks-toc-aside"
         style={{
           width: 232,
           flexShrink: 0,
@@ -64,7 +64,7 @@ export default function LabsIndexPage() {
           padding: "3.5rem 0",
         }}
       >
-        <LabsToc items={tocItems} />
+        <BenchmarkToc items={tocItems} />
       </aside>
 
       {/* Article column */}
@@ -80,10 +80,11 @@ export default function LabsIndexPage() {
             marginBottom: "0.5rem",
           }}
         >
-          OrcaBot Labs
+          OrcaBot Benchmarks
         </h1>
         <p className="text-[var(--foreground-muted)]" style={{ fontSize: "1rem" }}>
-          Deeper technical dives into all things AI.
+          Reproducible agent benchmarks, re-run every month so you can see model
+          drift and plugin updates as they happen. Every run ships its full config.
         </p>
       </div>
 

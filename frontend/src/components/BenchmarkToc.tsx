@@ -1,13 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: labs-toc-v1
+// REVISION: benchmark-toc-v1
 "use client";
 
 import { useEffect, useState } from "react";
 
-const MODULE_REVISION = "labs-toc-v1";
-console.log(`[LabsToc] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+const MODULE_REVISION = "benchmark-toc-v1";
+console.log(`[BenchmarkToc] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export interface TocItem {
   text: string;
@@ -16,11 +16,11 @@ export interface TocItem {
 }
 
 /**
- * Sticky "On this page" heading menu for the Labs pages. Anchors line up with the
+ * Sticky "On this page" heading menu for the Benchmarks pages. Anchors line up with the
  * ids rehype-slug stamps on the rendered headings; the active item is highlighted
  * as you scroll via an IntersectionObserver watching those headings.
  */
-export function LabsToc({ items }: { items: TocItem[] }) {
+export function BenchmarkToc({ items }: { items: TocItem[] }) {
   const [active, setActive] = useState<string>("");
 
   useEffect(() => {
