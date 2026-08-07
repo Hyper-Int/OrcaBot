@@ -16,9 +16,11 @@
 
 import * as React from "react";
 import { CostAccuracyChart } from "./CostAccuracyChart";
+import { CheckpointErosionChart } from "./CheckpointErosionChart";
 
 const CHARTS: Record<string, React.ComponentType> = {
   "cost-accuracy": CostAccuracyChart,
+  "checkpoint-erosion": CheckpointErosionChart,
 };
 
 export function MarkdownChart({ id }: { id: string }) {

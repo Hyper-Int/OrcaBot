@@ -69,6 +69,21 @@ characterises the drift far more precisely than a single resolve rate.
 while every arm's Erosion moved by at most ±0.02. The model got materially better at
 solving new checkpoints and no better at all at not breaking what it had already written.
 
+The per-checkpoint curves say the same thing in a different way. Toggle the runs: the two
+bands sit almost on top of each other and fall at the same rate, from roughly 75–81% at
+checkpoint 1 to 33–50% by checkpoint 8. July starts marginally higher and ends marginally
+lower — a slightly steeper slide, not a flatter one. Hover any line to identify the arm.
+
+```chart
+checkpoint-erosion
+```
+
+Two cautions when reading it. The problem count shrinks as checkpoints advance (36 down to
+single digits), so the right-hand side is much noisier than the left — the convergence at
+cp7–cp8 is partly an artefact of having few problems left. And no arm separates from the
+baseline anywhere along the curve, in either run, which is the same null result June
+reported.
+
 That is pointed for skill packs specifically, because regression discipline is exactly
 what most of them claim to add — and it is the axis the model did not move on. Erosion
 also stays stubbornly arm-specific across both months (Superpowers ~0.46, Karpathy ~0.58),
@@ -239,7 +254,8 @@ Verbosity was not recorded in the June run.
 
 SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.
 
-![SlopCodeBench core solve rate by checkpoint: every arm erodes from ~75–82% at checkpoint 1 to ~44–50% by checkpoint 8, and the five skill arms track the baseline the whole way down — none pulls ahead. The problem count shrinks from 36 to 6, so the later checkpoints are noisier.](/benchmarks/slopcodebench-checkpoint-dropoff.svg)
+Every arm eroded together and none pulled ahead of the baseline — see the
+[per-checkpoint curves](#what-actually-changed-in-the-model), toggled to June alone.
 
 ### Verdict
 
