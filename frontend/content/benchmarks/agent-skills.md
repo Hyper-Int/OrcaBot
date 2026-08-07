@@ -31,6 +31,13 @@ only honest way to compare across runs.
 | Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |
 | Agent Skills | — | 54.46% | — | — → **−1.10** |
 
+Toggle the runs to see it directly — the entire July cloud sits above June's, at
+roughly the same spread of cost. That vertical shift is the drift.
+
+```chart
+cost-accuracy
+```
+
 The single most important number on this page is the **baseline's +2.76** — achieved with
 the same harness version and the same model string. The model got better at these tasks in
 one month by more than any skill pack's advantage over it in either run. Skill effects here
@@ -214,7 +221,9 @@ SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained ope
 
 *Note: While these benchmarks were running, Jesse Vincent released Superpowers v6 — it is covered in the July run above.*
 
-![SWE-bench Pro accuracy versus cost: all five skill arms sit above the baseline resolve rate, but spending more per problem doesn't buy more accuracy — Karpathy Skills is the cheapest yet beats the baseline, and Git Ship Done is the most expensive without being the most accurate.](/benchmarks/swebench-cost-accuracy.svg)
+Spending more per problem did not buy accuracy: Karpathy was the cheapest arm and still
+beat the baseline, while Git Ship Done was the most expensive without being the most
+accurate. Plot it in the [run history chart](#run-history) by toggling June on its own.
 
 ### SlopCodeBench
 

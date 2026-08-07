@@ -11,6 +11,14 @@ import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
+import { MarkdownChart } from "@/components/charts/MarkdownChart";
+
+/** True when a markdown code fence is a chart directive (```chart). Kept in the
+ *  server component — a helper exported from the "use client" chart module would
+ *  be a client reference and cannot be called during SSR. */
+function isChartFence(className?: string): boolean {
+  return typeof className === "string" && className.split(" ").includes("language-chart");
+}
 
 const MODULE_REVISION = "benchmarks-v1-index";
 console.log(`[benchmarks-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
@@ -165,7 +173,24 @@ export default function BenchmarksIndexPage() {
 
               {/* Post body */}
               <div className="legal-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>{post!.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeSlug]}
+                  components={{
+                    code({ className, children, node: _node, ...props }) {
+                      if (isChartFence(className)) {
+                        return <MarkdownChart id={String(children).trim()} />;
+                      }
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                  }}
+                >
+                  {post!.content}
+                </ReactMarkdown>
               </div>
 
               {/* Divider between posts */}

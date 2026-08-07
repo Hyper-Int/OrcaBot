@@ -12,6 +12,14 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc } from "@/components/BenchmarkToc";
+import { MarkdownChart } from "@/components/charts/MarkdownChart";
+
+/** True when a markdown code fence is a chart directive (```chart). Defined here,
+ *  in the server component, because a helper exported from the "use client"
+ *  chart module would be a client reference and cannot be called during SSR. */
+function isChartFence(className?: string): boolean {
+  return typeof className === "string" && className.split(" ").includes("language-chart");
+}
 
 const MODULE_REVISION = "benchmarks-v1-post";
 console.log(`[benchmarks-post] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
@@ -197,9 +205,29 @@ export default async function BenchmarkPage({ params }: Props) {
         )}
       </header>
 
-      {/* Post body */}
+      {/* Post body. A ```chart fence renders an interactive chart in place; every
+          other fence falls through to normal code rendering. */}
       <article className="legal-content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>{post.content}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeSlug]}
+          components={{
+            // `node` is react-markdown's hast node; strip it so it never lands
+            // on the DOM element as an unknown attribute.
+            code({ className, children, node: _node, ...props }) {
+              if (isChartFence(className)) {
+                return <MarkdownChart id={String(children).trim()} />;
+              }
+              return (
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              );
+            },
+          }}
+        >
+          {post.content}
+        </ReactMarkdown>
       </article>
       </div>
     </div>
