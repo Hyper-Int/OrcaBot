@@ -31,10 +31,11 @@ only honest way to compare across runs.
 | Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |
 | Agent Skills | 54.45% | 54.46% | +0.01 | +1.64 → **−1.10** |
 
-The single most important number on this page is the **baseline's +2.76**. The model got
-better at these tasks in one month by more than any skill pack's advantage over it, in
-either run. Skill effects here are small quantities riding on a much larger moving one —
-which is the entire argument for re-running rather than citing a number from a blog post.
+The single most important number on this page is the **baseline's +2.76** — achieved with
+the same harness version and the same model string. The model got better at these tasks in
+one month by more than any skill pack's advantage over it in either run. Skill effects here
+are small quantities riding on a much larger moving one, which is the entire argument for
+re-running rather than citing a number from a blog post.
 
 The Superpowers row compares v5 to v6, so its +2.89 mixes drift with a genuine pack
 update. Every other row holds the pack constant.
@@ -49,6 +50,8 @@ Both answers turned out to be uncomfortable ones.
 
 ### SWE-bench Pro
 
+729 instances common to every arm, single seed per arm.
+
 | # | Arm | Resolve % | Partial % | Tokens/prob | $/prob | Δ vs base |
 |---|-----|----------:|----------:|------------:|-------:|----------:|
 | 1 | Oh My ClaudeCode | 57.20% | 77.4% | 2.19M | $0.53 | +1.65 |
@@ -57,6 +60,9 @@ Both answers turned out to be uncomfortable ones.
 | 4 | baseline | 55.56% | 76.1% | 1.37M | $0.37 | — |
 | 5 | Git Ship Done | 55.42% | 76.3% | 2.70M | $0.61 | −0.14 |
 | 6 | Agent Skills | 54.46% | 75.7% | 2.07M | $0.52 | −1.10 |
+
+Every gap here is under two points on a single seed, so treat the ordering as
+indicative rather than settled — the sign of each delta is the interesting part.
 
 **June's headline result did not survive.** In June every skill collection beat baseline;
 in July two of them are *below* it. Git Ship Done went from +1.64 to −0.14 and Agent
@@ -71,29 +77,62 @@ now lose to baseline.
 
 ### SlopCodeBench
 
+All 36 problems, n ≤ 3 seeds per arm.
+
 | # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |
 |---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|
 | 1 | Superpowers-v6 | 14.5 ± 2.3 | 26.5 | 62.6 | 40.7 | 0.46 | 0.897 | 1.71 |
 | 2 | baseline | 13.9 ± 0.5 | 27.3 | 67.1 | 46.3 | 0.59 | 0.827 | 1.26 |
 | 3 | Git Ship Done | 13.1 ± 0.5 | 25.9 | 67.5 | 41.7 | 0.53 | 0.895 | 2.02 |
-| 4 | Karpathy Skills | 12.9 ± 1.7 | 25.2 | 67.9 | 43.5 | 0.58 | — | — |
-| 5 | Oh My ClaudeCode | 12.1 ± 1.0 | 25.9 | 65.8 | 44.4 | 0.54 | — | — |
-| 6 | Agent Skills | 11.7 ± 1.5 | 24.8 | 65.1 | 38.9 | 0.47 | — | — |
+| 4 | Karpathy Skills | 12.9 ± 1.7 | 25.2 | 67.9 | 43.5 | 0.58 | 0.915 | 1.25 |
+| 5 | Oh My ClaudeCode | 12.1 ± 1.0 | 25.9 | 65.8 | 44.4 | 0.54 | 0.908 | 1.87 |
+| 6 | Agent Skills | 11.7 ± 1.5 | 24.8 | 65.1 | 38.9 | 0.47 | 0.900 | 2.00 |
 
 Superpowers v6 is the **first skill pack in either run to beat baseline on Strict**
 (14.5 vs 13.9), reversing June's clean sweep in the other direction. Treat it gently: its
-±2.3 spread is wider than its 0.6-point margin, so this is suggestive, not established.
+±2.3 spread is wider than its 0.6-point margin, so this is suggestive, not established —
+and the win is narrow in a second sense, since v6 simultaneously posts the *worst* Core
+(62.6) and Partial (40.7) of any arm. It solves more checkpoints outright while breaking
+more of what it had already built.
 
-The baseline moved here too — Strict 12.2 → 13.9 — so the same drift story applies. Note
-also that baseline still leads on Iso, Core and Partial, meaning v6's Strict win comes
-with worse regression behaviour on prior checkpoints, not better code overall.
+The baseline moved here too — Strict 12.2 → 13.9 — so the same drift story applies, and
+baseline still leads on Iso, Core and Partial.
+
+Every pack is also more verbose than baseline (0.83 vs 0.90–0.92), which is the cost
+story restated: the packs spend more words to land in roughly the same place. Karpathy is
+the exception that proves the rule — the only arm cheaper than baseline per checkpoint
+($1.25 vs $1.26) while still finishing above the two most expensive packs.
+
+### Verdict
+
+Measured against a **contemporaneous** baseline, the public workflow skills mostly wash.
+Which one "wins" depends on the benchmark and the metric more than on the skill.
+
+- **Superpowers-v6** — the only pack positive on *both* (Pro +1.51, SlopCodeBench Strict
+  leader). Caveat above: that Strict lead comes with the worst Core and Partial, on wide
+  noise.
+- **Oh My ClaudeCode** — Pro leader (+1.65) but 1.8 below baseline on SlopCodeBench
+  Strict. Benchmark-dependent.
+- **Karpathy Skills** — a cheap positive on Pro (+0.96 at baseline cost), negative on
+  SlopCodeBench.
+- **Git Ship Done** — neutral-to-negative on both, at the highest token spend on Pro.
+- **Agent Skills** — negative on both.
+
+The June answer to the title question was "sometimes, and it depends on the task." One
+month later the same experiment says something sharper: **it depends on the task, the
+metric, and the month.**
 
 ### What changed since June
 
-- **The model.** Baseline resolve rose 52.80% → 55.56% on SWE-bench Pro and 12.2 → 13.9
-  Strict on SlopCodeBench, with no change on our side.
-- **Superpowers v5 → v6**, the only pack version bump in this run.
-- **A new Verbosity metric** on SlopCodeBench, which is why June has no column for it.
+- **The model — and essentially nothing else.** Same harness (Codex CLI `v0.136.0`), same
+  model name (`gpt-5.5`, high reasoning), same packs bar one. Baseline still rose
+  52.80% → 55.56% on Pro and 12.2 → 13.9 Strict on SlopCodeBench. That is silent
+  server-side drift under a fixed version string, and it is the cleanest measurement on
+  this page.
+- **Superpowers v5 → v6**, the only pack version bump.
+- **Set size:** 729 instances common to all arms, against June's 731.
+- **New SlopCodeBench metrics** (Verbosity, cost/checkpoint detail), which is why the June
+  table has no Verbosity column.
 
 ## June 2026
 
@@ -193,7 +232,8 @@ Pinned commits, June 2026 run:
 | Baseline | — (no skill) | — |
 
 ### SWE-bench Pro Configuration
-- **Set:** the 731-instance public split, 11 repositories.
+- **Set:** the public split, 11 repositories — 731 instances in June, and the 729
+  instances common to every arm in July.
 - **Generation:** one attempt per instance (**n = 1 seed**), 30-minute cap.
 - **Evaluation:** the official Docker-based evaluator, run locally. We patched one bug:
   the Docker SDK's 60-second client read-timeout silently drops output for test suites
