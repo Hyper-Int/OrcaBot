@@ -67,12 +67,13 @@ what most of them claim to add — and it is the axis the model did not move on.
 also stays stubbornly arm-specific across both months (Superpowers ~0.46, Karpathy ~0.58),
 suggesting it is a property of the workflow rather than the model.
 
-**Karpathy is an accidental control arm**, and a useful one. It is the only pack pinned to
-the same commit in both runs, so its movement should equal the baseline's if nothing but
-the model changed — and it does, almost exactly: **+1.8 against baseline's +1.7** here, and
-+3.44 against +2.76 on SWE-bench Pro. Two independent arms agreeing on the size of the
-drift is the strongest evidence on this page that the June→July shift is real and not an
-artefact of one measurement.
+**Karpathy is an accidental control arm**, and a useful one. It ran on identical code in
+both months — not because we pinned an old commit, but because
+[the repo has not changed since April](#skills-real-not-distilled). Its movement should
+therefore equal the baseline's if nothing but the model changed, and it does, almost
+exactly: **+1.8 against baseline's +1.7** here, and +3.44 against +2.76 on SWE-bench Pro.
+Two independent arms agreeing on the size of the drift is the strongest evidence on this
+page that the June→July shift is real and not an artefact of one measurement.
 
 Take that agreement as the yardstick and the pack updates can be scored against it:
 
@@ -292,6 +293,18 @@ which is exactly why the baseline and Karpathy arms matter as controls (see
 | Karpathy Skills | andrej-karpathy-skills | `2c60614` (04-20) | `2c60614` (04-20) — **same** |
 | Agent Skills | agent-skills | — *(no June run)* | `70b7506` (07-06) |
 | Baseline | — *(no skill, just-solve)* | — | — |
+
+**On the Karpathy pin.** Both runs use the same commit not because we froze it, but
+because the repository has not changed: `2c60614` (2026-04-20) is still the latest commit
+upstream, with zero commits since. That is a property of the pack, not a choice we made,
+and it is what makes the arm a fair control rather than an artificially stale one — the
+pack was tested at its current state in both runs.
+
+The contrast is stark. Checked on 2026-08-07, three of the other four packs have already
+moved past the commit used in the July run: Git Ship Done to `a731a45` (that same day),
+Agent Skills to `d2478bf`, Superpowers to `44c9b2d`. Only Oh My ClaudeCode still sits at
+its July commit. Any conclusion below about a *pack* — as opposed to the model — has a
+shelf life measured in weeks, which is the other half of the argument for re-running.
 
 ### SWE-bench Pro Configuration
 - **Set:** the public split, 11 repositories — 731 instances in June, and the 729
