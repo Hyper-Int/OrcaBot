@@ -29,7 +29,7 @@ only honest way to compare across runs.
 | Karpathy Skills | 53.08% | 56.52% | +3.44 | +0.27 → +0.96 |
 | **baseline** | **52.80%** | **55.56%** | **+2.76** | — |
 | Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |
-| Agent Skills | 54.45% | 54.46% | +0.01 | +1.64 → **−1.10** |
+| Agent Skills | — | 54.46% | — | — → **−1.10** |
 
 The single most important number on this page is the **baseline's +2.76** — achieved with
 the same harness version and the same model string. The model got better at these tasks in
@@ -39,6 +39,34 @@ re-running rather than citing a number from a blog post.
 
 The Superpowers row compares v5 to v6, so its +2.89 mixes drift with a genuine pack
 update. Every other row holds the pack constant.
+
+### What actually changed in the model
+
+SlopCodeBench separates two things SWE-bench Pro blends together: how many checkpoints an
+arm solves outright (**Strict**), and how much previously-working code it breaks as the
+codebase accretes (**Erosion**, lower is better). Comparing both across the two runs
+characterises the drift far more precisely than a single resolve rate.
+
+| Arm | Strict Jun | Strict Jul | Δ | Erosion Jun | Erosion Jul | Δ | Verbosity Jul |
+|-----|-----------:|-----------:|--:|------------:|------------:|--:|--------------:|
+| **baseline** | 12.2 | 13.9 | **+1.7** | 0.58 | 0.59 | +0.01 | 0.827 |
+| Git Ship Done | 11.9 | 13.1 | +1.2 | 0.54 | 0.53 | −0.01 | 0.895 |
+| Oh My ClaudeCode | 11.6 | 12.1 | +0.5 | 0.52 | 0.54 | +0.02 | 0.908 |
+| Superpowers *(v5→v6)* | 11.4 | 14.5 | +3.1 | 0.46 | 0.46 | 0.00 | 0.897 |
+| Karpathy Skills | 11.1 | 12.9 | +1.8 | 0.58 | 0.58 | 0.00 | 0.915 |
+
+The pattern is unusually clean: **every arm's Strict rate rose (+0.5 to +3.1) while every
+arm's Erosion moved by at most ±0.02.** The model got materially better at solving new
+checkpoints and no better at all at not breaking what it had already written. Whatever
+changed between June and July was capability, not discipline.
+
+That matters for skill packs specifically, because regression discipline is exactly what
+most of them claim to add — and it is the axis the underlying model did not move on.
+Erosion also stays stubbornly arm-specific across both months (Superpowers ~0.46,
+Karpathy ~0.58), suggesting it is a property of the workflow rather than the model.
+
+Verbosity is July-only, so it cannot be tracked across months yet; it is recorded here as
+the baseline for future runs. Every pack is wordier than baseline (0.83 vs 0.90–0.92).
 
 ## July 2026
 
@@ -65,10 +93,10 @@ Every gap here is under two points on a single seed, so treat the ordering as
 indicative rather than settled — the sign of each delta is the interesting part.
 
 **June's headline result did not survive.** In June every skill collection beat baseline;
-in July two of them are *below* it. Git Ship Done went from +1.64 to −0.14 and Agent
-Skills from +1.64 to −1.10 — neither pack got worse in absolute terms (both scored
-roughly the same or better than in June), they simply failed to keep up with a baseline
-that improved underneath them.
+in July two are *below* it. The cleanest case is Git Ship Done, measured in both months:
+it went from +1.64 to −0.14 without getting worse in absolute terms — it scored *higher*
+than in June (54.45% → 55.42%) and still lost its edge, because the baseline improved
+faster underneath it. Agent Skills, new to the study this month, lands at −1.10.
 
 Karpathy Skills is now the efficiency standout: it matches the baseline's token spend and
 cost per problem *exactly* (1.37M, $0.37) while resolving ~1 point more. Every other pack
@@ -145,10 +173,12 @@ SlopCodeBench (mean of 3 runs). Model: Codex 5.5.
 |---|-----|----------:|----------:|------------:|-------:|----------:|
 | 1 | Oh My ClaudeCode | 54.99% | 76.1% | 2.09M | $0.54 | +2.19 |
 | 2 | Git Ship Done | 54.45% | 75.3% | 2.46M | $0.60 | +1.64 |
-| 3 | Agent Skills | 54.45% | 75.8% | 2.06M | $0.51 | +1.64 |
-| 4 | Superpowers-v5 | 54.17% | 75.8% | 1.72M | $0.48 | +1.37 |
-| 5 | Karpathy Skills | 53.08% | 74.7% | 1.23M | $0.37 | +0.27 |
-| 6 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | — |
+| 3 | Superpowers-v5 | 54.17% | 75.8% | 1.72M | $0.48 | +1.37 |
+| 4 | Karpathy Skills | 53.08% | 74.7% | 1.23M | $0.37 | +0.27 |
+| 5 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | — |
+
+Agent Skills is absent here: it entered the study with the July cohort, so it has no
+June measurement.
 
 SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained open-source repositories; a task may require substantial coordinated changes across several files, but the agent generally gets one issue and one final evaluation.
 
@@ -162,10 +192,11 @@ SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained ope
 |---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|
 | 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | — | 1.32 |
 | 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | — | 2.04 |
-| 3 | Agent Skills | 11.7 ± 1.5 | 24.8 | 65.1 | 38.9 | 0.47 | — | 2.00 |
-| 4 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | — | 1.87 |
-| 5 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | — | 1.67 |
-| 6 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | — | 1.32 |
+| 3 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | — | 1.87 |
+| 4 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | — | 1.67 |
+| 5 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | — | 1.32 |
+
+Verbosity was not recorded in the June run.
 
 SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.
 
@@ -228,8 +259,11 @@ Pinned commits, June 2026 run:
 | Oh My ClaudeCode | Yeachan-Heo/oh-my-claudecode | a172043 |
 | Superpowers v5 | obra/superpowers (v5.1.0) | f2cbfbe |
 | Karpathy Skills | multica-ai/andrej-karpathy-skills | 2c60614 |
-| Agent Skills | addyosmani/agent-skills | 70b7506 |
 | Baseline | — (no skill) | — |
+
+For July, Superpowers moved to v6 and Agent Skills
+([addyosmani/agent-skills](https://github.com/addyosmani/agent-skills), commit `70b7506`)
+joined the cohort; the other packs were held at the commits above.
 
 ### SWE-bench Pro Configuration
 - **Set:** the public split, 11 repositories — 731 instances in June, and the 729
