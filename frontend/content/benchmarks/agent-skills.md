@@ -3,7 +3,7 @@ title: Do Skills Improve Coding Agent Accuracy?
 date: 2026-07-31
 description: Five public skill collections benchmarked against SWE-bench Pro and SlopCodeBench, re-run monthly to track model drift and plugin updates
 author: Rob Macrae
-ogImage: /benchmarks/og-do-skills.png
+ogImage: /benchmarks/og-agent-skills.png
 ---
 
 Agent skills were originally designed to allow developers to teach a general AI agent a specific process or domain expert’s workflow without bloating the agent's prompt or context window. Before agent skills, managing AI behavior was a messy process of swapping and chaining system prompts.
