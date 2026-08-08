@@ -78,8 +78,14 @@ const displayArm = (name: string) => ARM_ALIAS[armKey(name)] ?? armKey(name);
 export function CheckpointErosionChart() {
   const [on, setOn] = React.useState<Record<string, boolean>>({ jun: true, jul: true });
   const [hover, setHover] = React.useState<{ arm: Arm; runLabel: string; color: string } | null>(null);
-  /** Arm highlighted from the legend — identity without needing 6 safe hues. */
-  const [focusArm, setFocusArm] = React.useState<string | null>(null);
+  // Arm highlighting — identity without needing 6 CVD-safe hues.
+  // Hover and pin are SEPARATE states on purpose. With one shared state, the
+  // pointer is already hovering the button when the click lands, so the toggle
+  // saw "already active" and switched it off — clicking appeared to do nothing,
+  // and mouse-leave then wiped it anyway.
+  const [pinnedArm, setPinnedArm] = React.useState<string | null>(null);
+  const [hoverArm, setHoverArm] = React.useState<string | null>(null);
+  const focusArm = hoverArm ?? pinnedArm;
   const [showTable, setShowTable] = React.useState(false);
 
   const visible = RUNS.filter((r) => on[r.id]);
@@ -237,28 +243,33 @@ export function CheckpointErosionChart() {
       <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: INK.muted }}>
         <span style={{ marginRight: "0.6rem" }}>Highlight an arm:</span>
         {armsPresent.map((a) => {
-          const active = focusArm === a;
+          const pinned = pinnedArm === a;
+          const lit = focusArm === a;
           return (
             <button
               key={a}
               type="button"
-              onMouseEnter={() => setFocusArm(a)}
-              onMouseLeave={() => setFocusArm(null)}
-              onClick={() => setFocusArm((f) => (f === a ? null : a))}
-              aria-pressed={active}
+              onMouseEnter={() => setHoverArm(a)}
+              onMouseLeave={() => setHoverArm(null)}
+              onClick={() => setPinnedArm((f) => (f === a ? null : a))}
+              aria-pressed={pinned}
+              title={pinned ? "Click to unpin" : "Click to keep this arm highlighted"}
               style={{
                 display: "inline-block",
                 margin: "0 0.35rem 0.35rem 0",
                 padding: "0.18rem 0.55rem",
                 borderRadius: 999,
-                border: `1px solid ${active ? INK.secondary : AXIS}`,
-                background: active ? "#1e3354" : "transparent",
-                color: active ? INK.primary : INK.muted,
+                // Pinned reads stronger than a passing hover, so it is obvious
+                // which state you are in once the pointer moves away.
+                border: `1px solid ${pinned ? INK.primary : lit ? INK.secondary : AXIS}`,
+                background: pinned ? "#2a4570" : lit ? "#1e3354" : "transparent",
+                color: lit || pinned ? INK.primary : INK.muted,
                 fontSize: "0.75rem",
                 cursor: "pointer",
               }}
             >
               {a}
+              {pinned ? " ×" : ""}
             </button>
           );
         })}
