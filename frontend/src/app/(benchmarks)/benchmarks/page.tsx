@@ -12,6 +12,7 @@ import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
+import { SortableTable } from "@/components/SortableTable";
 
 /** True when a markdown code fence is a chart directive (```chart). Kept in the
  *  server component; a helper exported from the "use client" chart module would
@@ -177,6 +178,10 @@ export default function BenchmarksIndexPage() {
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeSlug]}
                   components={{
+                    // Column headers sort the rows; see SortableTable.
+                    table: ({ node }) => <SortableTable node={node as never} />,
+                    // `node` is react-markdown's hast node; strip it so it never
+                    // lands on the DOM element as an unknown attribute.
                     code({ className, children, node: _node, ...props }) {
                       if (isChartFence(className)) {
                         return <MarkdownChart id={String(children).trim()} />;

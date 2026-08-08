@@ -13,6 +13,7 @@ import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc } from "@/components/BenchmarkToc";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
+import { SortableTable } from "@/components/SortableTable";
 
 /** True when a markdown code fence is a chart directive (```chart). Defined here,
  *  in the server component, because a helper exported from the "use client"
@@ -212,6 +213,8 @@ export default async function BenchmarkPage({ params }: Props) {
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeSlug]}
           components={{
+            // Column headers sort the rows; see SortableTable.
+            table: ({ node }) => <SortableTable node={node as never} />,
             // `node` is react-markdown's hast node; strip it so it never lands
             // on the DOM element as an unknown attribute.
             code({ className, children, node: _node, ...props }) {
