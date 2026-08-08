@@ -6,12 +6,12 @@
 // REVISION: cost-accuracy-chart-v1
 // SWE-bench Pro resolve rate vs cost per problem, one dot per arm per run.
 // Runs toggle independently (both / either / neither) so the reader can watch
-// the whole July cloud sit above June's — that gap IS the model drift.
+// the whole July cloud sit above June's; that gap IS the model drift.
 //
 // Palette: reference categorical slots 1 (blue) and 2 (orange), dark steps,
-// validated against this page's navy surface #101e33 —
+// validated against this page's navy surface #101e33:
 //   node scripts/validate_palette.js "#3987e5,#d95926" --mode dark --surface "#101e33"
-//   worst adjacent CVD dE 26.8 protan / 32.4 tritan, normal 31.8 — all checks pass.
+//   worst adjacent CVD dE 26.8 protan / 32.4 tritan, normal 31.8, all checks pass.
 // Runs are assigned in CHRONOLOGICAL order, never by rank, so adding August takes
 // slot 3 and never repaints June or July.
 
@@ -26,7 +26,7 @@ interface Point {
   arm: string;
   cost: number;
   resolve: number;
-  /** Arm carries no skill — the pure model-drift reference. */
+  /** Arm carries no skill: the pure model-drift reference. */
   isBaseline?: boolean;
   /** Render the label under the mark. Set where a neighbour's dot sits in the
    *  default label position (June's baseline and Karpathy are ~0.3pp apart). */
@@ -68,7 +68,7 @@ const RUNS: RunSeries[] = [
   },
 ];
 
-// Ink tokens — text never wears the series color.
+// Ink tokens: text never wears the series color.
 const INK = { primary: "#e8edf5", secondary: "#c3cee0", muted: "#94a3c0" };
 const GRID = "#1e3354";
 const AXIS = "#2a4570";
@@ -80,7 +80,7 @@ const M = { top: 28, right: 24, bottom: 52, left: 60 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
 
-// Fixed domains so toggling a run never rescales the axes — the whole point is
+// Fixed domains so toggling a run never rescales the axes; the whole point is
 // to compare positions between runs.
 const X = [0.32, 0.66];
 const Y = [52, 58];
@@ -273,7 +273,7 @@ export function CostAccuracyChart() {
         )}
       </div>
 
-      {/* Legend — always present for >= 2 series, identity never by color alone */}
+      {/* Legend: always present for >= 2 series, identity never by color alone */}
       <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
         {RUNS.map((r) => (
           <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", opacity: on[r.id] ? 1 : 0.4 }}>

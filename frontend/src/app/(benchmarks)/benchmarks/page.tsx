@@ -14,7 +14,7 @@ import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
 
 /** True when a markdown code fence is a chart directive (```chart). Kept in the
- *  server component — a helper exported from the "use client" chart module would
+ *  server component; a helper exported from the "use client" chart module would
  *  be a client reference and cannot be called during SSR. */
 function isChartFence(className?: string): boolean {
   return typeof className === "string" && className.split(" ").includes("language-chart");
@@ -98,7 +98,7 @@ export default function BenchmarksIndexPage() {
 
       {posts.length === 0 ? (
         <p className="text-[var(--foreground-muted)]" style={{ fontSize: "0.95rem" }}>
-          Nothing published yet — check back soon.
+          Nothing published yet. Check back soon.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "5rem" }}>

@@ -15,7 +15,7 @@ export default function BenchmarksLayout({
   return (
     // Benchmarks shares the blog's navy "midnight" surface. Scope the midnight
     // theme to this subtree so var(--foreground*) resolves to the light text
-    // colors even when the visitor's global theme is light — otherwise the
+    // colors even when the visitor's global theme is light; otherwise the
     // hard-coded navy background pairs with near-black :root text and everything
     // greys out.
     <div className="midnight" style={{ minHeight: "100vh", backgroundColor: "#0b1a2e", color: "#ffffff" }}>

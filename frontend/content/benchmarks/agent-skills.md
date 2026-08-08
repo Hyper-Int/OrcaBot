@@ -17,7 +17,7 @@ So I decided to put these skills to the test using similar benchmarks to the one
 ## Results Combined
 
 Both runs side by side, one section per suite. Every delta is measured against **that
-month's own baseline**, which is the only honest way to compare across runs — because the
+month's own baseline**, which is the only honest way to compare across runs, because the
 baseline itself moves.
 
 ### SWE-bench Pro
@@ -30,18 +30,18 @@ bracketed figure is its edge over that month's baseline.
 | Oh My ClaudeCode | 54.99% | 57.20% | +2.21 | +2.19 → +1.65 |
 | Superpowers | 54.17% *(v5)* | 57.06% *(v6)* | +2.89 | +1.37 → +1.51 |
 | Karpathy Skills | 53.08% | 56.52% | +3.44 | +0.27 → +0.96 |
-| **baseline Codex 5.5** | **52.80%** | **55.56%** | **+2.76** | — |
+| **baseline Codex 5.5** | **52.80%** | **55.56%** | **+2.76** | n/a |
 | Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |
-| Agent Skills | — | 54.46% | — | — → **−1.10** |
+| Agent Skills | n/a | 54.46% | n/a | n/a → **−1.10** |
 
-Toggle the runs to see it directly — the entire July cloud sits above June's, at
+Toggle the runs to see it directly: the entire July cloud sits above June's, at
 roughly the same spread of cost. That vertical shift is the drift.
 
 ```chart
 cost-accuracy
 ```
 
-The single most important number on this page is the **baseline's +2.76** — achieved with
+The single most important number on this page is the **baseline's +2.76**, achieved with
 the same harness version and the same model string. The model got better at these tasks in
 one month by more than any skill pack's advantage over it in either run. Skill effects here
 are small quantities riding on a much larger moving one, which is the entire argument for
@@ -76,25 +76,25 @@ solving new checkpoints and no better at all at not breaking what it had already
 The per-checkpoint curves say the same thing in a different way. Toggle the runs: the two
 bands sit almost on top of each other and fall at the same rate, from roughly 75–81% at
 checkpoint 1 to 33–50% by checkpoint 8. July starts marginally higher and ends marginally
-lower — a slightly steeper slide, not a flatter one. Hover any line to identify the arm.
+lower, a slightly steeper slide rather than a flatter one. Hover any line to identify the arm.
 
 ```chart
 checkpoint-erosion
 ```
 
 Two cautions when reading it. The problem count shrinks as checkpoints advance (36 down to
-single digits), so the right-hand side is much noisier than the left — the convergence at
+single digits), so the right-hand side is much noisier than the left; the convergence at
 cp7–cp8 is partly an artefact of having few problems left. And no arm separates from the
 baseline anywhere along the curve, in either run, which is the same null result June
 reported.
 
 That is pointed for skill packs specifically, because regression discipline is exactly
-what most of them claim to add — and it is the axis the model did not move on. Erosion
+what most of them claim to add, and it is the axis the model did not move on. Erosion
 also stays stubbornly arm-specific across both months (Superpowers ~0.46, Karpathy ~0.58),
 suggesting it is a property of the workflow rather than the model.
 
 **Karpathy is an accidental control arm**, and a useful one. It ran on identical code in
-both months — not because we pinned an old commit, but because
+both months, not because we pinned an old commit, but because
 [the repo has not changed since April](#skills-real-not-distilled). Its movement should
 therefore equal the baseline's if nothing but the model changed, and it does, almost
 exactly: **+1.8 against baseline's +1.7** here, and +3.44 against +2.76 on SWE-bench Pro.
@@ -106,13 +106,13 @@ Take that agreement as the yardstick and the pack updates can be scored against 
 - **Superpowers v6 genuinely improved.** +3.1 Strict against a ~+1.75 drift baseline is
   roughly double what the model alone delivered.
 - **Git Ship Done (+1.2) and Oh My ClaudeCode (+0.5) came in *under* drift**, on both
-  benchmarks — GSD managed only +0.97 on SWE-bench Pro where standing still was worth
+  benchmarks. GSD managed only +0.97 on SWE-bench Pro where standing still was worth
   ~+2.8. Their July updates look net negative: they gave back some of what the model
   handed them.
 
 Stated carefully, because the noise is real: SWE-bench Pro is single-seed with sub-1pp
 gaps, and SlopCodeBench spreads run ±0.5–2.3. These are directional readings, not
-settled ones — which is the argument for the next run rather than a conclusion from this
+settled ones, which is the argument for the next run rather than a conclusion from this
 one.
 
 Verbosity is July-only, so it cannot be tracked across months yet; it is recorded here as
@@ -122,7 +122,7 @@ the baseline for future runs. Every pack is wordier than baseline (0.83 vs 0.90�
 
 This run exists to answer two questions the June run couldn't: how much of the June
 result was **skill quality** versus **model drift** in the underlying model, and whether
-the packs' own updates — notably Superpowers v6 — change the ranking.
+the packs' own updates (notably Superpowers v6) change the ranking.
 
 Both answers turned out to be uncomfortable ones.
 
@@ -135,16 +135,16 @@ Both answers turned out to be uncomfortable ones.
 | 1 | Oh My ClaudeCode | 57.20% | 77.4% | 2.19M | $0.53 | +1.65 |
 | 2 | Superpowers-v6 | 57.06% | 77.1% | 1.83M | $0.46 | +1.51 |
 | 3 | Karpathy Skills | 56.52% | 76.9% | 1.37M | $0.37 | +0.96 |
-| 4 | baseline Codex 5.5 | 55.56% | 76.1% | 1.37M | $0.37 | — |
+| 4 | baseline Codex 5.5 | 55.56% | 76.1% | 1.37M | $0.37 | n/a |
 | 5 | Git Ship Done | 55.42% | 76.3% | 2.70M | $0.61 | −0.14 |
 | 6 | Agent Skills | 54.46% | 75.7% | 2.07M | $0.52 | −1.10 |
 
 Every gap here is under two points on a single seed, so treat the ordering as
-indicative rather than settled — the sign of each delta is the interesting part.
+indicative rather than settled; the sign of each delta is the interesting part.
 
 **June's headline result did not survive.** In June every skill collection beat baseline;
 in July two are *below* it. Git Ship Done went from +1.64 to −0.14 without getting worse
-in absolute terms — it scored *higher* than in June (54.45% → 55.42%) and still lost its
+in absolute terms. It scored *higher* than in June (54.45% → 55.42%) and still lost its
 edge, because the baseline improved faster underneath it. Its pack also shipped an update
 between the runs, so the loss is either drift outrunning it or a regression in the update;
 neither reading flatters the pack. Agent Skills, new to the cohort this month, lands
@@ -170,17 +170,17 @@ All 36 problems, n ≤ 3 seeds per arm.
 
 Superpowers v6 is the **first skill pack in either run to beat baseline on Strict**
 (14.5 vs 13.9), reversing June's clean sweep in the other direction. Treat it gently: its
-±2.3 spread is wider than its 0.6-point margin, so this is suggestive, not established —
-and the win is narrow in a second sense, since v6 simultaneously posts the *worst* Core
+±2.3 spread is wider than its 0.6-point margin, so this is suggestive, not established.
+The win is narrow in a second sense too, since v6 simultaneously posts the *worst* Core
 (62.6) and Partial (40.7) of any arm. It solves more checkpoints outright while breaking
 more of what it had already built.
 
-The baseline moved here too — Strict 12.2 → 13.9 — so the same drift story applies, and
+The baseline moved here too (Strict 12.2 → 13.9), so the same drift story applies, and
 baseline still leads on Iso, Core and Partial.
 
 Every pack is also more verbose than baseline (0.83 vs 0.90–0.92), which is the cost
 story restated: the packs spend more words to land in roughly the same place. Karpathy is
-the exception that proves the rule — the only arm cheaper than baseline per checkpoint
+the exception that proves the rule: the only arm cheaper than baseline per checkpoint
 ($1.25 vs $1.26) while still finishing above the two most expensive packs.
 
 ### Verdict
@@ -188,15 +188,15 @@ the exception that proves the rule — the only arm cheaper than baseline per ch
 Measured against a **contemporaneous** baseline, the public workflow skills mostly wash.
 Which one "wins" depends on the benchmark and the metric more than on the skill.
 
-- **Superpowers-v6** — the only pack positive on *both* (Pro +1.51, SlopCodeBench Strict
+- **Superpowers-v6**: the only pack positive on *both* (Pro +1.51, SlopCodeBench Strict
   leader). Caveat above: that Strict lead comes with the worst Core and Partial, on wide
   noise.
-- **Oh My ClaudeCode** — Pro leader (+1.65) but 1.8 below baseline on SlopCodeBench
+- **Oh My ClaudeCode**: Pro leader (+1.65) but 1.8 below baseline on SlopCodeBench
   Strict. Benchmark-dependent.
-- **Karpathy Skills** — a cheap positive on Pro (+0.96 at baseline cost), negative on
+- **Karpathy Skills**: a cheap positive on Pro (+0.96 at baseline cost), negative on
   SlopCodeBench.
-- **Git Ship Done** — neutral-to-negative on both, at the highest token spend on Pro.
-- **Agent Skills** — negative on both.
+- **Git Ship Done**: neutral-to-negative on both, at the highest token spend on Pro.
+- **Agent Skills**: negative on both.
 
 The June answer to the title question was "sometimes, and it depends on the task." One
 month later the same experiment says something sharper: **it depends on the task, the
@@ -208,7 +208,7 @@ metric, and the month.**
   model name (`gpt-5.5`, high reasoning). The baseline arm runs no skill at all and still
   rose 52.80% → 55.56% on Pro and 12.2 → 13.9 Strict on SlopCodeBench. That is silent
   server-side drift, and it is the cleanest measurement on this page.
-- **Three of the five packs also shipped updates** — Git Ship Done (`de73ad92` →
+- **Three of the five packs also shipped updates**: Git Ship Done (`de73ad92` →
   `4fc89497`), Oh My ClaudeCode (`a1720433` → `41a4c0f7`) and Superpowers (v5.1.0 → v6).
   Their month-over-month numbers therefore conflate drift with a pack change.
 - **Karpathy Skills did not** (`2c60614` in both runs), which is what makes it a usable
@@ -231,14 +231,14 @@ SlopCodeBench (mean of 3 runs). Model: Codex 5.5.
 | 2 | Git Ship Done | 54.45% | 75.3% | 2.46M | $0.60 | +1.64 |
 | 3 | Superpowers-v5 | 54.17% | 75.8% | 1.72M | $0.48 | +1.37 |
 | 4 | Karpathy Skills | 53.08% | 74.7% | 1.23M | $0.37 | +0.27 |
-| 5 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | — |
+| 5 | baseline Codex 5.5 | 52.80% | 72.9% | 1.29M | $0.38 | n/a |
 
 Agent Skills is absent here: it entered the study with the July cohort, so it has no
 June measurement.
 
 SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained open-source repositories; a task may require substantial coordinated changes across several files, but the agent generally gets one issue and one final evaluation.
 
-*Note: While these benchmarks were running, Jesse Vincent released Superpowers v6 — it is covered in the July run above.*
+*Note: While these benchmarks were running, Jesse Vincent released Superpowers v6, which is covered in the July run above.*
 
 Spending more per problem did not buy accuracy: Karpathy was the cheapest arm and still
 beat the baseline, while Git Ship Done was the most expensive without being the most
@@ -248,17 +248,17 @@ accurate. Plot it in the [combined SWE-bench Pro chart](#swe-bench-pro) by toggl
 
 | # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |
 |---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|
-| 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | — | 1.32 |
-| 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | — | 2.04 |
-| 3 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | — | 1.87 |
-| 4 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | — | 1.67 |
-| 5 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | — | 1.32 |
+| 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | n/a | 1.32 |
+| 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | n/a | 2.04 |
+| 3 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | n/a | 1.87 |
+| 4 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | n/a | 1.67 |
+| 5 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | n/a | 1.32 |
 
 Verbosity was not recorded in the June run.
 
 SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.
 
-Every arm eroded together and none pulled ahead of the baseline — see the
+Every arm eroded together and none pulled ahead of the baseline. See the
 [per-checkpoint curves](#slopcodebench), toggled to June alone.
 
 ### Verdict
@@ -269,8 +269,8 @@ With the exception of Karpathy Skills, each collection of skills **costs more to
 
 On the evidence: **sometimes, and it depends on the task.**
 
-- On SWE-bench Pro, yes — uniformly. Every skill collection helped.
-- On SlopCodeBench, no — every skill collection actively hurt.
+- On SWE-bench Pro, yes, uniformly. Every skill collection helped.
+- On SlopCodeBench, no: every skill collection actively hurt.
 
 A caveat worth stating plainly: SlopCodeBench ran at n=3 seeds and the spread on several arms (±2.3) is wider than the gaps between them.
 
@@ -297,14 +297,14 @@ CLI (v0.136.0) on a ChatGPT subscription. The agent runs **inside each task's Do
 container**: the harness starts the container, `docker exec`s Codex into it with the
 skill mounted, and extracts the resulting git diff. No agent logic runs on the host.
 
-- **SlopCodeBench** — [robdmac/slop-code-bench @ `reproduce-public-skills`](https://github.com/robdmac/slop-code-bench/tree/reproduce-public-skills)
-- **SWE-bench Pro** — [robdmac/SWE-bench_Pro-os @ `reproduce-public-skills`](https://github.com/robdmac/SWE-bench_Pro-os/tree/reproduce-public-skills)
+- **SlopCodeBench**: [robdmac/slop-code-bench @ `reproduce-public-skills`](https://github.com/robdmac/slop-code-bench/tree/reproduce-public-skills)
+- **SWE-bench Pro**: [robdmac/SWE-bench_Pro-os @ `reproduce-public-skills`](https://github.com/robdmac/SWE-bench_Pro-os/tree/reproduce-public-skills)
 
 ### Skills: real, not distilled
 Each skill's **actual upstream repository** was mounted read-only into the container at
 a fixed commit (below); the trigger prompt instructs the agent to read the repo's own
 entry file (e.g. OMC's `AGENTS.md`) and follow it. We did **not** paraphrase any skill
-into the prompt — trajectories confirm the agent read the real skill files (e.g. 730/731
+into the prompt; trajectories confirm the agent read the real skill files (e.g. 730/731
 OMC runs opened `oh-my-claudecode/AGENTS.md` and its rule files). Because Codex is a
 single agent, multi-agent frameworks (OMC, Superpowers) were applied as a **single-agent
 sequential pass** rather than orchestrated sub-agents; this is a faithful adaptation but
@@ -319,24 +319,24 @@ which is exactly why the baseline and Karpathy arms matter as controls (see
 | Git Ship Done | get-shit-done-redux | `de73ad92` (05-25) | `4fc89497` (07-22) |
 | Oh My ClaudeCode | oh-my-claudecode | `a1720433` (05-25) | `41a4c0f7` (07-23) |
 | Superpowers | superpowers | `f2cbfbe` (v5.1.0, 05-04) | `d884ae0` (v6, 07-02) |
-| Karpathy Skills | andrej-karpathy-skills | `2c60614` (04-20) | `2c60614` (04-20) — **same** |
-| Agent Skills | agent-skills | — *(no June run)* | `70b7506` (07-06) |
-| Baseline | — *(no skill, just-solve)* | — | — |
+| Karpathy Skills | andrej-karpathy-skills | `2c60614` (04-20) | `2c60614` (04-20), **same** |
+| Agent Skills | agent-skills | n/a *(no June run)* | `70b7506` (07-06) |
+| Baseline | n/a *(no skill, just-solve)* | n/a | n/a |
 
 **On the Karpathy pin.** Both runs use the same commit not because we froze it, but
 because the repository has not changed: `2c60614` (2026-04-20) is still the latest commit
 upstream, with zero commits since. That is a property of the pack, not a choice we made,
-and it is what makes the arm a fair control rather than an artificially stale one — the
+and it is what makes the arm a fair control rather than an artificially stale one; the
 pack was tested at its current state in both runs.
 
 The contrast is stark. Checked on 2026-08-07, three of the other four packs have already
 moved past the commit used in the July run: Git Ship Done to `a731a45` (that same day),
 Agent Skills to `d2478bf`, Superpowers to `44c9b2d`. Only Oh My ClaudeCode still sits at
-its July commit. Any conclusion below about a *pack* — as opposed to the model — has a
+its July commit. Any conclusion below about a *pack*, as opposed to the model, has a
 shelf life measured in weeks, which is the other half of the argument for re-running.
 
 ### SWE-bench Pro Configuration
-- **Set:** the public split, 11 repositories — 731 instances in June, and the 729
+- **Set:** the public split, 11 repositories: 731 instances in June, and the 729
   instances common to every arm in July.
 - **Generation:** one attempt per instance (**n = 1 seed**), 30-minute cap.
 - **Evaluation:** the official Docker-based evaluator, run locally. We patched one bug:

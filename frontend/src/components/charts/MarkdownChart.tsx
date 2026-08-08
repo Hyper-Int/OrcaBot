@@ -42,5 +42,5 @@ export function MarkdownChart({ id }: { id: string }) {
 // NOTE: the "is this a chart fence?" predicate deliberately lives in the SERVER
 // page, not here. Everything exported from a "use client" module becomes a client
 // reference, so a plain helper exported alongside the component cannot be called
-// during server render — it fails with "Attempted to call isChartFence() from the
+// during server render; it fails with "Attempted to call isChartFence() from the
 // server but isChartFence is on the client".

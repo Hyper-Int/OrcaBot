@@ -6,7 +6,7 @@
 // REVISION: checkpoint-erosion-chart-v1
 // SlopCodeBench core solve rate by checkpoint, both runs, independently toggled.
 //
-// Colour encodes the RUN, not the arm — deliberately. With 5–6 arms per run,
+// Colour encodes the RUN, not the arm, deliberately. With 5–6 arms per run,
 // colouring by arm would need 11 hues (past the 8-slot limit, and it would cycle).
 // The question this chart answers is run-level anyway: "does July erode
 // differently from June?" So each run is one hue: thin lines carry the arms,
@@ -15,7 +15,7 @@
 //
 // Palette validated for this page's navy surface:
 //   node scripts/validate_palette.js "#3987e5,#d95926" --mode dark --surface "#101e33"
-//   worst adjacent CVD dE 26.8 protan / 32.4 tritan — all checks pass.
+//   worst adjacent CVD dE 26.8 protan / 32.4 tritan, all checks pass.
 
 import * as React from "react";
 import june from "@/data/benchmarks/agent-skills/2026-06.json";
@@ -59,7 +59,7 @@ const Y_TICKS = [30, 40, 50, 60, 70, 80];
 const mean = (arms: Arm[], i: number) => arms.reduce((s, a) => s + a.values[i], 0) / arms.length;
 const path = (vals: number[]) => vals.map((v, i) => `${i === 0 ? "M" : "L"}${sx(CPS[i])},${sy(v)}`).join(" ");
 
-/** Canonical arm identity across runs — "Superpowers v5" and "Superpowers v6" are
+/** Canonical arm identity across runs. "Superpowers v5" and "Superpowers v6" are
  *  the same pack, so highlighting Superpowers must catch both. */
 const armKey = (name: string) => name.replace(/\s+v\d+$/, "");
 
@@ -78,10 +78,10 @@ const displayArm = (name: string) => ARM_ALIAS[armKey(name)] ?? armKey(name);
 export function CheckpointErosionChart() {
   const [on, setOn] = React.useState<Record<string, boolean>>({ jun: true, jul: true });
   const [hover, setHover] = React.useState<{ arm: Arm; runLabel: string; color: string } | null>(null);
-  // Arm highlighting — identity without needing 6 CVD-safe hues.
+  // Arm highlighting: identity without needing 6 CVD-safe hues.
   // Hover and pin are SEPARATE states on purpose. With one shared state, the
   // pointer is already hovering the button when the click lands, so the toggle
-  // saw "already active" and switched it off — clicking appeared to do nothing,
+  // saw "already active" and switched it off, so clicking appeared to do nothing,
   // and mouse-leave then wiped it anyway.
   const [pinnedArm, setPinnedArm] = React.useState<string | null>(null);
   const [hoverArm, setHoverArm] = React.useState<string | null>(null);
@@ -101,7 +101,7 @@ export function CheckpointErosionChart() {
         SlopCodeBench: solve rate erodes over checkpoints
       </h4>
       <p style={{ margin: "0 0 0.85rem", fontSize: "0.83rem", color: INK.muted }}>
-        Every arm declines together — no skill separates from the baseline, in either run.
+        Every arm declines together; no skill separates from the baseline, in either run.
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.75rem" }}>
@@ -192,7 +192,7 @@ export function CheckpointErosionChart() {
             })
           )}
 
-          {/* Bold run mean — recedes while an individual arm is singled out */}
+          {/* Bold run mean, recedes while an individual arm is singled out */}
           {visible.map((run) => (
             <path
               key={`${run.id}-mean`}
@@ -224,7 +224,7 @@ export function CheckpointErosionChart() {
         )}
       </div>
 
-      {/* Encoding legend — colour means RUN here, never arm */}
+      {/* Encoding legend: colour means RUN here, never arm */}
       <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
         {RUNS.map((r) => (
           <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", opacity: on[r.id] ? 1 : 0.4 }}>
