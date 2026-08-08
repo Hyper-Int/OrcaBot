@@ -18,7 +18,8 @@ So I decided to put these skills to the test using similar benchmarks to the one
 
 Both runs side by side, one section per suite. Every delta is measured against **that
 month's own baseline**, which is the only honest way to compare across runs, because the
-baseline itself moves.
+baseline itself moves indicating improvements being made to Codex 5.5 on the server side
+by OpenAI that are not identifiable by any version number.
 
 ### SWE-bench Pro
 
