@@ -1,24 +1,34 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: labs-v1-index
+// REVISION: benchmarks-v1-index
 
-import { getPost, getAllPosts } from "@/lib/labs";
+import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
 import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
-import { LabsToc, type TocItem } from "@/components/LabsToc";
+import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
+import { MarkdownChart } from "@/components/charts/MarkdownChart";
+import { SortableTable } from "@/components/SortableTable";
+import { rehypeNamespaceFootnoteLabel } from "@/lib/rehype-namespace-footnote-label";
 
-const MODULE_REVISION = "labs-v1-index";
-console.log(`[labs-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+/** True when a markdown code fence is a chart directive (```chart). Kept in the
+ *  server component; a helper exported from the "use client" chart module would
+ *  be a client reference and cannot be called during SSR. */
+function isChartFence(className?: string): boolean {
+  return typeof className === "string" && className.split(" ").includes("language-chart");
+}
+
+const MODULE_REVISION = "benchmarks-v1-index";
+console.log(`[benchmarks-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export const metadata: Metadata = {
-  title: "OrcaBot Labs",
+  title: "OrcaBot Benchmarks",
   description:
-    "Deeper technical dives into all things AI",
+    "Reproducible agent benchmarks, re-run every month. Every number links to the config that produced it.",
 };
 
 function formatDate(dateStr: string): string {
@@ -32,14 +42,25 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export default function LabsIndexPage() {
+export default function BenchmarksIndexPage() {
   const metas = getAllPosts();
   const posts = metas.map((m) => getPost(m.slug)).filter(Boolean);
 
   // Table-of-contents items for the side menu: each post's title as a top-level
   // entry, followed by its headings.
+  //
+  // Heading ids are namespaced per post on this page. Every benchmark is rendered
+  // through its OWN ReactMarkdown/rehype-slug instance, so the de-duplication
+  // counter restarts for each one: a second benchmark with a "Methodology"
+  // heading would emit a duplicate id, and every duplicate anchor would resolve
+  // to the first post. The same prefix is passed to rehype-slug below so the
+  // menu and the rendered ids agree.
   const tocItems: TocItem[] = posts.flatMap((post) => {
-    const heads = (post!.headings ?? []).map((h) => ({ text: h.text, slug: h.slug, depth: h.depth }));
+    const heads = (post!.headings ?? []).map((h) => ({
+      text: h.text,
+      slug: `${post!.slug}--${h.slug}`,
+      depth: h.depth,
+    }));
     return [{ text: post!.title, slug: post!.slug, depth: 1 }, ...heads];
   });
 
@@ -47,12 +68,12 @@ export default function LabsIndexPage() {
     <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
       <style
         dangerouslySetInnerHTML={{
-          __html: `@media (max-width: 1023px) { .labs-toc-aside { display: none !important; } }`,
+          __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
         }}
       />
       {/* Heading side menu */}
       <aside
-        className="labs-toc-aside"
+        className="benchmarks-toc-aside"
         style={{
           width: 232,
           flexShrink: 0,
@@ -64,7 +85,7 @@ export default function LabsIndexPage() {
           padding: "3.5rem 0",
         }}
       >
-        <LabsToc items={tocItems} />
+        <BenchmarkToc items={tocItems} />
       </aside>
 
       {/* Article column */}
@@ -80,16 +101,17 @@ export default function LabsIndexPage() {
             marginBottom: "0.5rem",
           }}
         >
-          OrcaBot Labs
+          OrcaBot Benchmarks
         </h1>
         <p className="text-[var(--foreground-muted)]" style={{ fontSize: "1rem" }}>
-          Deeper technical dives into all things AI.
+          Reproducible agent benchmarks, re-run every month so you can see model
+          drift and plugin updates as they happen. Every run ships its full config.
         </p>
       </div>
 
       {posts.length === 0 ? (
         <p className="text-[var(--foreground-muted)]" style={{ fontSize: "0.95rem" }}>
-          Nothing published yet — check back soon.
+          Nothing published yet. Check back soon.
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "5rem" }}>
@@ -164,7 +186,57 @@ export default function LabsIndexPage() {
 
               {/* Post body */}
               <div className="legal-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]}>{post!.content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  // Footnote ids are namespaced too: they are numbered from 1 per
+                  // render, so a second benchmark would emit its own fn-1 and
+                  // collide. clobberPrefix is a remark-rehype option (not a gfm
+                  // one) and rewrites both the ids and the links pointing at them,
+                  // so the pair stays self-consistent.
+                  remarkRehypeOptions={{ clobberPrefix: `${post!.slug}--fn-` }}
+                  // Namespaced per post; see the tocItems comment above.
+                  rehypePlugins={[
+                    [rehypeSlug, { prefix: `${post!.slug}--` }],
+                    // clobberPrefix above misses the footnotes section label;
+                    // see the plugin for why it cannot be done with an option.
+                    [rehypeNamespaceFootnoteLabel, { prefix: `${post!.slug}--` }],
+                  ]}
+                  components={{
+                    // Links written in the markdown point at bare heading ids
+                    // ("#methodology"). Those ids are namespaced on this page, so
+                    // the hrefs must be too, or every in-article cross-reference
+                    // dead-ends here while working fine on the post's own page.
+                    // Footnote links already carry the prefix and are left alone.
+                    a: ({ href, children, node: _n, ...rest }) => {
+                      const ns = `#${post!.slug}--`;
+                      const to =
+                        href && href.startsWith("#") && !href.startsWith(ns)
+                          ? `${ns}${href.slice(1)}`
+                          : href;
+                      return (
+                        <a href={to} {...rest}>
+                          {children}
+                        </a>
+                      );
+                    },
+                    // Column headers sort the rows; see SortableTable.
+                    table: ({ node }) => <SortableTable node={node as never} />,
+                    // `node` is react-markdown's hast node; strip it so it never
+                    // lands on the DOM element as an unknown attribute.
+                    code({ className, children, node: _node, ...props }) {
+                      if (isChartFence(className)) {
+                        return <MarkdownChart id={String(children).trim()} />;
+                      }
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                  }}
+                >
+                  {post!.content}
+                </ReactMarkdown>
               </div>
 
               {/* Divider between posts */}

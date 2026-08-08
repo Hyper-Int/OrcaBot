@@ -10,6 +10,24 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // The Labs section became Benchmarks. /labs URLs are live on the internet
+  // (shared links, social cards), so every one of them permanently redirects.
+  // Order matters — Next matches top-down:
+  //   1. the published Labs post -> its benchmark's permanent page
+  //   2. the section index
+  //   3. everything else under /labs, which also covers the moved static assets
+  //      (e.g. /labs/og-do-skills.png, referenced by already-cached social cards)
+  async redirects() {
+    return [
+      {
+        source: "/labs/do-skills-improve-coding-agent-accuracy",
+        destination: "/benchmarks/agent-skills",
+        permanent: true,
+      },
+      { source: "/labs", destination: "/benchmarks", permanent: true },
+      { source: "/labs/:path*", destination: "/benchmarks/:path*", permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;
