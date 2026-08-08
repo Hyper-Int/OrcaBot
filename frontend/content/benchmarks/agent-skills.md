@@ -27,7 +27,7 @@ only honest way to compare across runs.
 | Oh My ClaudeCode | 54.99% | 57.20% | +2.21 | +2.19 → +1.65 |
 | Superpowers | 54.17% *(v5)* | 57.06% *(v6)* | +2.89 | +1.37 → +1.51 |
 | Karpathy Skills | 53.08% | 56.52% | +3.44 | +0.27 → +0.96 |
-| **baseline** | **52.80%** | **55.56%** | **+2.76** | — |
+| **baseline Codex 5.5** | **52.80%** | **55.56%** | **+2.76** | — |
 | Git Ship Done | 54.45% | 55.42% | +0.97 | +1.64 → **−0.14** |
 | Agent Skills | — | 54.46% | — | — → **−1.10** |
 
@@ -59,7 +59,7 @@ characterises the drift far more precisely than a single resolve rate.
 
 | Arm | Pack | Strict Jun | Strict Jul | Δ | Erosion Jun | Erosion Jul | Δ | Verbosity Jul |
 |-----|------|-----------:|-----------:|--:|------------:|------------:|--:|--------------:|
-| **baseline** | *none* | 12.2 | 13.9 | **+1.7** | 0.58 | 0.59 | +0.01 | 0.827 |
+| **baseline Codex 5.5** | *none* | 12.2 | 13.9 | **+1.7** | 0.58 | 0.59 | +0.01 | 0.827 |
 | **Karpathy Skills** | *unchanged* | 11.1 | 12.9 | **+1.8** | 0.58 | 0.58 | 0.00 | 0.915 |
 | Superpowers | v5→v6 | 11.4 | 14.5 | +3.1 | 0.46 | 0.46 | 0.00 | 0.897 |
 | Git Ship Done | updated | 11.9 | 13.1 | +1.2 | 0.54 | 0.53 | −0.01 | 0.895 |
@@ -131,7 +131,7 @@ Both answers turned out to be uncomfortable ones.
 | 1 | Oh My ClaudeCode | 57.20% | 77.4% | 2.19M | $0.53 | +1.65 |
 | 2 | Superpowers-v6 | 57.06% | 77.1% | 1.83M | $0.46 | +1.51 |
 | 3 | Karpathy Skills | 56.52% | 76.9% | 1.37M | $0.37 | +0.96 |
-| 4 | baseline | 55.56% | 76.1% | 1.37M | $0.37 | — |
+| 4 | baseline Codex 5.5 | 55.56% | 76.1% | 1.37M | $0.37 | — |
 | 5 | Git Ship Done | 55.42% | 76.3% | 2.70M | $0.61 | −0.14 |
 | 6 | Agent Skills | 54.46% | 75.7% | 2.07M | $0.52 | −1.10 |
 
@@ -158,7 +158,7 @@ All 36 problems, n ≤ 3 seeds per arm.
 | # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |
 |---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|
 | 1 | Superpowers-v6 | 14.5 ± 2.3 | 26.5 | 62.6 | 40.7 | 0.46 | 0.897 | 1.71 |
-| 2 | baseline | 13.9 ± 0.5 | 27.3 | 67.1 | 46.3 | 0.59 | 0.827 | 1.26 |
+| 2 | baseline Codex 5.5 | 13.9 ± 0.5 | 27.3 | 67.1 | 46.3 | 0.59 | 0.827 | 1.26 |
 | 3 | Git Ship Done | 13.1 ± 0.5 | 25.9 | 67.5 | 41.7 | 0.53 | 0.895 | 2.02 |
 | 4 | Karpathy Skills | 12.9 ± 1.7 | 25.2 | 67.9 | 43.5 | 0.58 | 0.915 | 1.25 |
 | 5 | Oh My ClaudeCode | 12.1 ± 1.0 | 25.9 | 65.8 | 44.4 | 0.54 | 0.908 | 1.87 |
