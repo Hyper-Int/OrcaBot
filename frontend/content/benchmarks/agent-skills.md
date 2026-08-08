@@ -14,11 +14,16 @@ None of them originally shipped with evidence, other than some demonstrations, t
 
 So I decided to put these skills to the test using similar benchmarks to the ones that the frontier labs use when they release new models: **SWE-bench Pro** [^8] and **SlopCodeBench** [^9]. **The same arms are re-run every month.** Skill packs ship updates, models drift underneath them, and a number published once decays quietly. Each run below is a dated snapshot with its own config; the methodology is shared, so the months are directly comparable.
 
-## Run history
+## Results Combined
 
-Resolve % on SWE-bench Pro, by run. The right-hand column is each arm's month-over-month
-change; the bracketed figure is its edge over **that month's own baseline**, which is the
-only honest way to compare across runs.
+Both runs side by side, one section per suite. Every delta is measured against **that
+month's own baseline**, which is the only honest way to compare across runs — because the
+baseline itself moves.
+
+### SWE-bench Pro
+
+Resolve %, by run. The right-hand column is each arm's month-over-month change; the
+bracketed figure is its edge over that month's baseline.
 
 | Arm | June 2026 | July 2026 | Δ month | (edge vs base) |
 |-----|----------:|----------:|--------:|---------------:|
@@ -48,12 +53,13 @@ Only two rows are clean drift measurements. **Baseline** runs no skill at all, a
 month-over-month figures mix model drift with a pack update and cannot be read as either
 one alone.
 
-### What actually changed in the model
+### SlopCodeBench
 
-SlopCodeBench separates two things SWE-bench Pro blends together: how many checkpoints an
+This suite separates two things SWE-bench Pro blends together: how many checkpoints an
 arm solves outright (**Strict**), and how much previously-working code it breaks as the
 codebase accretes (**Erosion**, lower is better). Comparing both across the two runs
-characterises the drift far more precisely than a single resolve rate.
+characterises what actually changed in the model far more precisely than a single resolve
+rate can.
 
 | Arm | Pack | Strict Jun | Strict Jul | Δ | Erosion Jun | Erosion Jul | Δ | Verbosity Jul |
 |-----|------|-----------:|-----------:|--:|------------:|------------:|--:|--------------:|
@@ -236,7 +242,7 @@ SWE-bench Pro contains long-horizon issues drawn from 11 actively maintained ope
 
 Spending more per problem did not buy accuracy: Karpathy was the cheapest arm and still
 beat the baseline, while Git Ship Done was the most expensive without being the most
-accurate. Plot it in the [run history chart](#run-history) by toggling June on its own.
+accurate. Plot it in the [combined SWE-bench Pro chart](#swe-bench-pro) by toggling June on its own.
 
 ### SlopCodeBench
 
@@ -253,7 +259,7 @@ Verbosity was not recorded in the June run.
 SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.
 
 Every arm eroded together and none pulled ahead of the baseline — see the
-[per-checkpoint curves](#what-actually-changed-in-the-model), toggled to June alone.
+[per-checkpoint curves](#slopcodebench), toggled to June alone.
 
 ### Verdict
 
@@ -306,7 +312,7 @@ may *understate* skills designed around native multi-agent tooling.
 
 Pinned commits per run. Every pack except Karpathy shipped changes between the two runs,
 which is exactly why the baseline and Karpathy arms matter as controls (see
-[What actually changed in the model](#what-actually-changed-in-the-model)).
+[Results Combined](#results-combined)).
 
 | Skill | Repo | June run | July run |
 |---|---|---|---|
