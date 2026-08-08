@@ -12,9 +12,7 @@ Almost immediately, developers such as Jesse Vincent [^1] were developing skills
 
 None of them originally shipped with evidence, other than some demonstrations, that they actually improved end-to-end software-engineering performance. Superpowers came closest, but it tested workflow compliance, not whether the same model solved more coding tasks. And with the AI models and coding harnesses constantly improving, it was an open question whether any gains would survive the next model release.
 
-So I decided to put these skills to the test using similar benchmarks to the ones that the frontier labs use when they release new models: **SWE-bench Pro** [^8] and **SlopCodeBench** [^9].
-
-That last point — whether a result survives the next model release — is why this page is not a one-off. **The same arms are re-run every month.** Skill packs ship updates, models drift underneath them, and a number published once decays quietly. Each run below is a dated snapshot with its own config; the methodology is shared, so the months are directly comparable.
+So I decided to put these skills to the test using similar benchmarks to the ones that the frontier labs use when they release new models: **SWE-bench Pro** [^8] and **SlopCodeBench** [^9]. **The same arms are re-run every month.** Skill packs ship updates, models drift underneath them, and a number published once decays quietly. Each run below is a dated snapshot with its own config; the methodology is shared, so the months are directly comparable.
 
 ## Run history
 
