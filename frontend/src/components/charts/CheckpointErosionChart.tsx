@@ -59,15 +59,45 @@ const Y_TICKS = [30, 40, 50, 60, 70, 80];
 const mean = (arms: Arm[], i: number) => arms.reduce((s, a) => s + a.values[i], 0) / arms.length;
 const path = (vals: number[]) => vals.map((v, i) => `${i === 0 ? "M" : "L"}${sx(CPS[i])},${sy(v)}`).join(" ");
 
+/** Canonical arm identity across runs — "Superpowers v5" and "Superpowers v6" are
+ *  the same pack, so highlighting Superpowers must catch both. */
+const armKey = (name: string) => name.replace(/\s+v\d+$/, "");
+
+const ARM_ORDER = ["baseline Codex 5.5", "Git Ship Done", "Oh My ClaudeCode", "Superpowers", "Karpathy", "Agent Skills"];
+/** Display names differ slightly between the data files and the prose tables. */
+const ARM_ALIAS: Record<string, string> = {
+  baseline: "baseline Codex 5.5",
+  GSD: "Git Ship Done",
+  OMC: "Oh My ClaudeCode",
+  Karpathy: "Karpathy",
+  Superpowers: "Superpowers",
+  "Agent Skills": "Agent Skills",
+};
+const displayArm = (name: string) => ARM_ALIAS[armKey(name)] ?? armKey(name);
+
 export function CheckpointErosionChart() {
   const [on, setOn] = React.useState<Record<string, boolean>>({ jun: true, jul: true });
   const [hover, setHover] = React.useState<{ arm: Arm; runLabel: string; color: string } | null>(null);
+  /** Arm highlighted from the legend — identity without needing 6 safe hues. */
+  const [focusArm, setFocusArm] = React.useState<string | null>(null);
   const [showTable, setShowTable] = React.useState(false);
 
   const visible = RUNS.filter((r) => on[r.id]);
+  const armsPresent = ARM_ORDER.filter((a) =>
+    visible.some((r) => r.arms.some((x) => displayArm(x.arm) === a))
+  );
+  const isDim = (a: Arm) => focusArm !== null && displayArm(a.arm) !== focusArm;
+  const isFocus = (a: Arm) => focusArm !== null && displayArm(a.arm) === focusArm;
 
   return (
     <figure style={{ margin: "2rem 0" }}>
+      <h4 style={{ margin: "0 0 0.15rem", fontSize: "1.05rem", fontWeight: 700, color: INK.primary }}>
+        SlopCodeBench: solve rate erodes over checkpoints
+      </h4>
+      <p style={{ margin: "0 0 0.85rem", fontSize: "0.83rem", color: INK.muted }}>
+        Every arm declines together — no skill separates from the baseline, in either run.
+      </p>
+
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", marginBottom: "0.75rem" }}>
         {RUNS.map((r) => {
           const active = on[r.id];
@@ -131,21 +161,22 @@ export function CheckpointErosionChart() {
           ))}
           <text x={M.left + PW / 2} y={H - 10} textAnchor="middle" fontSize={12} fill={INK.secondary}>Checkpoint</text>
           <text x={-(M.top + PH / 2)} y={14} transform="rotate(-90)" textAnchor="middle" fontSize={12} fill={INK.secondary}>
-            Core solve rate
+            Core solve %
           </text>
 
           {/* Thin per-arm lines */}
           {visible.map((run) =>
             run.arms.map((a) => {
-              const hot = hover?.arm === a;
+              const hot = hover?.arm === a || isFocus(a);
+              const dim = isDim(a) || (hover != null && hover.arm !== a && focusArm === null);
               return (
                 <path
                   key={`${run.id}-${a.arm}`}
                   d={path(a.values)}
                   fill="none"
                   stroke={run.color}
-                  strokeWidth={hot ? 2.5 : 1.25}
-                  strokeOpacity={hover ? (hot ? 1 : 0.18) : 0.4}
+                  strokeWidth={hot ? 2.75 : 1.25}
+                  strokeOpacity={hot ? 1 : dim ? 0.15 : 0.4}
                   strokeDasharray={a.isBaseline ? "5 3" : undefined}
                   style={{ cursor: "pointer" }}
                   onMouseEnter={() => setHover({ arm: a, runLabel: run.label, color: run.color })}
@@ -155,7 +186,7 @@ export function CheckpointErosionChart() {
             })
           )}
 
-          {/* Bold run mean */}
+          {/* Bold run mean — recedes while an individual arm is singled out */}
           {visible.map((run) => (
             <path
               key={`${run.id}-mean`}
@@ -163,7 +194,7 @@ export function CheckpointErosionChart() {
               fill="none"
               stroke={run.color}
               strokeWidth={3}
-              strokeOpacity={hover ? 0.25 : 1}
+              strokeOpacity={hover || focusArm ? 0.22 : 1}
               style={{ pointerEvents: "none" }}
             />
           ))}
@@ -187,6 +218,7 @@ export function CheckpointErosionChart() {
         )}
       </div>
 
+      {/* Encoding legend — colour means RUN here, never arm */}
       <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
         {RUNS.map((r) => (
           <span key={r.id} style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", opacity: on[r.id] ? 1 : 0.4 }}>
@@ -196,6 +228,40 @@ export function CheckpointErosionChart() {
         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
           <span style={{ width: 14, height: 0, borderTop: `2px dashed ${INK.muted}` }} /> dashed = baseline
         </span>
+      </div>
+
+      {/* Arm legend. Arms are identified by NAME, not hue: five crossing lines
+          cannot be told apart by colour under CVD (the reference palette scores
+          all-pairs dE 1.6 at this series count), so identity comes from
+          highlighting instead. Hover or tap a name to isolate it in both runs. */}
+      <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: INK.muted }}>
+        <span style={{ marginRight: "0.6rem" }}>Highlight an arm:</span>
+        {armsPresent.map((a) => {
+          const active = focusArm === a;
+          return (
+            <button
+              key={a}
+              type="button"
+              onMouseEnter={() => setFocusArm(a)}
+              onMouseLeave={() => setFocusArm(null)}
+              onClick={() => setFocusArm((f) => (f === a ? null : a))}
+              aria-pressed={active}
+              style={{
+                display: "inline-block",
+                margin: "0 0.35rem 0.35rem 0",
+                padding: "0.18rem 0.55rem",
+                borderRadius: 999,
+                border: `1px solid ${active ? INK.secondary : AXIS}`,
+                background: active ? "#1e3354" : "transparent",
+                color: active ? INK.primary : INK.muted,
+                fontSize: "0.75rem",
+                cursor: "pointer",
+              }}
+            >
+              {a}
+            </button>
+          );
+        })}
       </div>
 
       {showTable && (
