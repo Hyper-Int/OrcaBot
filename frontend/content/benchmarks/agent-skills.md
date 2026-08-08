@@ -17,9 +17,16 @@ So I decided to put these skills to the test using similar benchmarks to the one
 ## Results Combined
 
 Both runs side by side, one section per suite. Every delta is measured against **that
-month's own baseline**, which is the only honest way to compare across runs, because the
-baseline itself moves indicating improvements being made to Codex 5.5 on the server side
-by OpenAI that are not identifiable by any version number.
+month's own baseline**, which is the only honest way to compare across runs.
+
+**Codex 5.5 changed underneath us, and nothing in its version string says so.** Same
+harness (Codex CLI `v0.136.0`), same model name (`gpt-5.5`, reasoning effort `high`), one
+month apart. Across that month the skill-free baseline gained **+2.76** points on
+SWE-bench Pro and **+1.7** Strict on SlopCodeBench, and its verbosity **roughly tripled**,
+from 0.311 to 0.827. Those are improvements OpenAI made server side, and there is no
+revision number anywhere for a reader, or a benchmark, to pin them to. Every figure below
+is a measurement of a moving target, which is why each run is dated and compared only
+against its own contemporaneous baseline.
 
 ### SWE-bench Pro
 
@@ -62,17 +69,21 @@ codebase accretes (**Erosion**, lower is better). Comparing both across the two 
 characterises what actually changed in the model far more precisely than a single resolve
 rate can.
 
-| Arm | Pack | Strict Jun | Strict Jul | Δ | Erosion Jun | Erosion Jul | Δ | Verbosity Jul |
-|-----|------|-----------:|-----------:|--:|------------:|------------:|--:|--------------:|
-| **baseline Codex 5.5** | *none* | 12.2 | 13.9 | **+1.7** | 0.58 | 0.59 | +0.01 | 0.827 |
-| **Karpathy Skills** | *unchanged* | 11.1 | 12.9 | **+1.8** | 0.58 | 0.58 | 0.00 | 0.915 |
-| Superpowers | v5→v6 | 11.4 | 14.5 | +3.1 | 0.46 | 0.46 | 0.00 | 0.897 |
-| Git Ship Done | updated | 11.9 | 13.1 | +1.2 | 0.54 | 0.53 | −0.01 | 0.895 |
-| Oh My ClaudeCode | updated | 11.6 | 12.1 | +0.5 | 0.52 | 0.54 | +0.02 | 0.908 |
+| Arm | Pack | Strict Jun | Strict Jul | Δ | Erosion Jun | Erosion Jul | Δ | Verbosity Jun→Jul |
+|-----|------|-----------:|-----------:|--:|------------:|------------:|--:|------------------:|
+| **baseline Codex 5.5** | *none* | 12.2 | 13.9 | **+1.7** | 0.58 | 0.59 | +0.01 | 0.311 → 0.827 |
+| **Karpathy Skills** | *unchanged* | 11.1 | 12.9 | **+1.8** | 0.58 | 0.58 | 0.00 | 0.300 → 0.915 |
+| Superpowers | v5→v6 | 11.4 | 14.5 | +3.1 | 0.46 | 0.46 | 0.00 | 0.258 → 0.897 |
+| Git Ship Done | updated | 11.9 | 13.1 | +1.2 | 0.54 | 0.53 | −0.01 | 0.274 → 0.895 |
+| Oh My ClaudeCode | updated | 11.6 | 12.1 | +0.5 | 0.52 | 0.54 | +0.02 | 0.280 → 0.908 |
 
-**Capability moved; discipline did not.** Every arm's Strict rate rose (+0.5 to +3.1)
-while every arm's Erosion moved by at most ±0.02. The model got materially better at
-solving new checkpoints and no better at all at not breaking what it had already written.
+**Capability moved, discipline did not, and verbosity roughly tripled.** Every arm's
+Strict rate rose (+0.5 to +3.1) while every arm's Erosion moved by at most ±0.02: the
+model got materially better at solving new checkpoints and no better at all at not
+breaking what it had already written. Verbosity is the third axis, and it moved hardest.
+Every arm went from roughly 0.26–0.31 to 0.83–0.92, the skill-free baseline included,
+under the same harness version and the same model string. Codex 5.5 simply became a much
+wordier model in the space of a month.
 
 The per-checkpoint curves say the same thing in a different way. Toggle the runs: the two
 bands sit almost on top of each other and fall at the same rate, from roughly 75–81% at
@@ -116,8 +127,12 @@ gaps, and SlopCodeBench spreads run ±0.5–2.3. These are directional readings,
 settled ones, which is the argument for the next run rather than a conclusion from this
 one.
 
-Verbosity is July-only, so it cannot be tracked across months yet; it is recorded here as
-the baseline for future runs. Every pack is wordier than baseline (0.83 vs 0.90–0.92).
+The verbosity ordering also inverted, which is worth separating from the size of the
+jump. In June every skill pack came in *below* the baseline (0.258 to 0.300 against
+0.311): the packs were restraining output. In July every one sits *above* it (0.895 to
+0.915 against 0.827). So the base model did not just get wordier, it got wordier in a way
+the packs now add to rather than damp down. For a pack sold on imposing discipline, that
+is the wrong direction on the one axis that moved most.
 
 ## July 2026
 
@@ -207,8 +222,9 @@ metric, and the month.**
 
 - **The model, under a fixed version string.** Same harness (Codex CLI `v0.136.0`), same
   model name (`gpt-5.5`, high reasoning). The baseline arm runs no skill at all and still
-  rose 52.80% → 55.56% on Pro and 12.2 → 13.9 Strict on SlopCodeBench. That is silent
-  server-side drift, and it is the cleanest measurement on this page.
+  rose 52.80% → 55.56% on Pro and 12.2 → 13.9 Strict on SlopCodeBench, while its
+  verbosity went 0.311 → 0.827. That is silent server-side drift, and it is the cleanest
+  measurement on this page.
 - **Three of the five packs also shipped updates**: Git Ship Done (`de73ad92` →
   `4fc89497`), Oh My ClaudeCode (`a1720433` → `41a4c0f7`) and Superpowers (v5.1.0 → v6).
   Their month-over-month numbers therefore conflate drift with a pack change.
@@ -249,13 +265,15 @@ accurate. Plot it in the [combined SWE-bench Pro chart](#swe-bench-pro) by toggl
 
 | # | Arm | Strict | Iso | Core | Partial | Erosion | Verbosity | $/ckpt |
 |---|-----|-------:|----:|-----:|--------:|--------:|----------:|-------:|
-| 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | n/a | 1.32 |
-| 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | n/a | 2.04 |
-| 3 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | n/a | 1.87 |
-| 4 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | n/a | 1.67 |
-| 5 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | n/a | 1.32 |
+| 1 | baseline Codex 5.5 | 12.2 ± 0.4 | 25.7 | 68.4 | 41.7 | 0.58 | 0.311 | 1.32 |
+| 2 | Git Ship Done | 11.9 ± 0.2 | 26.0 | 69.0 | 39.8 | 0.54 | 0.274 | 2.04 |
+| 3 | Oh My ClaudeCode | 11.6 ± 2.3 | 25.9 | 63.6 | 42.6 | 0.52 | 0.280 | 1.87 |
+| 4 | Superpowers-v5 | 11.4 ± 2.3 | 27.4 | 65.0 | 36.1 | 0.46 | 0.258 | 1.67 |
+| 5 | Karpathy Skills | 11.1 ± 0.9 | 24.8 | 66.2 | 41.7 | 0.58 | 0.300 | 1.32 |
 
-Verbosity was not recorded in the June run.
+Note the verbosity column: in June every skill pack was *less* verbose than the skill-free
+baseline (0.258 to 0.300 against 0.311). By July that ordering has inverted and the whole
+scale has roughly tripled; see [Results Combined](#slopcodebench).
 
 SlopCodeBench contains 36 synthetic, language-agnostic problems divided into 196 sequential checkpoints. The agent receives only an observable CLI or API contract, chooses its own architecture, and must keep modifying the code it previously wrote.
 

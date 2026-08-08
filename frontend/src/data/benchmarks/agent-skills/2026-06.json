@@ -7,13 +7,94 @@
   "slopcodebench": {
     "metric": "core",
     "note": "Core solve rate per checkpoint. cp1ToLast is supplied from unrounded values, so it can differ by 1 from the rounded endpoints shown here.",
-    "checkpoints": [1, 2, 3, 4, 5, 6, 7, 8],
+    "checkpoints": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
     "arms": [
-      { "arm": "baseline", "isBaseline": true, "values": [81, 66, 73, 65, 67, 62, 50, 44], "cp1ToLast": -37 },
-      { "arm": "GSD", "values": [81, 70, 70, 67, 67, 64, 50, 44], "cp1ToLast": -36 },
-      { "arm": "OMC", "values": [74, 62, 67, 59, 59, 69, 50, 44], "cp1ToLast": -30 },
-      { "arm": "Superpowers v5", "values": [73, 67, 67, 61, 63, 64, 50, 50], "cp1ToLast": -23 },
-      { "arm": "Karpathy", "values": [75, 65, 74, 63, 63, 60, 46, 50], "cp1ToLast": -25 }
-    ]
+      {
+        "arm": "baseline",
+        "isBaseline": true,
+        "values": [
+          81,
+          66,
+          73,
+          65,
+          67,
+          62,
+          50,
+          44
+        ],
+        "cp1ToLast": -37,
+        "verbosity": 0.311
+      },
+      {
+        "arm": "GSD",
+        "values": [
+          81,
+          70,
+          70,
+          67,
+          67,
+          64,
+          50,
+          44
+        ],
+        "cp1ToLast": -36,
+        "verbosity": 0.274
+      },
+      {
+        "arm": "OMC",
+        "values": [
+          74,
+          62,
+          67,
+          59,
+          59,
+          69,
+          50,
+          44
+        ],
+        "cp1ToLast": -30,
+        "verbosity": 0.28
+      },
+      {
+        "arm": "Superpowers v5",
+        "values": [
+          73,
+          67,
+          67,
+          61,
+          63,
+          64,
+          50,
+          50
+        ],
+        "cp1ToLast": -23,
+        "verbosity": 0.258
+      },
+      {
+        "arm": "Karpathy",
+        "values": [
+          75,
+          65,
+          74,
+          63,
+          63,
+          60,
+          46,
+          50
+        ],
+        "cp1ToLast": -25,
+        "verbosity": 0.3
+      }
+    ],
+    "verbosityNote": "Verbosity roughly tripled between the June and July runs across every arm, including the skill-free baseline, under the same harness version and model string. Treated as a real change in the model rather than a metric redefinition. Note the ordering also inverted: in June every pack sat below baseline, in July every pack sits above it."
   }
 }
