@@ -13,6 +13,7 @@ import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
 import { SortableTable } from "@/components/SortableTable";
+import { rehypeNamespaceFootnoteLabel } from "@/lib/rehype-namespace-footnote-label";
 
 /** True when a markdown code fence is a chart directive (```chart). Kept in the
  *  server component; a helper exported from the "use client" chart module would
@@ -194,7 +195,12 @@ export default function BenchmarksIndexPage() {
                   // so the pair stays self-consistent.
                   remarkRehypeOptions={{ clobberPrefix: `${post!.slug}--fn-` }}
                   // Namespaced per post; see the tocItems comment above.
-                  rehypePlugins={[[rehypeSlug, { prefix: `${post!.slug}--` }]]}
+                  rehypePlugins={[
+                    [rehypeSlug, { prefix: `${post!.slug}--` }],
+                    // clobberPrefix above misses the footnotes section label;
+                    // see the plugin for why it cannot be done with an option.
+                    [rehypeNamespaceFootnoteLabel, { prefix: `${post!.slug}--` }],
+                  ]}
                   components={{
                     // Links written in the markdown point at bare heading ids
                     // ("#methodology"). Those ids are namespaced on this page, so
