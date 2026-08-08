@@ -85,13 +85,21 @@ export function CheckpointErosionChart() {
   // and mouse-leave then wiped it anyway.
   const [pinnedArm, setPinnedArm] = React.useState<string | null>(null);
   const [hoverArm, setHoverArm] = React.useState<string | null>(null);
-  const focusArm = hoverArm ?? pinnedArm;
   const [showTable, setShowTable] = React.useState(false);
 
   const visible = RUNS.filter((r) => on[r.id]);
   const armsPresent = ARM_ORDER.filter((a) =>
     visible.some((r) => r.arms.some((x) => displayArm(x.arm) === a))
   );
+
+  // An arm can stop being visible while pinned: pin "Agent Skills" (a July-only
+  // arm), then switch July off. Its chip leaves the legend, so honouring the pin
+  // would dim every remaining line with no control left to release it. Derived
+  // rather than cleared, so re-enabling the run restores the pin instead of
+  // silently dropping it.
+  const activePin = pinnedArm && armsPresent.includes(pinnedArm) ? pinnedArm : null;
+  const activeHover = hoverArm && armsPresent.includes(hoverArm) ? hoverArm : null;
+  const focusArm = activeHover ?? activePin;
   const isDim = (a: Arm) => focusArm !== null && displayArm(a.arm) !== focusArm;
   const isFocus = (a: Arm) => focusArm !== null && displayArm(a.arm) === focusArm;
 
@@ -243,7 +251,7 @@ export function CheckpointErosionChart() {
       <div style={{ marginTop: "0.7rem", fontSize: "0.78rem", color: INK.muted }}>
         <span style={{ marginRight: "0.6rem" }}>Highlight an arm:</span>
         {armsPresent.map((a) => {
-          const pinned = pinnedArm === a;
+          const pinned = activePin === a;
           const lit = focusArm === a;
           return (
             <button

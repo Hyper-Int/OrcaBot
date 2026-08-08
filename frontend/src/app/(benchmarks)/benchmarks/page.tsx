@@ -47,8 +47,19 @@ export default function BenchmarksIndexPage() {
 
   // Table-of-contents items for the side menu: each post's title as a top-level
   // entry, followed by its headings.
+  //
+  // Heading ids are namespaced per post on this page. Every benchmark is rendered
+  // through its OWN ReactMarkdown/rehype-slug instance, so the de-duplication
+  // counter restarts for each one: a second benchmark with a "Methodology"
+  // heading would emit a duplicate id, and every duplicate anchor would resolve
+  // to the first post. The same prefix is passed to rehype-slug below so the
+  // menu and the rendered ids agree.
   const tocItems: TocItem[] = posts.flatMap((post) => {
-    const heads = (post!.headings ?? []).map((h) => ({ text: h.text, slug: h.slug, depth: h.depth }));
+    const heads = (post!.headings ?? []).map((h) => ({
+      text: h.text,
+      slug: `${post!.slug}--${h.slug}`,
+      depth: h.depth,
+    }));
     return [{ text: post!.title, slug: post!.slug, depth: 1 }, ...heads];
   });
 
@@ -176,8 +187,32 @@ export default function BenchmarksIndexPage() {
               <div className="legal-content">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeSlug]}
+                  // Footnote ids are namespaced too: they are numbered from 1 per
+                  // render, so a second benchmark would emit its own fn-1 and
+                  // collide. clobberPrefix is a remark-rehype option (not a gfm
+                  // one) and rewrites both the ids and the links pointing at them,
+                  // so the pair stays self-consistent.
+                  remarkRehypeOptions={{ clobberPrefix: `${post!.slug}--fn-` }}
+                  // Namespaced per post; see the tocItems comment above.
+                  rehypePlugins={[[rehypeSlug, { prefix: `${post!.slug}--` }]]}
                   components={{
+                    // Links written in the markdown point at bare heading ids
+                    // ("#methodology"). Those ids are namespaced on this page, so
+                    // the hrefs must be too, or every in-article cross-reference
+                    // dead-ends here while working fine on the post's own page.
+                    // Footnote links already carry the prefix and are left alone.
+                    a: ({ href, children, node: _n, ...rest }) => {
+                      const ns = `#${post!.slug}--`;
+                      const to =
+                        href && href.startsWith("#") && !href.startsWith(ns)
+                          ? `${ns}${href.slice(1)}`
+                          : href;
+                      return (
+                        <a href={to} {...rest}>
+                          {children}
+                        </a>
+                      );
+                    },
                     // Column headers sort the rows; see SortableTable.
                     table: ({ node }) => <SortableTable node={node as never} />,
                     // `node` is react-markdown's hast node; strip it so it never

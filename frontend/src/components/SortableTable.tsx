@@ -135,15 +135,35 @@ export function SortableTable({ node }: { node: HastNode }) {
             return (
               <th
                 key={i}
-                style={{ ...alignOf(th), cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+                style={{ ...alignOf(th), whiteSpace: "nowrap", padding: 0 }}
                 aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}
-                onClick={() => onHeader(i)}
-                title="Sort by this column"
               >
-                <Inline nodes={th.children ?? []} />
-                <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.32, marginLeft: "0.3rem", fontSize: "0.8em" }}>
-                  {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
-                </span>
+                {/* A real button, not a click handler on the <th>: a th is not
+                    focusable, so keyboard users could not sort at all. */}
+                <button
+                  type="button"
+                  onClick={() => onHeader(i)}
+                  title="Sort by this column"
+                  style={{
+                    font: "inherit",
+                    color: "inherit",
+                    background: "none",
+                    border: "none",
+                    // Matches .legal-content th padding, which is moved onto the
+                    // button so the whole cell stays a hit target.
+                    padding: "0.625rem 0.75rem",
+                    margin: 0,
+                    width: "100%",
+                    textAlign: "inherit",
+                    cursor: "pointer",
+                    userSelect: "none",
+                  }}
+                >
+                  <Inline nodes={th.children ?? []} />
+                  <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.32, marginLeft: "0.3rem", fontSize: "0.8em" }}>
+                    {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
+                  </span>
+                </button>
               </th>
             );
           })}
