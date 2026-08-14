@@ -4,7 +4,8 @@
  "label": "August 2026",
  "machine": "Apple M2, macOS",
  "corpus": "84 phrases",
- "filter": "Configurations slower than 2.0x real time are excluded: this is a benchmark of models you can actually run in real time.",
+ "rtfCutoff": 2.1,
+ "filter": "Configurations slower than 2.1x real time are excluded: this is a benchmark of models you can actually run in real time.",
  "caption": "Sorted by word error rate. Autoregressive engines are averaged over two passes (168 samples); feed-forward engines over one (84). chatterbox and bark are still on one pass.",
  "columns": [
   "Sample · Configuration",
@@ -220,15 +221,15 @@
      "align": "right"
     },
     {
-     "v": "·",
-     "sort": "-1",
+     "v": "3.30",
+     "sort": "3.30",
      "tone": "",
      "align": "right"
     },
     {
-     "v": "·",
-     "sort": "99",
-     "tone": "",
+     "v": "0.04s",
+     "sort": "0.04",
+     "tone": "good",
      "align": "right"
     },
     {
@@ -956,6 +957,122 @@
    "sample": "nt-2e-q4-metal.mp3"
   },
   {
+   "config": "chatterbox-q4",
+   "group": "",
+   "cells": [
+    {
+     "v": "Chatterbox-q4",
+     "sort": "chatterbox-q4",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.54B",
+     "sort": "540.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "25 Hz",
+     "sort": "25.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-04",
+     "sort": "202504",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "637 MB",
+     "sort": "637.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "655 MB",
+     "sort": "655.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.1 GB",
+     "sort": "1126.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "148/168",
+     "sort": "0.8810",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "12%",
+     "sort": "0.1183",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0892",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.98",
+     "sort": "2.98",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "0.06s",
+     "sort": "0.06",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "2.03x",
+     "sort": "2.0326",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "6.39s",
+     "sort": "6.3891",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "3.14s",
+     "sort": "3.1433",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "6 points worse than fp32 and no faster than q8.",
+     "sort": "6 points worse than fp32 and no faster t",
+     "tone": "",
+     "align": "right"
+    }
+   ],
+   "display": "Chatterbox-q4",
+   "sample": "chatterbox-q4.mp3"
+  },
+  {
    "config": "styletts2",
    "group": "",
    "cells": [
@@ -1380,15 +1497,15 @@
      "align": "right"
     },
     {
-     "v": "·",
-     "sort": "-1",
-     "tone": "",
+     "v": "2.72",
+     "sort": "2.72",
+     "tone": "bad",
      "align": "right"
     },
     {
-     "v": "·",
-     "sort": "99",
-     "tone": "",
+     "v": "0.00s",
+     "sort": "0.00",
+     "tone": "good",
      "align": "right"
     },
     {

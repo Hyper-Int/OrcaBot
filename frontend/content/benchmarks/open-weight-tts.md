@@ -17,10 +17,10 @@ is blind to naturalness, expressiveness and speaker similarity, which are the ax
 large LM-backed engines are actually sold on. This benchmark systematically understates
 them, and the play buttons exist because that gap is audible.
 
-**Only engines that run faster than real time are listed.** Anything above 2.0x real time
-is excluded, because a model that cannot keep up with its own speech is not a candidate for
-reading anything aloud as it happens. That drops seven configurations, including Chatterbox
-at 4.41x and Bark at 4.26x.
+**Only engines that can keep pace with real time are listed.** Anything above 2.1x real
+time is excluded, because a model that cannot keep up with its own speech is not a
+candidate for reading anything aloud as it happens. That drops six configurations,
+including Chatterbox at 4.41x and Bark at 4.26x.
 
 Every row below can be played, so the fastest way to calibrate what a word error rate means
 is to listen to **Piper** at 4% and **SpeechT5** at 24%.
@@ -52,8 +52,10 @@ neither of which a word error rate can see. Judge them by ear.
 **Quantization is what makes the LM-backed engines viable at all.** Every NeuTTS-2E
 configuration that survives the real-time filter is quantized: the fp32 builds run at 2.35x
 and 2.39x and are excluded outright. Within what remains, q4 on CPU gives 9% at 2.49s per
-phrase and moving to Metal cuts that to 2.09s for 2 points of accuracy. That trade is
-invisible on any published model card.
+phrase and moving to Metal cuts that to 2.09s for 2 points of accuracy. Chatterbox tells
+the same story more starkly: the full build is 4.41x and out, q4 scrapes in at 2.03x, and
+the turbo build reaches 0.98x while improving on both. That trade is invisible on any
+published model card.
 
 **One engine is only nominally in the running.** **SpeechT5** at 24% is below the threshold
 where output is reliably usable, and its PESQ of 1.67 is the only score under 3 in the
@@ -95,9 +97,13 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Real-time filter.** Configurations above 2.0x RTF are excluded. Seven are dropped by it:
-Chatterbox and its q4/q8 builds, both NeuTTS-2E fp32 builds, CSM and Bark. Their
-measurements remain in the raw export.
+**Real-time filter.** Configurations above 2.1x RTF are excluded. Six are dropped by it:
+Chatterbox and its q8 build, both NeuTTS-2E fp32 builds, CSM and Bark. Their measurements
+remain in the raw export.
+
+The cutoff sits just above 2.0 so Chatterbox-q4 stays in at 2.03x. Worth knowing when
+reading it: RTF counts silence, and against speech alone that configuration is 2.59x, so it
+is the one row here that is only nominally real time.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.
