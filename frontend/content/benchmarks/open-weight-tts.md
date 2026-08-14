@@ -27,9 +27,7 @@ is to listen to **Piper** at 4% and **SpeechT5** at 24%.
 
 ## Results
 
-Sorted as published, by word error rate. Click any column to re-sort. The shaded band is
-NeuTTS-2E: one backbone crossed with every device it can actually run on, which is the
-comparison the vendor's own card cannot show you.
+Sorted as published, by word error rate. Click any column to re-sort.
 
 ```chart
 tts-results
@@ -44,17 +42,16 @@ the answer.
 
 **The LM-backed engines do not win on intelligibility, and they are not sold on it.**
 **Qwen3-TTS** reaches 6%, matching the small feed-forward models while costing roughly 20×
-the compute per phrase. **Chatterbox-turbo** is the notable arrival: 4% word error at 0.98x
+the compute per phrase. **Chatterbox Turbo** is the notable arrival: 4% word error at 0.98x
 real time, which is the first LM-backed engine here to reach Piper's accuracy and still
 keep up with its own speech. What that compute buys is voice cloning and emotional range,
 neither of which a word error rate can see. Judge them by ear.
 
 **Quantization is what makes the LM-backed engines viable at all.** Every NeuTTS-2E
 configuration that survives the real-time filter is quantized: the fp32 builds run at 2.35x
-and 2.39x and are excluded outright. Within what remains, q4 on CPU gives 9% at 2.49s per
-phrase and moving to Metal cuts that to 2.09s for 2 points of accuracy. Chatterbox tells
-the same story more starkly: the full build is 4.41x and out, q4 scrapes in at 2.03x, and
-the turbo build reaches 0.98x while improving on both. That trade is invisible on any
+and 2.39x and are excluded outright. Chatterbox tells the same story across a single
+family: the full build is 4.41x and out, Q4 scrapes in at 2.03x, and Turbo reaches 0.98x
+while improving on both. That trade is invisible on any
 published model card.
 
 **One engine is only nominally in the running.** **SpeechT5** at 24% is below the threshold
@@ -101,7 +98,7 @@ face value.
 Chatterbox and its q8 build, both NeuTTS-2E fp32 builds, CSM and Bark. Their measurements
 remain in the raw export.
 
-The cutoff sits just above 2.0 so Chatterbox-q4 stays in at 2.03x. Worth knowing when
+The cutoff sits just above 2.0 so Chatterbox Q4 stays in at 2.03x. Worth knowing when
 reading it: RTF counts silence, and against speech alone that configuration is 2.59x, so it
 is the one row here that is only nominally real time.
 
@@ -115,6 +112,14 @@ ceiling and only mediocre audio has room to rise.
 
 **Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
 Differences under roughly two points are not resolvable at this sample size.
+
+**Device builds are pooled.** NeuTTS-2E Q4 was measured on both CPU and Metal. The device
+changes how fast the same weights run, not how well they speak, so the two are pooled and
+listed once: word error is the mean of both builds over 336 samples, and the speed, size
+and memory figures are the Metal build. The evidence for treating the difference as noise
+is that the stronger transcriber puts them 0.09 points apart (8.78% against 8.87%), while
+only the weaker one separates them. PESQ and lead-in stay unpooled because both are scored
+on the single playable clip.
 
 ### What is excluded, and why
 

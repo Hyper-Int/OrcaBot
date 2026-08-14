@@ -67,7 +67,7 @@ export default function BenchmarksIndexPage() {
   });
 
   return (
-    <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
+    <div style={{ maxWidth: "80rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
       <style
         dangerouslySetInnerHTML={{
           __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
@@ -91,7 +91,7 @@ export default function BenchmarksIndexPage() {
       </aside>
 
       {/* Article column */}
-      <div style={{ flex: 1, minWidth: 0, maxWidth: "44rem" }} className="px-6 py-12 pb-24">
+      <div style={{ flex: 1, minWidth: 0, maxWidth: "60rem" }} className="px-6 py-12 pb-24">
       {/* Page header */}
       <div className="mb-16">
         <h1

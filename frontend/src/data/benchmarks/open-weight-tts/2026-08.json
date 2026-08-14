@@ -5,7 +5,6 @@
  "machine": "Apple M2, macOS",
  "corpus": "84 phrases",
  "rtfCutoff": 2.1,
- "filter": "Configurations slower than 2.1x real time are excluded: this is a benchmark of models you can actually run in real time.",
  "caption": "Sorted by word error rate. Autoregressive engines are averaged over two passes (168 samples); feed-forward engines over one (84). chatterbox and bark are still on one pass.",
  "columns": [
   "Sample · Configuration",
@@ -149,7 +148,7 @@
    "group": "",
    "cells": [
     {
-     "v": "Chatterbox-turbo",
+     "v": "Chatterbox Turbo",
      "sort": "chatterbox-turbo",
      "tone": "",
      "align": "left"
@@ -257,7 +256,7 @@
      "align": "right"
     }
    ],
-   "display": "Chatterbox-turbo",
+   "display": "Chatterbox Turbo",
    "sample": "chatterbox-turbo.mp3"
   },
   {
@@ -609,122 +608,6 @@
    "sample": "kokoro.mp3"
   },
   {
-   "config": "nt-2e-q4-cpu",
-   "group": "neu",
-   "cells": [
-    {
-     "v": "NeuTTS-2E-q4-cpu",
-     "sort": "nt-2e-q4-cpu",
-     "tone": "",
-     "align": "left"
-    },
-    {
-     "v": "ar-lm",
-     "sort": "ar-lm",
-     "tone": "",
-     "align": "left"
-    },
-    {
-     "v": "0.24B",
-     "sort": "240.0",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "50 Hz",
-     "sort": "50.0",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "2026-07",
-     "sort": "202607",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "585 MB",
-     "sort": "585.0",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "1.4 GB",
-     "sort": "1433.6",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "2.0 GB",
-     "sort": "2048.0",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "1.8 GB",
-     "sort": "1843.2",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "154/168",
-     "sort": "0.9167",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "9%",
-     "sort": "0.0897",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "9%",
-     "sort": "0.0878",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "3.47",
-     "sort": "3.47",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "0.48s",
-     "sort": "0.48",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "0.63x",
-     "sort": "0.6320",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "2.49s",
-     "sort": "2.4908",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "3.94s",
-     "sort": "3.9408",
-     "tone": "",
-     "align": "right"
-    },
-    {
-     "v": "What you get by default. ~1 point behind fp32 - an excellent conversion.",
-     "sort": "What you get by default. ~1 point behind",
-     "tone": "",
-     "align": "right"
-    }
-   ],
-   "display": "NeuTTS-2E-q4-cpu",
-   "sample": "nt-2e-q4-cpu.mp3"
-  },
-  {
    "config": "vibevoice",
    "group": "",
    "cells": [
@@ -842,10 +725,10 @@
   },
   {
    "config": "nt-2e-q4-metal",
-   "group": "neu",
+   "group": "",
    "cells": [
     {
-     "v": "NeuTTS-2E-q4-metal",
+     "v": "NeuTTS-2E Q4 Metal",
      "sort": "nt-2e-q4-metal",
      "tone": "",
      "align": "left"
@@ -899,20 +782,20 @@
      "align": "right"
     },
     {
-     "v": "152/168",
-     "sort": "0.9048",
+     "v": "306/336",
+     "sort": "0.9107",
      "tone": "",
      "align": "right"
     },
     {
-     "v": "11%",
-     "sort": "0.1092",
+     "v": "10%",
+     "sort": "0.0995",
      "tone": "",
      "align": "right"
     },
     {
      "v": "9%",
-     "sort": "0.0887",
+     "sort": "0.0882",
      "tone": "",
      "align": "right"
     },
@@ -953,15 +836,19 @@
      "align": "right"
     }
    ],
-   "display": "NeuTTS-2E-q4-metal",
-   "sample": "nt-2e-q4-metal.mp3"
+   "display": "NeuTTS-2E Q4 Metal",
+   "sample": "nt-2e-q4-metal.mp3",
+   "pooledAccuracyFrom": [
+    "nt-2e-q4-cpu",
+    "nt-2e-q4-metal"
+   ]
   },
   {
    "config": "chatterbox-q4",
    "group": "",
    "cells": [
     {
-     "v": "Chatterbox-q4",
+     "v": "Chatterbox Q4",
      "sort": "chatterbox-q4",
      "tone": "",
      "align": "left"
@@ -1069,7 +956,7 @@
      "align": "right"
     }
    ],
-   "display": "Chatterbox-q4",
+   "display": "Chatterbox Q4",
    "sample": "chatterbox-q4.mp3"
   },
   {

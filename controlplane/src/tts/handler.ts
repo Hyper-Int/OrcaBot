@@ -17,8 +17,8 @@ const RUN = '2026-08';
  */
 const CONFIGS = [
   'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'kokoro',
-  'nt-2e-q4-cpu', 'nt-2e-q4-metal', 'vibevoice', 'chatterbox-q4', 'styletts2',
-  'melotts', 'cosyvoice3', 'fastpitch', 'speecht5',
+  'nt-2e-q4-metal', 'vibevoice', 'chatterbox-q4', 'styletts2', 'melotts',
+  'cosyvoice3', 'fastpitch', 'speecht5',
 ] as const;
 
 /**

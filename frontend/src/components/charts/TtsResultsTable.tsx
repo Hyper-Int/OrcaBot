@@ -4,8 +4,9 @@
 "use client";
 
 // REVISION: tts-results-table-v1
-// The open-weight TTS comparison: 18 configurations x 18 columns, each row
-// playable so the reader can hear the engine that produced the numbers.
+// The open-weight TTS comparison: every configuration that keeps pace with real
+// time, 18 columns each, and every row playable so the reader can hear the
+// engine that produced the numbers.
 //
 // Playback goes through Web Audio rather than an <audio> element, matching the
 // original export. Two reasons, both learned the hard way there:
@@ -27,11 +28,14 @@ if (typeof window !== "undefined") {
 }
 
 interface Cell { v: string; sort: string; tone: string; align: string }
-interface Row { config: string; display: string; group: string; sample: string | null; cells: Cell[] }
+interface Row { config: string; display: string; sample: string | null; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
 const COLUMNS = run.columns as string[];
 const AUDIO_BASE = "/benchmarks/tts/";
+
+/** The table needs ~1756px to show all 18 columns; past that, extra width is waste. */
+const MAX_TABLE_WIDTH = 1760;
 
 const INK = { primary: "#e8edf5", secondary: "#c3cee0", muted: "#94a3c0" };
 const AXIS = "#2a4570";
@@ -46,6 +50,21 @@ function keyOf(c: Cell | undefined): number | string {
 }
 
 export function TtsResultsTable() {
+  const figRef = React.useRef<HTMLElement>(null);
+  const [overhang, setOverhang] = React.useState(0);
+  React.useEffect(() => {
+    const measure = () => {
+      const parent = figRef.current?.parentElement;
+      if (!parent) return;
+      const left = parent.getBoundingClientRect().left;
+      const avail = document.documentElement.clientWidth - left - 24; // 24px right gutter
+      setOverhang(Math.max(0, Math.min(MAX_TABLE_WIDTH, avail) - parent.clientWidth));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(null);
   const [playing, setPlaying] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<string | null>(null);
@@ -112,8 +131,8 @@ export function TtsResultsTable() {
     const idle: (cb: () => void) => void =
       (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback ??
       ((cb) => window.setTimeout(cb, 300) as unknown as void);
-    // Rows without audio are skipped: chatterbox-turbo ships in the table
-    // but its sample is not in this export.
+    // Every row in this run has a clip, but a future run may publish a
+    // configuration before its audio, so the guard stays.
     idle(() => { ROWS.forEach((r) => { if (r.sample) void decode(r.sample).catch(() => {}); }); });
   }, [decode]);
 
@@ -166,14 +185,40 @@ export function TtsResultsTable() {
 
   const th: React.CSSProperties = {
     // Deliberately not sticky. A sticky header overlays the rows scrolled under
-    // it, which swallows clicks on the play buttons; 18 rows nearly fit one
+    // it, which swallows clicks on the play buttons; the rows nearly fit one
     // screen, so it was cost without benefit.
     padding: 0, whiteSpace: "nowrap",
     background: "var(--background-elevated)", borderBottom: `2px solid ${AXIS}`,
   };
 
   return (
-    <figure style={{ margin: "2rem 0" }}>
+    <figure
+      ref={figRef}
+      style={{
+        margin: "2rem 0",
+        // Eighteen columns will not fit a column sized for prose, so the table
+        // widens past the article, rightwards into the empty gutter.
+        //
+        // Two things this deliberately is NOT. Not the usual 50%/50vw
+        // negative-margin trick: that assumes the container is centred in the
+        // viewport, and this one is pushed right by the TOC sidebar, so the
+        // figure hung off the right edge. And not an explicit `width` either —
+        // a fixed width raises the article grid track's min-content size, which
+        // grows the whole two-column layout and scrolls the page sideways even
+        // though the figure's own box fits. A negative right margin buys the
+        // same pixels while *reducing* the intrinsic contribution, so the track
+        // never grows and there is no feedback loop with the measurement.
+        marginRight: overhang ? `-${overhang}px` : undefined,
+        // Without this the page scrolls sideways by a constant 1288px at every
+        // viewport, which is the table's *min-content* width leaking up into the
+        // article grid track: the inner scroll container clips what you see, but
+        // the track still sizes itself to fit the table unclipped. `clip` makes
+        // the figure itself an intrinsic-size boundary and stops the leak. It has
+        // to be `clip` rather than `hidden` — `hidden` would force the vertical
+        // axis to scroll too, cutting the figure off inside the article.
+        overflowX: "clip",
+      }}
+    >
       <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>
         <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary }}>
           <thead>
@@ -209,11 +254,7 @@ export function TtsResultsTable() {
               return (
                 <tr
                   key={r.config}
-                  style={{
-                    // The NeuTTS band: one backbone crossed with every device it runs on.
-                    background: r.group ? "rgba(57,135,229,0.07)" : undefined,
-                    borderBottom: `1px solid ${AXIS}`,
-                  }}
+                  style={{ borderBottom: `1px solid ${AXIS}` }}
                 >
                   {r.cells.map((c, ci) => (
                     <td
