@@ -16,9 +16,9 @@
 
 import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
-import { fetchTtsScores } from "@/lib/api/cloudflare/tts";
 import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
 import { useSamplePlayer } from "./useSamplePlayer";
+import { useTtsScores } from "./useTtsScores";
 
 const MODULE_REVISION = "tts-results-table-v2-human-column";
 if (typeof window !== "undefined") {
@@ -35,6 +35,12 @@ const AUDIO_BASE = "/benchmarks/tts/";
  *  live number is visible without scrolling the table sideways. */
 const HUMAN_COL = 1;
 const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
+
+/** Opening sort: compute per phrase, cheapest first. Word error was the old
+ *  default, but it saturates once speech is intelligible and two engines have no
+ *  score under the stronger transcriber, so it is a poor way to meet the table.
+ *  Cost per phrase is the axis every reader is actually shopping on. */
+const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
 /** Full table needs ~1756px; past that, extra width is waste. */
 const MAX_TABLE_WIDTH = 1760;
@@ -81,24 +87,15 @@ export function TtsResultsTable() {
     return () => window.removeEventListener("resize", measure);
   }, []);
 
-  const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(null);
+  const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [showBallot, setShowBallot] = React.useState(false);
   const pendingRef = React.useRef<Row | null>(null);
   const player = useSamplePlayer(AUDIO_BASE);
 
-  // Live human ratings. A failure here is silent by design: the column falls
-  // back to em-dashes and the other seventeen columns are unaffected.
-  const [ratings, setRatings] = React.useState<Map<string, number | null>>(new Map());
-  const [minBallots, setMinBallots] = React.useState<number | null>(null);
-  const loadScores = React.useCallback(() => {
-    fetchTtsScores()
-      .then((s) => {
-        setRatings(new Map(s.scores.map((x) => [x.config, x.rating])));
-        setMinBallots(s.minBallots);
-      })
-      .catch(() => {});
-  }, []);
-  React.useEffect(() => { loadScores(); }, [loadScores]);
+  // Live human ratings, shared with the preference chart. Failure is silent by
+  // design: the column falls back to em-dashes and the other seventeen columns
+  // are unaffected.
+  const { ratings, minBallots, reload: loadScores } = useTtsScores();
 
   /** Splice the live rating in as a real cell so sorting needs no special case. */
   const rows = React.useMemo(() => {

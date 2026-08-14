@@ -18,13 +18,14 @@ import * as React from "react";
 import { CostAccuracyChart } from "./CostAccuracyChart";
 import { CheckpointErosionChart } from "./CheckpointErosionChart";
 import { TtsResultsTable } from "./TtsResultsTable";
-import { TtsSpeedAccuracyChart } from "./TtsSpeedAccuracyChart";
+import { TtsPreferenceChart } from "./TtsPreferenceChart";
 
 const CHARTS: Record<string, React.ComponentType> = {
   "cost-accuracy": CostAccuracyChart,
   "checkpoint-erosion": CheckpointErosionChart,
   "tts-results": TtsResultsTable,
-  "tts-speed-accuracy": TtsSpeedAccuracyChart,
+  // Renders nothing until enough engines have a human rating.
+  "tts-preference": TtsPreferenceChart,
 };
 
 export function MarkdownChart({ id }: { id: string }) {

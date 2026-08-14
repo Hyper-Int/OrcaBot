@@ -3,24 +3,33 @@
 
 "use client";
 
-// REVISION: tts-speed-accuracy-v1
-// The article's headline finding, made visual: every real-time engine placed by
-// what it costs to speak a phrase against how much of that phrase survives a
-// Whisper round trip. Piper sits alone in the bottom-left, and the expensive
-// LM-backed cluster to its right buys no intelligibility at all.
+// REVISION: tts-preference-chart-v2-human-axis
+// What compute actually buys, plotted against what it costs: reader preference
+// on the y-axis, compute per phrase on the x.
 //
-// Axis choices, both deliberate and both argued in the article:
-//   - x is Avg synth (compute per phrase), NOT the conventional RTF. RTF is
-//     compute per second of *audio*, so it flatters any engine that pads with
-//     silence. Every engine here speaks the same 84 phrases, so per-phrase
-//     compute compares directly and cannot be gamed.
-//   - y is WER base rather than the stronger WER med, only because two engines
-//     (Chatterbox Turbo and FastPitch) have no medium-model score, and dropping
-//     the headline arrival from the headline chart would be perverse. base.en
-//     understates the good engines, so the real spread is wider than shown.
+// This deliberately does NOT plot word error, which was the first version of
+// this chart. Word error is the wrong y-axis for the question the chart is
+// asking. It saturates once speech is merely intelligible, so it cannot rank
+// engines that are all comprehensible and differ in how they sound; two of the
+// thirteen have no medium-model score at all, so the stronger transcriber
+// cannot be used without dropping them; and the article says outright that
+// base.en understates good engines more than bad ones. Ranking engines on a
+// measure the article spends a section warning you about is not a chart worth
+// publishing.
 //
-// Marker area encodes total disk, which is the third axis in "nothing beats
-// Piper on all three at once" — otherwise that claim is only in the prose.
+// So it waits. The chart renders nothing at all until enough engines have a
+// human rating, then appears on its own. That is why it has no fixed headline:
+// the relationship between compute and preference is exactly the thing being
+// measured, and asserting the finding before the data is in would be inventing
+// it. Sharpen the title once the shape is known.
+//
+// x is Avg synth (compute per phrase), NOT the conventional RTF. RTF is compute
+// per second of *audio*, so it flatters any engine that pads with silence.
+// Every engine here speaks the same 84 phrases, so per-phrase compute compares
+// directly and cannot be gamed.
+//
+// Marker area encodes total disk, so the third axis in "what will this cost me"
+// is present without a third chart.
 //
 // Palette validated for CVD on this surface before use: the three class hues
 // separate by >=14.8 in OKLab under the worst of protan/deutan/tritan, against
@@ -28,11 +37,15 @@
 
 import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
+import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-speed-accuracy-v1";
+const MODULE_REVISION = "tts-preference-chart-v2-human-axis";
 if (typeof window !== "undefined") {
-  console.log(`[tts-speed-accuracy] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+  console.log(`[tts-preference-chart] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
+
+/** Below this many rated engines a scatter is anecdote, not a chart. */
+const MIN_ENGINES_TO_PLOT = 6;
 
 const INK = { primary: "#e8edf5", secondary: "#c3cee0", muted: "#94a3c0" };
 const GRID = "#1e3354";
@@ -47,38 +60,26 @@ const CLASSES = [
 ] as const;
 
 const COL = Object.fromEntries(run.columns.map((c, i) => [c, i])) as Record<string, number>;
-const num = (r: { cells: { sort: string }[] }, c: string) => Number(r.cells[COL[c]].sort);
 
-interface Point {
-  name: string; cls: string; color: string;
-  synth: number; wer: number; disk: number; rtf: number; werText: string;
+interface Engine {
+  config: string; name: string; cls: string; color: string;
+  synth: number; disk: number; rtf: number;
 }
 
-const POINTS: Point[] = (run.rows as { display: string; cells: { v: string; sort: string }[] }[]).map((r) => {
+const ENGINES: Engine[] = (
+  run.rows as { config: string; display: string; cells: { v: string; sort: string }[] }[]
+).map((r) => {
   const cls = r.cells[COL["Class"]].sort;
   return {
+    config: r.config,
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: num(r, "Avg synth"),
-    wer: num(r, "WER base") * 100,
-    disk: num(r, "Total disk"),
-    rtf: num(r, "RTF"),
-    werText: r.cells[COL["WER base"]].v,
+    synth: Number(r.cells[COL["Avg synth"]].sort),
+    disk: Number(r.cells[COL["Total disk"]].sort),
+    rtf: Number(r.cells[COL["RTF"]].sort),
   };
 });
-
-// Labelled inline: the two extremes that calibrate the axes, the cheapest and
-// dearest LM-backed engines, and the one engine only nominally in the running.
-// The rest label on hover — a number on every point is noise at this density.
-const LABELLED: Record<string, { dx: number; dy: number }> = {
-  "Piper": { dx: 10, dy: -8 },
-  "Chatterbox Turbo": { dx: 0, dy: -14 },
-  "Chatterbox Q4": { dx: -10, dy: -12 },
-  "SpeechT5": { dx: 12, dy: 4 },
-  "Qwen3-TTS": { dx: 10, dy: -10 },
-  "FastPitch": { dx: 12, dy: 4 },
-};
 
 const W = 780, H = 470;
 const M = { top: 18, right: 26, bottom: 56, left: 58 };
@@ -86,40 +87,60 @@ const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
 
 const X_MAX = 6.8;   // Chatterbox Q4 at 6.39 is the slowest that survives the filter
-const Y_MAX = 26;    // SpeechT5 at 24.2 is the worst
+const Y_MAX = 100;   // ratings are already scaled 0-100 server-side
 const sx = (v: number) => M.left + (v / X_MAX) * PW;
 const sy = (v: number) => M.top + PH - (v / Y_MAX) * PH;
 
-const DISK = { min: Math.min(...POINTS.map((p) => p.disk)), max: Math.max(...POINTS.map((p) => p.disk)) };
+const DISK = { min: Math.min(...ENGINES.map((e) => e.disk)), max: Math.max(...ENGINES.map((e) => e.disk)) };
 /** Area-proportional, floored at 5px radius so the smallest is still a target. */
-const radius = (disk: number) =>
-  5 + 7 * Math.sqrt((disk - DISK.min) / (DISK.max - DISK.min));
+const radius = (disk: number) => 5 + 7 * Math.sqrt((disk - DISK.min) / (DISK.max - DISK.min));
 
 const X_TICKS = [0, 1, 2, 3, 4, 5, 6];
-const Y_TICKS = [0, 5, 10, 15, 20, 25];
+const Y_TICKS = [0, 25, 50, 75, 100];
 
-export function TtsSpeedAccuracyChart() {
+interface Point extends Engine { rating: number }
+
+export function TtsPreferenceChart() {
+  const { ratings, minBallots } = useTtsScores();
   const [hover, setHover] = React.useState<Point | null>(null);
   // Which class is isolated, if any. Isolating dims the others rather than
   // removing them, so the cloud they form stays visible as context.
   const [focus, setFocus] = React.useState<string | null>(null);
 
+  const points: Point[] = React.useMemo(
+    () =>
+      ENGINES.flatMap((e) => {
+        const rating = ratings.get(e.config);
+        return rating == null ? [] : [{ ...e, rating }];
+      }),
+    [ratings]
+  );
+
+  // Nothing to say yet, so say nothing. An empty axis box would read as a bug,
+  // and a placeholder would be a promise the page cannot keep on its own.
+  if (points.length < MIN_ENGINES_TO_PLOT) return null;
+
   const isLit = (p: Point) => !focus || p.cls === focus;
+  // Only label the extremes; at this density a name on every point is noise.
+  const byRating = [...points].sort((a, b) => b.rating - a.rating);
+  const cheapest = [...points].sort((a, b) => a.synth - b.synth)[0];
+  const labelled = new Set([byRating[0], byRating[byRating.length - 1], cheapest].map((p) => p.config));
 
   return (
     <figure style={{ margin: "2rem 0" }}>
       <figcaption style={{ marginBottom: "0.75rem" }}>
         <strong style={{ display: "block", color: INK.primary, fontSize: "1rem", fontWeight: 600 }}>
-          Nothing buys its way to better intelligibility
+          What the compute actually buys
         </strong>
         <span style={{ color: INK.muted, fontSize: "0.85rem" }}>
-          Word error after a Whisper round trip against compute per phrase, for every engine that
-          keeps pace with real time. Down and to the left is better; marker size is total disk.
+          Reader preference against compute per phrase. Up and to the left is better; marker size
+          is total disk. Preference comes from blind four-way rankings and moves as more arrive,
+          so an engine appears here only once{minBallots ? ` ${minBallots}` : ""} people have ranked it.
         </span>
       </figcaption>
 
       {/* Legend doubles as a filter. Colour follows the architecture class, so
-          dimming a class never repaints the classes that remain. */}
+          isolating a class never repaints the classes that remain. */}
       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
         {CLASSES.map((c) => {
           const active = focus === c.id;
@@ -149,7 +170,7 @@ export function TtsSpeedAccuracyChart() {
           viewBox={`0 0 ${W} ${H}`}
           width="100%"
           role="img"
-          aria-label="Scatter plot of word error rate against compute per phrase for thirteen text-to-speech engines. Piper is alone in the low-error, low-compute corner."
+          aria-label={`Scatter plot of reader preference against compute per phrase for ${points.length} text-to-speech engines.`}
           style={{ display: "block", background: SURFACE, border: `1px solid ${AXIS}`, borderRadius: 8 }}
           onMouseLeave={() => setHover(null)}
         >
@@ -164,7 +185,7 @@ export function TtsSpeedAccuracyChart() {
 
           {Y_TICKS.map((t) => (
             <text key={`ty${t}`} x={M.left - 10} y={sy(t) + 4} textAnchor="end" fontSize={11} fill={INK.muted}>
-              {t}%
+              {t}
             </text>
           ))}
           {X_TICKS.map((t) => (
@@ -179,34 +200,34 @@ export function TtsSpeedAccuracyChart() {
             transform={`rotate(-90 14 ${M.top + PH / 2})`}
             x={14} y={M.top + PH / 2} textAnchor="middle" fontSize={12} fill={INK.secondary}
           >
-            Word error rate
+            Reader preference
           </text>
 
-          {POINTS.map((p) => {
+          {points.map((p) => {
             const lit = isLit(p);
-            const hot = hover?.name === p.name;
+            const hot = hover?.config === p.config;
             const r = radius(p.disk);
+            const right = p.synth > X_MAX * 0.75;
+            // Labels sit above the marker, except near the ceiling where that
+            // puts them through the top border. The best-rated engine is by
+            // definition up there, so this is the common case, not an edge one.
+            const high = p.rating > Y_MAX * 0.88;
             return (
-              <g
-                key={p.name}
-                opacity={lit ? 1 : 0.18}
-                onMouseEnter={() => setHover(p)}
-                style={{ cursor: "pointer" }}
-              >
+              <g key={p.config} opacity={lit ? 1 : 0.18} onMouseEnter={() => setHover(p)} style={{ cursor: "pointer" }}>
                 {/* 2px surface ring so overlapping markers stay separable. */}
-                <circle cx={sx(p.synth)} cy={sy(p.wer)} r={r + 2} fill={SURFACE} />
+                <circle cx={sx(p.synth)} cy={sy(p.rating)} r={r + 2} fill={SURFACE} />
                 <circle
-                  cx={sx(p.synth)} cy={sy(p.wer)} r={r}
+                  cx={sx(p.synth)} cy={sy(p.rating)} r={r}
                   fill={p.color} fillOpacity={hot ? 1 : 0.75}
                   stroke={hot ? INK.primary : p.color} strokeWidth={hot ? 2 : 1}
                 />
                 {/* Generous invisible hit target, independent of marker size. */}
-                <circle cx={sx(p.synth)} cy={sy(p.wer)} r={Math.max(r + 8, 16)} fill="transparent" />
-                {LABELLED[p.name] && lit && (
+                <circle cx={sx(p.synth)} cy={sy(p.rating)} r={Math.max(r + 8, 16)} fill="transparent" />
+                {labelled.has(p.config) && lit && (
                   <text
-                    x={sx(p.synth) + LABELLED[p.name].dx}
-                    y={sy(p.wer) + LABELLED[p.name].dy}
-                    textAnchor={LABELLED[p.name].dx < 0 ? "end" : LABELLED[p.name].dx === 0 ? "middle" : "start"}
+                    x={sx(p.synth) + (right ? -(r + 6) : r + 6)}
+                    y={sy(p.rating) + (high ? r + 15 : -(r + 6))}
+                    textAnchor={right ? "end" : "start"}
                     fontSize={11}
                     fill={hot ? INK.primary : INK.secondary}
                   >
@@ -223,7 +244,7 @@ export function TtsSpeedAccuracyChart() {
             style={{
               position: "absolute", pointerEvents: "none",
               left: `${(sx(hover.synth) / W) * 100}%`,
-              top: `${(sy(hover.wer) / H) * 100}%`,
+              top: `${(sy(hover.rating) / H) * 100}%`,
               transform: `translate(${hover.synth > X_MAX * 0.6 ? "-105%" : "12px"}, -110%)`,
               background: "#0b1a2e", border: `1px solid ${hover.color}`, borderRadius: 6,
               padding: "0.45rem 0.6rem", fontSize: "0.76rem", color: INK.secondary, whiteSpace: "nowrap",
@@ -232,7 +253,7 @@ export function TtsSpeedAccuracyChart() {
           >
             <strong style={{ color: INK.primary }}>{hover.name}</strong>
             <br />
-            {hover.werText} word error · {hover.synth.toFixed(2)}s per phrase
+            {hover.rating.toFixed(1)} preference · {hover.synth.toFixed(2)}s per phrase
             <br />
             <span style={{ color: INK.muted }}>
               {hover.rtf.toFixed(2)}× real time ·{" "}

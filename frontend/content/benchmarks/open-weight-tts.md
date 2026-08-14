@@ -3,7 +3,6 @@ title: Which Open-Weight TTS Engine Should You Actually Run?
 date: 2026-08-14
 description: Every open-weight TTS engine that runs faster than real time, speaking the same corpus and transcribed back by Whisper, with the samples to listen to
 author: Rob Macrae
-ogImage: /benchmarks/og-open-weight-tts.png
 ---
 
 Text-to-speech leaderboards usually rank engines on mean opinion scores collected from
@@ -26,21 +25,16 @@ including Chatterbox at 4.41x and Bark at 4.26x.
 Every row below can be played, so the fastest way to calibrate what a word error rate means
 is to listen to **Piper** at 4% and **SpeechT5** at 24%.
 
-```chart
-tts-speed-accuracy
-```
-
-The cluster on the right is the interesting part. Those engines cost twenty to fifty times
-more compute per phrase than Piper and none of them is more intelligible for it, because
-what that compute buys is voice cloning and emotional range, which a word error rate cannot
-see. The chart is the case for reading the table by ear as well as by number.
-
 ## Results
 
-Sorted as published, by word error rate. Click any column to re-sort.
+Sorted by compute per phrase, fastest first. Click any column to re-sort.
 
 ```chart
 tts-results
+```
+
+```chart
+tts-preference
 ```
 
 ## What the numbers say

@@ -5,7 +5,7 @@
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2.1,
-  "caption": "Sorted by word error rate. Autoregressive engines are averaged over two passes (168 samples) and feed-forward engines over one (84); Chatterbox Turbo is still on one pass, and NeuTTS-2E Q4 pools two device builds over 336.",
+  "caption": "Sorted by compute per phrase, fastest first. Autoregressive engines are averaged over two passes (168 samples) and feed-forward engines over one (84); Chatterbox Turbo is still on one pass, and NeuTTS-2E Q4 pools two device builds over 336.",
   "columns": [
     "Sample · Configuration",
     "Class",
