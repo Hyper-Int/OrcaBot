@@ -42,8 +42,9 @@ const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** Full table needs ~1756px; past that, extra width is waste. */
-const MAX_TABLE_WIDTH = 1760;
+/** Full table needs ~1662px; past that, extra width is dead space. Re-measure
+ *  if columns are added or dropped. */
+const MAX_TABLE_WIDTH = 1680;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
@@ -184,7 +185,7 @@ export function TtsResultsTable() {
         ref={figRef}
         style={{
           margin: "2rem 0",
-          // Eighteen columns will not fit a column sized for prose, so the table
+          // The table will not fit a column sized for prose, so it
           // widens past the article, rightwards into the empty gutter.
           //
           // Two things this deliberately is NOT. Not the usual 50%/50vw

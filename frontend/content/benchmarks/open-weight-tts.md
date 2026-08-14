@@ -1,26 +1,13 @@
 ---
 title: Which Open-Weight TTS Engine Should You Actually Run?
 date: 2026-08-14
-description: Every open-weight TTS engine that runs faster than real time, speaking the same corpus and transcribed back by Whisper, with the samples to listen to
+description: Every open-weight TTS engine that runs faster than real time (or thereabouts), tested for WER using Whisper.
 author: Rob Macrae
 ---
 
-Text-to-speech leaderboards usually rank engines on mean opinion scores collected from
-listening panels, which is expensive, slow, and impossible to reproduce on your own
-hardware. This benchmark takes the cheap, mechanical route instead: **every engine speaks
-the same 84-phrase corpus, and Whisper transcribes it back.** Word error rate is whatever
-survives the round trip.
+Here are all the available TTS open weight models that can likely run in real-time - or close to real-time, on consumer hardware.
 
-That measures one thing well and several things not at all. It is a good proxy for
-**intelligibility**, which is what you need from a system that reads notifications, and it
-is blind to naturalness, expressiveness and speaker similarity, which are the axes the
-large LM-backed engines are actually sold on. This benchmark systematically understates
-them, and the play buttons exist because that gap is audible.
-
-**Only engines that can keep pace with real time are listed.** Anything above 2.1x real
-time is excluded, because a model that cannot keep up with its own speech is not a
-candidate for reading anything aloud as it happens. That drops six configurations,
-including Chatterbox at 4.41x and Bark at 4.26x.
+We tested them against the same corpus, using Whisper medium to transcribe back to text.
 
 Every row below can be played, so the fastest way to calibrate what a word error rate means
 is to listen to **Piper** at 4% and **SpeechT5** at 24%.

@@ -10,13 +10,11 @@
     "Sample · Configuration",
     "Class",
     "Params",
-    "Frame rate",
     "Released",
     "Weights",
     "Libs",
     "Total disk",
     "Peak RSS",
-    "Passed",
     "WER base",
     "WER med",
     "PESQ",
@@ -50,12 +48,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2023-06",
           "sort": "202306",
           "tone": "",
@@ -82,12 +74,6 @@
         {
           "v": "338 MB",
           "sort": "338.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "83/84",
-          "sort": "0.9881",
           "tone": "",
           "align": "right"
         },
@@ -166,12 +152,6 @@
           "align": "right"
         },
         {
-          "v": "50 Hz",
-          "sort": "50.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2025-08",
           "sort": "202508",
           "tone": "",
@@ -198,12 +178,6 @@
         {
           "v": "-",
           "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "82/84",
-          "sort": "0.9762",
           "tone": "",
           "align": "right"
         },
@@ -282,12 +256,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2026-02",
           "sort": "202602",
           "tone": "",
@@ -314,12 +282,6 @@
         {
           "v": "608 MB",
           "sort": "608.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "81/84",
-          "sort": "0.9643",
           "tone": "",
           "align": "right"
         },
@@ -398,12 +360,6 @@
           "align": "right"
         },
         {
-          "v": "12 Hz",
-          "sort": "12.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2026-01",
           "sort": "202601",
           "tone": "",
@@ -430,12 +386,6 @@
         {
           "v": "2.2 GB",
           "sort": "2252.8",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "162/168",
-          "sort": "0.9643",
           "tone": "",
           "align": "right"
         },
@@ -514,12 +464,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2024-12",
           "sort": "202412",
           "tone": "",
@@ -546,12 +490,6 @@
         {
           "v": "1.6 GB",
           "sort": "1638.4",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "79/84",
-          "sort": "0.9405",
           "tone": "",
           "align": "right"
         },
@@ -630,12 +568,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2025-08",
           "sort": "202508",
           "tone": "",
@@ -662,12 +594,6 @@
         {
           "v": "1.3 GB",
           "sort": "1331.2",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "152/168",
-          "sort": "0.9048",
           "tone": "",
           "align": "right"
         },
@@ -746,12 +672,6 @@
           "align": "right"
         },
         {
-          "v": "50 Hz",
-          "sort": "50.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2026-07",
           "sort": "202607",
           "tone": "",
@@ -778,12 +698,6 @@
         {
           "v": "1.7 GB",
           "sort": "1740.8",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "306/336",
-          "sort": "0.9107",
           "tone": "",
           "align": "right"
         },
@@ -866,12 +780,6 @@
           "align": "right"
         },
         {
-          "v": "25 Hz",
-          "sort": "25.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2025-04",
           "sort": "202504",
           "tone": "",
@@ -898,12 +806,6 @@
         {
           "v": "1.1 GB",
           "sort": "1126.4",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "148/168",
-          "sort": "0.8810",
           "tone": "",
           "align": "right"
         },
@@ -982,12 +884,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "~2023",
           "sort": "202300",
           "tone": "",
@@ -1014,12 +910,6 @@
         {
           "v": "1.8 GB",
           "sort": "1843.2",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "76/84",
-          "sort": "0.9048",
           "tone": "",
           "align": "right"
         },
@@ -1098,12 +988,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2024-02",
           "sort": "202402",
           "tone": "",
@@ -1130,12 +1014,6 @@
         {
           "v": "587 MB",
           "sort": "587.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "74/84",
-          "sort": "0.8810",
           "tone": "",
           "align": "right"
         },
@@ -1214,12 +1092,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2025-07",
           "sort": "202507",
           "tone": "",
@@ -1246,12 +1118,6 @@
         {
           "v": "1.0 GB",
           "sort": "1024.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "142/168",
-          "sort": "0.8452",
           "tone": "",
           "align": "right"
         },
@@ -1330,12 +1196,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2021-06",
           "sort": "202106",
           "tone": "",
@@ -1362,12 +1222,6 @@
         {
           "v": "-",
           "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "70/84",
-          "sort": "0.8333",
           "tone": "",
           "align": "right"
         },
@@ -1446,12 +1300,6 @@
           "align": "right"
         },
         {
-          "v": "-",
-          "sort": "-1",
-          "tone": "",
-          "align": "right"
-        },
-        {
           "v": "2023-02",
           "sort": "202302",
           "tone": "",
@@ -1478,12 +1326,6 @@
         {
           "v": "474 MB",
           "sort": "474.0",
-          "tone": "",
-          "align": "right"
-        },
-        {
-          "v": "110/168",
-          "sort": "0.6548",
           "tone": "",
           "align": "right"
         },
