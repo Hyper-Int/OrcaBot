@@ -3,26 +3,24 @@
 
 "use client";
 
-// REVISION: tts-results-table-v1
+// REVISION: tts-results-table-v2-human-column
 // The open-weight TTS comparison: every configuration that keeps pace with real
-// time, 18 columns each, and every row playable so the reader can hear the
-// engine that produced the numbers.
+// time, and every row playable so the reader can hear the engine that produced
+// the numbers.
 //
-// Playback goes through Web Audio rather than an <audio> element, matching the
-// original export. Two reasons, both learned the hard way there:
-//   - "canplaythrough" is a heuristic about download rate, so playback could
-//     begin while the MP3 was still decoding and swallow the first word. For a
-//     speech benchmark that is disqualifying. decodeAudioData resolves only once
-//     the whole clip is PCM in memory, so a source that has started is
-//     guaranteed to have every sample.
-//   - macOS powers the output device down when idle and the first sound after
-//     that loses a couple of hundred ms, below the browser and unaffected by
-//     decoding early. A silent buffer pushed on first interaction wakes it.
+// The Human column is the one number here that is not measured on my machine.
+// Word error rate saturates once speech is merely intelligible, so it cannot
+// separate the engines that are actually sold on naturalness; the column is fed
+// by readers ranking four blind clips (see TtsPreferenceDialog) and aggregated
+// server-side with Bradley-Terry. It is live, so it changes under the reader.
 
 import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
+import { fetchTtsScores } from "@/lib/api/cloudflare/tts";
+import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
+import { useSamplePlayer } from "./useSamplePlayer";
 
-const MODULE_REVISION = "tts-results-table-v1";
+const MODULE_REVISION = "tts-results-table-v2-human-column";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -31,15 +29,26 @@ interface Cell { v: string; sort: string; tone: string; align: string }
 interface Row { config: string; display: string; sample: string | null; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
-const COLUMNS = run.columns as string[];
 const AUDIO_BASE = "/benchmarks/tts/";
 
-/** The table needs ~1756px to show all 18 columns; past that, extra width is waste. */
+/** The Human column is spliced in here, right after the engine name, so the
+ *  live number is visible without scrolling the table sideways. */
+const HUMAN_COL = 1;
+const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
+
+/** Full table needs ~1756px; past that, extra width is waste. */
 const MAX_TABLE_WIDTH = 1760;
+
+/** Remembers that this reader has already been asked, so they are asked once. */
+const BALLOT_KEY = "orcabot.tts.ballot.v1";
 
 const INK = { primary: "#e8edf5", secondary: "#c3cee0", muted: "#94a3c0" };
 const AXIS = "#2a4570";
+const ACCENT = "#d95926";
 const TONE: Record<string, string> = { good: "#6ee7a8", bad: "#f0908a", warn: "#e0b25e" };
+
+const SAMPLE_OF = new Map(ROWS.map((r) => [r.config, r.sample]));
+const NAME_OF = new Map(ROWS.map((r) => [r.config, r.display]));
 
 /** Sort key from the precomputed data-sort value; numeric when it parses. */
 function keyOf(c: Cell | undefined): number | string {
@@ -47,6 +56,13 @@ function keyOf(c: Cell | undefined): number | string {
   if (raw === "") return "";
   const n = Number(raw);
   return Number.isFinite(n) ? n : raw.toLowerCase();
+}
+
+function askedBefore(): boolean {
+  try { return window.localStorage.getItem(BALLOT_KEY) !== null; } catch { return true; }
+}
+function rememberAsked(outcome: "submitted" | "skipped") {
+  try { window.localStorage.setItem(BALLOT_KEY, outcome); } catch { /* private mode */ }
 }
 
 export function TtsResultsTable() {
@@ -66,122 +82,91 @@ export function TtsResultsTable() {
   }, []);
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(null);
-  const [playing, setPlaying] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState<string | null>(null);
+  const [showBallot, setShowBallot] = React.useState(false);
+  const pendingRef = React.useRef<Row | null>(null);
+  const player = useSamplePlayer(AUDIO_BASE);
 
-  const ctxRef = React.useRef<AudioContext | null>(null);
-  const cacheRef = React.useRef<Map<string, AudioBuffer>>(new Map());
-  const currentRef = React.useRef<AudioBufferSourceNode | null>(null);
-  const primedRef = React.useRef(false);
-  const warmedRef = React.useRef(false);
-
-  const ctx = React.useCallback(() => {
-    if (!ctxRef.current) {
-      const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      ctxRef.current = new AC();
-    }
-    return ctxRef.current;
+  // Live human ratings. A failure here is silent by design: the column falls
+  // back to em-dashes and the other seventeen columns are unaffected.
+  const [ratings, setRatings] = React.useState<Map<string, number | null>>(new Map());
+  const [minBallots, setMinBallots] = React.useState<number | null>(null);
+  const loadScores = React.useCallback(() => {
+    fetchTtsScores()
+      .then((s) => {
+        setRatings(new Map(s.scores.map((x) => [x.config, x.rating])));
+        setMinBallots(s.minBallots);
+      })
+      .catch(() => {});
   }, []);
+  React.useEffect(() => { loadScores(); }, [loadScores]);
 
-  /** Wake the output device with a short silence so the first clip is not clipped. */
-  const primeDevice = React.useCallback(() => {
-    if (primedRef.current) return;
-    const ac = ctx();
-    const push = () => {
-      // Only counts as primed once really running: a hover is not a user
-      // gesture, so resume() can be refused there and the click should retry.
-      if (primedRef.current || ac.state !== "running") return;
-      primedRef.current = true;
-      const s = ac.createBufferSource();
-      s.buffer = ac.createBuffer(1, Math.ceil(ac.sampleRate * 0.5), ac.sampleRate);
-      s.connect(ac.destination);
-      s.start();
-    };
-    if (ac.state === "suspended") void ac.resume().then(push).catch(() => {});
-    else push();
-  }, [ctx]);
-
-  const decode = React.useCallback(
-    async (file: string): Promise<AudioBuffer> => {
-      const hit = cacheRef.current.get(file);
-      if (hit) return hit;
-      const res = await fetch(AUDIO_BASE + file);
-      const buf = await ctx().decodeAudioData(await res.arrayBuffer());
-      cacheRef.current.set(file, buf);
-      return buf;
-    },
-    [ctx]
-  );
-
-  const stop = React.useCallback(() => {
-    const src = currentRef.current;
-    currentRef.current = null;
-    if (src) {
-      src.onended = null;
-      try { src.stop(); } catch { /* already ended */ }
-    }
-    setPlaying(null);
-  }, []);
-
-  // Once one clip is decoded the context is live, so warm the rest while idle
-  // and no other row pays the decode cost on its first click either.
-  const warmAll = React.useCallback(() => {
-    if (warmedRef.current) return;
-    warmedRef.current = true;
-    const idle: (cb: () => void) => void =
-      (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback ??
-      ((cb) => window.setTimeout(cb, 300) as unknown as void);
-    // Every row in this run has a clip, but a future run may publish a
-    // configuration before its audio, so the guard stays.
-    idle(() => { ROWS.forEach((r) => { if (r.sample) void decode(r.sample).catch(() => {}); }); });
-  }, [decode]);
-
-  const play = React.useCallback(
-    async (row: Row) => {
-      if (!row.sample) return;
-      primeDevice();
-      if (playing === row.config) { stop(); return; }
-      stop();
-      setLoading(row.config);
-      try {
-        const buf = await decode(row.sample);
-        const src = ctx().createBufferSource();
-        src.buffer = buf;
-        src.connect(ctx().destination);
-        src.onended = () => { if (currentRef.current === src) { currentRef.current = null; setPlaying(null); } };
-        currentRef.current = src;
-        src.start();
-        setPlaying(row.config);
-        warmAll();
-      } catch {
-        setPlaying(null);
-      } finally {
-        setLoading(null);
-      }
-    },
-    [ctx, decode, playing, primeDevice, stop, warmAll]
-  );
-
-  React.useEffect(() => () => { try { currentRef.current?.stop(); } catch {} void ctxRef.current?.close(); }, []);
-
+  /** Splice the live rating in as a real cell so sorting needs no special case. */
   const rows = React.useMemo(() => {
-    const indexed = ROWS.map((r, i) => ({ r, i }));
-    if (!sort) return indexed;
-    return [...indexed].sort((a, b) => {
-      const ka = keyOf(a.r.cells[sort.col]);
-      const kb = keyOf(b.r.cells[sort.col]);
-      const cmp = typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
+    const withHuman = ROWS.map((r) => {
+      const rating = ratings.get(r.config);
+      const human: Cell =
+        rating == null
+          ? { v: "—", sort: "", tone: "", align: "" }
+          : { v: rating.toFixed(1), sort: String(rating), tone: "", align: "" };
+      return { ...r, cells: [r.cells[0], human, ...r.cells.slice(1)] };
+    });
+    if (!sort) return withHuman;
+    return [...withHuman].sort((a, b) => {
+      const ka = keyOf(a.cells[sort.col]);
+      const kb = keyOf(b.cells[sort.col]);
+      // Missing values sink in both directions. Sorting by Human early on would
+      // otherwise just float the un-rated engines to the top.
+      const ea = ka === "", eb = kb === "";
+      if (ea || eb) return ea && eb ? 0 : ea ? 1 : -1;
+      const cmp =
+        typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [sort]);
+  }, [ratings, sort]);
 
   const onHeader = (col: number) =>
     setSort((s) => {
-      const numeric = typeof keyOf(ROWS[0]?.cells[col]) === "number";
-      if (!s || s.col !== col) return { col, dir: numeric ? "asc" : "asc" };
+      if (!s || s.col !== col) return { col, dir: "asc" };
       if (s.dir === "asc") return { col, dir: "desc" };
       return null;
     });
+
+  const playRow = React.useCallback(
+    (r: Row) => { if (r.sample) void player.toggle(r.config, r.sample); },
+    [player]
+  );
+
+  /** First play is the moment the reader has opted into listening, so it is the
+   *  one place a ranking request is not an interruption. Asked once, ever. */
+  const onPlayClick = (r: Row) => {
+    if (!r.sample) return;
+    if (!showBallot && !askedBefore() && player.playing !== r.config) {
+      pendingRef.current = r;
+      setShowBallot(true);
+      return;
+    }
+    playRow(r);
+  };
+
+  const closeBallot = (submitted: boolean) => {
+    rememberAsked(submitted ? "submitted" : "skipped");
+    setShowBallot(false);
+    if (submitted) loadScores();
+  };
+
+  // Honour the click that opened the dialog, so the reader lands where they were
+  // headed rather than having to press the same button twice. This waits for the
+  // dialog to actually unmount: starting the clip inside the close handler races
+  // the dialog's own teardown, which stops whatever is sounding and would kill
+  // the clip a moment after it began.
+  React.useEffect(() => {
+    if (showBallot) return;
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    player.warm(ROWS.map((r) => r.sample).filter((s): s is string => !!s));
+    playRow(pending);
+  }, [showBallot, player, playRow]);
 
   const th: React.CSSProperties = {
     // Deliberately not sticky. A sticky header overlays the rows scrolled under
@@ -191,118 +176,148 @@ export function TtsResultsTable() {
     background: "var(--background-elevated)", borderBottom: `2px solid ${AXIS}`,
   };
 
+  const humanHelp =
+    minBallots == null
+      ? "Reader preference, pooled from blind four-way rankings."
+      : `Reader preference from blind four-way rankings, 0-100. Shown once an engine has ${minBallots} ballots.`;
+
   return (
-    <figure
-      ref={figRef}
-      style={{
-        margin: "2rem 0",
-        // Eighteen columns will not fit a column sized for prose, so the table
-        // widens past the article, rightwards into the empty gutter.
-        //
-        // Two things this deliberately is NOT. Not the usual 50%/50vw
-        // negative-margin trick: that assumes the container is centred in the
-        // viewport, and this one is pushed right by the TOC sidebar, so the
-        // figure hung off the right edge. And not an explicit `width` either —
-        // a fixed width raises the article grid track's min-content size, which
-        // grows the whole two-column layout and scrolls the page sideways even
-        // though the figure's own box fits. A negative right margin buys the
-        // same pixels while *reducing* the intrinsic contribution, so the track
-        // never grows and there is no feedback loop with the measurement.
-        marginRight: overhang ? `-${overhang}px` : undefined,
-        // Without this the page scrolls sideways by a constant 1288px at every
-        // viewport, which is the table's *min-content* width leaking up into the
-        // article grid track: the inner scroll container clips what you see, but
-        // the track still sizes itself to fit the table unclipped. `clip` makes
-        // the figure itself an intrinsic-size boundary and stops the leak. It has
-        // to be `clip` rather than `hidden` — `hidden` would force the vertical
-        // axis to scroll too, cutting the figure off inside the article.
-        overflowX: "clip",
-      }}
-    >
-      <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>
-        <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary }}>
-          <thead>
-            <tr>
-              {COLUMNS.map((c, i) => {
-                const active = sort?.col === i;
+    <>
+      <figure
+        ref={figRef}
+        style={{
+          margin: "2rem 0",
+          // Eighteen columns will not fit a column sized for prose, so the table
+          // widens past the article, rightwards into the empty gutter.
+          //
+          // Two things this deliberately is NOT. Not the usual 50%/50vw
+          // negative-margin trick: that assumes the container is centred in the
+          // viewport, and this one is pushed right by the TOC sidebar, so the
+          // figure hung off the right edge. And not an explicit `width` either —
+          // a fixed width raises the article grid track's min-content size, which
+          // grows the whole two-column layout and scrolls the page sideways even
+          // though the figure's own box fits. A negative right margin buys the
+          // same pixels while *reducing* the intrinsic contribution, so the track
+          // never grows and there is no feedback loop with the measurement.
+          marginRight: overhang ? `-${overhang}px` : undefined,
+          // Without this the page scrolls sideways by a constant 1288px at every
+          // viewport, which is the table's *min-content* width leaking up into the
+          // article grid track: the inner scroll container clips what you see, but
+          // the track still sizes itself to fit the table unclipped. `clip` makes
+          // the figure itself an intrinsic-size boundary and stops the leak. It has
+          // to be `clip` rather than `hidden` — `hidden` would force the vertical
+          // axis to scroll too, cutting the figure off inside the article.
+          overflowX: "clip",
+        }}
+      >
+        <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>
+          <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary }}>
+            <thead>
+              <tr>
+                {COLUMNS.map((c, i) => {
+                  const active = sort?.col === i;
+                  return (
+                    <th key={c} style={th} aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
+                      <button
+                        type="button"
+                        onClick={() => onHeader(i)}
+                        title={i === HUMAN_COL ? humanHelp : "Sort by this column"}
+                        style={{
+                          font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
+                          border: "none", padding: "0.5rem 0.6rem", width: "100%", textAlign: i === 0 ? "left" : "right",
+                          cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap",
+                        }}
+                      >
+                        {c}
+                        <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
+                          {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const isPlaying = player.playing === r.config;
+                const isLoading = player.loading === r.config;
                 return (
-                  <th key={c} style={th} aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
-                    <button
-                      type="button"
-                      onClick={() => onHeader(i)}
-                      title="Sort by this column"
-                      style={{
-                        font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
-                        border: "none", padding: "0.5rem 0.6rem", width: "100%", textAlign: i === 0 ? "left" : "right",
-                        cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap",
-                      }}
-                    >
-                      {c}
-                      <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
-                        {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
-                      </span>
-                    </button>
-                  </th>
+                  <tr key={r.config} style={{ borderBottom: `1px solid ${AXIS}` }}>
+                    {r.cells.map((c, ci) => (
+                      <td
+                        key={ci}
+                        style={{
+                          padding: "0.35rem 0.6rem",
+                          textAlign: ci === 0 || c.align === "left" ? "left" : "right",
+                          color:
+                            ci === HUMAN_COL
+                              ? c.sort ? INK.primary : INK.muted
+                              : c.tone ? TONE[c.tone] ?? INK.secondary : INK.secondary,
+                          whiteSpace: ci === COLUMNS.length - 1 ? "normal" : "nowrap",
+                          minWidth: ci === COLUMNS.length - 1 ? 220 : undefined,
+                          fontWeight: ci === HUMAN_COL && c.sort ? 600 : undefined,
+                        }}
+                      >
+                        {ci === 0 ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
+                            <button
+                              type="button"
+                              disabled={!r.sample}
+                              onClick={() => onPlayClick(r)}
+                              onPointerEnter={player.prime}
+                              aria-label={r.sample ? `${isPlaying ? "Stop" : "Play"} ${r.display} sample` : `No audio sample for ${r.display}`}
+                              title={r.sample ? undefined : "No audio sample in this export"}
+                              style={{
+                                width: 22, height: 22, flexShrink: 0, borderRadius: 999, cursor: "pointer",
+                                border: `1px solid ${isPlaying ? ACCENT : AXIS}`,
+                                background: isPlaying ? ACCENT : "transparent",
+                                color: isPlaying ? "#fff" : INK.muted,
+                                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                fontSize: "0.6rem", lineHeight: 1, padding: 0,
+                              }}
+                            >
+                              <span aria-hidden="true">{isLoading ? "…" : isPlaying ? "■" : "▶"}</span>
+                            </button>
+                            <span style={{ color: INK.primary }}>{c.v}</span>
+                          </span>
+                        ) : (
+                          c.v
+                        )}
+                      </td>
+                    ))}
+                  </tr>
                 );
               })}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(({ r }) => {
-              const isPlaying = playing === r.config;
-              const isLoading = loading === r.config;
-              return (
-                <tr
-                  key={r.config}
-                  style={{ borderBottom: `1px solid ${AXIS}` }}
-                >
-                  {r.cells.map((c, ci) => (
-                    <td
-                      key={ci}
-                      style={{
-                        padding: "0.35rem 0.6rem",
-                        textAlign: ci === 0 || c.align === "left" ? "left" : "right",
-                        color: c.tone ? TONE[c.tone] ?? INK.secondary : INK.secondary,
-                        whiteSpace: ci === COLUMNS.length - 1 ? "normal" : "nowrap",
-                        minWidth: ci === COLUMNS.length - 1 ? 220 : undefined,
-                      }}
-                    >
-                      {ci === 0 ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
-                          <button
-                            type="button"
-                            disabled={!r.sample}
-                            onClick={() => { if (r.sample) void play(r); }}
-                            onPointerEnter={primeDevice}
-                            aria-label={r.sample ? `${isPlaying ? "Stop" : "Play"} ${r.display} sample` : `No audio sample for ${r.display}`}
-                            title={r.sample ? undefined : "No audio sample in this export"}
-                            style={{
-                              width: 22, height: 22, flexShrink: 0, borderRadius: 999, cursor: "pointer",
-                              border: `1px solid ${isPlaying ? "#d95926" : AXIS}`,
-                              background: isPlaying ? "#d95926" : "transparent",
-                              color: isPlaying ? "#fff" : INK.muted,
-                              display: "inline-flex", alignItems: "center", justifyContent: "center",
-                              fontSize: "0.6rem", lineHeight: 1, padding: 0,
-                            }}
-                          >
-                            <span aria-hidden="true">{isLoading ? "…" : isPlaying ? "■" : "▶"}</span>
-                          </button>
-                          <span style={{ color: INK.primary }}>{c.v}</span>
-                        </span>
-                      ) : (
-                        c.v
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {run.caption && (
-        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>{run.caption}</figcaption>
+            </tbody>
+          </table>
+        </div>
+        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
+          {run.caption}{run.caption ? " " : ""}
+          <strong style={{ color: INK.secondary }}>Human</strong> is reader preference from blind
+          four-way rankings, scored 0&ndash;100 by Bradley-Terry and updated live; an engine shows
+          a dash until enough people have ranked it.{" "}
+          <button
+            type="button"
+            onClick={() => { pendingRef.current = null; setShowBallot(true); }}
+            style={{
+              font: "inherit", color: INK.secondary, background: "none", border: "none",
+              padding: 0, textDecoration: "underline", cursor: "pointer",
+            }}
+          >
+            Rank four clips
+          </button>.
+        </figcaption>
+      </figure>
+
+      {showBallot && (
+        <TtsPreferenceDialog
+          player={player}
+          sampleOf={(c) => SAMPLE_OF.get(c) ?? null}
+          nameOf={(c) => NAME_OF.get(c) ?? c}
+          onClose={closeBallot}
+        />
       )}
-    </figure>
+    </>
   );
 }

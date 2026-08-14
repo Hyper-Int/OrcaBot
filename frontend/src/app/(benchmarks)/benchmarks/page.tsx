@@ -23,6 +23,18 @@ function isChartFence(className?: string): boolean {
   return typeof className === "string" && className.split(" ").includes("language-chart");
 }
 
+/** The fence language of a <pre>'s <code> child, as a class string. hast keeps
+ *  className as an array, which isChartFence does not accept. */
+function fenceLanguageOf(node: unknown): string {
+  const kids = (node as { children?: unknown[] } | undefined)?.children;
+  const first = kids?.[0] as
+    | { tagName?: string; properties?: { className?: unknown } }
+    | undefined;
+  if (first?.tagName !== "code") return "";
+  const cls = first.properties?.className;
+  return Array.isArray(cls) ? cls.join(" ") : typeof cls === "string" ? cls : "";
+}
+
 const MODULE_REVISION = "benchmarks-v1-index";
 console.log(`[benchmarks-index] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -225,6 +237,14 @@ export default function BenchmarksIndexPage() {
                     },
                     // Column headers sort the rows; see SortableTable.
                     table: ({ node }) => <SortableTable node={node as never} />,
+                    // A chart fence is a React component, not code, so it must
+                    // not stay wrapped in <pre>: `white-space: pre` inherits into
+                    // the chart and stops captions and labels wrapping, running
+                    // them off the page.
+                    pre({ node, children, ...props }) {
+                      if (isChartFence(fenceLanguageOf(node))) return <>{children}</>;
+                      return <pre {...props}>{children}</pre>;
+                    },
                     // `node` is react-markdown's hast node; strip it so it never
                     // lands on the DOM element as an unknown attribute.
                     code({ className, children, node: _node, ...props }) {
