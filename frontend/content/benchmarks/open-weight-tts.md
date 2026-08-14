@@ -18,12 +18,12 @@ large LM-backed engines are actually sold on. This benchmark systematically unde
 them, and the play buttons exist because that gap is audible.
 
 Every row below can be played. All eighteen speak the same sentence, so the fastest way to
-calibrate what a word error rate means is to listen to `piper` at 4% and `bark` at 55%.
+calibrate what a word error rate means is to listen to **Piper** at 4% and **Bark** at 55%.
 
 ## Results
 
 Sorted as published, by word error rate. Click any column to re-sort. The shaded band is
-NeuTTS 2E: one backbone crossed with every device it can actually run on, which is the
+NeuTTS-2E: one backbone crossed with every device it can actually run on, which is the
 comparison the vendor's own card cannot show you.
 
 ```chart
@@ -32,13 +32,13 @@ tts-results
 
 ## What the numbers say
 
-**Nothing beats piper on all three axes at once.** 4% word error, 0.04× real time, 60 MB
+**Nothing beats Piper on all three axes at once.** 4% word error, 0.04× real time, 60 MB
 on disk, and no torch in the dependency tree at all. It is a 2023 feed-forward model with
 no cloning, no emotion and no prompt conditioning, and for reading text aloud it remains
 the answer.
 
 **The LM-backed engines do not win on intelligibility, and they are not sold on it.**
-`qwen3-tts` and `chatterbox` both reach 6%, matching the small feed-forward models, while
+**Qwen3-TTS** and **Chatterbox** both reach 6%, matching the small feed-forward models, while
 costing 20× and 100× more compute per phrase respectively. What you buy at that price is
 voice cloning and emotional range, neither of which a word error rate can see. Judge them
 by ear.
@@ -48,8 +48,8 @@ NeuTTS band, fp32 on CPU and q4 on CPU both land at 9% word error, but q4 cuts c
 phrase from 9.28s to 2.49s. Moving q4 to Metal halves it again to 2.09s and costs 2 points
 of accuracy. That is a real trade, and it is invisible on any published model card.
 
-**Two engines are only nominally in the running.** `speecht5` at 24% and `bark` at 55% are
-below the threshold where output is reliably usable, and `bark` spends 17.86s per phrase to
+**Two engines are only nominally in the running.** **SpeechT5** at 24% and **Bark** at 55% are
+below the threshold where output is reliably usable, and Bark spends 17.86s per phrase to
 get there.
 
 ## How to read each column

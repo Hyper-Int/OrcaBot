@@ -6,7 +6,7 @@
  "corpus": "84 phrases",
  "caption": "Sorted by word error rate. Autoregressive engines are averaged over two passes (168 samples); feed-forward engines over one (84). chatterbox and bark are still on one pass.",
  "columns": [
-  "Sample \u00b7 Configuration",
+  "Sample · Configuration",
   "Class",
   "Params",
   "Frame rate",
@@ -31,7 +31,7 @@
    "group": "",
    "cells": [
     {
-     "v": "piper",
+     "v": "Piper",
      "sort": "piper",
      "tone": "",
      "align": "left"
@@ -139,14 +139,15 @@
      "align": "left"
     }
    ],
-   "sample": "piper.mp3"
+   "sample": "piper.mp3",
+   "display": "Piper"
   },
   {
    "config": "kittentts",
    "group": "",
    "cells": [
     {
-     "v": "kittentts",
+     "v": "KittenTTS",
      "sort": "kittentts",
      "tone": "",
      "align": "left"
@@ -254,14 +255,15 @@
      "align": "left"
     }
    ],
-   "sample": "kittentts.mp3"
+   "sample": "kittentts.mp3",
+   "display": "KittenTTS"
   },
   {
    "config": "qwen3-tts",
    "group": "",
    "cells": [
     {
-     "v": "qwen3-tts",
+     "v": "Qwen3-TTS",
      "sort": "qwen3-tts",
      "tone": "",
      "align": "left"
@@ -369,14 +371,15 @@
      "align": "left"
     }
    ],
-   "sample": "qwen3-tts.mp3"
+   "sample": "qwen3-tts.mp3",
+   "display": "Qwen3-TTS"
   },
   {
    "config": "chatterbox",
    "group": "",
    "cells": [
     {
-     "v": "chatterbox",
+     "v": "Chatterbox",
      "sort": "chatterbox",
      "tone": "",
      "align": "left"
@@ -484,14 +487,15 @@
      "align": "left"
     }
    ],
-   "sample": "chatterbox.mp3"
+   "sample": "chatterbox.mp3",
+   "display": "Chatterbox"
   },
   {
    "config": "kokoro",
    "group": "",
    "cells": [
     {
-     "v": "kokoro",
+     "v": "Kokoro",
      "sort": "kokoro",
      "tone": "",
      "align": "left"
@@ -599,14 +603,15 @@
      "align": "left"
     }
    ],
-   "sample": "kokoro.mp3"
+   "sample": "kokoro.mp3",
+   "display": "Kokoro"
   },
   {
    "config": "nt-2e-fp32-cpu",
    "group": "neu",
    "cells": [
     {
-     "v": "nt-2e-fp32-cpu",
+     "v": "NeuTTS-2E-fp32-cpu",
      "sort": "nt-2e-fp32-cpu",
      "tone": "",
      "align": "left"
@@ -714,14 +719,15 @@
      "align": "left"
     }
    ],
-   "sample": "nt-2e-fp32-cpu.mp3"
+   "sample": "nt-2e-fp32-cpu.mp3",
+   "display": "NeuTTS-2E-fp32-cpu"
   },
   {
    "config": "nt-2e-q4-cpu",
    "group": "neu",
    "cells": [
     {
-     "v": "nt-2e-q4-cpu",
+     "v": "NeuTTS-2E-q4-cpu",
      "sort": "nt-2e-q4-cpu",
      "tone": "",
      "align": "left"
@@ -829,14 +835,15 @@
      "align": "left"
     }
    ],
-   "sample": "nt-2e-q4-cpu.mp3"
+   "sample": "nt-2e-q4-cpu.mp3",
+   "display": "NeuTTS-2E-q4-cpu"
   },
   {
    "config": "nt-2e-fp32-mps",
    "group": "neu",
    "cells": [
     {
-     "v": "nt-2e-fp32-mps",
+     "v": "NeuTTS-2E-fp32-mps",
      "sort": "nt-2e-fp32-mps",
      "tone": "",
      "align": "left"
@@ -944,14 +951,15 @@
      "align": "left"
     }
    ],
-   "sample": "nt-2e-fp32-mps.mp3"
+   "sample": "nt-2e-fp32-mps.mp3",
+   "display": "NeuTTS-2E-fp32-mps"
   },
   {
    "config": "chatterbox-q8",
    "group": "",
    "cells": [
     {
-     "v": "chatterbox-q8",
+     "v": "Chatterbox-q8",
      "sort": "chatterbox-q8",
      "tone": "",
      "align": "left"
@@ -1059,14 +1067,15 @@
      "align": "left"
     }
    ],
-   "sample": "chatterbox-q8.mp3"
+   "sample": "chatterbox-q8.mp3",
+   "display": "Chatterbox-q8"
   },
   {
    "config": "vibevoice",
    "group": "",
    "cells": [
     {
-     "v": "vibevoice",
+     "v": "VibeVoice",
      "sort": "vibevoice",
      "tone": "",
      "align": "left"
@@ -1174,14 +1183,15 @@
      "align": "left"
     }
    ],
-   "sample": "vibevoice.mp3"
+   "sample": "vibevoice.mp3",
+   "display": "VibeVoice"
   },
   {
    "config": "nt-2e-q4-metal",
    "group": "neu",
    "cells": [
     {
-     "v": "nt-2e-q4-metal",
+     "v": "NeuTTS-2E-q4-metal",
      "sort": "nt-2e-q4-metal",
      "tone": "",
      "align": "left"
@@ -1289,14 +1299,15 @@
      "align": "left"
     }
    ],
-   "sample": "nt-2e-q4-metal.mp3"
+   "sample": "nt-2e-q4-metal.mp3",
+   "display": "NeuTTS-2E-q4-metal"
   },
   {
    "config": "chatterbox-q4",
    "group": "",
    "cells": [
     {
-     "v": "chatterbox-q4",
+     "v": "Chatterbox-q4",
      "sort": "chatterbox-q4",
      "tone": "",
      "align": "left"
@@ -1404,14 +1415,15 @@
      "align": "left"
     }
    ],
-   "sample": "chatterbox-q4.mp3"
+   "sample": "chatterbox-q4.mp3",
+   "display": "Chatterbox-q4"
   },
   {
    "config": "styletts2",
    "group": "",
    "cells": [
     {
-     "v": "styletts2",
+     "v": "StyleTTS2",
      "sort": "styletts2",
      "tone": "",
      "align": "left"
@@ -1519,14 +1531,15 @@
      "align": "left"
     }
    ],
-   "sample": "styletts2.mp3"
+   "sample": "styletts2.mp3",
+   "display": "StyleTTS2"
   },
   {
    "config": "melotts",
    "group": "",
    "cells": [
     {
-     "v": "melotts",
+     "v": "MeloTTS",
      "sort": "melotts",
      "tone": "",
      "align": "left"
@@ -1634,14 +1647,15 @@
      "align": "left"
     }
    ],
-   "sample": "melotts.mp3"
+   "sample": "melotts.mp3",
+   "display": "MeloTTS"
   },
   {
    "config": "cosyvoice3",
    "group": "",
    "cells": [
     {
-     "v": "cosyvoice3",
+     "v": "CosyVoice3",
      "sort": "cosyvoice3",
      "tone": "",
      "align": "left"
@@ -1749,14 +1763,15 @@
      "align": "left"
     }
    ],
-   "sample": "cosyvoice3.mp3"
+   "sample": "cosyvoice3.mp3",
+   "display": "CosyVoice3"
   },
   {
    "config": "csm",
    "group": "",
    "cells": [
     {
-     "v": "csm",
+     "v": "CSM",
      "sort": "csm",
      "tone": "",
      "align": "left"
@@ -1864,14 +1879,15 @@
      "align": "left"
     }
    ],
-   "sample": "csm.mp3"
+   "sample": "csm.mp3",
+   "display": "CSM"
   },
   {
    "config": "speecht5",
    "group": "",
    "cells": [
     {
-     "v": "speecht5",
+     "v": "SpeechT5",
      "sort": "speecht5",
      "tone": "",
      "align": "left"
@@ -1979,14 +1995,15 @@
      "align": "left"
     }
    ],
-   "sample": "speecht5.mp3"
+   "sample": "speecht5.mp3",
+   "display": "SpeechT5"
   },
   {
    "config": "bark",
    "group": "",
    "cells": [
     {
-     "v": "bark",
+     "v": "Bark",
      "sort": "bark",
      "tone": "",
      "align": "left"
@@ -2094,7 +2111,8 @@
      "align": "left"
     }
    ],
-   "sample": "bark.mp3"
+   "sample": "bark.mp3",
+   "display": "Bark"
   }
  ]
 }

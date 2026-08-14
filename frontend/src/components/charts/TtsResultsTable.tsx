@@ -27,7 +27,7 @@ if (typeof window !== "undefined") {
 }
 
 interface Cell { v: string; sort: string; tone: string; align: string }
-interface Row { config: string; group: string; sample: string; cells: Cell[] }
+interface Row { config: string; display: string; group: string; sample: string; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
 const COLUMNS = run.columns as string[];
@@ -229,7 +229,7 @@ export function TtsResultsTable() {
                             type="button"
                             onClick={() => void play(r)}
                             onPointerEnter={primeDevice}
-                            aria-label={`${isPlaying ? "Stop" : "Play"} ${r.config} sample`}
+                            aria-label={`${isPlaying ? "Stop" : "Play"} ${r.display} sample`}
                             style={{
                               width: 22, height: 22, flexShrink: 0, borderRadius: 999, cursor: "pointer",
                               border: `1px solid ${isPlaying ? "#d95926" : AXIS}`,
