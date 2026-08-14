@@ -3,7 +3,7 @@
 
 // REVISION: benchmarks-v1-index
 
-import { getPost, getAllPosts } from "@/lib/benchmarks";
+import { getPost } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
@@ -11,6 +11,7 @@ import type { Metadata } from "next";
 import { BlogSubscribe } from "@/components/BlogSubscribe";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc, type TocItem } from "@/components/BenchmarkToc";
+import { BenchmarkTabs, DEFAULT_BENCHMARK } from "@/components/BenchmarkTabs";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
 import { SortableTable } from "@/components/SortableTable";
 import { rehypeNamespaceFootnoteLabel } from "@/lib/rehype-namespace-footnote-label";
@@ -43,8 +44,9 @@ function formatDate(dateStr: string): string {
 }
 
 export default function BenchmarksIndexPage() {
-  const metas = getAllPosts();
-  const posts = metas.map((m) => getPost(m.slug)).filter(Boolean);
+  // One benchmark per page. The tab bar navigates between them, so the index
+  // shows the default rather than stacking every benchmark into one document.
+  const posts = [getPost(DEFAULT_BENCHMARK)].filter(Boolean);
 
   // Table-of-contents items for the side menu: each post's title as a top-level
   // entry, followed by its headings.
@@ -108,6 +110,8 @@ export default function BenchmarksIndexPage() {
           drift and plugin updates as they happen. Every run ships its full config.
         </p>
       </div>
+
+      <BenchmarkTabs active={DEFAULT_BENCHMARK} />
 
       {posts.length === 0 ? (
         <p className="text-[var(--foreground-muted)]" style={{ fontSize: "0.95rem" }}>

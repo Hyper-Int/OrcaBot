@@ -1,0 +1,2100 @@
+{
+ "benchmark": "open-weight-tts",
+ "run": "2026-08",
+ "label": "August 2026",
+ "machine": "Apple M2, macOS",
+ "corpus": "84 phrases",
+ "caption": "Sorted by word error rate. Autoregressive engines are averaged over two passes (168 samples); feed-forward engines over one (84). chatterbox and bark are still on one pass.",
+ "columns": [
+  "Sample \u00b7 Configuration",
+  "Class",
+  "Params",
+  "Frame rate",
+  "Released",
+  "Weights",
+  "Libs",
+  "Total disk",
+  "Peak RSS",
+  "Passed",
+  "WER base",
+  "WER med",
+  "PESQ",
+  "Lead-in",
+  "RTF",
+  "Avg synth",
+  "Avg audio",
+  "Notes"
+ ],
+ "rows": [
+  {
+   "config": "piper",
+   "group": "",
+   "cells": [
+    {
+     "v": "piper",
+     "sort": "piper",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "stoch-ff",
+     "sort": "stoch-ff",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "16M",
+     "sort": "16.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2023-06",
+     "sort": "202306",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "60 MB",
+     "sort": "60.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "391 MB",
+     "sort": "391.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "451 MB",
+     "sort": "451.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "338 MB",
+     "sort": "338.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "83/84",
+     "sort": "0.9881",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4%",
+     "sort": "0.0375",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3%",
+     "sort": "0.0292",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "4.10",
+     "sort": "4.10",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.00s",
+     "sort": "0.00",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.04x",
+     "sort": "0.0399",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.12s",
+     "sort": "0.1233",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.09s",
+     "sort": "3.0912",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "No torch at all. Peaks at full scale - check for clipping.",
+     "sort": "No torch at all. Peaks at full scale - c",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "piper.mp3"
+  },
+  {
+   "config": "kittentts",
+   "group": "",
+   "cells": [
+    {
+     "v": "kittentts",
+     "sort": "kittentts",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "det-ff",
+     "sort": "det-ff",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "73M",
+     "sort": "73.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-02",
+     "sort": "202602",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "78 MB",
+     "sort": "78.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "764 MB",
+     "sort": "764.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "842 MB",
+     "sort": "842.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "608 MB",
+     "sort": "608.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "81/84",
+     "sort": "0.9643",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "6%",
+     "sort": "0.0567",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "4%",
+     "sort": "0.0381",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.48",
+     "sort": "3.48",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.42s",
+     "sort": "0.42",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.47x",
+     "sort": "0.4695",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.78s",
+     "sort": "1.7822",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.80s",
+     "sort": "3.7956",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Identical duration every run; only numerical jitter.",
+     "sort": "Identical duration every run; only numer",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "kittentts.mp3"
+  },
+  {
+   "config": "qwen3-tts",
+   "group": "",
+   "cells": [
+    {
+     "v": "qwen3-tts",
+     "sort": "qwen3-tts",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.6B",
+     "sort": "600.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "12 Hz",
+     "sort": "12.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-01",
+     "sort": "202601",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.3 GB",
+     "sort": "1331.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.3 GB",
+     "sort": "1331.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.2 GB",
+     "sort": "2252.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "162/168",
+     "sort": "0.9643",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "6%",
+     "sort": "0.0575",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "4%",
+     "sort": "0.0436",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.55",
+     "sort": "3.55",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.00s",
+     "sort": "1.00",
+     "tone": "warn",
+     "align": "right"
+    },
+    {
+     "v": "0.73x",
+     "sort": "0.7278",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.47s",
+     "sort": "2.4675",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.39s",
+     "sort": "3.3905",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Alibaba's 0.6B at a 12 Hz codec - the direct architectural rival.",
+     "sort": "Alibaba's 0.6B at a 12 Hz codec - the di",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "qwen3-tts.mp3"
+  },
+  {
+   "config": "chatterbox",
+   "group": "",
+   "cells": [
+    {
+     "v": "chatterbox",
+     "sort": "chatterbox",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.54B",
+     "sort": "540.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "25 Hz",
+     "sort": "25.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-04",
+     "sort": "202504",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.0 GB",
+     "sort": "3072.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.2 GB",
+     "sort": "1228.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.2 GB",
+     "sort": "4300.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "441 MB",
+     "sort": "441.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "80/84",
+     "sort": "0.9524",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "6%",
+     "sort": "0.0631",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "5%",
+     "sort": "0.0478",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.61",
+     "sort": "3.61",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.11s",
+     "sort": "0.11",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "4.19x",
+     "sort": "4.1945",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "12.10s",
+     "sort": "12.0982",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "2.88s",
+     "sort": "2.8843",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "MIT, best fp32 quality here. PerTh watermarking; own venv.",
+     "sort": "MIT, best fp32 quality here. PerTh water",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "chatterbox.mp3"
+  },
+  {
+   "config": "kokoro",
+   "group": "",
+   "cells": [
+    {
+     "v": "kokoro",
+     "sort": "kokoro",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "det-ff",
+     "sort": "det-ff",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "82M",
+     "sort": "82.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2024-12",
+     "sort": "202412",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "313 MB",
+     "sort": "313.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.1 GB",
+     "sort": "1126.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.6 GB",
+     "sort": "1638.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "79/84",
+     "sort": "0.9405",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "7%",
+     "sort": "0.0684",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "5%",
+     "sort": "0.0499",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.70",
+     "sort": "3.70",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.30s",
+     "sort": "0.30",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.21x",
+     "sort": "0.2118",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.79s",
+     "sort": "0.7935",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.75s",
+     "sort": "3.7458",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Deterministic timing. Weakest on very short utterances.",
+     "sort": "Deterministic timing. Weakest on very sh",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "kokoro.mp3"
+  },
+  {
+   "config": "nt-2e-fp32-cpu",
+   "group": "neu",
+   "cells": [
+    {
+     "v": "nt-2e-fp32-cpu",
+     "sort": "nt-2e-fp32-cpu",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.24B",
+     "sort": "240.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "50 Hz",
+     "sort": "50.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-07",
+     "sort": "202607",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "771 MB",
+     "sort": "771.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.2 GB",
+     "sort": "2252.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.0 GB",
+     "sort": "2048.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "153/168",
+     "sort": "0.9107",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0894",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "8%",
+     "sort": "0.0840",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.42",
+     "sort": "3.42",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.70s",
+     "sort": "0.70",
+     "tone": "warn",
+     "align": "right"
+    },
+    {
+     "v": "2.42x",
+     "sort": "2.4187",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "9.28s",
+     "sort": "9.2774",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "3.84s",
+     "sort": "3.8357",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.4x slower than the same weights quantized on Metal.",
+     "sort": "4.4x slower than the same weights quanti",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "nt-2e-fp32-cpu.mp3"
+  },
+  {
+   "config": "nt-2e-q4-cpu",
+   "group": "neu",
+   "cells": [
+    {
+     "v": "nt-2e-q4-cpu",
+     "sort": "nt-2e-q4-cpu",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.24B",
+     "sort": "240.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "50 Hz",
+     "sort": "50.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-07",
+     "sort": "202607",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "585 MB",
+     "sort": "585.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.0 GB",
+     "sort": "2048.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.8 GB",
+     "sort": "1843.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "154/168",
+     "sort": "0.9167",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0897",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0878",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.47",
+     "sort": "3.47",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.48s",
+     "sort": "0.48",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.63x",
+     "sort": "0.6320",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.49s",
+     "sort": "2.4908",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.94s",
+     "sort": "3.9408",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "What you get by default. ~1 point behind fp32 - an excellent conversion.",
+     "sort": "What you get by default. ~1 point behind",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "nt-2e-q4-cpu.mp3"
+  },
+  {
+   "config": "nt-2e-fp32-mps",
+   "group": "neu",
+   "cells": [
+    {
+     "v": "nt-2e-fp32-mps",
+     "sort": "nt-2e-fp32-mps",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.24B",
+     "sort": "240.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "50 Hz",
+     "sort": "50.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-07",
+     "sort": "202607",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "771 MB",
+     "sort": "771.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.2 GB",
+     "sort": "2252.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.1 GB",
+     "sort": "1126.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "155/168",
+     "sort": "0.9226",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0929",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "7%",
+     "sort": "0.0663",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.29",
+     "sort": "3.29",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.50s",
+     "sort": "0.50",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.44x",
+     "sort": "2.4415",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "9.64s",
+     "sort": "9.6402",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "3.95s",
+     "sort": "3.9485",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "A dead heat with CPU: the path PR #123 targeted has nothing to win.",
+     "sort": "A dead heat with CPU: the path PR #123 t",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "nt-2e-fp32-mps.mp3"
+  },
+  {
+   "config": "chatterbox-q8",
+   "group": "",
+   "cells": [
+    {
+     "v": "chatterbox-q8",
+     "sort": "chatterbox-q8",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.54B",
+     "sort": "540.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "25 Hz",
+     "sort": "25.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-04",
+     "sort": "202504",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1004 MB",
+     "sort": "1004.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1022 MB",
+     "sort": "1022.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.5 GB",
+     "sort": "1536.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "158/168",
+     "sort": "0.9405",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "10%",
+     "sort": "0.1048",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "10%",
+     "sort": "0.0989",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.15",
+     "sort": "3.15",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.03s",
+     "sort": "0.03",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "2.22x",
+     "sort": "2.2156",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "7.03s",
+     "sort": "7.0331",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "3.17s",
+     "sort": "3.1743",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Quantization costs 4 points, refuting the ASR-identical claim.",
+     "sort": "Quantization costs 4 points, refuting th",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "chatterbox-q8.mp3"
+  },
+  {
+   "config": "vibevoice",
+   "group": "",
+   "cells": [
+    {
+     "v": "vibevoice",
+     "sort": "vibevoice",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "1.02B",
+     "sort": "1020.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-08",
+     "sort": "202508",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "668 MB",
+     "sort": "668.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "686 MB",
+     "sort": "686.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.3 GB",
+     "sort": "1331.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "152/168",
+     "sort": "0.9048",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "11%",
+     "sort": "0.1074",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "8%",
+     "sort": "0.0819",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.21",
+     "sort": "3.21",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.01s",
+     "sort": "0.01",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.72x",
+     "sort": "0.7193",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.67s",
+     "sort": "2.6705",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.71s",
+     "sort": "3.7124",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Smallest deployed footprint of any LM engine. 1.02B despite a 0.5b filename.",
+     "sort": "Smallest deployed footprint of any LM en",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "vibevoice.mp3"
+  },
+  {
+   "config": "nt-2e-q4-metal",
+   "group": "neu",
+   "cells": [
+    {
+     "v": "nt-2e-q4-metal",
+     "sort": "nt-2e-q4-metal",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.24B",
+     "sort": "240.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "50 Hz",
+     "sort": "50.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2026-07",
+     "sort": "202607",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "585 MB",
+     "sort": "585.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.0 GB",
+     "sort": "2048.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.7 GB",
+     "sort": "1740.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "152/168",
+     "sort": "0.9048",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "11%",
+     "sort": "0.1092",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0887",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.13",
+     "sort": "3.13",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.43s",
+     "sort": "0.43",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.48x",
+     "sort": "0.4842",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.09s",
+     "sort": "2.0940",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.32s",
+     "sort": "4.3244",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Best 2E configuration. Reachable only via an undocumented split-device call.",
+     "sort": "Best 2E configuration. Reachable only vi",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "nt-2e-q4-metal.mp3"
+  },
+  {
+   "config": "chatterbox-q4",
+   "group": "",
+   "cells": [
+    {
+     "v": "chatterbox-q4",
+     "sort": "chatterbox-q4",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.54B",
+     "sort": "540.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "25 Hz",
+     "sort": "25.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-04",
+     "sort": "202504",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "637 MB",
+     "sort": "637.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "655 MB",
+     "sort": "655.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.1 GB",
+     "sort": "1126.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "148/168",
+     "sort": "0.8810",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "12%",
+     "sort": "0.1183",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9%",
+     "sort": "0.0892",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.98",
+     "sort": "2.98",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "0.06s",
+     "sort": "0.06",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "2.03x",
+     "sort": "2.0326",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "6.39s",
+     "sort": "6.3891",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "3.14s",
+     "sort": "3.1433",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "6 points worse than fp32 and no faster than q8.",
+     "sort": "6 points worse than fp32 and no faster t",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "chatterbox-q4.mp3"
+  },
+  {
+   "config": "styletts2",
+   "group": "",
+   "cells": [
+    {
+     "v": "styletts2",
+     "sort": "styletts2",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "stoch-ff",
+     "sort": "stoch-ff",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "~2023",
+     "sort": "202300",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "870 MB",
+     "sort": "870.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.1 GB",
+     "sort": "1126.4",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.9 GB",
+     "sort": "1945.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.8 GB",
+     "sort": "1843.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "76/84",
+     "sort": "0.9048",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "12%",
+     "sort": "0.1194",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "11%",
+     "sort": "0.1069",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.69",
+     "sort": "3.69",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.27s",
+     "sort": "0.27",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.69x",
+     "sort": "0.6902",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.91s",
+     "sort": "2.9146",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.22s",
+     "sort": "4.2229",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Phoneme model that still needs digit normalization (+20% gap).",
+     "sort": "Phoneme model that still needs digit nor",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "styletts2.mp3"
+  },
+  {
+   "config": "melotts",
+   "group": "",
+   "cells": [
+    {
+     "v": "melotts",
+     "sort": "melotts",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "stoch-ff",
+     "sort": "stoch-ff",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2024-02",
+     "sort": "202402",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "198 MB",
+     "sort": "198.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.7 GB",
+     "sort": "2764.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.9 GB",
+     "sort": "2969.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "587 MB",
+     "sort": "587.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "74/84",
+     "sort": "0.8810",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "13%",
+     "sort": "0.1252",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "8%",
+     "sort": "0.0840",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.79",
+     "sort": "3.79",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.50s",
+     "sort": "0.50",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.17x",
+     "sort": "0.1749",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.69s",
+     "sort": "0.6907",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.95s",
+     "sort": "3.9482",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "198 MB of weights in a 3 GB install; 774 MB is a Japanese dictionary.",
+     "sort": "198 MB of weights in a 3 GB install; 774",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "melotts.mp3"
+  },
+  {
+   "config": "cosyvoice3",
+   "group": "",
+   "cells": [
+    {
+     "v": "cosyvoice3",
+     "sort": "cosyvoice3",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "0.64B",
+     "sort": "640.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2025-07",
+     "sort": "202507",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.2 GB",
+     "sort": "1228.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.2 GB",
+     "sort": "1228.8",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.0 GB",
+     "sort": "1024.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "142/168",
+     "sort": "0.8452",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "14%",
+     "sort": "0.1408",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "7%",
+     "sort": "0.0655",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "3.34",
+     "sort": "3.34",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.12s",
+     "sort": "0.12",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.98x",
+     "sort": "0.9839",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.01s",
+     "sort": "4.0101",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "4.08s",
+     "sort": "4.0757",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "9 languages plus 18 Chinese dialects; 8-voice baked bank.",
+     "sort": "9 languages plus 18 Chinese dialects; 8-",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "cosyvoice3.mp3"
+  },
+  {
+   "config": "csm",
+   "group": "",
+   "cells": [
+    {
+     "v": "csm",
+     "sort": "csm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "1.78B",
+     "sort": "1780.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "12.5 Hz",
+     "sort": "12.5",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "~2025",
+     "sort": "202500",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.3 GB",
+     "sort": "1331.2",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.4 GB",
+     "sort": "1433.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2.4 GB",
+     "sort": "2457.6",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "142/168",
+     "sort": "0.8452",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18%",
+     "sort": "0.1799",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "10%",
+     "sort": "0.1040",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "3.39",
+     "sort": "3.39",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.00s",
+     "sort": "0.00",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "2.52x",
+     "sort": "2.5208",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "11.97s",
+     "sort": "11.9702",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "4.75s",
+     "sort": "4.7486",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.78B as served; the CSM-1B name covers the backbone only.",
+     "sort": "1.78B as served; the CSM-1B name covers ",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "csm.mp3"
+  },
+  {
+   "config": "speecht5",
+   "group": "",
+   "cells": [
+    {
+     "v": "speecht5",
+     "sort": "speecht5",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "157M",
+     "sort": "157.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2023-02",
+     "sort": "202302",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "300 MB",
+     "sort": "300.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "318 MB",
+     "sort": "318.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "474 MB",
+     "sort": "474.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "110/168",
+     "sort": "0.6548",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "24%",
+     "sort": "0.2420",
+     "tone": "warn",
+     "align": "right"
+    },
+    {
+     "v": "18%",
+     "sort": "0.1839",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "1.67",
+     "sort": "1.67",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "0.00s",
+     "sort": "0.00",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "0.23x",
+     "sort": "0.2276",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "0.44s",
+     "sort": "0.4440",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "1.95s",
+     "sort": "1.9509",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "16 kHz output - duller than everything else regardless of accuracy.",
+     "sort": "16 kHz output - duller than everything e",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "speecht5.mp3"
+  },
+  {
+   "config": "bark",
+   "group": "",
+   "cells": [
+    {
+     "v": "bark",
+     "sort": "bark",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "ar-lm",
+     "sort": "ar-lm",
+     "tone": "",
+     "align": "left"
+    },
+    {
+     "v": "404M",
+     "sort": "404.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "-",
+     "sort": "-1",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "2023-04",
+     "sort": "202304",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "414 MB",
+     "sort": "414.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "18 MB",
+     "sort": "18.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "432 MB",
+     "sort": "432.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "624 MB",
+     "sort": "624.0",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "31/84",
+     "sort": "0.3690",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "55%",
+     "sort": "0.5539",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "50%",
+     "sort": "0.4981",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "2.10",
+     "sort": "2.10",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "0.00s",
+     "sort": "0.00",
+     "tone": "good",
+     "align": "right"
+    },
+    {
+     "v": "4.28x",
+     "sort": "4.2773",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "17.86s",
+     "sort": "17.8594",
+     "tone": "bad",
+     "align": "right"
+    },
+    {
+     "v": "4.18s",
+     "sort": "4.1754",
+     "tone": "",
+     "align": "right"
+    },
+    {
+     "v": "Unusable. Invents lead-in words never present in the input.",
+     "sort": "Unusable. Invents lead-in words never pr",
+     "tone": "",
+     "align": "left"
+    }
+   ],
+   "sample": "bark.mp3"
+  }
+ ]
+}

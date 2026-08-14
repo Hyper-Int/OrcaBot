@@ -12,6 +12,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc } from "@/components/BenchmarkToc";
+import { BenchmarkTabs } from "@/components/BenchmarkTabs";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
 import { SortableTable } from "@/components/SortableTable";
 
@@ -123,6 +124,8 @@ export default async function BenchmarkPage({ params }: Props) {
           ← All benchmarks
         </Link>
       </div>
+
+      <BenchmarkTabs active={slug} />
 
       {/* Cover image/video */}
       {post.coverVideo ? (
