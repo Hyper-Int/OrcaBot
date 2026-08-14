@@ -1148,6 +1148,32 @@ CREATE TABLE IF NOT EXISTS link_edge_map (
   PRIMARY KEY (link_id, edge_a_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_link_edge_b ON link_edge_map(link_id, edge_b_id);
+
+-- Blind preference ballots for the open-weight TTS benchmark. A ballot is issued
+-- server-side (so the client cannot choose its own comparison set), then filled
+-- in by ranking the items best to worst.
+--
+-- anchor_config is a deliberately weak engine seeded into some ballots: a ballot
+-- that ranks it first is noise or gaming, and is stored with status 'rejected'
+-- so it is auditable rather than silently dropped.
+--
+-- NOTE for future tables: this belongs HERE, in the SCHEMA constant that
+-- initializeDatabase executes. blog_subscribers was appended to the bottom of a
+-- conditional migration function instead, which returns early on any migrated
+-- database, so that table can never be created by /init-db.
+CREATE TABLE IF NOT EXISTS tts_ballots (
+  id TEXT PRIMARY KEY,
+  run TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  anchor_config TEXT,
+  ranking_json TEXT,
+  status TEXT NOT NULL DEFAULT 'issued' CHECK (status IN ('issued','counted','rejected')),
+  voter_hash TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  submitted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tts_ballots_status ON tts_ballots(status, run);
+CREATE INDEX IF NOT EXISTS idx_tts_ballots_voter ON tts_ballots(voter_hash, created_at);
 `;
 
 // Initialize the database
