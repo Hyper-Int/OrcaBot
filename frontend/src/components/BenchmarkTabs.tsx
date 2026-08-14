@@ -12,14 +12,14 @@ import Link from "next/link";
 const MODULE_REVISION = "benchmark-tabs-v1";
 console.log(`[benchmark-tabs] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
-/** Display order and labels. Slugs match content/benchmarks/<slug>.md. */
+/** Display order and labels. Slugs match content/benchmarks/<slug>.md.
+ *  The FIRST entry is the default benchmark: /benchmarks redirects to it. That
+ *  redirect lives in next.config.ts, which cannot import this file, so the two
+ *  have to be changed together. */
 export const BENCHMARK_TABS = [
   { slug: "agent-skills", label: "Agent Skills" },
   { slug: "open-weight-tts", label: "Open Weight TTS" },
 ] as const;
-
-/** The benchmark shown at /benchmarks. */
-export const DEFAULT_BENCHMARK = BENCHMARK_TABS[0].slug;
 
 export function BenchmarkTabs({ active }: { active: string }) {
   return (

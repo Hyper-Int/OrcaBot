@@ -7,7 +7,6 @@ import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
@@ -120,23 +119,9 @@ export default async function BenchmarkPage({ params }: Props) {
       </aside>
 
       <div style={{ flex: 1, minWidth: 0, maxWidth: "60rem" }} className="px-6 py-12 pb-24">
-      {/* Back link */}
-      <div style={{ marginBottom: "2rem" }}>
-        <Link
-          href="/benchmarks"
-          style={{
-            fontSize: "0.85rem",
-            color: "var(--foreground-muted)",
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.35rem",
-          }}
-        >
-          ← All benchmarks
-        </Link>
-      </div>
-
+      {/* No "all benchmarks" back link: /benchmarks now redirects straight to
+          the default benchmark, so the link either did nothing or silently threw
+          you onto a different benchmark. The tabs below are the navigation. */}
       <BenchmarkTabs active={slug} />
 
       {/* Cover image/video */}
