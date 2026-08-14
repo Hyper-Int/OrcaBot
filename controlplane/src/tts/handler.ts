@@ -16,19 +16,23 @@ const RUN = '2026-08';
  * the benchmark at all).
  */
 const CONFIGS = [
-  'piper', 'kittentts', 'qwen3-tts', 'chatterbox', 'kokoro',
-  'nt-2e-fp32-cpu', 'nt-2e-q4-cpu', 'nt-2e-fp32-mps', 'nt-2e-q4-metal',
-  'chatterbox-q8', 'chatterbox-q4', 'vibevoice', 'styletts2', 'melotts',
-  'cosyvoice3', 'csm', 'speecht5', 'bark',
+  'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'kokoro',
+  'nt-2e-q4-cpu', 'nt-2e-q4-metal', 'vibevoice', 'styletts2', 'melotts',
+  'cosyvoice3', 'fastpitch', 'speecht5',
 ] as const;
 
 /**
- * Deliberately weak engines, by the measured round-trip word error rate: bark
- * 55%, speecht5 24%. Seeded into a share of ballots as an attention check.
+ * Deliberately weak engine, seeded into a share of ballots as an attention
+ * check. Only speecht5 qualifies now: it is the worst on both axes in the
+ * real-time set (24% word error, and the only PESQ under 3 at 1.67).
+ *
+ * This check is weaker than it was. bark, at 55% word error, was unmistakably
+ * bad to any listener, but it runs at 4.26x real time and the real-time filter
+ * removes it. With a single anchor, a determined submitter could learn never to
+ * rank speecht5 first, so treat rejection rate as a floor on junk, not a
+ * guarantee.
  */
-const ANCHORS = ['bark', 'speecht5'];
-/** Fraction of ballots that carry an anchor. Enough to sample validity without
- *  spending half of every comparison on an engine nobody is choosing. */
+const ANCHORS = ['speecht5'];
 const ANCHOR_RATE = 0.34;
 const ITEMS_PER_BALLOT = 4;
 

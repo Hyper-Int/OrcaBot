@@ -27,7 +27,7 @@ if (typeof window !== "undefined") {
 }
 
 interface Cell { v: string; sort: string; tone: string; align: string }
-interface Row { config: string; display: string; group: string; sample: string; cells: Cell[] }
+interface Row { config: string; display: string; group: string; sample: string | null; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
 const COLUMNS = run.columns as string[];
@@ -112,11 +112,14 @@ export function TtsResultsTable() {
     const idle: (cb: () => void) => void =
       (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback ??
       ((cb) => window.setTimeout(cb, 300) as unknown as void);
-    idle(() => { ROWS.forEach((r) => { void decode(r.sample).catch(() => {}); }); });
+    // Rows without audio are skipped: chatterbox-turbo ships in the table
+    // but its sample is not in this export.
+    idle(() => { ROWS.forEach((r) => { if (r.sample) void decode(r.sample).catch(() => {}); }); });
   }, [decode]);
 
   const play = React.useCallback(
     async (row: Row) => {
+      if (!row.sample) return;
       primeDevice();
       if (playing === row.config) { stop(); return; }
       stop();
@@ -227,9 +230,11 @@ export function TtsResultsTable() {
                         <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
                           <button
                             type="button"
-                            onClick={() => void play(r)}
+                            disabled={!r.sample}
+                            onClick={() => { if (r.sample) void play(r); }}
                             onPointerEnter={primeDevice}
-                            aria-label={`${isPlaying ? "Stop" : "Play"} ${r.display} sample`}
+                            aria-label={r.sample ? `${isPlaying ? "Stop" : "Play"} ${r.display} sample` : `No audio sample for ${r.display}`}
+                            title={r.sample ? undefined : "No audio sample in this export"}
                             style={{
                               width: 22, height: 22, flexShrink: 0, borderRadius: 999, cursor: "pointer",
                               border: `1px solid ${isPlaying ? "#d95926" : AXIS}`,
