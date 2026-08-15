@@ -17,11 +17,11 @@ const RUN = '2026-08';
  */
 const CONFIGS = [
   'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'chatterbox',
-  'f5-tts', 'kokoro', 'nt-2e-fp32-cpu', 'nt-2e-q4-cpu', 'nt-2e-fp32-mps',
-  'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl',
-  'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice', 'cosyvoice3',
-  'bananamind-tts', 'fastpitch', 'zonos', 'csm', 'speecht5',
-  'vibevoice-1.5b', 'parler-tts', 'bark',
+  'f5-tts', 'dots-tts', 'kokoro', 'nt-2e-fp32-cpu', 'nt-2e-q4-cpu',
+  'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
+  'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
+  'cosyvoice3', 'bananamind-tts', 'fastpitch', 'tada-3b', 'zonos', 'csm',
+  'tada-1b', 'mms-tts', 'speecht5', 'vibevoice-1.5b', 'parler-tts', 'bark',
 ] as const;
 
 /**

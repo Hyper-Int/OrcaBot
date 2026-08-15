@@ -203,7 +203,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -217,7 +217,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -231,7 +231,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -711,7 +711,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -725,7 +725,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -739,7 +739,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -782,6 +782,133 @@
         {
           "v": "Flow matching: non-autoregressive, but iterative.",
           "sort": "Flow matching: non-autoregressive, but i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "dots-tts",
+      "display": "Dots-TTS (partial)",
+      "group": "",
+      "sample": "dots-tts.mp3",
+      "cells": [
+        {
+          "v": "Dots-TTS (partial)",
+          "sort": "dots-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "?",
+          "sort": "?",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-06",
+          "sort": "202506",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0643",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "13.02x",
+          "sort": "13.0239",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "41.68s",
+          "sort": "41.6766",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.20s",
+          "sort": "3.2000",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.4 GB f16 and 11x real time, but second-best accuracy measured.",
+          "sort": "4.4 GB f16 and 11x real time, but second",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1727,7 +1854,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1741,7 +1868,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1755,7 +1882,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -1960,7 +2087,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2087,7 +2214,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2214,14 +2341,14 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2235,7 +2362,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2249,7 +2376,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2263,7 +2390,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -2468,14 +2595,14 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2489,7 +2616,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2503,7 +2630,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2517,7 +2644,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -2595,7 +2722,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2616,7 +2743,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2630,7 +2757,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2644,7 +2771,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -2687,6 +2814,133 @@
         {
           "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
           "sort": "Non-autoregressive, 120 MB. Output carri",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "tada-3b",
+      "display": "Tada 3B",
+      "group": "",
+      "sample": "tada-3b.mp3",
+      "cells": [
+        {
+          "v": "Tada 3B",
+          "sort": "tada-3b",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "?",
+          "sort": "?",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-09",
+          "sort": "202509",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.4 GB",
+          "sort": "6553.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.4 GB",
+          "sort": "6553.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "16%",
+          "sort": "0.1593",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.13x",
+          "sort": "2.1252",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7.53s",
+          "sort": "7.5334",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.54s",
+          "sort": "3.5448",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3B sibling of tada-1b: three times the weights, three points better.",
+          "sort": "3B sibling of tada-1b: three times the w",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2743,7 +2997,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2757,21 +3011,21 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "16%",
-          "sort": "0.1634",
+          "v": "17%",
+          "sort": "0.1668",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -2791,22 +3045,22 @@
           "restricted": false
         },
         {
-          "v": "10.70x",
-          "sort": "10.7034",
+          "v": "10.59x",
+          "sort": "10.5940",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "32.08s",
-          "sort": "32.0827",
+          "v": "31.60s",
+          "sort": "31.6000",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.00s",
-          "sort": "2.9974",
+          "v": "2.98s",
+          "sort": "2.9828",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2941,6 +3195,260 @@
         {
           "v": "1.78B as served; the CSM-1B name covers the backbone only.",
           "sort": "1.78B as served; the CSM-1B name covers ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "tada-1b",
+      "display": "Tada 1B",
+      "group": "",
+      "sample": "tada-1b.mp3",
+      "cells": [
+        {
+          "v": "Tada 1B",
+          "sort": "tada-1b",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "?",
+          "sort": "?",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "1B",
+          "sort": "1000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-09",
+          "sort": "202509",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "19%",
+          "sort": "0.1894",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.24x",
+          "sort": "1.2394",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.79s",
+          "sort": "3.7947",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.06s",
+          "sort": "3.0617",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1B multilingual. Middling accuracy, unremarkable throughout.",
+          "sort": "1B multilingual. Middling accuracy, unre",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "mms-tts",
+      "display": "MMS-TTS",
+      "group": "",
+      "sample": "mms-tts.mp3",
+      "cells": [
+        {
+          "v": "MMS-TTS",
+          "sort": "mms-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "stoch-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-NC-4.0",
+          "sort": "CC-BY-NC-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "36M",
+          "sort": "36.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-05",
+          "sort": "202305",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "22%",
+          "sort": "0.2240",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.43",
+          "sort": "3.43",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.39s",
+          "sort": "0.39",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.12x",
+          "sort": "0.1220",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.46s",
+          "sort": "0.4615",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.78s",
+          "sort": "3.7819",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Meta MMS: a VITS per language, 1100+ of them. The only engine here not served by the C++ runtime.",
+          "sort": "Meta MMS: a VITS per language, 1100+ of ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3124,7 +3632,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3138,7 +3646,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3152,7 +3660,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false
@@ -3251,7 +3759,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3265,7 +3773,7 @@
         },
         {
           "v": "-",
-          "sort": "-1",
+          "sort": "",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3279,7 +3787,7 @@
         },
         {
           "v": "·",
-          "sort": "99",
+          "sort": "",
           "tone": "pending",
           "align": "",
           "restricted": false

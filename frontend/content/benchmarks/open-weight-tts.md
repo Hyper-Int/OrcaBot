@@ -26,7 +26,7 @@ tts-preference
 
 ## What the numbers say
 
-**Nothing in twenty-seven configurations is both more accurate and cheaper than Piper.**
+**Nothing in thirty-one configurations is both more accurate and cheaper than Piper.**
 Nothing has a lower word error than its 4%, and nothing speaks a phrase in less compute
 than its 0.12s, at 0.04x real time. It is not the smallest: BananaMind TTS is 38 MB against
 Piper's 60 MB of weights, and pays for it with 14% word error. Piper is a 2023 feed-forward
@@ -52,8 +52,8 @@ words that were never in the phrase; **Parler-TTS** at 39% could not finish the 
 the time allowed; **VibeVoice 1.5B** manages 37% while being larger and markedly worse than
 the 1.02B build above it, and posts the lowest perceptual quality measured here at 1.60;
 and **SpeechT5** at 24% sits below the threshold where output is reliably usable. Eight
-configurations now score under 3 on PESQ, so that is no longer the outlier it was when only
-the real-time set was listed.
+configurations score under 3 on PESQ, so that is no longer the outlier it was when only the
+real-time set was listed.
 
 ## How to read each column
 
@@ -91,7 +91,7 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration measured is listed, including the nine
+**Nothing is filtered out.** Every configuration compared is listed, including the eleven
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2.1x for readers who only care about what can be
