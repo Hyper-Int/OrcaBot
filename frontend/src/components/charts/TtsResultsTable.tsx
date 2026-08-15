@@ -26,10 +26,20 @@ if (typeof window !== "undefined") {
 }
 
 interface Cell { v: string; sort: string; tone: string; align: string }
-interface Row { config: string; display: string; sample: string | null; cells: Cell[] }
+interface Row { config: string; display: string; group: string; sample: string | null; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
 const AUDIO_BASE = "/benchmarks/tts/";
+
+/** Real-time filter. Every configuration is listed by default, including the
+ *  ones that cannot keep up with their own speech, because "how far off is it"
+ *  is a real question and a table that silently omits the answer cannot be
+ *  checked. The filter is opt-in for readers who only care about what can be
+ *  spoken live. */
+const RTF_COL = run.columns.indexOf("RTF");
+const RTF_CUTOFF = run.rtfCutoff;
+const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
+const WITHIN_CUTOFF = ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF).length;
 
 /** The Human column is spliced in here, right after the engine name, so the
  *  live number is visible without scrolling the table sideways. */
@@ -42,9 +52,9 @@ const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** Full table needs ~1662px; past that, extra width is dead space. Re-measure
- *  if columns are added or dropped. */
-const MAX_TABLE_WIDTH = 1680;
+/** The full table measures 1806px; past that, extra width is dead space.
+ *  Re-measure if columns change. */
+const MAX_TABLE_WIDTH = 1820;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
@@ -89,6 +99,7 @@ export function TtsResultsTable() {
   }, []);
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
+  const [realtimeOnly, setRealtimeOnly] = React.useState(false);
   const [showBallot, setShowBallot] = React.useState(false);
   const pendingRef = React.useRef<Row | null>(null);
   const player = useSamplePlayer(AUDIO_BASE);
@@ -100,7 +111,8 @@ export function TtsResultsTable() {
 
   /** Splice the live rating in as a real cell so sorting needs no special case. */
   const rows = React.useMemo(() => {
-    const withHuman = ROWS.map((r) => {
+    const visible = realtimeOnly ? ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF) : ROWS;
+    const withHuman = visible.map((r) => {
       const rating = ratings.get(r.config);
       const human: Cell =
         rating == null
@@ -120,7 +132,7 @@ export function TtsResultsTable() {
         typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [ratings, sort]);
+  }, [ratings, realtimeOnly, sort]);
 
   const onHeader = (col: number) =>
     setSort((s) => {
@@ -208,6 +220,34 @@ export function TtsResultsTable() {
           overflowX: "clip",
         }}
       >
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: "0.6rem",
+            flexWrap: "wrap", marginBottom: "0.6rem", fontSize: "0.8rem",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setRealtimeOnly((v) => !v)}
+            aria-pressed={realtimeOnly}
+            style={{
+              font: "inherit", fontWeight: 600, padding: "0.3rem 0.7rem", borderRadius: 999,
+              cursor: "pointer",
+              border: `1px solid ${realtimeOnly ? ACCENT : AXIS}`,
+              background: realtimeOnly ? `${ACCENT}1f` : "transparent",
+              color: realtimeOnly ? INK.primary : INK.muted,
+            }}
+          >
+            <span aria-hidden="true" style={{ marginRight: "0.4rem" }}>{realtimeOnly ? "☑" : "☐"}</span>
+            Real time only (under {RTF_CUTOFF}×)
+          </button>
+          <span style={{ color: INK.muted }} aria-live="polite">
+            {realtimeOnly
+              ? `${WITHIN_CUTOFF} of ${ROWS.length} configurations`
+              : `${ROWS.length} configurations`}
+          </span>
+        </div>
+
         <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>
           <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary }}>
             <thead>
@@ -241,7 +281,15 @@ export function TtsResultsTable() {
                 const isPlaying = player.playing === r.config;
                 const isLoading = player.loading === r.config;
                 return (
-                  <tr key={r.config} style={{ borderBottom: `1px solid ${AXIS}` }}>
+                  <tr
+                    key={r.config}
+                    style={{
+                      // The NeuTTS band: one backbone crossed with every
+                      // precision and device it was measured on.
+                      background: r.group ? "rgba(57,135,229,0.07)" : undefined,
+                      borderBottom: `1px solid ${AXIS}`,
+                    }}
+                  >
                     {r.cells.map((c, ci) => (
                       <td
                         key={ci}

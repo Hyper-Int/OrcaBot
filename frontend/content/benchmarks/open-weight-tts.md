@@ -26,10 +26,12 @@ tts-preference
 
 ## What the numbers say
 
-**Nothing beats Piper on all three axes at once.** 4% word error, 0.04× real time, 60 MB
-on disk, and no torch in the dependency tree at all. It is a 2023 feed-forward model with
-no cloning, no emotion and no prompt conditioning, and for reading text aloud it remains
-the answer.
+**Nothing in twenty-seven configurations is both more accurate and cheaper than Piper.**
+Nothing has a lower word error than its 4%, and nothing speaks a phrase in less compute
+than its 0.12s, at 0.04x real time. It is not the smallest: BananaMind TTS is 38 MB against
+Piper's 60 MB of weights, and pays for it with 14% word error. Piper is a 2023 feed-forward
+model with no cloning, no emotion, no prompt conditioning and no torch in the dependency
+tree at all, and for reading text aloud it remains the answer.
 
 **The LM-backed engines do not win on intelligibility, and they are not sold on it.**
 **Qwen3-TTS** reaches 6%, matching the small feed-forward models while costing roughly 20×
@@ -38,16 +40,20 @@ real time, which is the first LM-backed engine here to reach Piper's accuracy an
 keep up with its own speech. What that compute buys is voice cloning and emotional range,
 neither of which a word error rate can see. Judge them by ear.
 
-**Quantization is what makes the LM-backed engines viable at all.** Every NeuTTS-2E
-configuration that survives the real-time filter is quantized: the fp32 builds run at 2.35x
-and 2.39x and are excluded outright. Chatterbox tells the same story across a single
-family: the full build is 4.41x and out, Q4 scrapes in at 2.03x, and Turbo reaches 0.98x
-while improving on both. That trade is invisible on any
-published model card.
+**Quantization is what makes the LM-backed engines viable at all.** The NeuTTS-2E band
+shows it directly: both fp32 builds sit at 2.42x and 2.44x, and quantizing the same weights
+to Q4 takes them to 0.63x on CPU and 0.48x on Metal, a four-fold speed-up. Chatterbox tells
+the same story across one family, from 4.19x for the full build to 2.22x at q8, 2.03x at
+Q4, and 0.98x for Turbo, which is faster and more accurate than any of them. That trade is
+invisible on any published model card.
 
-**One engine is only nominally in the running.** **SpeechT5** at 24% is below the threshold
-where output is reliably usable, and its PESQ of 1.67 is the only score under 3 in the
-table.
+**Four engines are not really in the running.** **Bark** at 55% word error invents lead-in
+words that were never in the phrase; **Parler-TTS** at 39% could not finish the corpus in
+the time allowed; **VibeVoice 1.5B** manages 37% while being larger and markedly worse than
+the 1.02B build above it, and posts the lowest perceptual quality measured here at 1.60;
+and **SpeechT5** at 24% sits below the threshold where output is reliably usable. Eight
+configurations now score under 3 on PESQ, so that is no longer the outlier it was when only
+the real-time set was listed.
 
 ## How to read each column
 
@@ -85,13 +91,15 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Real-time filter.** Configurations above 2.1x RTF are excluded. Six are dropped by it:
-Chatterbox and its q8 build, both NeuTTS-2E fp32 builds, CSM and Bark. Their measurements
-remain in the raw export.
+**Nothing is filtered out.** Every configuration measured is listed, including the nine
+that cannot keep up with their own speech, because "how far off is it" is a real question
+and a table that quietly omits the answer cannot be checked. The **Real time only** control
+above the table hides anything above 2.1x for readers who only care about what can be
+spoken live.
 
-The cutoff sits just above 2.0 so Chatterbox Q4 stays in at 2.03x. Worth knowing when
-reading it: RTF counts silence, and against speech alone that configuration is 2.59x, so it
-is the one row here that is only nominally real time.
+The cutoff sits just above 2.0 so Chatterbox Q4 survives it at 2.03x. Worth knowing when
+reading that row: RTF counts silence, and against speech alone the same configuration is
+2.59x, so it is the one that is only nominally real time.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.
@@ -104,13 +112,11 @@ ceiling and only mediocre audio has room to rise.
 **Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
 Differences under roughly two points are not resolvable at this sample size.
 
-**Device builds are pooled.** NeuTTS-2E Q4 was measured on both CPU and Metal. The device
-changes how fast the same weights run, not how well they speak, so the two are pooled and
-listed once: word error is the mean of both builds over 336 samples, and the speed, size
-and memory figures are the Metal build. The evidence for treating the difference as noise
-is that the stronger transcriber puts them 0.09 points apart (8.78% against 8.87%), while
-only the weaker one separates them. PESQ and lead-in stay unpooled because both are scored
-on the single playable clip.
+**Device builds are listed separately.** The shaded band is one backbone, NeuTTS-2E,
+crossed with both precisions and both devices. They are shown rather than pooled because
+the point of the band is the comparison: the device changes the speed by a factor of four
+while the word error moves by around two points, which is the scale at which this corpus
+stops resolving differences at all.
 
 ### What is excluded, and why
 

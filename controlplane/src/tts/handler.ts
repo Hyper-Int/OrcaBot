@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: tts-ballots-v1
+// REVISION: tts-ballots-v2-full-config-set
 
 import type { Env } from '../types';
 
-const MODULE_REVISION = 'tts-ballots-v1';
+const MODULE_REVISION = 'tts-ballots-v2-full-config-set';
 console.log(`[tts] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /** The run these ballots score. Bumped when a new TTS run replaces the samples. */
@@ -16,23 +16,29 @@ const RUN = '2026-08';
  * the benchmark at all).
  */
 const CONFIGS = [
-  'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'kokoro',
-  'nt-2e-q4-metal', 'vibevoice', 'chatterbox-q4', 'styletts2', 'melotts',
-  'cosyvoice3', 'fastpitch', 'speecht5',
+  'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'chatterbox',
+  'f5-tts', 'kokoro', 'nt-2e-fp32-cpu', 'nt-2e-q4-cpu', 'nt-2e-fp32-mps',
+  'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl',
+  'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice', 'cosyvoice3',
+  'bananamind-tts', 'fastpitch', 'zonos', 'csm', 'speecht5',
+  'vibevoice-1.5b', 'parler-tts', 'bark',
 ] as const;
 
 /**
- * Deliberately weak engine, seeded into a share of ballots as an attention
- * check. Only speecht5 qualifies now: it is the worst on both axes in the
- * real-time set (24% word error, and the only PESQ under 3 at 1.67).
+ * Deliberately weak engines, seeded into a share of ballots as an attention
+ * check: ranking one of these best means the ballot is noise or gaming.
  *
- * This check is weaker than it was. bark, at 55% word error, was unmistakably
- * bad to any listener, but it runs at 4.26x real time and the real-time filter
- * removes it. With a single anchor, a determined submitter could learn never to
- * rank speecht5 first, so treat rejection rate as a floor on junk, not a
- * guarantee.
+ * bark is back. The table now lists every configuration rather than only the
+ * real-time ones, so the 55%-word-error engine no longer has to be excluded,
+ * and it is the one nobody listening could rank first in good faith.
+ * vibevoice-1.5b joins it at 37% word error and the lowest PESQ measured (1.60).
+ *
+ * Two anchors rather than one matters: with a single known-bad engine a
+ * determined submitter can simply learn never to rank it first. Speed is not a
+ * disqualifier here - a ballot asks how something sounds, not how fast it is -
+ * so slow engines are in the pool like any other.
  */
-const ANCHORS = ['speecht5'];
+const ANCHORS = ['bark', 'vibevoice-1.5b'];
 const ANCHOR_RATE = 0.34;
 const ITEMS_PER_BALLOT = 4;
 
