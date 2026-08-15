@@ -110,11 +110,11 @@ ceiling and only mediocre audio has room to rise.
 **Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
 Differences under roughly two points are not resolvable at this sample size.
 
-**Device builds are listed separately.** The shaded band is one backbone, NeuTTS-2E,
-crossed with both precisions and both devices. They are shown rather than pooled because
-the point of the band is the comparison: the device changes the speed by a factor of four
-while the word error moves by around two points, which is the scale at which this corpus
-stops resolving differences at all.
+**Device builds are listed separately.** The four NeuTTS-2E rows are one backbone crossed
+with both precisions and both devices. They are shown rather than pooled because the point
+of them is the comparison: the device changes the speed by a factor of four while the word
+error moves by around two points, which is the scale at which this corpus stops resolving
+differences at all.
 
 ### What is excluded, and why
 

@@ -286,15 +286,7 @@ export function TtsResultsTable() {
                 const isPlaying = player.playing === r.config;
                 const isLoading = player.loading === r.config;
                 return (
-                  <tr
-                    key={r.config}
-                    style={{
-                      // The NeuTTS band: one backbone crossed with every
-                      // precision and device it was measured on.
-                      background: r.group ? "rgba(57,135,229,0.07)" : undefined,
-                      borderBottom: `1px solid ${AXIS}`,
-                    }}
-                  >
+                  <tr key={r.config} style={{ borderBottom: `1px solid ${AXIS}` }}>
                     {r.cells.map((c, ci) => (
                       <td
                         key={ci}
