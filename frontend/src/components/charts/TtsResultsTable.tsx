@@ -134,11 +134,15 @@ export function TtsResultsTable() {
     });
   }, [ratings, realtimeOnly, sort]);
 
+  // asc -> desc -> back to the default, never to "unsorted". Unsorted rendered
+  // the export's own row order, which is neither the default the reader arrived
+  // at nor meaningful in itself, so a third click silently swapped the table
+  // into an order nothing on the page explains.
   const onHeader = (col: number) =>
     setSort((s) => {
       if (!s || s.col !== col) return { col, dir: "asc" };
       if (s.dir === "asc") return { col, dir: "desc" };
-      return null;
+      return DEFAULT_SORT;
     });
 
   const playRow = React.useCallback(
