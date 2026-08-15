@@ -37,8 +37,24 @@ const OUT_AUDIO = "public/benchmarks/tts";
 /** Columns carried by the export that the page does not show.
  *  Passed is the denominator behind the word error rates - methodology, not a
  *  result, and it never separates one engine from another. Frame rate only means
- *  anything for the token-based engines and is blank for most rows. */
-const DROP_COLUMNS = new Set(["Frame rate", "Passed"]);
+ *  anything for the token-based engines and is blank for most rows. Libs is a
+ *  packaging detail already folded into Disk. Lead-in is measured on a single
+ *  clip, so it is indicative rather than a mean, and it earns its width less
+ *  than it costs in a table this wide - the caveat it exists to explain lives in
+ *  the methodology instead. */
+const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in"]);
+
+/** Shorter headers where the export's are longer than they need to be. */
+const RENAME_COLUMNS = { "Total disk": "Disk" };
+
+/** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
+ *  SPDX id, and spelled out it is the widest cell in the column. */
+const REWRITE = {
+  // Replacement is a function, not a string: "$5m" as a string literal is a
+  // capture-group reference to any future group 5 in that pattern, and would
+  // silently start substituting instead of printing.
+  Licence: (v) => v.replace(/under \$5M/i, () => "<$5m"),
+};
 
 /** Each vendor's own capitalisation. The export uses lowercase run ids; showing
  *  those verbatim misspells every product on the page. Anything not listed falls
@@ -154,7 +170,7 @@ if (claimed && claimed !== rawRows.length) {
 }
 
 const keep = headers.map((h) => !DROP_COLUMNS.has(h));
-const columns = headers.filter((_, i) => keep[i]);
+const columns = headers.filter((_, i) => keep[i]).map((h) => RENAME_COLUMNS[h] ?? h);
 
 const audioAvailable = new Set(
   fs.readdirSync(path.join(exportDir, "samples")).filter((f) => f.endsWith(".mp3"))
@@ -194,7 +210,12 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
   const display = (DISPLAY[config] ?? config) + (qualifier ? ` ${qualifier}` : "");
   if (!DISPLAY[config]) console.warn(`  ! no display name for "${config}" - using the raw id`);
 
-  const cells = tds.filter((_, i) => keep[i]);
+  const cells = tds
+    .map((c, i) => {
+      const rewrite = REWRITE[headers[i]];
+      return rewrite ? { ...c, v: rewrite(c.v) } : c;
+    })
+    .filter((_, i) => keep[i]);
   cells[0] = { ...cells[0], v: display };
 
   const sample = `${config}.mp3`;

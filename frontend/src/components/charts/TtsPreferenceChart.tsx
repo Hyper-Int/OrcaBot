@@ -59,7 +59,16 @@ const CLASSES = [
   { id: "ar-lm", label: "Autoregressive LM", color: "#d95926" },
 ] as const;
 
-const COL = Object.fromEntries(run.columns.map((c, i) => [c, i])) as Record<string, number>;
+const INDEX = Object.fromEntries(run.columns.map((c, i) => [c, i])) as Record<string, number>;
+/** Column index by name, loud when the name is not there. A bare lookup returns
+ *  undefined, which indexes into nothing and throws at module load with a stack
+ *  pointing at React rather than at the renamed column - which is exactly what
+ *  happened when "Total disk" became "Disk". */
+function col(name: string): number {
+  const i = INDEX[name];
+  if (i === undefined) throw new Error(`[tts] no "${name}" column in run ${run.run}: have ${run.columns.join(", ")}`);
+  return i;
+}
 
 interface Engine {
   config: string; name: string; cls: string; color: string;
@@ -69,15 +78,15 @@ interface Engine {
 const ENGINES: Engine[] = (
   run.rows as { config: string; display: string; cells: { v: string; sort: string }[] }[]
 ).map((r) => {
-  const cls = r.cells[COL["Class"]].sort;
+  const cls = r.cells[col("Class")].sort;
   return {
     config: r.config,
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: Number(r.cells[COL["Avg synth"]].sort),
-    disk: Number(r.cells[COL["Total disk"]].sort),
-    rtf: Number(r.cells[COL["RTF"]].sort),
+    synth: Number(r.cells[col("Avg synth")].sort),
+    disk: Number(r.cells[col("Disk")].sort),
+    rtf: Number(r.cells[col("RTF")].sort),
   };
 });
 

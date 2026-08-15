@@ -64,10 +64,6 @@ face value.
   any engine that emits excess silence**, because padding inflates the denominator. Prefer
   **Avg synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
-- **Lead-in** is silence before the first audible sample. It is not a defect in itself, but
-  Whisper transcribes silence as a word ("You", "Thank you.") rather than returning
-  nothing, so it manufactures insertion errors and inflates word error. It is measured on
-  one clip per configuration, so treat it as indicative rather than a mean.
 - **WER base / WER med** are the same audio scored by Whisper `base.en` and `medium.en`.
   They are not interchangeable: the weaker model hallucinates onto trailing silence and
   understates good engines more than bad ones, so the true spread between engines is wider
@@ -105,7 +101,9 @@ reading that row: RTF counts silence, and against speech alone the same configur
 long-form categories.
 
 **Scoring.** Round-trip word error rate, capped at 1.0 per phrase so a single runaway
-cannot swamp the mean. PESQ is scored on **trimmed** audio: scoring untrimmed rewards
+cannot swamp the mean. Leading silence is worth knowing about here: Whisper transcribes it
+as a word ("You", "Thank you.") rather than returning nothing, so an engine that pads the
+start of a clip manufactures insertion errors and scores worse than it sounds. PESQ is scored on **trimmed** audio: scoring untrimmed rewards
 models that pad with silence, by up to 0.78, because silence pulls the estimate toward the
 ceiling and only mediocre audio has room to rise.
 

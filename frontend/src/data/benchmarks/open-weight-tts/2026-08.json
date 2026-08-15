@@ -13,13 +13,11 @@
     "Params",
     "Released",
     "Weights",
-    "Libs",
-    "Total disk",
+    "Disk",
     "Peak RSS",
     "WER base",
     "WER med",
     "PESQ",
-    "Lead-in",
     "RTF",
     "Avg synth",
     "Avg audio",
@@ -75,13 +73,6 @@
           "restricted": false
         },
         {
-          "v": "391 MB",
-          "sort": "391.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "451 MB",
           "sort": "451.0",
           "tone": "",
@@ -112,13 +103,6 @@
         {
           "v": "4.10",
           "sort": "4.10",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -202,13 +186,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "980 MB",
           "sort": "980.0",
           "tone": "",
@@ -240,13 +217,6 @@
           "v": "3.30",
           "sort": "3.30",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.04s",
-          "sort": "0.04",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -329,13 +299,6 @@
           "restricted": false
         },
         {
-          "v": "764 MB",
-          "sort": "764.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "842 MB",
           "sort": "842.0",
           "tone": "",
@@ -366,13 +329,6 @@
         {
           "v": "3.48",
           "sort": "3.48",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.42s",
-          "sort": "0.42",
           "tone": "",
           "align": "",
           "restricted": false
@@ -456,13 +412,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.3 GB",
           "sort": "1331.2",
           "tone": "",
@@ -494,13 +443,6 @@
           "v": "3.55",
           "sort": "3.55",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.00s",
-          "sort": "1.00",
-          "tone": "warn",
           "align": "",
           "restricted": false
         },
@@ -583,13 +525,6 @@
           "restricted": false
         },
         {
-          "v": "1.2 GB",
-          "sort": "1228.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "4.2 GB",
           "sort": "4300.8",
           "tone": "",
@@ -621,13 +556,6 @@
           "v": "3.61",
           "sort": "3.61",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.11s",
-          "sort": "0.11",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -710,13 +638,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "953 MB",
           "sort": "953.0",
           "tone": "",
@@ -748,13 +669,6 @@
           "v": "2.36",
           "sort": "2.36",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.05s",
-          "sort": "0.05",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -837,13 +751,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "4.3 GB",
           "sort": "4403.2",
           "tone": "",
@@ -861,13 +768,6 @@
           "v": "6%",
           "sort": "0.0643",
           "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -964,13 +864,6 @@
           "restricted": false
         },
         {
-          "v": "1.1 GB",
-          "sort": "1126.4",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.4 GB",
           "sort": "1433.6",
           "tone": "",
@@ -1001,13 +894,6 @@
         {
           "v": "3.70",
           "sort": "3.70",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.30s",
-          "sort": "0.30",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1063,7 +949,7 @@
           "restricted": false
         },
         {
-          "v": "NeuTTS, under $5M",
+          "v": "NeuTTS, <$5m",
           "sort": "NeuTTS, under $5M",
           "tone": "",
           "align": "left",
@@ -1086,13 +972,6 @@
         {
           "v": "771 MB",
           "sort": "771.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1129,13 +1008,6 @@
           "v": "3.42",
           "sort": "3.42",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.70s",
-          "sort": "0.70",
-          "tone": "warn",
           "align": "",
           "restricted": false
         },
@@ -1190,7 +1062,7 @@
           "restricted": false
         },
         {
-          "v": "NeuTTS, under $5M",
+          "v": "NeuTTS, <$5m",
           "sort": "NeuTTS, under $5M",
           "tone": "",
           "align": "left",
@@ -1213,13 +1085,6 @@
         {
           "v": "585 MB",
           "sort": "585.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1255,13 +1120,6 @@
         {
           "v": "3.47",
           "sort": "3.47",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.48s",
-          "sort": "0.48",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1317,7 +1175,7 @@
           "restricted": false
         },
         {
-          "v": "NeuTTS, under $5M",
+          "v": "NeuTTS, <$5m",
           "sort": "NeuTTS, under $5M",
           "tone": "",
           "align": "left",
@@ -1340,13 +1198,6 @@
         {
           "v": "771 MB",
           "sort": "771.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1382,13 +1233,6 @@
         {
           "v": "3.29",
           "sort": "3.29",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.50s",
-          "sort": "0.50",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1472,13 +1316,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1022 MB",
           "sort": "1022.0",
           "tone": "",
@@ -1510,13 +1347,6 @@
           "v": "3.15",
           "sort": "3.15",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.03s",
-          "sort": "0.03",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -1599,13 +1429,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "686 MB",
           "sort": "686.0",
           "tone": "",
@@ -1637,13 +1460,6 @@
           "v": "3.21",
           "sort": "3.21",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.01s",
-          "sort": "0.01",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -1698,7 +1514,7 @@
           "restricted": false
         },
         {
-          "v": "NeuTTS, under $5M",
+          "v": "NeuTTS, <$5m",
           "sort": "NeuTTS, under $5M",
           "tone": "",
           "align": "left",
@@ -1721,13 +1537,6 @@
         {
           "v": "585 MB",
           "sort": "585.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1763,13 +1572,6 @@
         {
           "v": "3.13",
           "sort": "3.13",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.43s",
-          "sort": "0.43",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1853,13 +1655,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "384 MB",
           "sort": "384.0",
           "tone": "",
@@ -1891,13 +1686,6 @@
           "v": "3.67",
           "sort": "3.67",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.11s",
-          "sort": "0.11",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -1980,13 +1768,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "655 MB",
           "sort": "655.0",
           "tone": "",
@@ -2018,13 +1799,6 @@
           "v": "2.98",
           "sort": "2.98",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.06s",
-          "sort": "0.06",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2107,13 +1881,6 @@
           "restricted": false
         },
         {
-          "v": "1.1 GB",
-          "sort": "1126.4",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.9 GB",
           "sort": "1945.6",
           "tone": "",
@@ -2144,13 +1911,6 @@
         {
           "v": "3.69",
           "sort": "3.69",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.27s",
-          "sort": "0.27",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2234,13 +1994,6 @@
           "restricted": false
         },
         {
-          "v": "2.7 GB",
-          "sort": "2764.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "2.9 GB",
           "sort": "2969.6",
           "tone": "",
@@ -2271,13 +2024,6 @@
         {
           "v": "3.79",
           "sort": "3.79",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.50s",
-          "sort": "0.50",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2361,13 +2107,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.2 GB",
           "sort": "1228.8",
           "tone": "",
@@ -2399,13 +2138,6 @@
           "v": "3.50",
           "sort": "3.50",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.01s",
-          "sort": "0.01",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2488,13 +2220,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.2 GB",
           "sort": "1228.8",
           "tone": "",
@@ -2526,13 +2251,6 @@
           "v": "3.34",
           "sort": "3.34",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.12s",
-          "sort": "0.12",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2615,13 +2333,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "38 MB",
           "sort": "38.0",
           "tone": "",
@@ -2653,13 +2364,6 @@
           "v": "2.64",
           "sort": "2.64",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2742,13 +2446,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "120 MB",
           "sort": "120.0",
           "tone": "",
@@ -2780,13 +2477,6 @@
           "v": "2.72",
           "sort": "2.72",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2869,13 +2559,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "6.4 GB",
           "sort": "6553.6",
           "tone": "",
@@ -2893,13 +2576,6 @@
           "v": "16%",
           "sort": "0.1593",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -2996,13 +2672,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.6 GB",
           "sort": "1638.4",
           "tone": "",
@@ -3033,13 +2702,6 @@
         {
           "v": "4.02",
           "sort": "4.02",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.03s",
-          "sort": "0.03",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -3123,13 +2785,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.4 GB",
           "sort": "1433.6",
           "tone": "",
@@ -3161,13 +2816,6 @@
           "v": "3.39",
           "sort": "3.39",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -3250,13 +2898,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.7 GB",
           "sort": "1740.8",
           "tone": "",
@@ -3274,13 +2915,6 @@
           "v": "19%",
           "sort": "0.1894",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -3377,13 +3011,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "145 MB",
           "sort": "145.0",
           "tone": "",
@@ -3414,13 +3041,6 @@
         {
           "v": "3.43",
           "sort": "3.43",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.39s",
-          "sort": "0.39",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3504,13 +3124,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "318 MB",
           "sort": "318.0",
           "tone": "",
@@ -3542,13 +3155,6 @@
           "v": "1.67",
           "sort": "1.67",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -3631,13 +3237,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.6 GB",
           "sort": "1638.4",
           "tone": "",
@@ -3669,13 +3268,6 @@
           "v": "1.60",
           "sort": "1.60",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -3758,13 +3350,6 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "900 MB",
           "sort": "900.0",
           "tone": "",
@@ -3796,13 +3381,6 @@
           "v": "2.16",
           "sort": "2.16",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -3885,13 +3463,6 @@
           "restricted": false
         },
         {
-          "v": "18 MB",
-          "sort": "18.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "432 MB",
           "sort": "432.0",
           "tone": "",
@@ -3923,13 +3494,6 @@
           "v": "2.10",
           "sort": "2.10",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.00s",
-          "sort": "0.00",
-          "tone": "good",
           "align": "",
           "restricted": false
         },

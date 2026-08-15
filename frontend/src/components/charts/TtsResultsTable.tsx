@@ -37,6 +37,7 @@ const AUDIO_BASE = "/benchmarks/tts/";
  *  checked. The filter is opt-in for readers who only care about what can be
  *  spoken live. */
 const RTF_COL = run.columns.indexOf("RTF");
+if (RTF_COL < 0) throw new Error(`[tts] no "RTF" column in run ${run.run}: have ${run.columns.join(", ")}`);
 const RTF_CUTOFF = run.rtfCutoff;
 const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
 const WITHIN_CUTOFF = ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF).length;
@@ -52,9 +53,9 @@ const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** The full table measures 1806px; past that, extra width is dead space.
+/** The full table measures 1603px; past that, extra width is dead space.
  *  Re-measure if columns change. */
-const MAX_TABLE_WIDTH = 1820;
+const MAX_TABLE_WIDTH = 1620;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
