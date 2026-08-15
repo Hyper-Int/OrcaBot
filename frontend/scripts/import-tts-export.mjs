@@ -53,7 +53,7 @@ const REWRITE = {
   // Replacement is a function, not a string: "$5m" as a string literal is a
   // capture-group reference to any future group 5 in that pattern, and would
   // silently start substituting instead of printing.
-  Licence: (v) => v.replace(/under \$5M/i, () => "<$5m"),
+  Licence: (v) => v.replace(/under \$5M/i, () => "<$5M"),
 };
 
 /** Each vendor's own capitalisation. The export uses lowercase run ids; showing
