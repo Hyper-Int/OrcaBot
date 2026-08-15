@@ -251,6 +251,16 @@ export function TtsResultsTable() {
               ? `${WITHIN_CUTOFF} of ${ROWS.length} configurations`
               : `${ROWS.length} configurations`}
           </span>
+          {/* Without this a blocked audio context looks like a dead play
+              button, which is unfixable by the reader because they cannot see
+              why. On a phone there is no console to check either. */}
+          {player.problem && (
+            <span role="status" style={{ color: TONE.warn }}>
+              {player.problem === "blocked"
+                ? "Your browser blocked audio playback. On iPhone, check the ring/silent switch, then tap play again."
+                : "That sample could not be loaded. Try again, or another row."}
+            </span>
+          )}
         </div>
 
         <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>

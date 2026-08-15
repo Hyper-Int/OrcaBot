@@ -35,12 +35,16 @@ export interface SamplePlayer {
   prime: () => void;
   /** Decode these in the background once the context is live. */
   warm: (files: string[]) => void;
+  /** Set when a play attempt produced no sound, so the UI can say why rather
+   *  than appearing to ignore the click. Null once a clip starts. */
+  problem: "blocked" | "failed" | null;
 }
 
 export function useSamplePlayer(base: string): SamplePlayer {
   const [playing, setPlaying] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState<string | null>(null);
   const [heard, setHeard] = React.useState<Set<string>>(() => new Set());
+  const [problem, setProblem] = React.useState<"blocked" | "failed" | null>(null);
 
   const ctxRef = React.useRef<AudioContext | null>(null);
   const cacheRef = React.useRef<Map<string, AudioBuffer>>(new Map());
@@ -54,9 +58,35 @@ export function useSamplePlayer(base: string): SamplePlayer {
         window.AudioContext ??
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       ctxRef.current = new AC();
+
+      // iOS puts Web Audio in the "ambient" audio session, which the hardware
+      // ring/silent switch mutes - while <audio> elements and native apps sit in
+      // "playback" and ignore it. So on a phone with the switch flipped these
+      // samples are silent while Spotify is audible, which reads as a broken
+      // page rather than a muted phone. Declaring playback opts into the same
+      // category a music app uses. Safari 16.4+; ignored everywhere else.
+      const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
+      if (session) {
+        try { session.type = "playback"; } catch { /* older WebKit rejects the value */ }
+      }
     }
     return ctxRef.current;
   }, []);
+
+  /** Resolve once the context is actually running, or give up.
+   *  Every browser needs resume() inside a user gesture, but iOS is the strict
+   *  one: a context that is still suspended when start() is called plays
+   *  nothing, silently, and the source is spent. */
+  const ensureRunning = React.useCallback(async () => {
+    const ac = ctx();
+    if (ac.state !== "running") {
+      try { await ac.resume(); } catch { /* refused outside a gesture */ }
+    }
+    // Read through String() on purpose: TypeScript narrows ac.state at the
+    // branch above and does not know resume() can change it, so a direct
+    // comparison is rejected as impossible.
+    return String(ac.state) === "running";
+  }, [ctx]);
 
   const prime = React.useCallback(() => {
     if (primedRef.current) return;
@@ -117,6 +147,15 @@ export function useSamplePlayer(base: string): SamplePlayer {
       setLoading(key);
       try {
         const buf = await decode(file);
+        // decode() is a network fetch, so the user gesture is long gone by now.
+        // Re-assert the context before spending the source on silence.
+        const running = await ensureRunning();
+        if (!running) {
+          // Starting here would consume the source and play nothing at all,
+          // which is indistinguishable from a dead button.
+          setProblem("blocked");
+          return;
+        }
         const src = ctx().createBufferSource();
         src.buffer = buf;
         src.connect(ctx().destination);
@@ -131,13 +170,15 @@ export function useSamplePlayer(base: string): SamplePlayer {
         currentRef.current = src;
         src.start();
         setPlaying(key);
+        setProblem(null);
       } catch {
         setPlaying(null);
+        setProblem("failed");
       } finally {
         setLoading(null);
       }
     },
-    [ctx, decode, playing, prime, stop]
+    [ctx, decode, ensureRunning, playing, prime, stop]
   );
 
   React.useEffect(
@@ -151,7 +192,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
   // Memoised so callers can put the player in an effect's dependency list
   // without it re-firing on every render of the table.
   return React.useMemo(
-    () => ({ playing, loading, heard, toggle, stop, prime, warm }),
-    [playing, loading, heard, toggle, stop, prime, warm]
+    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem }),
+    [playing, loading, heard, toggle, stop, prime, warm, problem]
   );
 }

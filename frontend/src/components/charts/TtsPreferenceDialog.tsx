@@ -240,6 +240,17 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
               </ul>
             )}
 
+            {/* Reaching this dialog before the table means a blocked audio
+                context shows up here first: four buttons that do nothing and a
+                submit that can never enable, with no way to tell why. */}
+            {player.problem && (
+              <p role="status" style={{ margin: "0 0 1rem", fontSize: "0.82rem", color: "#e0b25e", lineHeight: 1.5 }}>
+                {player.problem === "blocked"
+                  ? "Your browser blocked audio playback, so these cannot be ranked. On iPhone, check the ring/silent switch and tap play again — or skip, and the table is all still there."
+                  : "A clip could not be loaded. Try again, or skip — the table is all still there."}
+              </p>
+            )}
+
             <Actions>
               <Button onClick={() => dismiss(false)}>Skip</Button>
               <Button
