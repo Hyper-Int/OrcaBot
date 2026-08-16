@@ -53,7 +53,7 @@ export interface TtsPreferenceDialogProps {
   onClose: (submitted: boolean) => void;
 }
 
-type Phase = "loading" | "ranking" | "sending" | "revealed" | "error";
+type Phase = "loading" | "ranking" | "confirm" | "sending" | "revealed" | "error";
 
 export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPreferenceDialogProps) {
   const [phase, setPhase] = React.useState<Phase>("loading");
@@ -63,7 +63,13 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
   // position. Deriving them renames every clip as soon as the reader reorders,
   // and worse, moves the "already played" tick onto different audio.
   const [letters, setLetters] = React.useState<Map<string, string>>(new Map());
+  // What just changed, announced for screen readers. The animation carries this
+  // visually; without it the swap is silent to anyone not watching.
+  const [announcement, setAnnouncement] = React.useState("");
   const { stop } = player;
+
+  const listRef = React.useRef<HTMLUListElement>(null);
+  const beforeRef = React.useRef<Map<string, number>>(new Map());
 
   React.useEffect(() => {
     let live = true;
@@ -90,14 +96,53 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
   // the reader once the dialog is gone.
   React.useEffect(() => () => stop(), [stop]);
 
-  const move = (i: number, delta: number) =>
+  /** Row tops, keyed by clip, as they are right now. */
+  const measure = () => {
+    const m = new Map<string, number>();
+    listRef.current?.querySelectorAll<HTMLLIElement>("[data-clip]").forEach((el) => {
+      m.set(el.dataset.clip!, el.getBoundingClientRect().top);
+    });
+    return m;
+  };
+
+  const move = (i: number, delta: number) => {
+    const j = i + delta;
+    if (j < 0 || j >= order.length) return;
+    // Captured before the state change so the effect below can animate from
+    // where each row was to where React has just put it.
+    beforeRef.current = measure();
+    const moved = order[i];
     setOrder((o) => {
-      const j = i + delta;
-      if (j < 0 || j >= o.length) return o;
       const next = [...o];
       [next[i], next[j]] = [next[j], next[i]];
       return next;
     });
+    setAnnouncement(`Clip ${letterOf(moved)} moved to ${ORDINALS[j]}, of ${order.length}.`);
+  };
+
+  // FLIP: the rows have already been re-ordered by React, so put each one back
+  // where it was with a transform and let it transition to zero. Animating the
+  // swap is the whole point - without it the list teleports and there is no
+  // signal that the press did anything at all.
+  React.useLayoutEffect(() => {
+    const before = beforeRef.current;
+    if (!before.size) return;
+    beforeRef.current = new Map();
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    listRef.current?.querySelectorAll<HTMLLIElement>("[data-clip]").forEach((el) => {
+      const was = before.get(el.dataset.clip!);
+      if (was === undefined) return;
+      const dy = was - el.getBoundingClientRect().top;
+      if (!dy) return;
+      el.style.transition = "none";
+      el.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = "transform 260ms cubic-bezier(0.2, 0.7, 0.3, 1)";
+        el.style.transform = "";
+      });
+    });
+  }, [order]);
 
   // Keyed by clip letter rather than config id so the DOM never carries the
   // engine name before the reveal.
@@ -153,6 +198,62 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
               <Button onClick={() => dismiss(false)} primary>Go to the results</Button>
             </Actions>
           </>
+        ) : phase === "confirm" || phase === "sending" ? (
+          <>
+            <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem", color: INK.primary }}>
+              Is this your order?
+            </h2>
+            <p style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
+              Best first. Nothing has been submitted yet — go back if this is not what you meant.
+            </p>
+            <ol style={{ margin: "0 0 1.25rem", padding: 0, listStyle: "none", display: "grid", gap: "0.4rem" }}>
+              {order.map((c, i) => {
+                const file = sampleOf(c);
+                const isPlaying = player.playing === keyFor(c);
+                return (
+                  <li
+                    key={c}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "0.6rem",
+                      padding: "0.5rem 0.6rem", borderRadius: 8,
+                      border: `1px solid ${isPlaying ? ACCENT : AXIS}`,
+                      background: "rgba(57,135,229,0.06)",
+                    }}
+                  >
+                    <span style={{ width: "2.2rem", flexShrink: 0, fontSize: "0.78rem", color: INK.muted }}>
+                      {ORDINALS[i]}
+                    </span>
+                    {/* Playable here too: checking an order you cannot re-hear
+                        is not much of a check. */}
+                    <button
+                      type="button"
+                      onClick={() => { if (file) void player.toggle(keyFor(c), file); }}
+                      aria-label={`${isPlaying ? "Stop" : "Play"} clip ${letterOf(c)}`}
+                      style={{
+                        width: 30, height: 30, flexShrink: 0, borderRadius: 999, cursor: "pointer",
+                        border: `1px solid ${isPlaying ? ACCENT : AXIS}`,
+                        background: isPlaying ? ACCENT : "transparent",
+                        color: isPlaying ? "#fff" : INK.secondary,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "0.7rem", padding: 0,
+                      }}
+                    >
+                      <span aria-hidden="true">{isPlaying ? "■" : "▶"}</span>
+                    </button>
+                    <span style={{ flex: 1, fontSize: "0.9rem", color: INK.primary }}>Clip {letterOf(c)}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            <Actions>
+              <Button onClick={() => { stop(); setPhase("ranking"); }} disabled={phase === "sending"}>
+                Go back
+              </Button>
+              <Button onClick={() => void submit()} disabled={phase === "sending"} primary>
+                {phase === "sending" ? "Submitting…" : "Confirm ranking"}
+              </Button>
+            </Actions>
+          </>
         ) : phase === "revealed" ? (
           <>
             <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem", color: INK.primary }}>
@@ -181,8 +282,13 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
             </h2>
             <p style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
               The table measures whether speech can be <em>understood</em>, which is not the same
-              as whether it sounds any good. Play all four and put them in order, best first.
-              They are unlabelled on purpose; the names are revealed once you submit.
+              as whether it sounds any good. They are unlabelled on purpose; the names are
+              revealed once you submit.
+            </p>
+            <p style={{ margin: "0 0 1rem", fontSize: "0.82rem", color: INK.muted, lineHeight: 1.5 }}>
+              <strong style={{ color: INK.secondary }}>Play all four</strong>, then use the{" "}
+              <span aria-hidden="true">▲▼</span> arrows to move each clip up or down until the
+              best is at the top. You get to check the order before anything is submitted.
             </p>
 
             {phase === "loading" ? (
@@ -190,7 +296,7 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
                 Loading samples…
               </p>
             ) : (
-              <ul style={{ listStyle: "none", margin: "0 0 1rem", padding: 0, display: "grid", gap: "0.4rem" }}>
+              <ul ref={listRef} style={{ listStyle: "none", margin: "0 0 0.75rem", padding: 0, display: "grid", gap: "0.4rem" }}>
                 {order.map((config, i) => {
                   const key = keyFor(config);
                   const file = sampleOf(config);
@@ -200,6 +306,7 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
                   return (
                     <li
                       key={config}
+                      data-clip={config}
                       style={{
                         display: "flex", alignItems: "center", gap: "0.6rem",
                         padding: "0.5rem 0.6rem", borderRadius: 8,
@@ -240,6 +347,8 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
               </ul>
             )}
 
+            <p className="sr-only" role="status" aria-live="polite">{announcement}</p>
+
             {/* Reaching this dialog before the table means a blocked audio
                 context shows up here first: four buttons that do nothing and a
                 submit that can never enable, with no way to tell why. */}
@@ -254,12 +363,12 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
             <Actions>
               <Button onClick={() => dismiss(false)}>Skip</Button>
               <Button
-                onClick={() => void submit()}
+                onClick={() => { stop(); setPhase("confirm"); }}
                 disabled={!allHeard || phase !== "ranking"}
                 title={allHeard ? undefined : "Play all four clips first"}
                 primary
               >
-                {phase === "sending" ? "Submitting…" : allHeard ? "Submit ranking" : "Play all four to submit"}
+                {allHeard ? "Review order" : "Play all four to submit"}
               </Button>
             </Actions>
           </>
