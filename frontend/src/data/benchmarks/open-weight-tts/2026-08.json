@@ -991,8 +991,8 @@
           "restricted": false
         },
         {
-          "v": "?",
-          "sort": "?",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -1005,8 +1005,8 @@
           "restricted": true
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "0.24B",
+          "sort": "240.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1019,15 +1019,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
+          "v": "645 MB",
+          "sort": "645.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1035,6 +1028,13 @@
         {
           "v": "2.0 GB",
           "sort": "2048.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.5 GB",
+          "sort": "1536.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2199,8 +2199,8 @@
           "restricted": false
         },
         {
-          "v": "358 MB",
-          "sort": "358.0",
+          "v": "543 MB",
+          "sort": "543.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2305,8 +2305,8 @@
           "restricted": false
         },
         {
-          "v": "527 MB",
-          "sort": "527.0",
+          "v": "397 MB",
+          "sort": "397.0",
           "tone": "",
           "align": "",
           "restricted": false
