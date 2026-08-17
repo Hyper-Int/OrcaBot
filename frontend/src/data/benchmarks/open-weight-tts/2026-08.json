@@ -254,7 +254,7 @@
       "config": "nt-2e-q8-cpu",
       "display": "NeuTTS-2E Q8 CPU",
       "group": "neu",
-      "sample": null,
+      "sample": "nt-2e-q8-cpu.mp3?v=82aad063",
       "cells": [
         {
           "v": "NeuTTS-2E Q8 CPU",
@@ -1158,7 +1158,7 @@
       "config": "nt-2e-q8-metal",
       "display": "NeuTTS-2E Q8 Metal",
       "group": "neu",
-      "sample": null,
+      "sample": "nt-2e-q8-metal.mp3?v=9f6e6a25",
       "cells": [
         {
           "v": "NeuTTS-2E Q8 Metal",
