@@ -19,11 +19,13 @@ import { CostAccuracyChart } from "./CostAccuracyChart";
 import { CheckpointErosionChart } from "./CheckpointErosionChart";
 import { TtsResultsTable } from "./TtsResultsTable";
 import { TtsPreferenceChart } from "./TtsPreferenceChart";
+import { TtsErrorCostChart } from "./TtsErrorCostChart";
 
 const CHARTS: Record<string, React.ComponentType> = {
   "cost-accuracy": CostAccuracyChart,
   "checkpoint-erosion": CheckpointErosionChart,
   "tts-results": TtsResultsTable,
+  "tts-error-cost": TtsErrorCostChart,
   // Renders nothing until enough engines have a human rating.
   "tts-preference": TtsPreferenceChart,
 };

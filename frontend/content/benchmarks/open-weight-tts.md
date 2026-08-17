@@ -1,13 +1,11 @@
 ---
-title: Which Open-Weight TTS Engine Should You Actually Run?
+title: Testing open-weight Text To Speech models
 date: 2026-08-14
-description: Every open-weight TTS engine that runs faster than real time (or thereabouts), tested for WER using Whisper.
+description: Every open-weight TTS engine that can run on a consumer laptop, tested for WER using Whisper.
 author: Rob Macrae
 ---
 
-Here are all the available TTS open weight models that can likely run in real-time - or close to real-time, on consumer hardware.
-
-We tested them against the same corpus, using Whisper medium to transcribe back to text.
+We tested all the open weight TTS models against the same corpus, using Whisper medium to transcribe back to text.
 
 Every row can be played, so you can hear what a word error rate actually sounds like.
 
@@ -17,6 +15,10 @@ Sorted by compute per phrase, fastest first. Click any column to re-sort.
 
 ```chart
 tts-results
+```
+
+```chart
+tts-error-cost
 ```
 
 ```chart

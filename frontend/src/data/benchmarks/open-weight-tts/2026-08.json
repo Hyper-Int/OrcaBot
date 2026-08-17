@@ -2147,7 +2147,7 @@
       "config": "bananamind-tts",
       "display": "BananaMind TTS",
       "group": "",
-      "sample": "bananamind-tts.mp3?v=5077b87e",
+      "sample": "bananamind-tts.mp3?v=cf3f65fb",
       "cells": [
         {
           "v": "BananaMind TTS",
@@ -2253,7 +2253,7 @@
       "config": "fastpitch",
       "display": "FastPitch",
       "group": "",
-      "sample": "fastpitch.mp3?v=ffefb257",
+      "sample": "fastpitch.mp3?v=58a1c73a",
       "cells": [
         {
           "v": "FastPitch",
@@ -3101,7 +3101,7 @@
       "config": "parler-tts",
       "display": "Parler-TTS (partial)",
       "group": "",
-      "sample": "parler-tts.mp3?v=e3a00da5",
+      "sample": "parler-tts.mp3?v=60ec0edf",
       "cells": [
         {
           "v": "Parler-TTS (partial)",
@@ -3207,7 +3207,7 @@
       "config": "bark",
       "display": "Bark",
       "group": "",
-      "sample": "bark.mp3?v=a7de9570",
+      "sample": "bark.mp3?v=c4f17bee",
       "cells": [
         {
           "v": "Bark",
