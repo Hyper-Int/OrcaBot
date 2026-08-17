@@ -73,7 +73,43 @@ const LICENCE_URLS = {
  *  several of these have no upstream model card to link to (the export says so
  *  outright for OmniVoice), and a plausible-looking wrong link is worse than
  *  none. */
-const MODEL_URLS = {};
+const MODEL_URLS = {
+  "piper": "https://github.com/rhasspy/piper",
+  "kokoro": "https://huggingface.co/hexgrad/Kokoro-82M",
+  "bark": "https://github.com/suno-ai/bark",
+  "mms-tts": "https://huggingface.co/facebook/mms-tts",
+  "f5-tts": "https://github.com/SWivid/F5-TTS",
+  "parler-tts": "https://github.com/huggingface/parler-tts",
+  "xtts": "https://huggingface.co/coqui/XTTS-v2",
+  "cosyvoice3": "https://github.com/QwenAudio/CosyVoice",
+  "cosyvoice3-rl": "https://github.com/QwenAudio/CosyVoice",
+  "chatterbox": "https://github.com/resemble-ai/chatterbox",
+  "chatterbox-turbo": "https://github.com/resemble-ai/chatterbox",
+  "chatterbox-q4": "https://github.com/resemble-ai/chatterbox",
+  "chatterbox-q8": "https://github.com/resemble-ai/chatterbox",
+  "styletts2": "https://github.com/yl4579/StyleTTS2",
+  "melotts": "https://github.com/myshell-ai/MeloTTS",
+  "speecht5": "https://huggingface.co/microsoft/speecht5_tts",
+  "kittentts": "https://huggingface.co/KittenML/kitten-tts-nano-0.1",
+  "csm": "https://github.com/SesameAILabs/csm",
+  "zonos": "https://github.com/Zyphra/Zonos",
+  "fastpitch": "https://github.com/NVIDIA-NeMo/Speech",
+  "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS",
+  "dots-tts": "https://github.com/rednote-hilab/dots.tts",
+  "tada-1b": "https://huggingface.co/HumeAI/tada-1b",
+  "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml",
+  // The quantized and device variants are the same upstream weights.
+  "nt-2e-fp32-mps": "https://huggingface.co/neuphonic/neutts-2e",
+  "nt-2e-q4-metal": "https://huggingface.co/neuphonic/neutts-2e",
+  "nt-2e-q8-metal": "https://huggingface.co/neuphonic/neutts-2e",
+  // 1.02B "despite a 0.5b filename", per the export - no model page matches it,
+  // so this one points at the project rather than a specific checkpoint.
+  "vibevoice": "https://github.com/microsoft/VibeVoice",
+  "vibevoice-1.5b": "https://huggingface.co/microsoft/VibeVoice-1.5B",
+  // Deliberately absent: omnivoice, which the export says has no upstream model
+  // card, and bananamind-tts, which nothing findable matches. They render as
+  // plain text rather than pointing somewhere plausible but wrong.
+};
 
 /** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
  *  SPDX id, and spelled out it is the widest cell in the column. */

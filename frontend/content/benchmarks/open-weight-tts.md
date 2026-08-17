@@ -9,6 +9,10 @@ We tested all the open weight TTS models against the same corpus, using Whisper 
 
 Every row can be played, so you can hear what a word error rate actually sounds like.
 
+```chart
+tts-vendors
+```
+
 ## Results
 
 Sorted by compute per phrase, fastest first. Click any column to re-sort.

@@ -34,7 +34,8 @@
           "sort": "piper",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/rhasspy/piper"
         },
         {
           "v": "stoch-ff",
@@ -141,7 +142,8 @@
           "sort": "chatterbox-turbo",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
         },
         {
           "v": "ar-lm",
@@ -248,7 +250,8 @@
           "sort": "kittentts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.1"
         },
         {
           "v": "det-ff",
@@ -355,7 +358,8 @@
           "sort": "qwen3-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/QwenLM/Qwen3-TTS"
         },
         {
           "v": "ar-lm",
@@ -462,7 +466,8 @@
           "sort": "chatterbox",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
         },
         {
           "v": "ar-lm",
@@ -569,7 +574,8 @@
           "sort": "f5-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/SWivid/F5-TTS"
         },
         {
           "v": "stoch-ff",
@@ -676,7 +682,8 @@
           "sort": "dots-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/rednote-hilab/dots.tts"
         },
         {
           "v": "ar-lm",
@@ -782,7 +789,8 @@
           "sort": "kokoro",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/hexgrad/Kokoro-82M"
         },
         {
           "v": "det-ff",
@@ -889,7 +897,8 @@
           "sort": "xtts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/coqui/XTTS-v2"
         },
         {
           "v": "ar-lm",
@@ -995,7 +1004,8 @@
           "sort": "nt-2e-q8-metal",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
         },
         {
           "v": "ar-lm",
@@ -1101,7 +1111,8 @@
           "sort": "nt-2e-fp32-mps",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
         },
         {
           "v": "ar-lm",
@@ -1207,7 +1218,8 @@
           "sort": "chatterbox-q8",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
         },
         {
           "v": "ar-lm",
@@ -1314,7 +1326,8 @@
           "sort": "vibevoice",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/microsoft/VibeVoice"
         },
         {
           "v": "ar-lm",
@@ -1421,7 +1434,8 @@
           "sort": "nt-2e-q4-metal",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
         },
         {
           "v": "ar-lm",
@@ -1527,7 +1541,8 @@
           "sort": "cosyvoice3-rl",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice"
         },
         {
           "v": "ar-lm",
@@ -1634,7 +1649,8 @@
           "sort": "chatterbox-q4",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
         },
         {
           "v": "ar-lm",
@@ -1741,7 +1757,8 @@
           "sort": "styletts2",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/yl4579/StyleTTS2"
         },
         {
           "v": "stoch-ff",
@@ -1848,7 +1865,8 @@
           "sort": "melotts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/myshell-ai/MeloTTS"
         },
         {
           "v": "stoch-ff",
@@ -2061,7 +2079,8 @@
           "sort": "cosyvoice3",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice"
         },
         {
           "v": "ar-lm",
@@ -2275,7 +2294,8 @@
           "sort": "fastpitch",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/NVIDIA-NeMo/Speech"
         },
         {
           "v": "det-ff",
@@ -2382,7 +2402,8 @@
           "sort": "tada-3b",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/HumeAI/tada-3b-ml"
         },
         {
           "v": "ar-lm",
@@ -2488,7 +2509,8 @@
           "sort": "zonos",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/Zyphra/Zonos"
         },
         {
           "v": "ar-lm",
@@ -2595,7 +2617,8 @@
           "sort": "csm",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/SesameAILabs/csm"
         },
         {
           "v": "ar-lm",
@@ -2702,7 +2725,8 @@
           "sort": "tada-1b",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/HumeAI/tada-1b"
         },
         {
           "v": "ar-lm",
@@ -2808,7 +2832,8 @@
           "sort": "mms-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/facebook/mms-tts"
         },
         {
           "v": "stoch-ff",
@@ -2915,7 +2940,8 @@
           "sort": "speecht5",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/speecht5_tts"
         },
         {
           "v": "ar-lm",
@@ -3022,7 +3048,8 @@
           "sort": "vibevoice-1.5b",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/VibeVoice-1.5B"
         },
         {
           "v": "ar-lm",
@@ -3129,7 +3156,8 @@
           "sort": "parler-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/huggingface/parler-tts"
         },
         {
           "v": "ar-lm",
@@ -3236,7 +3264,8 @@
           "sort": "bark",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/suno-ai/bark"
         },
         {
           "v": "ar-lm",
