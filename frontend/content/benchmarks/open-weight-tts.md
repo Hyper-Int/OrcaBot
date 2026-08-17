@@ -75,29 +75,13 @@ long-form categories.
 **Scoring.** Round-trip word error rate, capped at 1.0 per phrase so a single runaway
 cannot swamp the mean. Leading silence is worth knowing about here: Whisper transcribes it
 as a word ("You", "Thank you.") rather than returning nothing, so an engine that pads the
-start of a clip manufactures insertion errors and scores worse than it sounds. PESQ is scored on **trimmed** audio: scoring untrimmed rewards
-models that pad with silence, by up to 0.78, because silence pulls the estimate toward the
-ceiling and only mediocre audio has room to rise.
+start of a clip manufactures insertion errors and scores worse than it sounds. PESQ is
+scored on **trimmed** audio: scoring untrimmed rewards models that pad with silence, by up
+to 0.78, because silence pulls the estimate toward the ceiling and only mediocre audio has
+room to rise.
 
 **Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
 Differences under roughly two points are not resolvable at this sample size.
-
-**One device per model.** The three NeuTTS-2E rows are one backbone at three precisions,
-all measured on the GPU path. The same weights were also run on CPU; those rows are not
-shown, so that one model takes one row, and their measurements remain in the raw export.
-On speed the device is worth about a third once the model is quantized, and nothing at all
-at fp32, against roughly five times for the quantizing itself.
-
-### What is excluded, and why
-
-**macOS system TTS is not reproducible.** macOS resolves a voice to whichever quality tier
-a given machine has downloaded, and Compact, Enhanced and Premium are different models
-rather than bitrates of one. The row described one laptop, not a system anyone else could
-reproduce.
-
-**NeuTTS nano and Air are superseded**, replaced by 2E in July 2026. Ranking a vendor's
-older models against everyone else's current ones misrepresents the vendor. Their
-measurements and audio are retained in the raw export.
 
 ### Limitations
 
