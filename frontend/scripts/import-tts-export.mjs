@@ -24,6 +24,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 const [exportDir, runId = "2026-08"] = process.argv.slice(2);
 if (!exportDir) {
@@ -78,6 +79,9 @@ const DISPLAY = {
   "nt-2e-fp32-mps": "NeuTTS-2E FP32 MPS",
   "nt-2e-q4-cpu": "NeuTTS-2E Q4 CPU",
   "nt-2e-q4-metal": "NeuTTS-2E Q4 Metal",
+  "nt-2e-q8-cpu": "NeuTTS-2E Q8 CPU",
+  "nt-2e-q8-metal": "NeuTTS-2E Q8 Metal",
+  "xtts": "XTTS",
   "omnivoice": "OmniVoice",
   "parler-tts": "Parler-TTS",
   "qwen3-tts": "Qwen3-TTS",
@@ -223,6 +227,7 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
     config,
     display,
     group: (attrs(`<tr${rowAttrs}>`).class ?? "").trim(),
+    // Bare filename here; the content hash is appended after the copy below.
     sample: audioAvailable.has(sample) ? sample : null,
     cells,
   };
@@ -249,18 +254,31 @@ const run = {
   rows,
 };
 
-fs.mkdirSync(path.dirname(OUT_JSON), { recursive: true });
-fs.writeFileSync(OUT_JSON, JSON.stringify(run, null, 2) + "\n");
-
 fs.mkdirSync(OUT_AUDIO, { recursive: true });
-let copied = 0;
+const short = (buf) => crypto.createHash("sha256").update(buf).digest("hex").slice(0, 8);
+
+let copied = 0, changed = 0;
 for (const r of rows) {
   if (!r.sample) { console.warn(`  ! no audio for ${r.config}`); continue; }
-  fs.copyFileSync(path.join(exportDir, "samples", r.sample), path.join(OUT_AUDIO, r.sample));
+  const src = path.join(exportDir, "samples", r.sample);
+  const dst = path.join(OUT_AUDIO, r.sample);
+  const incoming = fs.readFileSync(src);
+  const existing = fs.existsSync(dst) ? fs.readFileSync(dst) : null;
+  const replaced = !existing || !existing.equals(incoming);
+  if (replaced) { fs.writeFileSync(dst, incoming); changed++; }
   copied++;
+
+  // A re-cut clip usually keeps its filename, so browsers and the CDN would go
+  // on serving the old audio against a table of new numbers - the sort of wrong
+  // that is invisible because everything still plays. Fingerprinting the URL
+  // with the content hash makes changed bytes a different URL, while unchanged
+  // clips keep theirs and stay cached.
+  r.sample = `${r.sample}?v=${short(incoming)}`;
+  if (replaced) console.log(`  ~ replaced ${path.basename(dst)}`);
 }
+
 // Audio for configurations no longer listed would otherwise accumulate forever.
-const wanted = new Set(rows.map((r) => r.sample).filter(Boolean));
+const wanted = new Set(rows.map((r) => r.sample?.split("?")[0]).filter(Boolean));
 for (const f of fs.readdirSync(OUT_AUDIO)) {
   if (f.endsWith(".mp3") && !wanted.has(f)) {
     fs.unlinkSync(path.join(OUT_AUDIO, f));
@@ -268,10 +286,18 @@ for (const f of fs.readdirSync(OUT_AUDIO)) {
   }
 }
 
+// Written only now: the copy loop above appends each clip's content hash to
+// row.sample, and serialising before that ran wrote the rows without their
+// version tags - the audio was correctly replaced and every URL still pointed
+// at the unversioned name, which is precisely the stale-cache case this exists
+// to prevent.
+fs.mkdirSync(path.dirname(OUT_JSON), { recursive: true });
+fs.writeFileSync(OUT_JSON, JSON.stringify(run, null, 2) + "\n");
+
 const within = rows.filter((r) => rtfOf(r) <= RTF_CUTOFF).length;
 console.log(
   `[import-tts-export] ${rows.length} configurations, ${columns.length} columns ` +
-  `(dropped ${[...DROP_COLUMNS].join(", ")}), ${copied} clips\n` +
+  `(dropped ${[...DROP_COLUMNS].join(", ")}), ${copied} clips (${changed} changed)\n` +
   `  ${within} within ${RTF_CUTOFF}x real time, ${rows.length - within} above it\n` +
   `  -> ${OUT_JSON}`
 );

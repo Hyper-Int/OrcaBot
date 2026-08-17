@@ -14,10 +14,15 @@ const RUN = '2026-08';
  * Every configuration a ballot can draw from. Kept server-side so a client
  * cannot nominate its own comparison set (or vote for something that is not in
  * the benchmark at all).
+ *
+ * Only configurations that have a published clip. The dialog drops anything it
+ * cannot play, but submitBallot requires the ranking to be a permutation of the
+ * items it issued - so seeding a clip-less configuration produces a ballot the
+ * reader can complete and the server is then obliged to reject.
  */
 const CONFIGS = [
   'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'chatterbox',
-  'f5-tts', 'dots-tts', 'kokoro', 'nt-2e-fp32-cpu', 'nt-2e-q4-cpu',
+  'f5-tts', 'dots-tts', 'kokoro', 'xtts', 'nt-2e-fp32-cpu', 'nt-2e-q4-cpu',
   'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
   'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
   'cosyvoice3', 'bananamind-tts', 'fastpitch', 'tada-3b', 'zonos', 'csm',

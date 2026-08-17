@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-15",
+  "label": "2026-08-17",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2.1,
@@ -28,7 +28,7 @@
       "config": "piper",
       "display": "Piper",
       "group": "",
-      "sample": "piper.mp3",
+      "sample": "piper.mp3?v=6e326b91",
       "cells": [
         {
           "v": "Piper",
@@ -141,7 +141,7 @@
       "config": "chatterbox-turbo",
       "display": "Chatterbox Turbo",
       "group": "",
-      "sample": "chatterbox-turbo.mp3",
+      "sample": "chatterbox-turbo.mp3?v=6ca98b6a",
       "cells": [
         {
           "v": "Chatterbox Turbo",
@@ -251,10 +251,123 @@
       ]
     },
     {
+      "config": "nt-2e-q8-cpu",
+      "display": "NeuTTS-2E Q8 CPU",
+      "group": "neu",
+      "sample": null,
+      "cells": [
+        {
+          "v": "NeuTTS-2E Q8 CPU",
+          "sort": "nt-2e-q8-cpu",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "?",
+          "sort": "?",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.4 GB",
+          "sort": "1433.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0535",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.61x",
+          "sort": "0.6056",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.32s",
+          "sort": "2.3164",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.83s",
+          "sort": "3.8252",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The best 2E configuration, and absent from this table until now - Neuphonic publish a Q8_0 that was never measured.",
+          "sort": "The best 2E configuration, and absent fr",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "kittentts",
       "display": "KittenTTS",
       "group": "",
-      "sample": "kittentts.mp3",
+      "sample": "kittentts.mp3?v=a3879f94",
       "cells": [
         {
           "v": "KittenTTS",
@@ -367,7 +480,7 @@
       "config": "qwen3-tts",
       "display": "Qwen3-TTS",
       "group": "",
-      "sample": "qwen3-tts.mp3",
+      "sample": "qwen3-tts.mp3?v=c11c9163",
       "cells": [
         {
           "v": "Qwen3-TTS",
@@ -480,7 +593,7 @@
       "config": "chatterbox",
       "display": "Chatterbox",
       "group": "",
-      "sample": "chatterbox.mp3",
+      "sample": "chatterbox.mp3?v=5d698986",
       "cells": [
         {
           "v": "Chatterbox",
@@ -593,7 +706,7 @@
       "config": "f5-tts",
       "display": "F5-TTS",
       "group": "",
-      "sample": "f5-tts.mp3",
+      "sample": "f5-tts.mp3?v=d66c2cec",
       "cells": [
         {
           "v": "F5-TTS",
@@ -706,7 +819,7 @@
       "config": "dots-tts",
       "display": "Dots-TTS (partial)",
       "group": "",
-      "sample": "dots-tts.mp3",
+      "sample": "dots-tts.mp3?v=95c4bd16",
       "cells": [
         {
           "v": "Dots-TTS (partial)",
@@ -819,7 +932,7 @@
       "config": "kokoro",
       "display": "Kokoro",
       "group": "",
-      "sample": "kokoro.mp3",
+      "sample": "kokoro.mp3?v=17f424fa",
       "cells": [
         {
           "v": "Kokoro",
@@ -929,10 +1042,236 @@
       ]
     },
     {
+      "config": "xtts",
+      "display": "XTTS",
+      "group": "",
+      "sample": "xtts.mp3?v=ac705b6a",
+      "cells": [
+        {
+          "v": "XTTS",
+          "sort": "xtts",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CPML (non-commercial)",
+          "sort": "CPML (non-commercial)",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "0.47B",
+          "sort": "470.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-11",
+          "sort": "202311",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.8 GB",
+          "sort": "1843.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.8 GB",
+          "sort": "1843.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0803",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.00",
+          "sort": "4.00",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.72x",
+          "sort": "4.7168",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "20.28s",
+          "sort": "20.2795",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.30s",
+          "sort": "4.2994",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Coqui XTTS v2. Clones from a reference clip; scored against a piper sample as reference.",
+          "sort": "Coqui XTTS v2. Clones from a reference c",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "nt-2e-q8-metal",
+      "display": "NeuTTS-2E Q8 Metal",
+      "group": "neu",
+      "sample": null,
+      "cells": [
+        {
+          "v": "NeuTTS-2E Q8 Metal",
+          "sort": "nt-2e-q8-metal",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "?",
+          "sort": "?",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.4 GB",
+          "sort": "1433.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9%",
+          "sort": "0.0891",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "·",
+          "sort": "",
+          "tone": "pending",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.46x",
+          "sort": "0.4567",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.89s",
+          "sort": "1.8868",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.13s",
+          "sort": "4.1314",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Q8 on Metal, 3.5 points behind the same weights on CPU - the same split the q4 pair shows.",
+          "sort": "Q8 on Metal, 3.5 points behind the same ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "nt-2e-fp32-cpu",
       "display": "NeuTTS-2E FP32 CPU",
       "group": "neu",
-      "sample": "nt-2e-fp32-cpu.mp3",
+      "sample": "nt-2e-fp32-cpu.mp3?v=def4b0e9",
       "cells": [
         {
           "v": "NeuTTS-2E FP32 CPU",
@@ -1045,7 +1384,7 @@
       "config": "nt-2e-q4-cpu",
       "display": "NeuTTS-2E Q4 CPU",
       "group": "neu",
-      "sample": "nt-2e-q4-cpu.mp3",
+      "sample": "nt-2e-q4-cpu.mp3?v=3952b0a5",
       "cells": [
         {
           "v": "NeuTTS-2E Q4 CPU",
@@ -1158,7 +1497,7 @@
       "config": "nt-2e-fp32-mps",
       "display": "NeuTTS-2E FP32 MPS",
       "group": "neu",
-      "sample": "nt-2e-fp32-mps.mp3",
+      "sample": "nt-2e-fp32-mps.mp3?v=130f14fb",
       "cells": [
         {
           "v": "NeuTTS-2E FP32 MPS",
@@ -1271,7 +1610,7 @@
       "config": "chatterbox-q8",
       "display": "Chatterbox Q8",
       "group": "",
-      "sample": "chatterbox-q8.mp3",
+      "sample": "chatterbox-q8.mp3?v=d8dfba9e",
       "cells": [
         {
           "v": "Chatterbox Q8",
@@ -1384,7 +1723,7 @@
       "config": "vibevoice",
       "display": "VibeVoice",
       "group": "",
-      "sample": "vibevoice.mp3",
+      "sample": "vibevoice.mp3?v=254bd085",
       "cells": [
         {
           "v": "VibeVoice",
@@ -1497,7 +1836,7 @@
       "config": "nt-2e-q4-metal",
       "display": "NeuTTS-2E Q4 Metal",
       "group": "neu",
-      "sample": "nt-2e-q4-metal.mp3",
+      "sample": "nt-2e-q4-metal.mp3?v=47039dd7",
       "cells": [
         {
           "v": "NeuTTS-2E Q4 Metal",
@@ -1610,7 +1949,7 @@
       "config": "cosyvoice3-rl",
       "display": "CosyVoice3 RL",
       "group": "",
-      "sample": "cosyvoice3-rl.mp3",
+      "sample": "cosyvoice3-rl.mp3?v=13929837",
       "cells": [
         {
           "v": "CosyVoice3 RL",
@@ -1723,7 +2062,7 @@
       "config": "chatterbox-q4",
       "display": "Chatterbox Q4",
       "group": "",
-      "sample": "chatterbox-q4.mp3",
+      "sample": "chatterbox-q4.mp3?v=83de8f42",
       "cells": [
         {
           "v": "Chatterbox Q4",
@@ -1836,7 +2175,7 @@
       "config": "styletts2",
       "display": "StyleTTS2",
       "group": "",
-      "sample": "styletts2.mp3",
+      "sample": "styletts2.mp3?v=f895a04a",
       "cells": [
         {
           "v": "StyleTTS2",
@@ -1949,7 +2288,7 @@
       "config": "melotts",
       "display": "MeloTTS",
       "group": "",
-      "sample": "melotts.mp3",
+      "sample": "melotts.mp3?v=cc97d4fa",
       "cells": [
         {
           "v": "MeloTTS",
@@ -2062,7 +2401,7 @@
       "config": "omnivoice",
       "display": "OmniVoice",
       "group": "",
-      "sample": "omnivoice.mp3",
+      "sample": "omnivoice.mp3?v=207aab3d",
       "cells": [
         {
           "v": "OmniVoice",
@@ -2175,7 +2514,7 @@
       "config": "cosyvoice3",
       "display": "CosyVoice3",
       "group": "",
-      "sample": "cosyvoice3.mp3",
+      "sample": "cosyvoice3.mp3?v=8dcf6959",
       "cells": [
         {
           "v": "CosyVoice3",
@@ -2288,7 +2627,7 @@
       "config": "bananamind-tts",
       "display": "BananaMind TTS",
       "group": "",
-      "sample": "bananamind-tts.mp3",
+      "sample": "bananamind-tts.mp3?v=5077b87e",
       "cells": [
         {
           "v": "BananaMind TTS",
@@ -2401,7 +2740,7 @@
       "config": "fastpitch",
       "display": "FastPitch",
       "group": "",
-      "sample": "fastpitch.mp3",
+      "sample": "fastpitch.mp3?v=ffefb257",
       "cells": [
         {
           "v": "FastPitch",
@@ -2514,7 +2853,7 @@
       "config": "tada-3b",
       "display": "Tada 3B",
       "group": "",
-      "sample": "tada-3b.mp3",
+      "sample": "tada-3b.mp3?v=cc91942e",
       "cells": [
         {
           "v": "Tada 3B",
@@ -2627,7 +2966,7 @@
       "config": "zonos",
       "display": "Zonos (partial)",
       "group": "",
-      "sample": "zonos.mp3",
+      "sample": "zonos.mp3?v=dc94eccd",
       "cells": [
         {
           "v": "Zonos (partial)",
@@ -2740,7 +3079,7 @@
       "config": "csm",
       "display": "CSM",
       "group": "",
-      "sample": "csm.mp3",
+      "sample": "csm.mp3?v=a9819fb6",
       "cells": [
         {
           "v": "CSM",
@@ -2853,7 +3192,7 @@
       "config": "tada-1b",
       "display": "Tada 1B",
       "group": "",
-      "sample": "tada-1b.mp3",
+      "sample": "tada-1b.mp3?v=8f5c9027",
       "cells": [
         {
           "v": "Tada 1B",
@@ -2966,7 +3305,7 @@
       "config": "mms-tts",
       "display": "MMS-TTS",
       "group": "",
-      "sample": "mms-tts.mp3",
+      "sample": "mms-tts.mp3?v=6a891650",
       "cells": [
         {
           "v": "MMS-TTS",
@@ -3079,7 +3418,7 @@
       "config": "speecht5",
       "display": "SpeechT5",
       "group": "",
-      "sample": "speecht5.mp3",
+      "sample": "speecht5.mp3?v=38c871a3",
       "cells": [
         {
           "v": "SpeechT5",
@@ -3192,7 +3531,7 @@
       "config": "vibevoice-1.5b",
       "display": "VibeVoice 1.5B",
       "group": "",
-      "sample": "vibevoice-1.5b.mp3",
+      "sample": "vibevoice-1.5b.mp3?v=04e0b430",
       "cells": [
         {
           "v": "VibeVoice 1.5B",
@@ -3305,7 +3644,7 @@
       "config": "parler-tts",
       "display": "Parler-TTS (partial)",
       "group": "",
-      "sample": "parler-tts.mp3",
+      "sample": "parler-tts.mp3?v=e3a00da5",
       "cells": [
         {
           "v": "Parler-TTS (partial)",
@@ -3418,7 +3757,7 @@
       "config": "bark",
       "display": "Bark",
       "group": "",
-      "sample": "bark.mp3",
+      "sample": "bark.mp3?v=a7de9570",
       "cells": [
         {
           "v": "Bark",

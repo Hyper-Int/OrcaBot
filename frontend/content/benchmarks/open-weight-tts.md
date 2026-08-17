@@ -55,7 +55,7 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the eleven
+**Nothing is filtered out.** Every configuration compared is listed, including the twelve
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2.1x for readers who only care about what can be
