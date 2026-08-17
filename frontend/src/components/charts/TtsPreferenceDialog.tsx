@@ -148,16 +148,35 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
   const allPlaced = slots.length > 0 && slots.every(Boolean);
   const allHeard = items.length > 0 && items.every((c) => player.heard.has(keyFor(c)));
 
-  /** Put `config` in slot `i`, evicting whatever was there back to the tray. */
+  /** Put `config` in slot `i`.
+   *
+   *  Dropping onto an occupied slot swaps: the occupant takes the slot the
+   *  dragged clip just left. Evicting it to the tray instead - which is what
+   *  this did - punished the most ordinary correction there is. Deciding two
+   *  clips are the wrong way round meant dragging one over the other, watching
+   *  the other fly back to the top, and then having to place it again, so a
+   *  swap cost two moves and undid work the reader had already done.
+   *
+   *  A clip dragged in from the tray still displaces the occupant to the tray,
+   *  because there is no slot to swap it into. */
   const place = React.useCallback(
     (config: string, i: number) => {
       setSlots((prev) => {
-        const next = prev.map((c) => (c === config ? null : c)); // moving, not copying
-        const evicted = next[i];
+        const from = prev.indexOf(config); // -1 when it comes from the tray
+        const next = [...prev];
+        const occupant = next[i];
         next[i] = config;
+        // Assigning occupant (which may be null) also clears the source slot
+        // when the target was empty, so a plain move needs no special case.
+        if (from >= 0) next[from] = occupant;
+
         setAnnouncement(
           `Clip ${letterOf(config)} placed ${slotLabel(i, prev.length)}.` +
-            (evicted ? ` Clip ${letterOf(evicted)} returned to the tray.` : "")
+            (occupant
+              ? from >= 0
+                ? ` Swapped with clip ${letterOf(occupant)}, now ${slotLabel(from, prev.length)}.`
+                : ` Clip ${letterOf(occupant)} returned to the tray.`
+              : "")
         );
         return next;
       });
@@ -226,6 +245,18 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
       const target = slotAt(e.clientX, e.clientY);
       // A drag that lands nowhere is a cancel, not a selection.
       if (target !== null) place(d.config, target);
+
+      // Swallow the click this gesture is about to produce. Pointer capture
+      // sends it to the chip we grabbed - which sits in the slot we dragged
+      // *away from* - so it bubbles to that slot's handler and reads as a tap,
+      // putting the clip that just swapped in straight back to the tray. The
+      // drag looked like it evicted rather than swapped; it did swap, and then
+      // undid half of it a moment later.
+      const swallow = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      // If no click follows (some pointer types), take the listener back out
+      // rather than leaving it to eat the next real one.
+      window.setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 300);
     } else if (d.pickable) {
       // Never moved, and from the tray: a tap picks up or puts down.
       setHeld((h) => (h === d.config ? null : d.config));
