@@ -25,7 +25,7 @@ if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
 
-interface Cell { v: string; sort: string; tone: string; align: string }
+interface Cell { v: string; sort: string; tone: string; align: string; href?: string }
 interface Row { config: string; display: string; group: string; sample: string | null; cells: Cell[] }
 
 const ROWS = run.rows as Row[];
@@ -332,10 +332,10 @@ export function TtsResultsTable() {
                             >
                               <span aria-hidden="true">{isLoading ? "…" : isPlaying ? "■" : "▶"}</span>
                             </button>
-                            <span style={{ color: INK.primary }}>{c.v}</span>
+                            <CellText cell={c} color={INK.primary} />
                           </span>
                         ) : (
-                          c.v
+                          <CellText cell={c} />
                         )}
                       </td>
                     ))}
@@ -372,5 +372,26 @@ export function TtsResultsTable() {
         />
       )}
     </>
+  );
+}
+
+/** A cell's text, as a link when the data carries one. Opens off-site in a new
+ *  tab rather than navigating away from a table the reader is part-way through. */
+function CellText({ cell, color }: { cell: Cell; color?: string }) {
+  if (!cell.href) return <span style={{ color }}>{cell.v}</span>;
+  return (
+    <a
+      href={cell.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        color: color ?? "inherit",
+        textDecoration: "underline",
+        textUnderlineOffset: "2px",
+        textDecorationColor: AXIS,
+      }}
+    >
+      {cell.v}
+    </a>
   );
 }

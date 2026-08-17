@@ -48,7 +48,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "16M",
@@ -154,7 +155,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "0.54B",
@@ -185,8 +187,8 @@
           "restricted": false
         },
         {
-          "v": "1.5 GB",
-          "sort": "1536.0",
+          "v": "1.7 GB",
+          "sort": "1740.8",
           "tone": "",
           "align": "",
           "restricted": false
@@ -260,7 +262,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "73M",
@@ -366,7 +369,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "0.6B",
@@ -472,7 +476,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "0.54B",
@@ -578,7 +583,8 @@
           "sort": "CC-BY-NC-4.0",
           "tone": "",
           "align": "left",
-          "restricted": true
+          "restricted": true,
+          "href": "https://creativecommons.org/licenses/by-nc/4.0/"
         },
         {
           "v": "0.34B",
@@ -609,8 +615,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "1.1 GB",
+          "sort": "1126.4",
           "tone": "",
           "align": "",
           "restricted": false
@@ -715,8 +721,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "4.9 GB",
+          "sort": "5017.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -790,7 +796,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "82M",
@@ -927,8 +934,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "4.0 GB",
+          "sort": "4096.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1033,8 +1040,8 @@
           "restricted": false
         },
         {
-          "v": "1.5 GB",
-          "sort": "1536.0",
+          "v": "1.9 GB",
+          "sort": "1945.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1214,7 +1221,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "0.54B",
@@ -1320,7 +1328,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "1.02B",
@@ -1532,7 +1541,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "0.64B",
@@ -1563,8 +1573,8 @@
           "restricted": false
         },
         {
-          "v": "1.1 GB",
-          "sort": "1126.4",
+          "v": "1.0 GB",
+          "sort": "1024.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1638,7 +1648,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "0.54B",
@@ -1744,7 +1755,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "-",
@@ -1850,7 +1862,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "-",
@@ -1987,8 +2000,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "2.2 GB",
+          "sort": "2252.8",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2062,7 +2075,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "0.64B",
@@ -2168,7 +2182,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "-",
@@ -2199,8 +2214,8 @@
           "restricted": false
         },
         {
-          "v": "543 MB",
-          "sort": "543.0",
+          "v": "246 MB",
+          "sort": "246.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2274,7 +2289,8 @@
           "sort": "CC-BY-4.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://creativecommons.org/licenses/by/4.0/"
         },
         {
           "v": "-",
@@ -2305,8 +2321,8 @@
           "restricted": false
         },
         {
-          "v": "397 MB",
-          "sort": "397.0",
+          "v": "376 MB",
+          "sort": "376.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2411,8 +2427,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "8.4 GB",
+          "sort": "8601.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2486,7 +2502,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "1.6B",
@@ -2517,8 +2534,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "2.4 GB",
+          "sort": "2457.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2592,7 +2609,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "1.78B",
@@ -2729,8 +2747,8 @@
           "restricted": false
         },
         {
-          "v": "3.2 GB",
-          "sort": "3276.8",
+          "v": "3.0 GB",
+          "sort": "3072.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2804,7 +2822,8 @@
           "sort": "CC-BY-NC-4.0",
           "tone": "",
           "align": "left",
-          "restricted": true
+          "restricted": true,
+          "href": "https://creativecommons.org/licenses/by-nc/4.0/"
         },
         {
           "v": "36M",
@@ -2835,8 +2854,8 @@
           "restricted": false
         },
         {
-          "v": "1.2 GB",
-          "sort": "1228.8",
+          "v": "742 MB",
+          "sort": "742.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2910,7 +2929,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "157M",
@@ -3016,7 +3036,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "1.5B",
@@ -3047,8 +3068,8 @@
           "restricted": false
         },
         {
-          "v": "2.9 GB",
-          "sort": "2969.6",
+          "v": "2.4 GB",
+          "sort": "2457.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3122,7 +3143,8 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://www.apache.org/licenses/LICENSE-2.0"
         },
         {
           "v": "0.88B",
@@ -3153,8 +3175,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "2.2 GB",
+          "sort": "2252.8",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3228,7 +3250,8 @@
           "sort": "MIT",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://opensource.org/license/mit"
         },
         {
           "v": "404M",

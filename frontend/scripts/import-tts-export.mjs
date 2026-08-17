@@ -57,6 +57,24 @@ const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
  *  did not. */
 const RENAME_COLUMNS = { "Total disk": "Disk", "WER base": "WER" };
 
+/** Canonical licence texts. Only SPDX-style identifiers with a stable, official
+ *  home are linked; NeuTTS's bespoke terms and "?" are left as plain text
+ *  because there is no authoritative page to point at, and guessing one is
+ *  worse than not linking. */
+const LICENCE_URLS = {
+  "MIT": "https://opensource.org/license/mit",
+  "Apache-2.0": "https://www.apache.org/licenses/LICENSE-2.0",
+  "CC-BY-4.0": "https://creativecommons.org/licenses/by/4.0/",
+  "CC-BY-NC-4.0": "https://creativecommons.org/licenses/by-nc/4.0/",
+};
+
+/** Where each model actually lives. Kept here rather than in the export, which
+ *  carries no URLs at all. A configuration with no entry renders as plain text:
+ *  several of these have no upstream model card to link to (the export says so
+ *  outright for OmniVoice), and a plausible-looking wrong link is worse than
+ *  none. */
+const MODEL_URLS = {};
+
 /** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
  *  SPDX id, and spelled out it is the widest cell in the column. */
 const REWRITE = {
@@ -230,10 +248,14 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
   const cells = tds
     .map((c, i) => {
       const rewrite = REWRITE[headers[i]];
-      return rewrite ? { ...c, v: rewrite(c.v) } : c;
+      const cell = rewrite ? { ...c, v: rewrite(c.v) } : c;
+      if (headers[i] === "Licence" && LICENCE_URLS[cell.v]) {
+        return { ...cell, href: LICENCE_URLS[cell.v] };
+      }
+      return cell;
     })
     .filter((_, i) => keep[i]);
-  cells[0] = { ...cells[0], v: display };
+  cells[0] = { ...cells[0], v: display, ...(MODEL_URLS[config] ? { href: MODEL_URLS[config] } : {}) };
 
   const sample = `${config}.mp3`;
   return {
