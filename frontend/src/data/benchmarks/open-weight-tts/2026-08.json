@@ -236,112 +236,6 @@
       ]
     },
     {
-      "config": "nt-2e-q8-cpu",
-      "display": "NeuTTS-2E Q8 CPU",
-      "group": "neu",
-      "sample": "nt-2e-q8-cpu.mp3?v=82aad063",
-      "cells": [
-        {
-          "v": "NeuTTS-2E Q8 CPU",
-          "sort": "nt-2e-q8-cpu",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "?",
-          "sort": "?",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NeuTTS, <$5M",
-          "sort": "NeuTTS, under $5M",
-          "tone": "",
-          "align": "left",
-          "restricted": true
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-07",
-          "sort": "202607",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.4 GB",
-          "sort": "1433.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5%",
-          "sort": "0.0535",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.61x",
-          "sort": "0.6056",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.32s",
-          "sort": "2.3164",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.83s",
-          "sort": "3.8252",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "The best 2E configuration, and absent from this table until now - Neuphonic publish a Q8_0 that was never measured.",
-          "sort": "The best 2E configuration, and absent fr",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
       "config": "kittentts",
       "display": "KittenTTS",
       "group": "",
@@ -1085,12 +979,12 @@
     },
     {
       "config": "nt-2e-q8-metal",
-      "display": "NeuTTS-2E Q8 Metal",
+      "display": "NeuTTS-2E Q8",
       "group": "neu",
       "sample": "nt-2e-q8-metal.mp3?v=9f6e6a25",
       "cells": [
         {
-          "v": "NeuTTS-2E Q8 Metal",
+          "v": "NeuTTS-2E Q8",
           "sort": "nt-2e-q8-metal",
           "tone": "",
           "align": "left",
@@ -1190,225 +1084,13 @@
       ]
     },
     {
-      "config": "nt-2e-fp32-cpu",
-      "display": "NeuTTS-2E FP32 CPU",
-      "group": "neu",
-      "sample": "nt-2e-fp32-cpu.mp3?v=def4b0e9",
-      "cells": [
-        {
-          "v": "NeuTTS-2E FP32 CPU",
-          "sort": "nt-2e-fp32-cpu",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NeuTTS, <$5M",
-          "sort": "NeuTTS, under $5M",
-          "tone": "",
-          "align": "left",
-          "restricted": true
-        },
-        {
-          "v": "0.24B",
-          "sort": "240.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-07",
-          "sort": "202607",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "771 MB",
-          "sort": "771.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.2 GB",
-          "sort": "2252.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.0 GB",
-          "sort": "2048.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9%",
-          "sort": "0.0894",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.42",
-          "sort": "3.42",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.42x",
-          "sort": "2.4187",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9.28s",
-          "sort": "9.2774",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.84s",
-          "sort": "3.8357",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.4x slower than the same weights quantized on Metal.",
-          "sort": "4.4x slower than the same weights quanti",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "nt-2e-q4-cpu",
-      "display": "NeuTTS-2E Q4 CPU",
-      "group": "neu",
-      "sample": "nt-2e-q4-cpu.mp3?v=3952b0a5",
-      "cells": [
-        {
-          "v": "NeuTTS-2E Q4 CPU",
-          "sort": "nt-2e-q4-cpu",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NeuTTS, <$5M",
-          "sort": "NeuTTS, under $5M",
-          "tone": "",
-          "align": "left",
-          "restricted": true
-        },
-        {
-          "v": "0.24B",
-          "sort": "240.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-07",
-          "sort": "202607",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "585 MB",
-          "sort": "585.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.0 GB",
-          "sort": "2048.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.8 GB",
-          "sort": "1843.2",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9%",
-          "sort": "0.0897",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.47",
-          "sort": "3.47",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.63x",
-          "sort": "0.6320",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.49s",
-          "sort": "2.4908",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.94s",
-          "sort": "3.9408",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "What you get by default. ~1 point behind fp32 - an excellent conversion.",
-          "sort": "What you get by default. ~1 point behind",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
       "config": "nt-2e-fp32-mps",
-      "display": "NeuTTS-2E FP32 MPS",
+      "display": "NeuTTS-2E FP32",
       "group": "neu",
       "sample": "nt-2e-fp32-mps.mp3?v=130f14fb",
       "cells": [
         {
-          "v": "NeuTTS-2E FP32 MPS",
+          "v": "NeuTTS-2E FP32",
           "sort": "nt-2e-fp32-mps",
           "tone": "",
           "align": "left",
@@ -1721,12 +1403,12 @@
     },
     {
       "config": "nt-2e-q4-metal",
-      "display": "NeuTTS-2E Q4 Metal",
+      "display": "NeuTTS-2E Q4",
       "group": "neu",
       "sample": "nt-2e-q4-metal.mp3?v=47039dd7",
       "cells": [
         {
-          "v": "NeuTTS-2E Q4 Metal",
+          "v": "NeuTTS-2E Q4",
           "sort": "nt-2e-q4-metal",
           "tone": "",
           "align": "left",

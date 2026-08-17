@@ -21,13 +21,12 @@ const RUN = '2026-08';
  * reader can complete and the server is then obliged to reject.
  */
 const CONFIGS = [
-  'piper', 'chatterbox-turbo', 'nt-2e-q8-cpu', 'kittentts', 'qwen3-tts',
-  'chatterbox', 'f5-tts', 'dots-tts', 'kokoro', 'xtts', 'nt-2e-q8-metal',
-  'nt-2e-fp32-cpu', 'nt-2e-q4-cpu', 'nt-2e-fp32-mps', 'chatterbox-q8',
-  'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl', 'chatterbox-q4',
-  'styletts2', 'melotts', 'omnivoice', 'cosyvoice3', 'bananamind-tts',
-  'fastpitch', 'tada-3b', 'zonos', 'csm', 'tada-1b', 'mms-tts', 'speecht5',
-  'vibevoice-1.5b', 'parler-tts', 'bark',
+  'piper', 'chatterbox-turbo', 'kittentts', 'qwen3-tts', 'chatterbox',
+  'f5-tts', 'dots-tts', 'kokoro', 'xtts', 'nt-2e-q8-metal', 'nt-2e-fp32-mps',
+  'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl',
+  'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice', 'cosyvoice3',
+  'bananamind-tts', 'fastpitch', 'tada-3b', 'zonos', 'csm', 'tada-1b',
+  'mms-tts', 'speecht5', 'vibevoice-1.5b', 'parler-tts', 'bark',
 ] as const;
 
 /**

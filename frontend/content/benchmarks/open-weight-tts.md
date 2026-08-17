@@ -33,7 +33,7 @@ face value.
   **Avg synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for sixteen of the thirty-four
+  `medium.en` was run too, but it did not finish for fifteen of the thirty-one
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones — so the true spread between engines is **wider** than this column
@@ -57,7 +57,7 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the twelve
+**Nothing is filtered out.** Every configuration compared is listed, including the eleven
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2.1x for readers who only care about what can be
@@ -80,11 +80,11 @@ ceiling and only mediocre audio has room to rise.
 **Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
 Differences under roughly two points are not resolvable at this sample size.
 
-**Device builds are listed separately.** The four NeuTTS-2E rows are one backbone crossed
-with both precisions and both devices. They are shown rather than pooled because the point
-of them is the comparison: the device changes the speed by a factor of four while the word
-error moves by around two points, which is the scale at which this corpus stops resolving
-differences at all.
+**One device per model.** The three NeuTTS-2E rows are one backbone at three precisions,
+all measured on the GPU path. The same weights were also run on CPU; those rows are not
+shown, so that one model takes one row, and their measurements remain in the raw export.
+On speed the device is worth about a third once the model is quantized, and nothing at all
+at fp32, against roughly five times for the quantizing itself.
 
 ### What is excluded, and why
 

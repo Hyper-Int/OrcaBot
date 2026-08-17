@@ -45,6 +45,12 @@ const OUT_AUDIO = "public/benchmarks/tts";
  *  the methodology instead. */
 const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in", "WER med"]);
 
+/** Configurations the comparison does not show. The NeuTTS-2E CPU builds are
+ *  the same weights as the rows that remain, run on a slower path: they tripled
+ *  the size of the NeuTTS band while saying nothing about the model, only about
+ *  the hardware it was pointed at. Their measurements stay in the raw export. */
+const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
+
 /** Shorter headers where the export's are longer than they need to be.
  *  Only one word error rate is shown, so it does not need qualifying: base.en
  *  is the recogniser that completed for every configuration, where medium.en
@@ -78,12 +84,9 @@ const DISPLAY = {
   "kittentts": "KittenTTS",
   "kokoro": "Kokoro",
   "melotts": "MeloTTS",
-  "nt-2e-fp32-cpu": "NeuTTS-2E FP32 CPU",
-  "nt-2e-fp32-mps": "NeuTTS-2E FP32 MPS",
-  "nt-2e-q4-cpu": "NeuTTS-2E Q4 CPU",
-  "nt-2e-q4-metal": "NeuTTS-2E Q4 Metal",
-  "nt-2e-q8-cpu": "NeuTTS-2E Q8 CPU",
-  "nt-2e-q8-metal": "NeuTTS-2E Q8 Metal",
+  "nt-2e-fp32-mps": "NeuTTS-2E FP32",
+  "nt-2e-q4-metal": "NeuTTS-2E Q4",
+  "nt-2e-q8-metal": "NeuTTS-2E Q8",
   "xtts": "XTTS",
   "omnivoice": "OmniVoice",
   "parler-tts": "Parler-TTS",
@@ -175,6 +178,13 @@ const claimed = Number(readme.match(/(\d+)\s+configurations/)?.[1] ?? 0);
 if (claimed && claimed !== rawRows.length) {
   console.log(`  i README counts ${claimed} measured; ${rawRows.length} are in the comparison`);
 }
+
+const kept = rawRows.filter((r) => !DROP_ROWS.has(r[2].match(/data-sort="([^"]+)"/)?.[1] ?? ""));
+if (kept.length !== rawRows.length) {
+  console.log(`  i not shown: ${[...DROP_ROWS].join(", ")}`);
+}
+rawRows.length = 0;
+rawRows.push(...kept);
 
 const keep = headers.map((h) => !DROP_COLUMNS.has(h));
 const columns = headers.filter((_, i) => keep[i]).map((h) => RENAME_COLUMNS[h] ?? h);
