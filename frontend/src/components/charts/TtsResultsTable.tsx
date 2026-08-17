@@ -53,9 +53,9 @@ const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** The full table measures 1603px; past that, extra width is dead space.
+/** The full table measures 1530px; past that, extra width is dead space.
  *  Re-measure if columns change. */
-const MAX_TABLE_WIDTH = 1620;
+const MAX_TABLE_WIDTH = 1550;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";

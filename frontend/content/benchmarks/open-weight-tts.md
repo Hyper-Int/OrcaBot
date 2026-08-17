@@ -32,10 +32,12 @@ face value.
   any engine that emits excess silence**, because padding inflates the denominator. Prefer
   **Avg synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
-- **WER base / WER med** are the same audio scored by Whisper `base.en` and `medium.en`.
-  They are not interchangeable: the weaker model hallucinates onto trailing silence and
-  understates good engines more than bad ones, so the true spread between engines is wider
-  than `base.en` suggests.
+- **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
+  `medium.en` was run too, but it did not finish for sixteen of the thirty-four
+  configurations, so `base.en` is the one recogniser that covers the whole table. Being the
+  weaker model it hallucinates words onto trailing silence, which understates good engines
+  more than bad ones — so the true spread between engines is **wider** than this column
+  shows, not narrower.
 - **PESQ** is a no-reference perceptual quality estimate from torchaudio's SQUIM, scored on
   the sample in the first column. It is a second axis word error cannot see, because word
   error saturates once speech is merely intelligible. It measures signal quality, not

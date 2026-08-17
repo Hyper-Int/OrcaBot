@@ -15,8 +15,7 @@
     "Weights",
     "Disk",
     "Peak RSS",
-    "WER base",
-    "WER med",
+    "WER",
     "PESQ",
     "RTF",
     "Avg synth",
@@ -89,13 +88,6 @@
         {
           "v": "4%",
           "sort": "0.0375",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3%",
-          "sort": "0.0292",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -203,13 +195,6 @@
           "v": "4%",
           "sort": "0.0430",
           "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -327,13 +312,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "0.61x",
           "sort": "0.6056",
           "tone": "",
@@ -428,13 +406,6 @@
         {
           "v": "6%",
           "sort": "0.0567",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4%",
-          "sort": "0.0381",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -546,13 +517,6 @@
           "restricted": false
         },
         {
-          "v": "4%",
-          "sort": "0.0436",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.55",
           "sort": "3.55",
           "tone": "",
@@ -654,13 +618,6 @@
         {
           "v": "6%",
           "sort": "0.0631",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5%",
-          "sort": "0.0478",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -768,13 +725,6 @@
           "v": "6%",
           "sort": "0.0633",
           "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -892,13 +842,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "13.02x",
           "sort": "13.0239",
           "tone": "bad",
@@ -993,13 +936,6 @@
         {
           "v": "7%",
           "sort": "0.0684",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5%",
-          "sort": "0.0499",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -1107,13 +1043,6 @@
           "v": "8%",
           "sort": "0.0803",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -1231,13 +1160,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "0.46x",
           "sort": "0.4567",
           "tone": "",
@@ -1332,13 +1254,6 @@
         {
           "v": "9%",
           "sort": "0.0894",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "8%",
-          "sort": "0.0840",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1450,13 +1365,6 @@
           "restricted": false
         },
         {
-          "v": "9%",
-          "sort": "0.0878",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.47",
           "sort": "3.47",
           "tone": "",
@@ -1563,13 +1471,6 @@
           "restricted": false
         },
         {
-          "v": "7%",
-          "sort": "0.0663",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.29",
           "sort": "3.29",
           "tone": "",
@@ -1671,13 +1572,6 @@
         {
           "v": "10%",
           "sort": "0.1048",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "10%",
-          "sort": "0.0989",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1789,13 +1683,6 @@
           "restricted": false
         },
         {
-          "v": "8%",
-          "sort": "0.0819",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.21",
           "sort": "3.21",
           "tone": "",
@@ -1897,13 +1784,6 @@
         {
           "v": "11%",
           "sort": "0.1092",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9%",
-          "sort": "0.0887",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2015,13 +1895,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.67",
           "sort": "3.67",
           "tone": "",
@@ -2123,13 +1996,6 @@
         {
           "v": "12%",
           "sort": "0.1183",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9%",
-          "sort": "0.0892",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2241,13 +2107,6 @@
           "restricted": false
         },
         {
-          "v": "11%",
-          "sort": "0.1069",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.69",
           "sort": "3.69",
           "tone": "",
@@ -2349,13 +2208,6 @@
         {
           "v": "13%",
           "sort": "0.1252",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "8%",
-          "sort": "0.0840",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2467,13 +2319,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "3.50",
           "sort": "3.50",
           "tone": "",
@@ -2576,13 +2421,6 @@
           "v": "14%",
           "sort": "0.1408",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7%",
-          "sort": "0.0655",
-          "tone": "good",
           "align": "",
           "restricted": false
         },
@@ -2693,13 +2531,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "2.64",
           "sort": "2.64",
           "tone": "bad",
@@ -2802,13 +2633,6 @@
           "v": "15%",
           "sort": "0.1530",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -2926,13 +2750,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "2.13x",
           "sort": "2.1252",
           "tone": "bad",
@@ -3028,13 +2845,6 @@
           "v": "17%",
           "sort": "0.1668",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -3140,13 +2950,6 @@
         {
           "v": "18%",
           "sort": "0.1799",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "10%",
-          "sort": "0.1040",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3265,13 +3068,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.24x",
           "sort": "1.2394",
           "tone": "warn",
@@ -3367,13 +3163,6 @@
           "v": "22%",
           "sort": "0.2240",
           "tone": "warn",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -3484,13 +3273,6 @@
           "restricted": false
         },
         {
-          "v": "18%",
-          "sort": "0.1839",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1.67",
           "sort": "1.67",
           "tone": "bad",
@@ -3593,13 +3375,6 @@
           "v": "37%",
           "sort": "0.3703",
           "tone": "warn",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
           "align": "",
           "restricted": false
         },
@@ -3710,13 +3485,6 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "2.16",
           "sort": "2.16",
           "tone": "bad",
@@ -3818,13 +3586,6 @@
         {
           "v": "55%",
           "sort": "0.5539",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "50%",
-          "sort": "0.4981",
           "tone": "bad",
           "align": "",
           "restricted": false
