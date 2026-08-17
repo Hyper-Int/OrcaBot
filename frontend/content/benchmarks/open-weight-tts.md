@@ -9,8 +9,7 @@ Here are all the available TTS open weight models that can likely run in real-ti
 
 We tested them against the same corpus, using Whisper medium to transcribe back to text.
 
-Every row below can be played, so the fastest way to calibrate what a word error rate means
-is to listen to **Piper** at 4% and **SpeechT5** at 24%.
+Every row can be played, so you can hear what a word error rate actually sounds like.
 
 ## Results
 
@@ -23,37 +22,6 @@ tts-results
 ```chart
 tts-preference
 ```
-
-## What the numbers say
-
-**Nothing in thirty-one configurations is both more accurate and cheaper than Piper.**
-Nothing has a lower word error than its 4%, and nothing speaks a phrase in less compute
-than its 0.12s, at 0.04x real time. It is not the smallest: BananaMind TTS is 38 MB against
-Piper's 60 MB of weights, and pays for it with 14% word error. Piper is a 2023 feed-forward
-model with no cloning, no emotion, no prompt conditioning and no torch in the dependency
-tree at all, and for reading text aloud it remains the answer.
-
-**The LM-backed engines do not win on intelligibility, and they are not sold on it.**
-**Qwen3-TTS** reaches 6%, matching the small feed-forward models while costing roughly 20×
-the compute per phrase. **Chatterbox Turbo** is the notable arrival: 4% word error at 0.98x
-real time, which is the first LM-backed engine here to reach Piper's accuracy and still
-keep up with its own speech. What that compute buys is voice cloning and emotional range,
-neither of which a word error rate can see. Judge them by ear.
-
-**Quantization is what makes the LM-backed engines viable at all.** The NeuTTS-2E band
-shows it directly: both fp32 builds sit at 2.42x and 2.44x, and quantizing the same weights
-to Q4 takes them to 0.63x on CPU and 0.48x on Metal, a four-fold speed-up. Chatterbox tells
-the same story across one family, from 4.19x for the full build to 2.22x at q8, 2.03x at
-Q4, and 0.98x for Turbo, which is faster and more accurate than any of them. That trade is
-invisible on any published model card.
-
-**Four engines are not really in the running.** **Bark** at 55% word error invents lead-in
-words that were never in the phrase; **Parler-TTS** at 39% could not finish the corpus in
-the time allowed; **VibeVoice 1.5B** manages 37% while being larger and markedly worse than
-the 1.02B build above it, and posts the lowest perceptual quality measured here at 1.60;
-and **SpeechT5** at 24% sits below the threshold where output is reliably usable. Eight
-configurations score under 3 on PESQ, so that is no longer the outlier it was when only the
-real-time set was listed.
 
 ## How to read each column
 
