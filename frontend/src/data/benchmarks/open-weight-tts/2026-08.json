@@ -888,8 +888,8 @@
           "restricted": false
         },
         {
-          "v": "441 MB",
-          "sort": "441.0",
+          "v": "3.5 GB",
+          "sort": "3584.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1494,8 +1494,8 @@
           "restricted": false
         },
         {
-          "v": "1.5 GB",
-          "sort": "1536.0",
+          "v": "1.4 GB",
+          "sort": "1433.6",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1797,8 +1797,8 @@
           "restricted": false
         },
         {
-          "v": "1.0 GB",
-          "sort": "1024.0",
+          "v": "1023 MB",
+          "sort": "1023.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1898,8 +1898,8 @@
           "restricted": false
         },
         {
-          "v": "1.1 GB",
-          "sort": "1126.4",
+          "v": "1.2 GB",
+          "sort": "1228.8",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2302,8 +2302,8 @@
           "restricted": false
         },
         {
-          "v": "1.0 GB",
-          "sort": "1024.0",
+          "v": "999 MB",
+          "sort": "999.0",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3319,9 +3319,9 @@
           "restricted": false
         },
         {
-          "v": "39%",
-          "sort": "0.3946",
-          "tone": "warn",
+          "v": "42%",
+          "sort": "0.4224",
+          "tone": "bad",
           "align": "",
           "restricted": false
         },
@@ -3333,15 +3333,15 @@
           "restricted": false
         },
         {
-          "v": "3.90x",
-          "sort": "3.8972",
+          "v": "2.84x",
+          "sort": "2.8388",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "31.23s",
-          "sort": "31.2313",
+          "v": "25.29s",
+          "sort": "25.2889",
           "tone": "bad",
           "align": "",
           "restricted": false
