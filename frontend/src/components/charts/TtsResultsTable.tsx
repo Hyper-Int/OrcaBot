@@ -56,15 +56,24 @@ const NOTES_COL = COLUMNS.indexOf("Notes");
  *  same way and the position can be computed before it renders. */
 const NOTE_WIDTH = 320;
 
+const LICENCE_COL = COLUMNS.indexOf("Licence");
+/** Widest licence that should fit whole: "NeuTTS, <$5M" measures 90px at this
+ *  font. Anything longer - only "CPML (non-commercial)" at 144px today - is
+ *  clipped to an ellipsis and readable on hover, rather than setting the width
+ *  of a column that is otherwise four characters wide. */
+const LICENCE_MAX = 92;
+
 /** Opening sort: compute per phrase, cheapest first. Word error was the old
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** The full table measures 1377px now that Notes is an icon; past that, extra
- *  width just stretches the columns. Re-measure if columns change. */
-const MAX_TABLE_WIDTH = 1400;
+/** The table's natural width, with Notes collapsed to an icon and the cell
+ *  padding trimmed. Past this the columns just stretch, so the breakout stops
+ *  here rather than filling whatever the viewport offers. Re-measure if columns
+ *  or padding change. */
+const MAX_TABLE_WIDTH = 1260;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
@@ -349,7 +358,7 @@ export function TtsResultsTable() {
                         }
                         style={{
                           font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
-                          border: "none", padding: "0.5rem 0.6rem", width: "100%", textAlign: i === 0 ? "left" : "right",
+                          border: "none", padding: "0.5rem 0.45rem", width: "100%", textAlign: i === 0 ? "left" : "right",
                           cursor: i === NOTES_COL ? "default" : "pointer",
                           fontWeight: 600, whiteSpace: "nowrap",
                         }}
@@ -376,7 +385,7 @@ export function TtsResultsTable() {
                       <td
                         key={ci}
                         style={{
-                          padding: "0.35rem 0.6rem",
+                          padding: "0.35rem 0.45rem",
                           textAlign:
                             ci === NOTES_COL ? "center" : ci === 0 || c.align === "left" ? "left" : "right",
                           color:
@@ -414,6 +423,22 @@ export function TtsResultsTable() {
                               <span aria-hidden="true">i</span>
                             </button>
                           ) : null
+                        ) : ci === LICENCE_COL && c.v ? (
+                          <span
+                            // Only pops up when the text is actually clipped, so
+                            // MIT and Apache-2.0 stay quiet.
+                            onMouseEnter={(e) => {
+                              const el = e.currentTarget;
+                              if (el.scrollWidth > el.clientWidth + 1) openNote(e, `${r.config}:lic`, c.v);
+                            }}
+                            onMouseLeave={() => closeIfNotPinned(`${r.config}:lic`)}
+                            style={{
+                              display: "inline-block", maxWidth: LICENCE_MAX, verticalAlign: "bottom",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}
+                          >
+                            <CellText cell={c} />
+                          </span>
                         ) : ci === 0 ? (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
                             <button
