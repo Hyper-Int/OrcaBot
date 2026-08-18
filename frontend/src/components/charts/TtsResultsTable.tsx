@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v3-sound-diagnostics
+// REVISION: tts-results-table-v4-element-playback
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer, type Report } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v3-sound-diagnostics";
+const MODULE_REVISION = "tts-results-table-v4-element-playback";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -584,7 +584,7 @@ export function TtsResultsTable() {
                               type="button"
                               disabled={!r.sample}
                               onClick={() => onPlayClick(r)}
-                              onPointerEnter={player.prime}
+                              onPointerEnter={() => player.prime(r.sample ?? undefined)}
                               aria-label={r.sample ? `${isPlaying ? "Stop" : "Play"} ${r.display} sample` : `No audio sample for ${r.display}`}
                               title={r.sample ? undefined : "No audio sample in this export"}
                               style={{
@@ -708,8 +708,9 @@ export function TtsResultsTable() {
             }}
           >
             <div style={{ marginBottom: "0.5rem" }}>
-              Each button plays something different. If the tone sounds but clips do not, the
-              problem is ours; if neither sounds, the browser is refusing to play at all.
+              Clips play through an audio element. The tone is the other route, Web Audio,
+              which Safari would not play here &mdash; it is kept as a check, not a fallback.
+              If the clip button is silent too, the browser is refusing this page sound.
             </div>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
               <button

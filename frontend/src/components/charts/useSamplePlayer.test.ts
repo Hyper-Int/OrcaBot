@@ -1,335 +1,218 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// Safari suspends an AudioContext that has been silent for a while, and
-// interrupts one whose tab is backgrounded. Coming back needs resume() from
-// inside a user gesture - and a gesture does not survive an await, so the
-// resume has to be issued in the synchronous part of the click, before the
-// clip is fetched.
+// Clips play through an <audio> element because Safari would not play Web Audio
+// on this page at all - a reader's test tone was silent while the same clip
+// through an element played. So these tests are about the element: that it is
+// reused rather than recreated (iOS ties its permission to the element), that a
+// refusal is reported instead of swallowed, and that the clip is fully fetched
+// before it is played, which is the guarantee Web Audio used to provide.
 //
-// The fake below enforces exactly that rule: resume() succeeds only while
-// `gesture` is true, and the test turns it off before releasing the fetch. A
-// player that resumes only after decoding therefore fails these tests, which is
-// what the real page did - the first plays worked, then Safari suspended the
-// context and every later click was refused.
+// The tone probe still exercises Web Audio, and its fake keeps the WebKit rule
+// that a resume it will not grant never settles - so a probe that awaited one
+// would hang the very diagnostics that exist to explain a hang.
 
 import { renderHook, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSamplePlayer } from "./useSamplePlayer";
 
-/** Stands in for user activation. Safari drops it at the first await. */
-let gesture = false;
-/** How a refused resume() behaves: "reject" is Chrome, "hang" is WebKit. */
-let refuseMode: "reject" | "hang" = "reject";
-/** Whether the <audio> fallback is allowed to play. */
-let elementPlays = true;
-/** A context can report "running" while its clock stands still - iOS does this
- *  when the audio session is held elsewhere, and the clip is inaudible. */
-let clockFrozen = false;
+let elementPlays: "yes" | "notallowed" | "error" = "yes";
 let elements: FakeAudio[] = [];
+let fetches: string[] = [];
+let pendingFetches: Array<() => void> = [];
+/** Whether a resume the fake context refuses hangs (WebKit) or rejects. */
+let resumeHangs = false;
 
-/** jsdom has no working HTMLMediaElement playback, so the fallback needs one. */
 class FakeAudio {
   src = "";
+  preload = "";
   currentTime = 0;
   paused = true;
+  readyState = 4;
+  error: { code: number } | null = null;
   onended: (() => void) | null = null;
   constructor() { elements.push(this); }
   play() {
-    if (!elementPlays) return Promise.reject(new Error("NotAllowedError"));
+    if (elementPlays === "notallowed") return Promise.reject(new Error("NotAllowedError: gesture"));
+    if (elementPlays === "error") return Promise.reject(new Error("NotSupportedError"));
     this.paused = false;
+    this.currentTime = 0.2;
     return Promise.resolve();
   }
   pause() { this.paused = true; }
   removeAttribute() {}
 }
-let contexts: FakeContext[] = [];
-/** Fetches resolve only when the test says so, so "during the gesture" and
- *  "after the gesture" are ordering facts rather than timer races. */
-let pendingFetches: Array<() => void> = [];
-
-class FakeSource {
-  buffer: unknown = null;
-  onended: (() => void) | null = null;
-  started = false;
-  connect() {}
-  start() { this.started = true; }
-  stop() {}
-}
 
 class FakeContext {
   state = "suspended";
-  get currentTime() { return clockFrozen ? 0 : performance.now() / 1000; }
-  sampleRate = 48000;
+  currentTime = 0;
   destination = {};
-  resumeCalls = 0;
-  /** resume() calls that were issued with no gesture behind them. */
-  refusedResumes = 0;
-  sources: FakeSource[] = [];
   private listeners: Array<() => void> = [];
-
-  constructor() { contexts.push(this); }
-
-  addEventListener(type: string, cb: () => void) {
-    if (type === "statechange") this.listeners.push(cb);
-  }
+  addEventListener(t: string, cb: () => void) { if (t === "statechange") this.listeners.push(cb); }
   removeEventListener() {}
-
-  /** What WebKit does on its own: silence suspension, or an interruption. */
-  setState(s: string) {
-    this.state = s;
-    for (const l of this.listeners) l();
-  }
-
-  /** WebKit does not reject a resume it will not grant - it leaves the promise
-   *  pending for good. `refuseMode` picks which browser this fake imitates. */
   resume(): Promise<void> {
-    this.resumeCalls++;
-    if (!gesture) {
-      this.refusedResumes++;
-      return refuseMode === "hang"
-        ? new Promise<void>(() => { /* never settles, as WebKit does */ })
-        : Promise.reject(new Error("NotAllowedError"));
-    }
-    this.setState("running");
+    if (resumeHangs) return new Promise<void>(() => { /* WebKit: never answers */ });
+    this.state = "running";
+    for (const l of this.listeners) l();
     return Promise.resolve();
   }
-
-  createBufferSource() {
-    const s = new FakeSource();
-    this.sources.push(s);
-    return s;
-  }
-  createBuffer() { return { duration: 0.5 }; }
-  async decodeAudioData() { return { fake: true }; }
-  async close() { this.setState("closed"); }
+  createOscillator() { return { frequency: { value: 0 }, connect: (n: unknown) => n, start() {}, stop() {} }; }
+  createGain() { return { gain: { value: 0 }, connect: (n: unknown) => n }; }
+  async close() {}
 }
 
 function releaseFetches() {
-  const queued = pendingFetches;
+  const q = pendingFetches;
   pendingFetches = [];
-  for (const r of queued) r();
+  for (const r of q) r();
 }
 
-/** One click: the synchronous part runs under a gesture, then activation is
- *  dropped and the clip download is allowed to complete - the real order. */
+/** One click, then the download completing after it - the real order. */
 async function click(play: () => void) {
-  gesture = true;
   act(() => { play(); });
-  gesture = false;
   await act(async () => {
     releaseFetches();
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
   });
 }
 
 beforeEach(() => {
-  gesture = false;
-  refuseMode = "reject";
-  elementPlays = true;
-  clockFrozen = false;
+  elementPlays = "yes";
+  resumeHangs = false;
   elements = [];
-  vi.stubGlobal("Audio", FakeAudio);
-  vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:clip", revokeObjectURL: () => {} });
-  contexts = [];
+  fetches = [];
   pendingFetches = [];
+  vi.stubGlobal("Audio", FakeAudio);
   vi.stubGlobal("AudioContext", FakeContext);
-  vi.stubGlobal("fetch", () =>
-    new Promise((resolve) => {
-      pendingFetches.push(() => resolve({ arrayBuffer: async () => new ArrayBuffer(8) }));
-    })
-  );
+  vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:clip", revokeObjectURL: () => {} });
+  vi.stubGlobal("fetch", (u: string) => {
+    fetches.push(u);
+    return new Promise((resolve) => {
+      pendingFetches.push(() => resolve({ ok: true, status: 200, blob: async () => ({ size: 8 }) }));
+    });
+  });
 });
 
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("useSamplePlayer", () => {
-  it("plays the first clip", async () => {
+  it("plays a clip through the element", async () => {
     const { result } = renderHook(() => useSamplePlayer("/a/"));
     await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
 
     expect(result.current.playing).toBe("kokoro");
     expect(result.current.problem).toBeNull();
-  });
-
-  it("plays again after WebKit suspends the context between clips", async () => {
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-    await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
-    act(() => { result.current.stop(); });
-
-    // Minutes pass with nothing sounding; Safari powers the context down.
-    act(() => { contexts[0].setState("suspended"); });
-
-    await click(() => void result.current.toggle("piper", "piper.mp3"));
-
-    expect(result.current.problem).toBeNull();
-    expect(result.current.playing).toBe("piper");
-    expect(contexts[0].sources.at(-1)?.started).toBe(true);
-    // The recovery must come from the in-gesture resume, not from a hopeful
-    // one issued after the download - that is the call Safari rejects.
-    expect(contexts[0].refusedResumes).toBe(0);
-  });
-
-  it("survives repeated suspensions, not just the first", async () => {
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-    for (const key of ["a", "b", "c", "d"]) {
-      act(() => { contexts[0]?.setState("suspended"); });
-      await click(() => void result.current.toggle(key, `${key}.mp3`));
-      expect(result.current.playing).toBe(key);
-      act(() => { result.current.stop(); });
-    }
-    expect(contexts[0].refusedResumes).toBe(0);
-  });
-
-  it("reports blocked rather than pretending to play when nothing may play", async () => {
-    elementPlays = false;
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-    // No gesture at all - what a scripted play would look like. The report
-    // comes after the grace period, since a resume granted late still counts.
-    act(() => { void result.current.toggle("kokoro", "kokoro.mp3"); });
-    await act(async () => {
-      releaseFetches();
-      await new Promise((r) => setTimeout(r, 900));
-    });
-
-    expect(result.current.playing).toBeNull();
-    expect(result.current.problem).toBe("blocked");
-  });
-
-  it("falls back to an element when the context will not run", async () => {
-    // Whatever WebKit is refusing the context - autoplay policy, a stuck
-    // interruption - a media element answers to a different, lighter policy,
-    // and the bytes are already local so the clip still starts whole.
-    refuseMode = "hang";
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-
-    act(() => { void result.current.toggle("kokoro", "kokoro.mp3"); });
-    await act(async () => {
-      releaseFetches();
-      await new Promise((r) => setTimeout(r, 900));
-    });
-
-    expect(result.current.playing).toBe("kokoro");
-    expect(result.current.problem).toBeNull();
+    expect(result.current.loading).toBeNull();
     expect(elements.at(-1)?.paused).toBe(false);
-    // Nothing was played through Web Audio - the source would have been silent.
-    expect(contexts[0].sources.some((s) => s.started && s.buffer)).toBe(false);
   });
 
-  it("counts a clip heard through the fallback, and stops it on demand", async () => {
-    refuseMode = "hang";
+  it("fetches the whole clip before playing it", async () => {
+    // Web Audio was originally chosen because an element started from a URL can
+    // begin before the file has arrived and swallow the first word. Fetching to
+    // a blob first keeps that guarantee without Web Audio.
     const { result } = renderHook(() => useSamplePlayer("/a/"));
-    act(() => { void result.current.toggle("kokoro", "kokoro.mp3"); });
-    await act(async () => {
-      releaseFetches();
-      await new Promise((r) => setTimeout(r, 900));
-    });
+    await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
 
-    act(() => { elements.at(-1)!.onended?.(); });
-    expect(result.current.heard.has("kokoro")).toBe(true);
-    expect(result.current.playing).toBeNull();
+    expect(fetches).toEqual(["/a/kokoro.mp3"]);
+    expect(elements.at(-1)?.src.startsWith("blob:")).toBe(true);
+  });
 
-    // And a second clip stopped mid-way leaves nothing sounding.
-    act(() => { void result.current.toggle("piper", "piper.mp3"); });
-    await act(async () => {
-      releaseFetches();
-      await new Promise((r) => setTimeout(r, 900));
-    });
-    expect(result.current.playing).toBe("piper");
+  it("reuses one element across clips", async () => {
+    // iOS grants playback to the element the reader started, not to the page.
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    await click(() => void result.current.toggle("b", "b.mp3"));
+
+    expect(elements.length).toBe(1);
+    expect(result.current.playing).toBe("b");
+  });
+
+  it("fetches each clip once, however often it is played", async () => {
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
     act(() => { result.current.stop(); });
+    await click(() => void result.current.toggle("a", "a.mp3"));
+
+    expect(fetches).toEqual(["/a/a.mp3"]);
+  });
+
+  it("stops when the sounding clip is clicked again", async () => {
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    await act(async () => { await result.current.toggle("a", "a.mp3"); });
+
     expect(result.current.playing).toBeNull();
     expect(elements.at(-1)?.paused).toBe(true);
   });
 
-  it("switches to the element when the context runs but makes no sound", async () => {
-    // The nastiest shape of this: everything reports success and the reader
-    // hears nothing. Only the audio clock gives it away.
-    clockFrozen = true;
+  it("counts a clip heard only when it runs to the end", async () => {
     const { result } = renderHook(() => useSamplePlayer("/a/"));
-    await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    expect(result.current.heard.has("a")).toBe(false);
 
-    // Web Audio was used first - it claimed to be running.
-    expect(contexts[0].sources.at(-1)?.started).toBe(true);
-    expect(result.current.playing).toBe("kokoro");
-
-    await act(async () => { await new Promise((r) => setTimeout(r, 500)); });
-
-    expect(elements.at(-1)?.paused).toBe(false);
-    expect(result.current.playing).toBe("kokoro");
-    expect(result.current.problem).toBeNull();
+    act(() => { elements.at(-1)!.onended?.(); });
+    expect(result.current.heard.has("a")).toBe(true);
+    expect(result.current.playing).toBeNull();
   });
 
-  // The pair below are the WebKit shape of the problem. Safari does not reject
-  // a resume it will not grant, it simply never answers - so any code that
-  // awaits one stops dead, and the play button does nothing at all rather than
-  // failing visibly.
-  it("plays on WebKit, where a refused resume never settles", async () => {
-    refuseMode = "hang";
+  it("does not count a clip that was stopped part-way", async () => {
     const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    const el = elements.at(-1)!;
+    act(() => { result.current.stop(); });
+    act(() => { el.onended?.(); });
 
-    // Hovering the button first is what a mouse user always does, and it used
-    // to leave a permanently pending resume behind for the click to await.
-    act(() => { result.current.prime(); });
-
-    let settled = false;
-    gesture = true;
-    act(() => { void result.current.toggle("kokoro", "kokoro.mp3").then(() => { settled = true; }); });
-    gesture = false;
-    await act(async () => {
-      releaseFetches();
-      await Promise.race([
-        new Promise((r) => setTimeout(r, 300)),
-        new Promise((r) => setTimeout(r, 0)),
-      ]);
-    });
-
-    expect(settled).toBe(true);
-    expect(result.current.playing).toBe("kokoro");
-    expect(result.current.loading).toBeNull();
+    expect(result.current.heard.has("a")).toBe(false);
   });
 
-  it("gives up and says blocked rather than hanging on a promise WebKit never answers", async () => {
-    refuseMode = "hang";
-    // Nothing may play at all, so the only way out of the click is the timeout.
-    elementPlays = false;
+  it("says blocked when the browser refuses to play", async () => {
+    elementPlays = "notallowed";
     const { result } = renderHook(() => useSamplePlayer("/a/"));
-
-    act(() => { void result.current.toggle("kokoro", "kokoro.mp3"); });
-    await act(async () => {
-      releaseFetches();
-      await new Promise((r) => setTimeout(r, 900));
-    });
+    await click(() => void result.current.toggle("a", "a.mp3"));
 
     expect(result.current.problem).toBe("blocked");
-    // The spinner has to come back too - the finally clause only runs if the
-    // await above ever returned.
+    expect(result.current.playing).toBeNull();
     expect(result.current.loading).toBeNull();
-    expect(result.current.playing).toBeNull();
   });
 
-  it("clears the playing state when a clip is interrupted mid-flight", async () => {
+  it("distinguishes a clip that will not load from one that is refused", async () => {
+    elementPlays = "error";
     const { result } = renderHook(() => useSamplePlayer("/a/"));
-    await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
-    expect(result.current.playing).toBe("kokoro");
+    await click(() => void result.current.toggle("a", "a.mp3"));
 
-    // Another app takes the audio session. onended will never fire, so without
-    // the statechange listener the button stays stuck showing "stop".
-    act(() => { contexts[0].setState("interrupted"); });
-
-    expect(result.current.playing).toBeNull();
+    expect(result.current.problem).toBe("failed");
   });
 
-  it("does not count an interrupted clip as heard", async () => {
+  it("reports what it knows, without needing a console", async () => {
     const { result } = renderHook(() => useSamplePlayer("/a/"));
-    await click(() => void result.current.toggle("kokoro", "kokoro.mp3"));
-    const src = contexts[0].sources.at(-1)!;
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    const r = result.current.report();
 
-    act(() => { contexts[0].setState("interrupted"); });
-    // A late onended from the abandoned source must not mark it listened to;
-    // the ranking dialog gates on `heard`.
-    act(() => { src.onended?.(); });
+    expect(r.clipPath).toBe("element");
+    expect(r.revision).toContain("element-first");
+    expect(r.elementState).toContain("playing");
+    expect(r.cachedClips).toBe(1);
+  });
 
-    expect(result.current.heard.has("kokoro")).toBe(false);
+  it("keeps the tone probe out of playback entirely", async () => {
+    // Safari would not play the tone. Nothing a reader hears may depend on it,
+    // so a context must not even exist until the probe is run.
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    expect(result.current.report().toneContext).toBe("not created");
+
+    await act(async () => { await result.current.testTone(); });
+    expect(result.current.report().toneContext).toBe("running");
+  });
+
+  it("the tone probe answers rather than hanging when WebKit will not resume", async () => {
+    resumeHangs = true;
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    let answer = "";
+    await act(async () => { answer = await result.current.testTone(); });
+
+    expect(answer).toContain("stuck at");
   });
 });
