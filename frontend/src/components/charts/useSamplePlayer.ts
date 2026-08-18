@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-sample-player-v4-element-first
+// REVISION: tts-sample-player-v5-element-only
 // Shared clip playback for the TTS benchmark: the results table and the blind
 // ranking dialog both drive this one hook, so there is a single media element, a
 // single cache of fetched clips, and only ever one clip audible at a time.
@@ -29,38 +29,14 @@
 // make Web Audio imitate what an element does natively, and it was also the one
 // Safari-only line in the file, which is the shape the failure had.
 //
-// The context now exists solely for the test tone, created only if that probe is
-// run. Nothing a reader hears depends on it.
+// No AudioContext is constructed at all any more. The probes that established
+// the above have served their purpose and are gone with it.
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-sample-player-v4-element-first";
+const MODULE_REVISION = "tts-sample-player-v5-element-only";
 if (typeof window !== "undefined") {
   console.log(`[tts-sample-player] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
-}
-
-/** How long the tone probe waits for a context to start before reporting it
- *  stuck. Only the diagnostics use this; playback never waits on it. */
-const RESUME_GRACE_MS = 600;
-
-/** Resolve true once the context is running, false if it has not got there in
- *  `ms`. WebKit leaves a resume() promise it will not grant pending for the life
- *  of the page, so the state - which it does report - is the thing to wait on. */
-function whenRunning(ac: AudioContext, ms: number): Promise<boolean> {
-  if (String(ac.state) === "running") return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean) => {
-      if (settled) return;
-      settled = true;
-      ac.removeEventListener("statechange", onChange);
-      clearTimeout(timer);
-      resolve(v);
-    };
-    const onChange = () => { if (String(ac.state) === "running") finish(true); };
-    ac.addEventListener("statechange", onChange);
-    const timer = setTimeout(() => finish(String(ac.state) === "running"), ms);
-  });
 }
 
 export interface SamplePlayer {
@@ -81,29 +57,6 @@ export interface SamplePlayer {
   /** Set when a play attempt produced no sound, so the UI can say why rather
    *  than appearing to ignore the click. Null once a clip starts. */
   problem: "blocked" | "failed" | null;
-  /** Everything known about why sound is or is not happening, read fresh. For
-   *  the reader to send back when a page that is entirely about listening does
-   *  not play - on a phone there is no console to ask instead. */
-  report: () => Report;
-  /** Two isolating probes, each run wholly inside the click that calls it. The
-   *  tone needs no network and no decoding, so it separates "this browser will
-   *  not start Web Audio" from anything to do with clips; the element probe
-   *  answers the same question for the route clips actually take. */
-  testTone: () => Promise<string>;
-  testElement: (file: string) => Promise<string>;
-}
-
-export interface Report {
-  revision: string;
-  /** How clips play. Web Audio is no longer used for them at all. */
-  clipPath: "element";
-  elementState: string;
-  elementError: string | null;
-  /** The tone probe's context, if it has ever been created. */
-  toneContext: string;
-  audioSession: string | null;
-  lastError: string | null;
-  cachedClips: number;
 }
 
 export function useSamplePlayer(base: string): SamplePlayer {
@@ -117,8 +70,6 @@ export function useSamplePlayer(base: string): SamplePlayer {
   const cacheRef = React.useRef<Map<string, string>>(new Map());
   const inflightRef = React.useRef<Map<string, Promise<string>>>(new Map());
   const warmedRef = React.useRef(false);
-  const errRef = React.useRef<string | null>(null);
-  const ctxRef = React.useRef<AudioContext | null>(null);
 
   /** One element for the life of the page, reused by changing src. iOS grants
    *  playback to an element the reader has started once and holds that grant as
@@ -225,7 +176,9 @@ export function useSamplePlayer(base: string): SamplePlayer {
         setPlaying(key);
         setProblem(null);
       } catch (e) {
-        errRef.current = String(e);
+        // Logged as well as shown: the message on the page tells the reader
+        // what happened, this tells whoever they report it to.
+        console.warn(`[tts-sample-player] REVISION: ${MODULE_REVISION} play failed:`, e);
         setPlaying(null);
         // A refused play() is a policy answer; anything else is the clip itself.
         setProblem(/NotAllowed/i.test(String(e)) ? "blocked" : "failed");
@@ -236,77 +189,11 @@ export function useSamplePlayer(base: string): SamplePlayer {
     [element, load, playing, stop]
   );
 
-  const report = React.useCallback((): Report => {
-    const el = elRef.current;
-    const state = el
-      ? `${el.paused ? "paused" : "playing"} at ${el.currentTime.toFixed(2)}s, readyState ${el.readyState}`
-      : "not created";
-    return {
-      revision: MODULE_REVISION,
-      clipPath: "element",
-      elementState: state,
-      elementError: el?.error ? `code ${el.error.code}` : null,
-      toneContext: ctxRef.current ? String(ctxRef.current.state) : "not created",
-      audioSession:
-        (navigator as unknown as { audioSession?: { type: string } }).audioSession?.type ?? null,
-      lastError: errRef.current,
-      cachedClips: cacheRef.current.size,
-    };
-  }, []);
-
-  /** A quarter-second sine through Web Audio, start to finish inside the calling
-   *  gesture. Kept as a probe only: this is the path Safari would not play, and
-   *  nothing a reader hears goes through it any more. */
-  const testTone = React.useCallback(async () => {
-    stop();
-    if (!ctxRef.current) {
-      const AC =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AC) return "this browser has no Web Audio at all";
-      ctxRef.current = new AC();
-    }
-    const ac = ctxRef.current;
-    if (String(ac.state) !== "running") {
-      void ac.resume().catch(() => {});
-      const ok = await whenRunning(ac, RESUME_GRACE_MS);
-      if (!ok) return `no tone: context stuck at "${ac.state}"`;
-    }
-    const osc = ac.createOscillator();
-    const gain = ac.createGain();
-    gain.gain.value = 0.15;                       // audible, not startling
-    osc.frequency.value = 440;
-    osc.connect(gain).connect(ac.destination);
-    const t0 = ac.currentTime;
-    osc.start();
-    osc.stop(ac.currentTime + 0.25);
-    await new Promise((r) => setTimeout(r, 400));
-    return ac.currentTime > t0
-      ? `tone played, context "${ac.state}", clock advanced ${(ac.currentTime - t0).toFixed(2)}s`
-      : `no tone: context says "${ac.state}" but its clock did not move`;
-  }, [stop]);
-
-  const testElement = React.useCallback(async (file: string) => {
-    stop();
-    try {
-      const el = element();
-      el.src = base + file;
-      await el.play();
-      await new Promise((r) => setTimeout(r, 400));
-      return el.currentTime > 0
-        ? `element played, position ${el.currentTime.toFixed(2)}s`
-        : "element accepted play() but its position never moved";
-    } catch (e) {
-      return `element refused: ${String(e)}`;
-    }
-  }, [base, element, stop]);
-
   React.useEffect(
     () => () => {
       const el = elRef.current;
       if (el) { el.onended = null; el.pause(); el.removeAttribute("src"); }
       for (const url of cacheRef.current.values()) URL.revokeObjectURL(url);
-      void ctxRef.current?.close();
     },
     []
   );
@@ -314,7 +201,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
   // Memoised so callers can put the player in an effect's dependency list
   // without it re-firing on every render of the table.
   return React.useMemo(
-    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem, report, testTone, testElement }),
-    [playing, loading, heard, toggle, stop, prime, warm, problem, report, testTone, testElement]
+    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem }),
+    [playing, loading, heard, toggle, stop, prime, warm, problem]
   );
 }

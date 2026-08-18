@@ -8,9 +8,8 @@
 // refusal is reported instead of swallowed, and that the clip is fully fetched
 // before it is played, which is the guarantee Web Audio used to provide.
 //
-// The tone probe still exercises Web Audio, and its fake keeps the WebKit rule
-// that a resume it will not grant never settles - so a probe that awaited one
-// would hang the very diagnostics that exist to explain a hang.
+// The AudioContext stub is a tripwire rather than a fake: nothing here may
+// construct one.
 
 import { renderHook, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,8 +19,7 @@ let elementPlays: "yes" | "notallowed" | "error" = "yes";
 let elements: FakeAudio[] = [];
 let fetches: string[] = [];
 let pendingFetches: Array<() => void> = [];
-/** Whether a resume the fake context refuses hangs (WebKit) or rejects. */
-let resumeHangs = false;
+let contextsBuilt = 0;
 
 class FakeAudio {
   src = "";
@@ -43,22 +41,10 @@ class FakeAudio {
   removeAttribute() {}
 }
 
-class FakeContext {
-  state = "suspended";
-  currentTime = 0;
-  destination = {};
-  private listeners: Array<() => void> = [];
-  addEventListener(t: string, cb: () => void) { if (t === "statechange") this.listeners.push(cb); }
-  removeEventListener() {}
-  resume(): Promise<void> {
-    if (resumeHangs) return new Promise<void>(() => { /* WebKit: never answers */ });
-    this.state = "running";
-    for (const l of this.listeners) l();
-    return Promise.resolve();
-  }
-  createOscillator() { return { frequency: { value: 0 }, connect: (n: unknown) => n, start() {}, stop() {} }; }
-  createGain() { return { gain: { value: 0 }, connect: (n: unknown) => n }; }
-  async close() {}
+/** Not a fake so much as a tripwire. Safari will not play Web Audio on this
+ *  page, so constructing a context is now a bug by definition. */
+class ForbiddenContext {
+  constructor() { contextsBuilt++; }
 }
 
 function releaseFetches() {
@@ -80,12 +66,13 @@ async function click(play: () => void) {
 
 beforeEach(() => {
   elementPlays = "yes";
-  resumeHangs = false;
+  contextsBuilt = 0;
   elements = [];
   fetches = [];
   pendingFetches = [];
   vi.stubGlobal("Audio", FakeAudio);
-  vi.stubGlobal("AudioContext", FakeContext);
+  vi.stubGlobal("AudioContext", ForbiddenContext);
+  vi.stubGlobal("webkitAudioContext", ForbiddenContext);
   vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:clip", revokeObjectURL: () => {} });
   vi.stubGlobal("fetch", (u: string) => {
     fetches.push(u);
@@ -185,34 +172,16 @@ describe("useSamplePlayer", () => {
     expect(result.current.problem).toBe("failed");
   });
 
-  it("reports what it knows, without needing a console", async () => {
+
+  it("never touches Web Audio", async () => {
+    // The path Safari refuses. Playing, stopping, switching and prefetching must
+    // not construct a context, or the failure this replaced comes back.
     const { result } = renderHook(() => useSamplePlayer("/a/"));
     await click(() => void result.current.toggle("a", "a.mp3"));
-    const r = result.current.report();
+    act(() => { result.current.stop(); });
+    await click(() => void result.current.toggle("b", "b.mp3"));
+    act(() => { result.current.prime("c.mp3"); });
 
-    expect(r.clipPath).toBe("element");
-    expect(r.revision).toContain("element-first");
-    expect(r.elementState).toContain("playing");
-    expect(r.cachedClips).toBe(1);
-  });
-
-  it("keeps the tone probe out of playback entirely", async () => {
-    // Safari would not play the tone. Nothing a reader hears may depend on it,
-    // so a context must not even exist until the probe is run.
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-    await click(() => void result.current.toggle("a", "a.mp3"));
-    expect(result.current.report().toneContext).toBe("not created");
-
-    await act(async () => { await result.current.testTone(); });
-    expect(result.current.report().toneContext).toBe("running");
-  });
-
-  it("the tone probe answers rather than hanging when WebKit will not resume", async () => {
-    resumeHangs = true;
-    const { result } = renderHook(() => useSamplePlayer("/a/"));
-    let answer = "";
-    await act(async () => { answer = await result.current.testTone(); });
-
-    expect(answer).toContain("stuck at");
+    expect(contextsBuilt).toBe(0);
   });
 });
