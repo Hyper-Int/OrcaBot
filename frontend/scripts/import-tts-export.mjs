@@ -112,6 +112,7 @@ const LICENCE_PROOF_URLS = {
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
+  "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2/blob/main/LICENSE",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice/blob/master/LICENSE",
   "tada-1b": "https://huggingface.co/HumeAI/tada-1b/blob/main/LICENSE",
   "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml/blob/main/LICENSE",
@@ -152,6 +153,7 @@ const MODEL_URLS = {
   "fastpitch": "https://github.com/NVIDIA-NeMo/Speech",
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice",
+  "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
   "tada-1b": "https://huggingface.co/HumeAI/tada-1b",
   "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml",
@@ -191,6 +193,9 @@ const CELL_OVERRIDES = {
     // contradicts two columns to its left.
     Notes: { v: "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card." },
   },
+  // Banaxi-Tech's card states "9.5M params"; it already declared apache-2.0,
+  // which is what the export had, so only the size was missing.
+  "bananamind-tts": { Params: { v: "9.5M", sort: "9.5" } },
   // Its repo has carried an Apache LICENSE all along - this was the mismatch the
   // licence cross-check flagged when the links were first added.
   "dots-tts": { Licence: { v: "Apache-2.0" } },

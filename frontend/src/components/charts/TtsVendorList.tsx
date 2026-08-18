@@ -44,6 +44,7 @@ const VENDORS: Vendor[] = [
   { name: "Suno", icon: "suno-ai.jpg", url: "https://github.com/suno-ai/bark" },
   { name: "Meta", icon: "facebookresearch.png", url: "https://huggingface.co/facebook/mms-tts" },
   { name: "Hugging Face", icon: "huggingface.png", url: "https://github.com/huggingface/parler-tts" },
+  { name: "Banaxi-Tech", icon: "Banaxi-Tech.png", url: "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2" },
   { name: "Coqui", icon: "coqui-ai.png", url: "https://huggingface.co/coqui/XTTS-v2" },
   { name: "MyShell", icon: "myshell-ai.png", url: "https://github.com/myshell-ai/MeloTTS" },
   { name: "KittenML", icon: "KittenML.png", url: "https://github.com/KittenML/KittenTTS" },
@@ -62,21 +63,21 @@ const ICON_BASE = "/icons/tts/";
 // inflated these chips from 36px tall to 92px. Both need beating on specificity.
 const CSS = `
 .tts-vendors-figure ul.tts-vendors {
-  display: flex; flex-wrap: wrap; gap: 8px;
+  display: flex; flex-wrap: wrap; gap: 6px;
   margin: 0; padding: 0; list-style: none;
 }
 .tts-vendors-figure ul.tts-vendors > li { margin: 0; padding: 0; list-style: none; }
 .tts-vendors a.tts-vendor-chip {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 8px 14px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
-  font-size: 0.82rem; font-weight: 500; line-height: 1;
+  padding: 7px 11px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
+  font-size: 0.8rem; font-weight: 500; line-height: 1;
   color: var(--foreground, #e8edf5);
   text-decoration: none; white-space: nowrap; background: var(--background-elevated, #0d1526);
 }
 .tts-vendors a.tts-vendor-chip:hover,
 .tts-vendors a.tts-vendor-chip:focus-visible { border-color: #d95926; opacity: 1; }
 .tts-vendors a.tts-vendor-chip img {
-  width: 18px; height: 18px; margin: 0; display: inline-block;
+  width: 16px; height: 16px; margin: 0; display: inline-block;
   object-fit: contain; border-radius: 4px; flex-shrink: 0;
 }
 `;

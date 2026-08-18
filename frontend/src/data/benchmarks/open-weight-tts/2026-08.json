@@ -2356,7 +2356,8 @@
           "sort": "bananamind-tts",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2"
         },
         {
           "v": "det-ff",
@@ -2370,11 +2371,12 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2/blob/main/LICENSE"
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "9.5M",
+          "sort": "9.5",
           "tone": "",
           "align": "",
           "restricted": false
