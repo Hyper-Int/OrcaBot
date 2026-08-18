@@ -45,7 +45,7 @@ const VENDORS: Vendor[] = [
   { name: "Hugging Face", icon: "huggingface.png", url: "https://github.com/huggingface/parler-tts" },
   { name: "Coqui", icon: "coqui-ai.png", url: "https://huggingface.co/coqui/XTTS-v2" },
   { name: "MyShell", icon: "myshell-ai.png", url: "https://github.com/myshell-ai/MeloTTS" },
-  { name: "KittenML", icon: "KittenML.png", url: "https://huggingface.co/KittenML/kitten-tts-nano-0.1" },
+  { name: "KittenML", icon: "KittenML.png", url: "https://github.com/KittenML/KittenTTS" },
   { name: "Sesame", icon: "SesameAILabs.png", url: "https://github.com/SesameAILabs/csm" },
   { name: "Zyphra", icon: "Zyphra.png", url: "https://github.com/Zyphra/Zonos" },
   { name: "NVIDIA", icon: "NVIDIA.png", url: "https://github.com/NVIDIA-NeMo/Speech" },

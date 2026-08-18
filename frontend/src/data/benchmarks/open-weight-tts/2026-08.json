@@ -240,18 +240,18 @@
       ]
     },
     {
-      "config": "kittentts",
-      "display": "KittenTTS",
+      "config": "kittentts-micro",
+      "display": "KittenTTS Micro",
       "group": "",
-      "sample": "kittentts.mp3?v=a3879f94",
+      "sample": "kittentts-micro.mp3?v=e2ada29e",
       "cells": [
         {
-          "v": "KittenTTS",
-          "sort": "kittentts",
+          "v": "KittenTTS Micro",
+          "sort": "kittentts-micro",
           "tone": "",
           "align": "left",
           "restricted": false,
-          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.1"
+          "href": "https://huggingface.co/KittenML/kitten-tts-micro-0.8"
         },
         {
           "v": "det-ff",
@@ -266,7 +266,223 @@
           "tone": "",
           "align": "left",
           "restricted": false,
-          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.1/blob/main/README.md"
+          "href": "https://huggingface.co/KittenML/kitten-tts-micro-0.8/blob/main/README.md"
+        },
+        {
+          "v": "40M",
+          "sort": "40.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "43 MB",
+          "sort": "43.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "43 MB",
+          "sort": "43.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "681 MB",
+          "sort": "681.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0457",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.69",
+          "sort": "3.69",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.18x",
+          "sort": "0.1810",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.75s",
+          "sort": "0.7533",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.16s",
+          "sort": "4.1615",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Smallest model in the benchmark at 43 MB. Non-autoregressive, so no sampling and no runaways.",
+          "sort": "Smallest model in the benchmark at 43 MB",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-nano-int8",
+      "display": "KittenTTS Nano INT8",
+      "group": "",
+      "sample": "kittentts-nano-int8.mp3?v=d2c08d2a",
+      "cells": [
+        {
+          "v": "KittenTTS Nano INT8",
+          "sort": "kittentts-nano-int8",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/blob/main/README.md"
+        },
+        {
+          "v": "54M",
+          "sort": "54.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "26 MB",
+          "sort": "26.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "26 MB",
+          "sort": "26.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "589 MB",
+          "sort": "589.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0546",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.52",
+          "sort": "3.52",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.18x",
+          "sort": "0.1774",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.78s",
+          "sort": "0.7806",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.40s",
+          "sort": "4.3996",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "int8 of the same nano weights at 26 MB. Non-autoregressive, so quantisation cannot cause the sampling failures seen in the LM models.",
+          "sort": "int8 of the same nano weights at 26 MB. ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-mini",
+      "display": "KittenTTS Mini",
+      "group": "",
+      "sample": "kittentts-mini.mp3?v=5b4feeb1",
+      "cells": [
+        {
+          "v": "KittenTTS Mini",
+          "sort": "kittentts-mini",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-mini-0.8"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-mini-0.8/blob/main/README.md"
         },
         {
           "v": "73M",
@@ -290,57 +506,57 @@
           "restricted": false
         },
         {
-          "v": "842 MB",
-          "sort": "842.0",
+          "v": "78 MB",
+          "sort": "78.0",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "608 MB",
-          "sort": "608.0",
+          "v": "785 MB",
+          "sort": "785.0",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "6%",
-          "sort": "0.0567",
+          "sort": "0.0558",
           "tone": "good",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.48",
-          "sort": "3.48",
+          "v": "3.65",
+          "sort": "3.65",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "0.47x",
-          "sort": "0.4695",
+          "v": "0.49x",
+          "sort": "0.4872",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "1.78s",
-          "sort": "1.7822",
+          "v": "1.88s",
+          "sort": "1.8795",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.80s",
-          "sort": "3.7956",
+          "v": "3.86s",
+          "sort": "3.8576",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "Identical duration every run; only numerical jitter.",
-          "sort": "Identical duration every run; only numer",
+          "v": "The largest KittenTTS, and what talkito loads by default.",
+          "sort": "The largest KittenTTS, and what talkito ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -449,6 +665,114 @@
         {
           "v": "Alibaba's 0.6B at a 12 Hz codec - the direct architectural rival.",
           "sort": "Alibaba's 0.6B at a 12 Hz codec - the di",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-nano",
+      "display": "KittenTTS Nano",
+      "group": "",
+      "sample": "kittentts-nano.mp3?v=fbb8b5df",
+      "cells": [
+        {
+          "v": "KittenTTS Nano",
+          "sort": "kittentts-nano",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32/blob/main/README.md"
+        },
+        {
+          "v": "54M",
+          "sort": "54.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "57 MB",
+          "sort": "57.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "57 MB",
+          "sort": "57.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "616 MB",
+          "sort": "616.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0592",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.54",
+          "sort": "3.54",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.06x",
+          "sort": "0.0632",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.28s",
+          "sort": "0.2779",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.40s",
+          "sort": "4.3996",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The middle of KittenTTS's three sizes, and the package default.",
+          "sort": "The middle of KittenTTS's three sizes, a",
           "tone": "",
           "align": "",
           "restricted": false
