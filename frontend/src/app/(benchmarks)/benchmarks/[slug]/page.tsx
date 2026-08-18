@@ -129,7 +129,14 @@ export default async function BenchmarkPage({ params }: Props) {
           aside would have taken and the page reads as though something failed
           to load. */}
       <div
-        style={{ flex: 1, minWidth: 0, maxWidth: "60rem", marginInline: showToc ? undefined : "auto" }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          // Wider without the index: the space the aside would have taken goes
+          // to the content rather than to the margins.
+          maxWidth: showToc ? "60rem" : "72rem",
+          marginInline: showToc ? undefined : "auto",
+        }}
         className="px-6 py-12 pb-24"
       >
       {/* No "all benchmarks" back link: /benchmarks now redirects straight to

@@ -29,7 +29,9 @@ if (typeof window !== "undefined") {
 
 interface Vendor { name: string; icon: string; url: string }
 
-/** Ordered roughly by how much of the table each accounts for. */
+/** Alphabetical, sorted at load rather than by hand so a new entry cannot be
+ *  dropped in the wrong place. localeCompare so case does not split the list -
+ *  "dots.tts" and "hexgrad" belong among the capitalised names, not after them. */
 const VENDORS: Vendor[] = [
   { name: "Resemble AI", icon: "resemble-ai.png", url: "https://github.com/resemble-ai/chatterbox" },
   { name: "Neuphonic", icon: "neuphonic.png", url: "https://huggingface.co/neuphonic/neutts-2e" },
@@ -49,7 +51,7 @@ const VENDORS: Vendor[] = [
   { name: "NVIDIA", icon: "NVIDIA.png", url: "https://github.com/NVIDIA-NeMo/Speech" },
   { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/rednote-hilab/dots.tts" },
   { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
-];
+].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
 const ICON_BASE = "/icons/tts/";
 
