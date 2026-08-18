@@ -40,7 +40,7 @@ face value.
   **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for nineteen of the thirty-four
+  `medium.en` was run too, but it did not finish for eighteen of the thirty-three
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones — so the true spread between engines is **wider** than this column
@@ -64,7 +64,7 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the twelve
+**Nothing is filtered out.** Every configuration compared is listed, including the eleven
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2x for readers who only care about what can be spoken

@@ -27,7 +27,7 @@ const CONFIGS = [
   'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl',
   'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice', 'cosyvoice3',
   'bananamind-tts', 'fastpitch', 'tada-3b', 'zonos', 'csm', 'tada-1b',
-  'mms-tts', 'speecht5', 'vibevoice-1.5b', 'parler-tts', 'bark',
+  'mms-tts', 'speecht5', 'vibevoice-1.5b', 'bark',
 ] as const;
 
 /**

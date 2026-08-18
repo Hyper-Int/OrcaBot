@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v2-static
+// REVISION: tts-vendor-list-v3-no-parler
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v2-static";
+const MODULE_REVISION = "tts-vendor-list-v3-no-parler";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -43,7 +43,6 @@ const VENDORS: Vendor[] = [
   { name: "hexgrad", icon: "hexgrad.png", url: "https://huggingface.co/hexgrad/Kokoro-82M" },
   { name: "Suno", icon: "suno-ai.jpg", url: "https://github.com/suno-ai/bark" },
   { name: "Meta", icon: "facebookresearch.png", url: "https://huggingface.co/facebook/mms-tts" },
-  { name: "Hugging Face", icon: "huggingface.png", url: "https://github.com/huggingface/parler-tts" },
   { name: "Banaxi-Tech", icon: "Banaxi-Tech.png", url: "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2" },
   { name: "Coqui", icon: "coqui-ai.png", url: "https://huggingface.co/coqui/XTTS-v2" },
   { name: "MyShell", icon: "myshell-ai.png", url: "https://github.com/myshell-ai/MeloTTS" },

@@ -216,8 +216,8 @@
           "restricted": false
         },
         {
-          "v": "Distilled chatterbox. Base q8 measures 2.89x.",
-          "sort": "Distilled chatterbox. Base q8 measures 2",
+          "v": "Distilled chatterbox, and joint-best accuracy here at 4%. Base q8 measures 2.22x.",
+          "sort": "Distilled chatterbox, and joint-best acc",
           "tone": "",
           "align": "",
           "restricted": false
@@ -317,8 +317,8 @@
           "restricted": false
         },
         {
-          "v": "Smallest model in the benchmark at 43 MB. Non-autoregressive, so no sampling and no runaways.",
-          "sort": "Smallest model in the benchmark at 43 MB",
+          "v": "The most accurate KittenTTS here at 43 MB. Non-autoregressive, so no sampling and no runaways.",
+          "sort": "The most accurate KittenTTS here at 43 M",
           "tone": "",
           "align": "",
           "restricted": false
@@ -620,8 +620,8 @@
           "restricted": false
         },
         {
-          "v": "4.4 GB f16 and 11x real time, but second-best accuracy measured.",
-          "sort": "4.4 GB f16 and 11x real time, but second",
+          "v": "4.4 GB f16 and 11x real time, for 6% WER - mid-pack accuracy.",
+          "sort": "4.4 GB f16 and 11x real time, for 6% WER",
           "tone": "",
           "align": "",
           "restricted": false
@@ -822,8 +822,8 @@
           "restricted": false
         },
         {
-          "v": "The middle of KittenTTS's three sizes, and the package default.",
-          "sort": "The middle of KittenTTS's three sizes, a",
+          "v": "The fp32 middle size of KittenTTS's four. Not the default - talkito loads mini.",
+          "sort": "The fp32 middle size of KittenTTS's four",
           "tone": "",
           "align": "",
           "restricted": false
@@ -923,8 +923,8 @@
           "restricted": false
         },
         {
-          "v": "MIT, best fp32 quality here. PerTh watermarking; own venv.",
-          "sort": "MIT, best fp32 quality here. PerTh water",
+          "v": "MIT, and the best of the chatterbox family on both axes. PerTh watermarking; own venv.",
+          "sort": "MIT, and the best of the chatterbox fami",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1630,8 +1630,8 @@
           "restricted": false
         },
         {
-          "v": "Smallest deployed footprint of any LM engine. 1.02B despite a 0.5b filename.",
-          "sort": "Smallest deployed footprint of any LM en",
+          "v": "Small deployed footprint for an LM engine, at 686 MB. 1.02B despite a 0.5b filename.",
+          "sort": "Small deployed footprint for an LM engin",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1731,8 +1731,8 @@
           "restricted": false
         },
         {
-          "v": "Best 2E configuration. Reachable only via an undocumented split-device call.",
-          "sort": "Best 2E configuration. Reachable only vi",
+          "v": "The fastest 2E configuration at 0.46x. Reachable only via an undocumented split-device call.",
+          "sort": "The fastest 2E configuration at 0.46x. R",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2741,8 +2741,8 @@
           "restricted": false
         },
         {
-          "v": "Best PESQ measured here, but 8x real time.",
-          "sort": "Best PESQ measured here, but 8x real tim",
+          "v": "Second-best PESQ here after piper, but 8x real time.",
+          "sort": "Second-best PESQ here after piper, but 8",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3248,107 +3248,6 @@
         {
           "v": "Larger than the 1.02B vibevoice and markedly worse.",
           "sort": "Larger than the 1.02B vibevoice and mark",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "parler-tts",
-      "display": "Parler-TTS (partial)",
-      "group": "",
-      "sample": "parler-tts.mp3?v=60ec0edf",
-      "cells": [
-        {
-          "v": "Parler-TTS (partial)",
-          "sort": "parler-tts",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/huggingface/parler-tts"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "Apache-2.0",
-          "sort": "Apache-2.0",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/huggingface/parler-tts/blob/main/LICENSE"
-        },
-        {
-          "v": "0.88B",
-          "sort": "880.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2024-08",
-          "sort": "202408",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "900 MB",
-          "sort": "900.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "900 MB",
-          "sort": "900.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.2 GB",
-          "sort": "2252.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "42%",
-          "sort": "0.4224",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.16",
-          "sort": "2.16",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.84x",
-          "sort": "2.8388",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "25.29s",
-          "sort": "25.2889",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Partial run: too slow to finish the corpus in the time allowed.",
-          "sort": "Partial run: too slow to finish the corp",
           "tone": "",
           "align": "",
           "restricted": false
