@@ -95,6 +95,29 @@ export interface SamplePlayer {
   /** Set when a play attempt produced no sound, so the UI can say why rather
    *  than appearing to ignore the click. Null once a clip starts. */
   problem: "blocked" | "failed" | null;
+  /** Everything known about why sound is or is not happening, read fresh. For
+   *  the reader to send back when a page that is entirely about listening does
+   *  not play - on a phone there is no console to ask instead. */
+  report: () => Report;
+  /** Two isolating probes, each run wholly inside the click that calls it.
+   *  A tone needs no network and no decoding, so it separates "this browser
+   *  will not start Web Audio" from "our fetch or decode path is broken"; the
+   *  element probe answers the same question for the fallback route. */
+  testTone: () => Promise<string>;
+  testElement: (file: string) => Promise<string>;
+}
+
+export interface Report {
+  revision: string;
+  contextState: string;
+  sampleRate: number | null;
+  /** Whether the audio clock is advancing - the one signal that distinguishes
+   *  a context that is really running from one that only says so. */
+  clockMoving: boolean | null;
+  audioSession: string | null;
+  lastPath: "web-audio" | "element" | null;
+  lastError: string | null;
+  cachedClips: number;
 }
 
 export function useSamplePlayer(base: string): SamplePlayer {
@@ -110,6 +133,9 @@ export function useSamplePlayer(base: string): SamplePlayer {
   const currentRef = React.useRef<AudioBufferSourceNode | null>(null);
   const primedRef = React.useRef(false);
   const warmedRef = React.useRef(false);
+  const pathRef = React.useRef<"web-audio" | "element" | null>(null);
+  const lastClockRef = React.useRef<number | null>(null);
+  const errRef = React.useRef<string | null>(null);
 
   const ctx = React.useCallback(() => {
     if (!ctxRef.current) {
@@ -243,6 +269,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
     el.currentTime = 0;
     await el.play();
     elPlayingRef.current = key;
+    pathRef.current = "element";
     el.onended = () => {
       if (elPlayingRef.current !== key) return;
       elPlayingRef.current = null;
@@ -288,7 +315,8 @@ export function useSamplePlayer(base: string): SamplePlayer {
           );
           try {
             await playElement(key, clip.url);
-          } catch {
+          } catch (e) {
+            errRef.current = String(e);
             setProblem("blocked");
           }
           return;
@@ -305,6 +333,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
           setHeard((h) => (h.has(key) ? h : new Set(h).add(key)));
         };
         currentRef.current = src;
+        pathRef.current = "web-audio";
         const clockAtStart = ctx().currentTime;
         src.start();
         setPlaying(key);
@@ -329,7 +358,8 @@ export function useSamplePlayer(base: string): SamplePlayer {
           try { src.stop(); } catch { /* already ended */ }
           void playElement(key, clip.url).catch(() => setProblem("blocked"));
         }, SILENT_CLOCK_MS);
-      } catch {
+      } catch (e) {
+        errRef.current = String(e);
         setPlaying(null);
         setProblem("failed");
       } finally {
@@ -338,6 +368,74 @@ export function useSamplePlayer(base: string): SamplePlayer {
     },
     [ctx, load, ensureRunning, playElement, playing, wake, stop]
   );
+
+  /** Read fresh on every call - a snapshot taken at render would be stale by
+   *  the time anyone read it. */
+  const report = React.useCallback((): Report => {
+    const ac = ctxRef.current;
+    let clockMoving: boolean | null = null;
+    if (ac) {
+      // Two reads a moment apart is the only honest test, but a synchronous
+      // report cannot wait: compare against the last one instead.
+      const t = ac.currentTime;
+      clockMoving = lastClockRef.current === null ? null : t > lastClockRef.current;
+      lastClockRef.current = t;
+    }
+    return {
+      revision: MODULE_REVISION,
+      contextState: ac ? String(ac.state) : "not created",
+      sampleRate: ac?.sampleRate ?? null,
+      clockMoving,
+      audioSession:
+        (navigator as unknown as { audioSession?: { type: string } }).audioSession?.type ?? null,
+      lastPath: pathRef.current,
+      lastError: errRef.current,
+      cachedClips: cacheRef.current.size,
+    };
+  }, []);
+
+  /** A quarter-second sine, start to finish inside the calling gesture. No
+   *  fetch, no decode, no buffer - if this is silent, the browser is refusing
+   *  Web Audio outright rather than objecting to anything we do with clips. */
+  const testTone = React.useCallback(async () => {
+    stop();
+    const ac = ctx();
+    if (String(ac.state) !== "running") {
+      void ac.resume().catch(() => {});
+      const ok = await whenRunning(ac, RESUME_GRACE_MS);
+      if (!ok) return `no tone: context stuck at "${ac.state}"`;
+    }
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    gain.gain.value = 0.15;                       // audible, not startling
+    osc.frequency.value = 440;
+    osc.connect(gain).connect(ac.destination);
+    const t0 = ac.currentTime;
+    osc.start();
+    osc.stop(ac.currentTime + 0.25);
+    await new Promise((r) => setTimeout(r, 400));
+    const moved = ac.currentTime > t0;
+    return moved
+      ? `tone played, context "${ac.state}", clock advanced ${(ac.currentTime - t0).toFixed(2)}s`
+      : `no tone: context says "${ac.state}" but its clock did not move`;
+  }, [ctx, stop]);
+
+  /** The same question for the fallback route, which answers to a different
+   *  policy in WebKit than the context does. */
+  const testElement = React.useCallback(async (file: string) => {
+    stop();
+    try {
+      const el = elRef.current ?? (elRef.current = new Audio());
+      el.src = base + file;
+      await el.play();
+      await new Promise((r) => setTimeout(r, 400));
+      return el.currentTime > 0
+        ? `element played, position ${el.currentTime.toFixed(2)}s`
+        : "element accepted play() but its position never moved";
+    } catch (e) {
+      return `element refused: ${String(e)}`;
+    }
+  }, [base, stop]);
 
   // Coming back to a backgrounded tab is the common way to find the context
   // interrupted. The page has sticky activation from the play that started all
@@ -368,7 +466,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
   // Memoised so callers can put the player in an effect's dependency list
   // without it re-firing on every render of the table.
   return React.useMemo(
-    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem }),
-    [playing, loading, heard, toggle, stop, prime, warm, problem]
+    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem, report, testTone, testElement }),
+    [playing, loading, heard, toggle, stop, prime, warm, problem, report, testTone, testElement]
   );
 }

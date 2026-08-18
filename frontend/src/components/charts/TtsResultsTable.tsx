@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v2-human-column
+// REVISION: tts-results-table-v3-sound-diagnostics
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -17,11 +17,11 @@
 import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
 import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
-import { useSamplePlayer } from "./useSamplePlayer";
+import { useSamplePlayer, type Report } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v2-human-column";
+const MODULE_REVISION = "tts-results-table-v3-sound-diagnostics";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -121,6 +121,11 @@ const MAX_TABLE_WIDTH = 1180;
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
 
+const DIAG_BUTTON: React.CSSProperties = {
+  font: "inherit", fontSize: "0.78rem", padding: "0.3rem 0.7rem", borderRadius: 999,
+  cursor: "pointer", border: "1px solid #2a4570", background: "transparent", color: "inherit",
+};
+
 const INK = { primary: "#e8edf5", secondary: "#c3cee0", muted: "#94a3c0" };
 const AXIS = "#2a4570";
 const ACCENT = "#d95926";
@@ -175,6 +180,7 @@ export function TtsResultsTable() {
   // mouseenter *then* click, so a handler that simply toggled would open on the
   // first and close on the second, and the icon would look dead to anyone
   // without a mouse.
+  const [diag, setDiag] = React.useState<{ report: Report; probe: string | null } | null>(null);
   const [note, setNote] = React.useState<
     { config: string; text: string; x: number; y: number; w: number; pinned: boolean } | null
   >(null);
@@ -675,8 +681,73 @@ export function TtsResultsTable() {
         <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
           {run.caption}{run.caption ? " " : ""}
           Human is reader preference from those rankings, scored 0&ndash;100 by Bradley-Terry and
-          updated live; an engine shows a dash until enough people have ranked it.
+          updated live; an engine shows a dash until enough people have ranked it.{" "}
+          <button
+            type="button"
+            onClick={() => setDiag((d) => (d ? null : { report: player.report(), probe: null }))}
+            style={{
+              font: "inherit", fontSize: "0.78rem", color: INK.muted, background: "none",
+              border: "none", padding: 0, cursor: "pointer", textDecoration: "underline",
+              textDecorationStyle: "dotted",
+            }}
+          >
+            No sound?
+          </button>
         </figcaption>
+
+        {/* A page whose whole point is listening owes the reader an answer when
+            it stays silent. Browsers differ on what they will let a page play
+            and when, and a phone has no console to ask - so the checks that
+            would otherwise need one are here, in the page, in two buttons. */}
+        {diag && (
+          <div
+            style={{
+              marginTop: "0.6rem", padding: "0.7rem 0.8rem", borderRadius: 8,
+              border: `1px solid ${AXIS}`, background: "var(--background-elevated)",
+              fontSize: "0.78rem", color: INK.secondary, lineHeight: 1.5,
+            }}
+          >
+            <div style={{ marginBottom: "0.5rem" }}>
+              Each button plays something different. If the tone sounds but clips do not, the
+              problem is ours; if neither sounds, the browser is refusing to play at all.
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  const probe = await player.testTone();
+                  setDiag({ report: player.report(), probe: `tone: ${probe}` });
+                }}
+                style={DIAG_BUTTON}
+              >
+                Play a test tone
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const f = ROWS.find((r) => r.sample)?.sample;
+                  const probe = f ? await player.testElement(f) : "no clip to try";
+                  setDiag({ report: player.report(), probe: `clip: ${probe}` });
+                }}
+                style={DIAG_BUTTON}
+              >
+                Play a clip the other way
+              </button>
+            </div>
+            {diag.probe && (
+              <div style={{ marginBottom: "0.4rem", color: INK.primary }}>{diag.probe}</div>
+            )}
+            <pre
+              style={{
+                margin: 0, padding: "0.4rem 0.5rem", borderRadius: 6, overflowX: "auto",
+                background: "#0b1a2e", fontSize: "0.72rem", color: INK.muted,
+                whiteSpace: "pre-wrap", wordBreak: "break-word",
+              }}
+            >
+              {Object.entries(diag.report).map(([k, v]) => `${k}: ${v ?? "—"}`).join("\n")}
+            </pre>
+          </div>
+        )}
       </figure>
 
       {/* Fixed, and a sibling of the table rather than a child of the scrolling
