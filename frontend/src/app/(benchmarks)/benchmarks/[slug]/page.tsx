@@ -89,6 +89,8 @@ export default async function BenchmarkPage({ params }: Props) {
   const post = getPost(slug);
   if (!post) notFound();
 
+  const showToc = post.toc !== false;
+
   // Lead the side menu with the article title, then its headings.
   const tocItems = [
     { text: post.title, slug: post.slug, depth: 1 },
@@ -102,6 +104,10 @@ export default async function BenchmarkPage({ params }: Props) {
           __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
         }}
       />
+      {/* The side index is opt-out per post: a benchmark with four headings gets
+          an index nearly as long as the article, which is furniture rather than
+          navigation. Set `toc: false` in the frontmatter. */}
+      {showToc && (
       <aside
         className="benchmarks-toc-aside"
         style={{
@@ -117,8 +123,15 @@ export default async function BenchmarkPage({ params }: Props) {
       >
         <BenchmarkToc items={tocItems} />
       </aside>
+      )}
 
-      <div style={{ flex: 1, minWidth: 0, maxWidth: "60rem" }} className="px-6 py-12 pb-24">
+      {/* Centred when there is no side index, or the column keeps the space the
+          aside would have taken and the page reads as though something failed
+          to load. */}
+      <div
+        style={{ flex: 1, minWidth: 0, maxWidth: "60rem", marginInline: showToc ? undefined : "auto" }}
+        className="px-6 py-12 pb-24"
+      >
       {/* No "all benchmarks" back link: /benchmarks now redirects straight to
           the default benchmark, so the link either did nothing or silently threw
           you onto a different benchmark. The tabs below are the navigation. */}

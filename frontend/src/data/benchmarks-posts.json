@@ -8,6 +8,7 @@
     "coverImage": null,
     "coverVideo": null,
     "ogImage": null,
+    "toc": false,
     "headings": [
       {
         "depth": 2,
@@ -41,6 +42,7 @@
     "coverImage": null,
     "coverVideo": null,
     "ogImage": "/benchmarks/og-agent-skills.png",
+    "toc": true,
     "headings": [
       {
         "depth": 2,
