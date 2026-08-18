@@ -2173,15 +2173,15 @@
           "href": "https://github.com/k2-fsa/OmniVoice/blob/master/LICENSE"
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "0.8B",
+          "sort": "800.0",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "2026-04",
+          "sort": "202604",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2236,8 +2236,8 @@
           "restricted": false
         },
         {
-          "v": "Speech is fluent; no upstream model card found, so licence is unverified.",
-          "sort": "Speech is fluent; no upstream model card",
+          "v": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
+          "sort": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
           "tone": "",
           "align": "",
           "restricted": false

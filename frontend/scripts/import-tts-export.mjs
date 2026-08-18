@@ -168,25 +168,36 @@ const MODEL_URLS = {
   // plain text rather than pointing somewhere plausible but wrong.
 };
 
-/** Licences the export could not verify from the model card, established since.
- *  The export prints "?" when it cannot read a licence off the card; that is a
- *  statement about the card, not about the model, so a value confirmed by hand
- *  belongs here rather than being left blank.
+/** Facts the export could not read off a model card, established since and
+ *  cited here so the next export cannot quietly revert them.
  *
- *  TaDA: both cards declare `license: llama3.2`, and Hume's own Space says "The
- *  model is licensed under the Llama 3.2 Community License Agreement". Each
- *  model repo carries the licence text itself, which is what the cell links to.
+ *  The export prints "-" or "?" when it cannot find something. That is a
+ *  statement about the card it could reach, not about the model, so a value
+ *  confirmed from the project's own materials belongs in the table.
+ *
+ *  `sort` is given wherever the column sorts on something other than the text -
+ *  Released is YYYYMM, Params is millions - because an override that changes
+ *  only the text sorts under the old blank, invisibly.
  */
-const LICENCE_OVERRIDES = {
-  // OmniVoice: the k2-fsa Space declares `license: apache-2.0` and the repo
-  // carries the Apache text, so the export's "?" was again about the card it
-  // could reach rather than about the model.
-  "omnivoice": "Apache-2.0",
-  // Dots-TTS: its repo has carried an Apache LICENSE all along - this was the
-  // mismatch the licence cross-check flagged when the links were first added.
-  "dots-tts": "Apache-2.0",
-  "tada-1b": "Llama 3.2 Community",
-  "tada-3b": "Llama 3.2 Community",
+const CELL_OVERRIDES = {
+  omnivoice: {
+    // k2-fsa's Space declares `license: apache-2.0`; the repo carries the text.
+    Licence: { v: "Apache-2.0" },
+    // arXiv:2604.00688, "OmniVoice: Towards Omnilingual Zero-Shot Text-to-Speech
+    // with Diffusion Language Models", submitted 1 Apr 2026.
+    Released: { v: "2026-04", sort: "202604" },
+    Params: { v: "0.8B", sort: "800.0" },
+    // The old note said the licence was unverified, which the row now
+    // contradicts two columns to its left.
+    Notes: { v: "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card." },
+  },
+  // Its repo has carried an Apache LICENSE all along - this was the mismatch the
+  // licence cross-check flagged when the links were first added.
+  "dots-tts": { Licence: { v: "Apache-2.0" } },
+  // Both cards declare `license: llama3.2`, and Hume's Space says "the model is
+  // licensed under the Llama 3.2 Community License Agreement".
+  "tada-1b": { Licence: { v: "Llama 3.2 Community" } },
+  "tada-3b": { Licence: { v: "Llama 3.2 Community" } },
 };
 
 /** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
@@ -370,14 +381,14 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
     .map((c, i) => {
       const rewrite = REWRITE[headers[i]];
       const cell = rewrite ? { ...c, v: rewrite(c.v) } : c;
-      if (headers[i] === "Licence") {
-        const v = LICENCE_OVERRIDES[config] ?? cell.v;
-        // Sort key follows the text, or an overridden licence would still sort
-        // under "?" - invisibly, since the column shows the text.
-        const sort = LICENCE_OVERRIDES[config] ?? cell.sort;
-        const href = LICENCE_PROOF_URLS[config];
-        return { ...cell, v, sort, ...(href ? { href } : {}) };
+      const override = CELL_OVERRIDES[config]?.[headers[i]];
+      const withOverride = override
+        ? { ...cell, v: override.v, sort: override.sort ?? override.v }
+        : cell;
+      if (headers[i] === "Licence" && LICENCE_PROOF_URLS[config]) {
+        return { ...withOverride, href: LICENCE_PROOF_URLS[config] };
       }
+      if (override) return withOverride;
       return cell;
     })
     .filter((_, i) => keep[i]);
