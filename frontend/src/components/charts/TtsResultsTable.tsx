@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v5-element-playback
+// REVISION: tts-results-table-v6-unlock-on-ballot-close
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v5-element-playback";
+const MODULE_REVISION = "tts-results-table-v6-unlock-on-ballot-close";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -266,6 +266,12 @@ export function TtsResultsTable() {
 
   const closeBallot = (submitted: boolean) => {
     rememberAsked(submitted ? "submitted" : "skipped");
+    // This close is a gesture; the effect below that honours the reader's
+    // original click is not. Take the element's playback grant here, while the
+    // activation exists, or a reader who skips the dialog without playing
+    // anything in it gets silence for the row they asked to hear. Skipping is
+    // exactly the path where nothing in the dialog has claimed it already.
+    player.unlock();
     setShowBallot(false);
     if (submitted) loadScores();
   };

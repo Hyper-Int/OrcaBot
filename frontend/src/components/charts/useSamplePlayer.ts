@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-sample-player-v6-gesture-and-generation
+// REVISION: tts-sample-player-v7-unlock-from-any-gesture
 // Shared clip playback for the TTS benchmark: the results table and the blind
 // ranking dialog both drive this one hook, so there is a single media element, a
 // single cache of fetched clips, and only ever one clip audible at a time.
@@ -41,7 +41,7 @@ const SILENT_MP3 =
   "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgID/////////////////////" +
   "//////////////////////////////8AAAA5TEFNRTMuOTlyAc0AAAAAAAAAABSAJAJAQgAAgAAAAnGMHkkIAAAA";
 
-const MODULE_REVISION = "tts-sample-player-v6-gesture-and-generation";
+const MODULE_REVISION = "tts-sample-player-v7-unlock-from-any-gesture";
 if (typeof window !== "undefined") {
   console.log(`[tts-sample-player] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -61,6 +61,10 @@ export interface SamplePlayer {
   prime: (file?: string) => void;
   /** Fetch these in the background. */
   warm: (files: string[]) => void;
+  /** Claim playback permission for the element. Must be called from inside a
+   *  user gesture; needed by anything that will start a clip later, after the
+   *  activation that authorised it has expired. */
+  unlock: () => void;
   /** Set when a play attempt produced no sound, so the UI can say why rather
    *  than appearing to ignore the click. Null once a clip starts. */
   problem: "blocked" | "failed" | null;
@@ -139,6 +143,25 @@ export function useSamplePlayer(base: string): SamplePlayer {
     setPlaying(null);
   }, []);
 
+  /** Claim playback permission for the element while a gesture is live.
+   *
+   *  Safari ties the permission to the element rather than to the page, and
+   *  grants it on a play() made during a user gesture. Anything that waits -
+   *  a download, a dialog closing, a React effect - happens after the
+   *  activation is gone, so the grant has to be taken first. Half a
+   *  millisecond of silence does it, and every later play inherits it.
+   *
+   *  Callable from any gesture, not just a play click: the ranking dialog
+   *  calls it as it closes, so the clip the reader originally asked for can
+   *  still start once the dialog is out of the way. */
+  const unlock = React.useCallback(() => {
+    if (unlockedRef.current) return;
+    const el = element();
+    unlockedRef.current = true;
+    el.src = SILENT_MP3;
+    void el.play().catch(() => { unlockedRef.current = false; });
+  }, [element]);
+
   /** Fetching on hover is worth more now than waking the output device was:
    *  the click's only remaining wait is the download, and a hover usually
    *  precedes it by long enough to cover a 20KB clip. */
@@ -167,17 +190,9 @@ export function useSamplePlayer(base: string): SamplePlayer {
       const el = element();
       const gen = ++genRef.current;
 
-      // Spend the gesture now, before the fetch. Safari ties playback
-      // permission to the element and grants it on a play() made while the
-      // activation is live; an uncached clip has a download between the click
-      // and its play(), and activation does not reliably survive that. Half a
-      // millisecond of silence claims the grant while it is still there, and
-      // every later play - including this one - inherits it.
-      if (!unlockedRef.current && !cacheRef.current.has(file)) {
-        unlockedRef.current = true;
-        el.src = SILENT_MP3;
-        void el.play().catch(() => { unlockedRef.current = false; });
-      }
+      // Nothing to wait for on a cached clip, so the grant can be taken by the
+      // real play(). Otherwise claim it before the download starts.
+      if (!cacheRef.current.has(file)) unlock();
 
       setLoading(key);
       try {
@@ -214,7 +229,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
         setLoading(null);
       }
     },
-    [element, load, playing, stop]
+    [element, load, playing, stop, unlock]
   );
 
   React.useEffect(
@@ -229,7 +244,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
   // Memoised so callers can put the player in an effect's dependency list
   // without it re-firing on every render of the table.
   return React.useMemo(
-    () => ({ playing, loading, heard, toggle, stop, prime, warm, problem }),
-    [playing, loading, heard, toggle, stop, prime, warm, problem]
+    () => ({ playing, loading, heard, toggle, stop, prime, warm, unlock, problem }),
+    [playing, loading, heard, toggle, stop, prime, warm, unlock, problem]
   );
 }

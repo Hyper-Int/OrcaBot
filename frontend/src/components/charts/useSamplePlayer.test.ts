@@ -246,4 +246,36 @@ describe("useSamplePlayer", () => {
     expect(srcs.some((u) => u.startsWith("data:"))).toBe(false);
     expect(result.current.playing).toBe("a");
   });
+
+  it("can take the playback grant from a gesture that is not a play click", async () => {
+    // The ranking dialog closes on a click, and the clip the reader originally
+    // asked for starts afterwards, from an effect with no activation of its
+    // own. unlock() is how that gesture is spent on the reader's behalf.
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    act(() => { result.current.unlock(); });
+
+    expect(elements[0]?.src.startsWith("data:audio/mpeg")).toBe(true);
+    expect(elements[0]?.paused).toBe(false);
+
+    const srcs: string[] = [];
+    Object.defineProperty(elements[0], "src", {
+      get() { return this._s ?? ""; },
+      set(v: string) { this._s = v; srcs.push(v); },
+    });
+    await click(() => void result.current.toggle("a", "a.mp3"));
+
+    // Already granted, so no second silent frame - and the clip still plays.
+    expect(srcs.some((u) => u.startsWith("data:"))).toBe(false);
+    expect(result.current.playing).toBe("a");
+  });
+
+  it("only claims the grant once", async () => {
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    act(() => { result.current.unlock(); });
+    act(() => { result.current.unlock(); });
+    act(() => { result.current.unlock(); });
+
+    expect(elements.length).toBe(1);
+    expect(elements[0]?.src.startsWith("data:")).toBe(true);
+  });
 });
