@@ -293,9 +293,12 @@ export function TtsResultsTable() {
     if (here === there) return null;
     // Which side is which depends on the sort direction, so say it rather than
     // leaving the reader to infer it from a bare line.
+    // The subject stays put and the direction flips. Naming whichever group
+    // happens to be underneath instead means the sentence changes meaning as
+    // well as direction, and the reader has to re-read it after every sort.
     return here
       ? `below: slower than real time, over ${RTF_CUTOFF}\u00d7`
-      : `below: real time, ${RTF_CUTOFF}\u00d7 and under`;
+      : `above: slower than real time, over ${RTF_CUTOFF}\u00d7`;
   };
 
   const th: React.CSSProperties = {
@@ -379,7 +382,18 @@ export function TtsResultsTable() {
         </div>
 
         <div style={{ overflowX: "auto", maxWidth: "100%", border: `1px solid ${AXIS}`, borderRadius: 8 }}>
-          <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary }}>
+          <table
+            style={{
+              width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", color: INK.secondary,
+              // .legal-content sets margin-bottom: 1.5rem on tables, which here
+              // lands *inside* the bordered wrapper and reads as an empty row
+              // under the last one. It also switches tables to display:block
+              // under 640px, which would give this a second scroll container
+              // nested in the one it already has.
+              marginBottom: 0,
+              display: "table",
+            }}
+          >
             <thead>
               <tr>
                 {COLUMNS.map((c, i) => {
