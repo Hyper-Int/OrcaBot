@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-17",
+  "label": "2026-08-18",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2.1,
@@ -742,9 +742,9 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
+          "v": "3.53",
+          "sort": "3.53",
+          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -2462,9 +2462,9 @@
           "restricted": false
         },
         {
-          "v": "·",
-          "sort": "",
-          "tone": "pending",
+          "v": "2.26",
+          "sort": "2.26",
+          "tone": "bad",
           "align": "",
           "restricted": false
         },
