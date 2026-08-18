@@ -89,8 +89,13 @@ const M = { top: 18, right: 26, bottom: 56, left: 58 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
 
-const X_MIN = 0.1, X_MAX = 50;   // decade-aligned around the real 0.12s..41.7s
-const Y_MAX = 60;                // Bark tops out at 55%
+// Bounds derive from the data. They were pinned to the range of one export, and
+// the next one moved a configuration past the right-hand end - Dots-TTS stopped
+// being a partial run, finished the whole corpus, and went from 41.7s to 51.0s,
+// which drew its marker outside the plot with nothing to say so.
+const X_MIN = 0.1;
+const X_MAX = Math.max(...POINTS.map((p) => p.synth)) * 1.18;
+const Y_MAX = Math.ceil(Math.max(...POINTS.map((p) => p.wer)) / 10) * 10 + 5;
 const lx = Math.log10(X_MIN), lxSpan = Math.log10(X_MAX) - lx;
 const sx = (v: number) => M.left + ((Math.log10(v) - lx) / lxSpan) * PW;
 const sy = (v: number) => M.top + PH - (v / Y_MAX) * PH;
@@ -99,8 +104,11 @@ const DISK = { min: Math.min(...POINTS.map((p) => p.disk)), max: Math.max(...POI
 /** Area-proportional, floored at 5px radius so the smallest is still a target. */
 const radius = (disk: number) => 5 + 7 * Math.sqrt((disk - DISK.min) / (DISK.max - DISK.min));
 
-const X_TICKS = [0.1, 0.3, 1, 3, 10, 30];
-const Y_TICKS = [0, 10, 20, 30, 40, 50];
+// Decade and half-decade ticks, keeping only those the axis actually spans.
+const X_TICKS = [0.1, 0.3, 1, 3, 10, 30, 100, 300].filter((t) => t >= X_MIN && t <= X_MAX);
+const Y_TICKS = Array.from({ length: Math.floor(Y_MAX / 10) + 1 }, (_, i) => i * 10).filter(
+  (t) => t <= Y_MAX - 5
+);
 const tickLabel = (t: number) => (t < 1 ? `${t}s` : `${t}s`);
 
 /** Labelled inline: the cheapest, the most accurate, the worst, and the dearest.

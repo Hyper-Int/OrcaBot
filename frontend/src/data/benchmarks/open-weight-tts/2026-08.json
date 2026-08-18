@@ -528,6 +528,107 @@
       ]
     },
     {
+      "config": "dots-tts",
+      "display": "Dots-TTS",
+      "group": "",
+      "sample": "dots-tts.mp3?v=95c4bd16",
+      "cells": [
+        {
+          "v": "Dots-TTS",
+          "sort": "dots-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-06",
+          "sort": "202506",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.9 GB",
+          "sort": "5017.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0569",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.57",
+          "sort": "3.57",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14.22x",
+          "sort": "14.2218",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "51.01s",
+          "sort": "51.0087",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.4 GB f16 and 11x real time, but second-best accuracy measured.",
+          "sort": "4.4 GB f16 and 11x real time, but second",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "qwen3-tts",
       "display": "Qwen3-TTS",
       "group": "",
@@ -925,107 +1026,6 @@
         {
           "v": "Flow matching: non-autoregressive, but iterative.",
           "sort": "Flow matching: non-autoregressive, but i",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "dots-tts",
-      "display": "Dots-TTS (partial)",
-      "group": "",
-      "sample": "dots-tts.mp3?v=95c4bd16",
-      "cells": [
-        {
-          "v": "Dots-TTS (partial)",
-          "sort": "dots-tts",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/studio-dots-ai/dots.tts"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "Apache-2.0",
-          "sort": "Apache-2.0",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2025-06",
-          "sort": "202506",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.3 GB",
-          "sort": "4403.2",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.3 GB",
-          "sort": "4403.2",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.9 GB",
-          "sort": "5017.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6%",
-          "sort": "0.0643",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.57",
-          "sort": "3.57",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "13.02x",
-          "sort": "13.0239",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "41.68s",
-          "sort": "41.6766",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.4 GB f16 and 11x real time, but second-best accuracy measured.",
-          "sort": "4.4 GB f16 and 11x real time, but second",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2650,12 +2650,12 @@
     },
     {
       "config": "zonos",
-      "display": "Zonos (partial)",
+      "display": "Zonos",
       "group": "",
       "sample": "zonos.mp3?v=dc94eccd",
       "cells": [
         {
-          "v": "Zonos (partial)",
+          "v": "Zonos",
           "sort": "zonos",
           "tone": "",
           "align": "left",
@@ -2714,7 +2714,7 @@
         },
         {
           "v": "17%",
-          "sort": "0.1668",
+          "sort": "0.1657",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2727,15 +2727,15 @@
           "restricted": false
         },
         {
-          "v": "10.59x",
-          "sort": "10.5940",
+          "v": "11.07x",
+          "sort": "11.0727",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "31.60s",
-          "sort": "31.6000",
+          "v": "34.78s",
+          "sort": "34.7792",
           "tone": "bad",
           "align": "",
           "restricted": false
