@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-sample-player-v1
+// REVISION: tts-sample-player-v2-safari-resume
 // Shared clip playback for the TTS benchmark: the results table and the blind
 // ranking dialog both drive this one hook, so there is a single AudioContext, a
 // single decoded-buffer cache, and only ever one clip audible at a time.
@@ -18,6 +18,13 @@
 //   - macOS powers the output device down when idle and the first sound after
 //     that loses a couple of hundred ms, below the browser and unaffected by
 //     decoding early. A silent buffer pushed on first interaction wakes it.
+//
+// The other side of that same power saving is why resume() is attempted on
+// every play rather than once: WebKit suspends a context that has been silent
+// for a while, and interrupts one whose tab is backgrounded or whose audio
+// session another app has taken. Coming back needs resume() from inside a user
+// gesture, so it has to happen synchronously at the top of the click - past the
+// first await the activation is gone and Safari refuses.
 
 import * as React from "react";
 
@@ -51,6 +58,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
   const currentRef = React.useRef<AudioBufferSourceNode | null>(null);
   const primedRef = React.useRef(false);
   const warmedRef = React.useRef(false);
+  const resumeRef = React.useRef<Promise<void> | null>(null);
 
   const ctx = React.useCallback(() => {
     if (!ctxRef.current) {
@@ -69,6 +77,21 @@ export function useSamplePlayer(base: string): SamplePlayer {
       if (session) {
         try { session.type = "playback"; } catch { /* older WebKit rejects the value */ }
       }
+
+      // A context that leaves "running" has taken every scheduled source with
+      // it, so onended will never fire for the clip that was sounding. Without
+      // this the button stays showing "stop" for audio that is not audible.
+      // Clearing primedRef also makes the next gesture do the full wake-up
+      // again, silent buffer included, rather than assuming the device is up.
+      ctxRef.current.addEventListener("statechange", () => {
+        const ac = ctxRef.current;
+        if (!ac || ac.state === "running") return;
+        primedRef.current = false;
+        if (currentRef.current) {
+          currentRef.current = null;
+          setPlaying(null);
+        }
+      });
     }
     return ctxRef.current;
   }, []);
@@ -79,6 +102,12 @@ export function useSamplePlayer(base: string): SamplePlayer {
    *  nothing, silently, and the source is spent. */
   const ensureRunning = React.useCallback(async () => {
     const ac = ctx();
+    // The resume that matters was started by prime(), inside the gesture. Wait
+    // on that one: a fresh resume() from here is issued after the decode and so
+    // has no activation behind it, which WebKit rejects.
+    if (resumeRef.current) {
+      try { await resumeRef.current; } catch { /* settled by prime()'s handler */ }
+    }
     if (ac.state !== "running") {
       try { await ac.resume(); } catch { /* refused outside a gesture */ }
     }
@@ -88,8 +117,10 @@ export function useSamplePlayer(base: string): SamplePlayer {
     return String(ac.state) === "running";
   }, [ctx]);
 
+  /** Wake the context, and the output device behind it. Called synchronously at
+   *  the top of every play so the resume lands while the gesture is still live;
+   *  the work inside is idempotent, so calling it on hover as well is free. */
   const prime = React.useCallback(() => {
-    if (primedRef.current) return;
     const ac = ctx();
     const push = () => {
       // Only counts as primed once really running: a hover is not a user
@@ -101,8 +132,11 @@ export function useSamplePlayer(base: string): SamplePlayer {
       s.connect(ac.destination);
       s.start();
     };
-    if (ac.state === "suspended") void ac.resume().then(push).catch(() => {});
-    else push();
+    if (ac.state === "running") { push(); return; }
+    // Anything else - "suspended", or WebKit's non-standard "interrupted" -
+    // needs resuming. Kept on a ref so the play that triggered it can await
+    // this exact attempt instead of racing a second, gesture-less one.
+    resumeRef.current = ac.resume().then(push, () => { /* refused outside a gesture */ });
   }, [ctx]);
 
   const decode = React.useCallback(
@@ -180,6 +214,23 @@ export function useSamplePlayer(base: string): SamplePlayer {
     },
     [ctx, decode, ensureRunning, playing, prime, stop]
   );
+
+  // Coming back to a backgrounded tab is the common way to find the context
+  // interrupted. The page has sticky activation from the play that started all
+  // this, so this resume often succeeds and the next click is instant; when it
+  // does not, the click resumes it anyway and nothing is lost by trying.
+  React.useEffect(() => {
+    const onVisible = () => {
+      const ac = ctxRef.current;
+      if (!ac || document.visibilityState !== "visible" || ac.state === "running") return;
+      resumeRef.current = ac.resume().then(
+        () => {},
+        () => { /* needs a gesture; the play button will supply one */ }
+      );
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   React.useEffect(
     () => () => {
