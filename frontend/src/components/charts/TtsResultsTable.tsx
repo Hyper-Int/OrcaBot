@@ -294,8 +294,8 @@ export function TtsResultsTable() {
     // Which side is which depends on the sort direction, so say it rather than
     // leaving the reader to infer it from a bare line.
     return here
-      ? `slower than real time below \u2014 over ${RTF_CUTOFF}\u00d7`
-      : `real time below \u2014 ${RTF_CUTOFF}\u00d7 and under`;
+      ? `below: slower than real time, over ${RTF_CUTOFF}\u00d7`
+      : `below: real time, ${RTF_CUTOFF}\u00d7 and under`;
   };
 
   const th: React.CSSProperties = {
@@ -522,20 +522,30 @@ export function TtsResultsTable() {
                   <React.Fragment key={r.config}>
                     {row}
                     <tr aria-hidden="true">
+                      {/* A band, not a rule. Drawn in the header's own surface and
+                          border so it reads as part of the table's structure; in
+                          the accent it looked like a warning about the rows under
+                          it, which is not what a change of pace is. */}
                       <td
                         colSpan={COLUMNS.length}
                         style={{
-                          padding: 0, borderBottom: `2px solid ${ACCENT}`,
-                          position: "relative", height: 26,
+                          padding: "0.28rem 0.45rem",
+                          background: "var(--background-elevated)",
+                          borderTop: `1px solid ${AXIS}`,
+                          borderBottom: `1px solid ${AXIS}`,
+                          fontSize: "0.66rem", letterSpacing: "0.09em",
+                          textTransform: "uppercase", fontWeight: 600,
+                          color: INK.muted, whiteSpace: "nowrap",
                         }}
                       >
-                        <span
-                          style={{
-                            position: "absolute", left: "0.45rem", bottom: 3,
-                            fontSize: "0.68rem", letterSpacing: "0.04em",
-                            color: ACCENT, textTransform: "uppercase", fontWeight: 700,
-                          }}
-                        >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
+                          {/* Three descending blocks: a graphic for "the pace
+                              drops here" that needs no colour to carry it. */}
+                          <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "flex-end", gap: 2, height: 9 }}>
+                            <i style={{ width: 3, height: 9, background: INK.muted, opacity: 0.85, display: "block" }} />
+                            <i style={{ width: 3, height: 6, background: INK.muted, opacity: 0.6, display: "block" }} />
+                            <i style={{ width: 3, height: 3, background: INK.muted, opacity: 0.35, display: "block" }} />
+                          </span>
                           {divider}
                         </span>
                       </td>
