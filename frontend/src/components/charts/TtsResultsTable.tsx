@@ -40,7 +40,6 @@ const RTF_COL = run.columns.indexOf("RTF");
 if (RTF_COL < 0) throw new Error(`[tts] no "RTF" column in run ${run.run}: have ${run.columns.join(", ")}`);
 const RTF_CUTOFF = run.rtfCutoff;
 const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
-const WITHIN_CUTOFF = ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF).length;
 
 /** The Human column is spliced in here, right after the engine name, so the
  *  live number is visible without scrolling the table sideways. */
@@ -69,6 +68,26 @@ const CLASS_DESC: Record<string, string> = {
   "ar-lm":
     "Autoregressive LM: samples audio tokens one at a time. Length is emergent, cloning and emotion become possible, and speed is floored by sequential decoding however much you quantize.",
 };
+
+/** Architecture classes present in this run, with the colours the chart uses -
+ *  filtering here and isolating there should look like the same scheme, because
+ *  they are the same grouping. Derived from the data so a new class appears
+ *  without being registered anywhere. */
+const CLASS_COLOURS: Record<string, string> = {
+  "det-ff": "#3987e5",
+  "stoch-ff": "#5ecfb0",
+  "ar-lm": "#d95926",
+};
+const CLASSES = [...new Map(
+  ROWS.map((r) => [r.cells[run.columns.indexOf("Class")].sort, r.cells[run.columns.indexOf("Class")].v])
+).entries()]
+  .map(([key, label]) => ({
+    key,
+    label,
+    colour: CLASS_COLOURS[key] ?? INK.muted,
+    count: ROWS.filter((r) => r.cells[run.columns.indexOf("Class")].sort === key).length,
+  }))
+  .sort((a, b) => b.count - a.count);
 
 const LICENCE_COL = COLUMNS.indexOf("Licence");
 /** Widest licence that should fit whole: "NeuTTS, <$5M" measures 90px at this
@@ -142,6 +161,9 @@ export function TtsResultsTable() {
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [realtimeOnly, setRealtimeOnly] = React.useState(false);
+  /** Classes to keep. Empty means all of them, so the default needs no special
+   *  case and clearing the last chip returns to showing everything. */
+  const [classFilter, setClassFilter] = React.useState<Set<string>>(new Set());
   /** The note being shown, with the anchor it was opened from. Positioned fixed
    *  rather than inside the cell: the table scrolls horizontally, and anything
    *  absolutely placed within it is clipped at the container edge - which is
@@ -185,7 +207,12 @@ export function TtsResultsTable() {
 
   /** Splice the live rating in as a real cell so sorting needs no special case. */
   const rows = React.useMemo(() => {
-    const visible = realtimeOnly ? ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF) : ROWS;
+    const classOf = (r: Row) => r.cells[run.columns.indexOf("Class")].sort;
+    const visible = ROWS.filter(
+      (r) =>
+        (!realtimeOnly || rtfOf(r) <= RTF_CUTOFF) &&
+        (classFilter.size === 0 || classFilter.has(classOf(r)))
+    );
     const withHuman = visible.map((r) => {
       const rating = ratings.get(r.config);
       const human: Cell =
@@ -206,7 +233,7 @@ export function TtsResultsTable() {
         typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [ratings, realtimeOnly, sort]);
+  }, [classFilter, ratings, realtimeOnly, sort]);
 
   // asc -> desc -> back to the default, never to "unsorted". Unsorted rendered
   // the export's own row order, which is neither the default the reader arrived
@@ -364,11 +391,60 @@ export function TtsResultsTable() {
             <span aria-hidden="true" style={{ marginRight: "0.4rem" }}>{realtimeOnly ? "☑" : "☐"}</span>
             Real time only (under {RTF_CUTOFF}×)
           </button>
-          <span style={{ color: INK.muted }} aria-live="polite">
-            {realtimeOnly
-              ? `${WITHIN_CUTOFF} of ${ROWS.length} configurations`
-              : `${ROWS.length} configurations`}
+          {/* Architecture filters. Additive: pressing none shows everything, so
+              there is no "all" chip to keep in sync with the others. */}
+          <span style={{ display: "inline-flex", gap: "0.3rem", flexWrap: "wrap" }}>
+            {CLASSES.map((c) => {
+              const on = classFilter.has(c.key);
+              return (
+                <button
+                  key={c.key}
+                  type="button"
+                  aria-pressed={on}
+                  title={CLASS_DESC[c.key]}
+                  onClick={() =>
+                    setClassFilter((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(c.key)) next.delete(c.key);
+                      else next.add(c.key);
+                      return next;
+                    })
+                  }
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: "0.35rem",
+                    font: "inherit", fontWeight: 600, padding: "0.3rem 0.6rem", borderRadius: 999,
+                    cursor: "pointer",
+                    border: `1px solid ${on ? c.colour : AXIS}`,
+                    background: on ? `${c.colour}1f` : "transparent",
+                    color: on ? INK.primary : INK.muted,
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{ width: 8, height: 8, borderRadius: 999, background: c.colour, opacity: on ? 1 : 0.55 }}
+                  />
+                  {c.label}
+                </button>
+              );
+            })}
           </span>
+          <span style={{ color: INK.muted }} aria-live="polite">
+            {rows.length === ROWS.length
+              ? `${ROWS.length} configurations`
+              : `${rows.length} of ${ROWS.length} configurations`}
+          </span>
+          {(realtimeOnly || classFilter.size > 0) && (
+            <button
+              type="button"
+              onClick={() => { setRealtimeOnly(false); setClassFilter(new Set()); }}
+              style={{
+                font: "inherit", color: INK.muted, background: "none", border: "none",
+                padding: 0, textDecoration: "underline", cursor: "pointer",
+              }}
+            >
+              clear
+            </button>
+          )}
           {/* Without this a blocked audio context looks like a dead play
               button, which is unfixable by the reader because they cannot see
               why. On a phone there is no console to check either. */}
