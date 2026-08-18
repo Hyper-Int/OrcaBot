@@ -111,6 +111,8 @@ const LICENCE_PROOF_URLS = {
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS/blob/main/LICENSE",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
+  "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
+  "omnivoice": "https://github.com/k2-fsa/OmniVoice/blob/master/LICENSE",
   "tada-1b": "https://huggingface.co/HumeAI/tada-1b/blob/main/LICENSE",
   "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml/blob/main/LICENSE",
   "vibevoice": "https://github.com/microsoft/VibeVoice/blob/main/LICENSE",
@@ -149,7 +151,8 @@ const MODEL_URLS = {
   "zonos": "https://github.com/Zyphra/Zonos",
   "fastpitch": "https://github.com/NVIDIA-NeMo/Speech",
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS",
-  "dots-tts": "https://github.com/rednote-hilab/dots.tts",
+  "omnivoice": "https://github.com/k2-fsa/OmniVoice",
+  "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
   "tada-1b": "https://huggingface.co/HumeAI/tada-1b",
   "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml",
   // The quantized and device variants are the same upstream weights.
@@ -175,6 +178,13 @@ const MODEL_URLS = {
  *  model repo carries the licence text itself, which is what the cell links to.
  */
 const LICENCE_OVERRIDES = {
+  // OmniVoice: the k2-fsa Space declares `license: apache-2.0` and the repo
+  // carries the Apache text, so the export's "?" was again about the card it
+  // could reach rather than about the model.
+  "omnivoice": "Apache-2.0",
+  // Dots-TTS: its repo has carried an Apache LICENSE all along - this was the
+  // mismatch the licence cross-check flagged when the links were first added.
+  "dots-tts": "Apache-2.0",
   "tada-1b": "Llama 3.2 Community",
   "tada-3b": "Llama 3.2 Community",
 };

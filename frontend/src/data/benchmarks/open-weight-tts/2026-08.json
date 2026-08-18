@@ -943,7 +943,7 @@
           "tone": "",
           "align": "left",
           "restricted": false,
-          "href": "https://github.com/rednote-hilab/dots.tts"
+          "href": "https://github.com/studio-dots-ai/dots.tts"
         },
         {
           "v": "ar-lm",
@@ -953,11 +953,12 @@
           "restricted": false
         },
         {
-          "v": "?",
-          "sort": "?",
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": true
+          "restricted": true,
+          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
         },
         {
           "v": "-",
@@ -2153,7 +2154,8 @@
           "sort": "omnivoice",
           "tone": "",
           "align": "left",
-          "restricted": false
+          "restricted": false,
+          "href": "https://github.com/k2-fsa/OmniVoice"
         },
         {
           "v": "ar-lm",
@@ -2163,11 +2165,12 @@
           "restricted": false
         },
         {
-          "v": "?",
-          "sort": "?",
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": true
+          "restricted": true,
+          "href": "https://github.com/k2-fsa/OmniVoice/blob/master/LICENSE"
         },
         {
           "v": "-",

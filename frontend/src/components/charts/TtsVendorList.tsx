@@ -38,6 +38,7 @@ const VENDORS: Vendor[] = [
   { name: "Microsoft", icon: "microsoft.png", url: "https://github.com/microsoft/VibeVoice" },
   { name: "Qwen", icon: "QwenLM.png", url: "https://github.com/QwenLM/Qwen3-TTS" },
   { name: "Hume AI", icon: "HumeAI.png", url: "https://huggingface.co/HumeAI/tada-3b-ml" },
+  { name: "k2-fsa", icon: "k2-fsa.png", url: "https://github.com/k2-fsa/OmniVoice" },
   { name: "Rhasspy", icon: "rhasspy.png", url: "https://github.com/rhasspy/piper" },
   { name: "hexgrad", icon: "hexgrad.png", url: "https://huggingface.co/hexgrad/Kokoro-82M" },
   { name: "Suno", icon: "suno-ai.jpg", url: "https://github.com/suno-ai/bark" },
@@ -49,7 +50,7 @@ const VENDORS: Vendor[] = [
   { name: "Sesame", icon: "SesameAILabs.png", url: "https://github.com/SesameAILabs/csm" },
   { name: "Zyphra", icon: "Zyphra.png", url: "https://github.com/Zyphra/Zonos" },
   { name: "NVIDIA", icon: "NVIDIA.png", url: "https://github.com/NVIDIA-NeMo/Speech" },
-  { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/rednote-hilab/dots.tts" },
+  { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/studio-dots-ai/dots.tts" },
   { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
 ].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
