@@ -165,6 +165,20 @@ const MODEL_URLS = {
   // plain text rather than pointing somewhere plausible but wrong.
 };
 
+/** Licences the export could not verify from the model card, established since.
+ *  The export prints "?" when it cannot read a licence off the card; that is a
+ *  statement about the card, not about the model, so a value confirmed by hand
+ *  belongs here rather than being left blank.
+ *
+ *  TaDA: both cards declare `license: llama3.2`, and Hume's own Space says "The
+ *  model is licensed under the Llama 3.2 Community License Agreement". Each
+ *  model repo carries the licence text itself, which is what the cell links to.
+ */
+const LICENCE_OVERRIDES = {
+  "tada-1b": "Llama 3.2 Community",
+  "tada-3b": "Llama 3.2 Community",
+};
+
 /** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
  *  SPDX id, and spelled out it is the widest cell in the column. */
 const REWRITE = {
@@ -346,8 +360,13 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
     .map((c, i) => {
       const rewrite = REWRITE[headers[i]];
       const cell = rewrite ? { ...c, v: rewrite(c.v) } : c;
-      if (headers[i] === "Licence" && LICENCE_PROOF_URLS[config]) {
-        return { ...cell, href: LICENCE_PROOF_URLS[config] };
+      if (headers[i] === "Licence") {
+        const v = LICENCE_OVERRIDES[config] ?? cell.v;
+        // Sort key follows the text, or an overridden licence would still sort
+        // under "?" - invisibly, since the column shows the text.
+        const sort = LICENCE_OVERRIDES[config] ?? cell.sort;
+        const href = LICENCE_PROOF_URLS[config];
+        return { ...cell, v, sort, ...(href ? { href } : {}) };
       }
       return cell;
     })
