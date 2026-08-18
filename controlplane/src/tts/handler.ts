@@ -51,6 +51,11 @@ const ITEMS_PER_BALLOT = 4;
 /** Below this, a configuration shows no human score rather than a noisy one. */
 export const MIN_BALLOTS_TO_SHOW = 8;
 
+/** Ballots one voter may contribute. Enough that someone willing to listen adds
+ *  real signal, few enough that no single pair of ears can move a rating on its
+ *  own - which is the failure mode of an open, unauthenticated vote. */
+const MAX_BALLOTS_PER_VOTER = 3;
+
 function shuffle<T>(a: T[]): T[] {
   const out = [...a];
   for (let i = out.length - 1; i > 0; i--) {
@@ -68,22 +73,63 @@ async function voterHash(request: Request): Promise<string> {
   return [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** What this voter has already done. Both limits below are enforced here rather
+ *  than in the client, which cannot be trusted to count its own votes. */
+async function voterHistory(env: Env, voter: string) {
+  const { results } = await env.DB.prepare(
+    `SELECT items_json, status FROM tts_ballots
+     WHERE voter_hash = ? AND run = ? AND status IN ('counted','rejected')`
+  ).bind(voter, RUN).all<{ items_json: string; status: string }>();
+
+  // Only submitted ballots count. An issued-then-abandoned one must not burn an
+  // attempt or retire four clips, or closing the dialog would quietly cost the
+  // reader a vote.
+  const heard = new Set<string>();
+  for (const r of results ?? []) {
+    try { for (const c of JSON.parse(r.items_json)) heard.add(c); } catch { /* skip */ }
+  }
+  return { submitted: (results ?? []).length, heard };
+}
+
 /** GET /tts/ballot - issue a blind comparison set. */
 export async function issueBallot(env: Env, request: Request): Promise<Response> {
-  const useAnchor = Math.random() < ANCHOR_RATE;
-  const anchor = useAnchor ? ANCHORS[Math.floor(Math.random() * ANCHORS.length)] : null;
-  const pool = CONFIGS.filter((c) => c !== anchor);
-  const picked = shuffle([...pool]).slice(0, anchor ? ITEMS_PER_BALLOT - 1 : ITEMS_PER_BALLOT);
+  const voter = await voterHash(request);
+  const { submitted, heard } = await voterHistory(env, voter);
+
+  if (submitted >= MAX_BALLOTS_PER_VOTER) {
+    return Response.json({ exhausted: 'limit', submitted, max: MAX_BALLOTS_PER_VOTER });
+  }
+
+  // Nothing already ranked comes back. A second opinion on the same clip from
+  // the same ears is not a second data point, and Bradley-Terry would treat it
+  // as one.
+  // Widened to string[]: CONFIGS is a literal tuple, and ANCHORS is not.
+  const fresh: string[] = CONFIGS.filter((c) => !heard.has(c));
+  if (fresh.length < 2) {
+    return Response.json({ exhausted: 'clips', submitted, max: MAX_BALLOTS_PER_VOTER });
+  }
+
+  // The anchor has to be one they have not heard either, or the attention check
+  // is just a memory test.
+  const freshAnchors = ANCHORS.filter((a) => fresh.includes(a));
+  const anchor =
+    freshAnchors.length && Math.random() < ANCHOR_RATE
+      ? freshAnchors[Math.floor(Math.random() * freshAnchors.length)]
+      : null;
+
+  const pool = fresh.filter((c) => c !== anchor);
+  const want = Math.min(ITEMS_PER_BALLOT, fresh.length) - (anchor ? 1 : 0);
+  const picked = shuffle(pool).slice(0, want);
   const items = shuffle(anchor ? [...picked, anchor] : picked);
 
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO tts_ballots (id, run, items_json, anchor_config, voter_hash) VALUES (?, ?, ?, ?, ?)`
-  ).bind(id, RUN, JSON.stringify(items), anchor, await voterHash(request)).run();
+  ).bind(id, RUN, JSON.stringify(items), anchor, voter).run();
 
   // The anchor is deliberately NOT returned: the client must not be able to
   // tell which item is the attention check.
-  return Response.json({ ballotId: id, items });
+  return Response.json({ ballotId: id, items, submitted, max: MAX_BALLOTS_PER_VOTER });
 }
 
 /** POST /tts/ballot - record a ranking, best first. */
@@ -98,10 +144,21 @@ export async function submitBallot(
   }
 
   const row = await env.DB.prepare(
-    `SELECT items_json, anchor_config, status FROM tts_ballots WHERE id = ?`
-  ).bind(ballotId).first<{ items_json: string; anchor_config: string | null; status: string }>();
+    `SELECT items_json, anchor_config, status, voter_hash FROM tts_ballots WHERE id = ?`
+  ).bind(ballotId).first<{ items_json: string; anchor_config: string | null; status: string; voter_hash: string }>();
 
   if (!row) return Response.json({ error: 'E79602: Unknown ballot' }, { status: 404 });
+
+  // Checked again at submit, not only at issue. Issuing is cheap and
+  // unauthenticated, so anyone can hold several open ballots and submit them
+  // all; the cap has to be applied where the vote is actually recorded.
+  const { submitted } = await voterHistory(env, row.voter_hash);
+  if (submitted >= MAX_BALLOTS_PER_VOTER) {
+    return Response.json(
+      { error: `E79605: This voter has already submitted ${MAX_BALLOTS_PER_VOTER} ballots`, code: 'BALLOT_LIMIT' },
+      { status: 409 }
+    );
+  }
   if (row.status !== 'issued') {
     return Response.json({ error: 'E79603: Ballot already submitted' }, { status: 409 });
   }

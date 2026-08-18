@@ -572,21 +572,40 @@ export function TtsResultsTable() {
             </tbody>
           </table>
         </div>
-        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
-          {run.caption}{run.caption ? " " : ""}
-          <strong style={{ color: INK.secondary }}>Human</strong> is reader preference from blind
-          four-way rankings, scored 0&ndash;100 by Bradley-Terry and updated live; an engine shows
-          a dash until enough people have ranked it.{" "}
+        {/* The Human column only fills up if people rank, and a link buried in a
+            caption asks too quietly. The invitation goes under the table, where
+            someone who has just finished reading it is standing. */}
+        <div
+          style={{
+            display: "flex", alignItems: "center", gap: "0.7rem", flexWrap: "wrap",
+            marginTop: "0.7rem", padding: "0.6rem 0.75rem",
+            border: `1px solid ${AXIS}`, borderRadius: 8,
+            background: "var(--background-elevated)",
+          }}
+        >
           <button
             type="button"
             onClick={() => { pendingRef.current = null; setShowBallot(true); }}
             style={{
-              font: "inherit", color: INK.secondary, background: "none", border: "none",
-              padding: 0, textDecoration: "underline", cursor: "pointer",
+              font: "inherit", fontSize: "0.82rem", fontWeight: 600,
+              padding: "0.4rem 0.85rem", borderRadius: 999, cursor: "pointer",
+              border: `1px solid ${ACCENT}`, background: ACCENT, color: "#fff",
+              flexShrink: 0,
             }}
           >
             Rank four clips
-          </button>.
+          </button>
+          <span style={{ fontSize: "0.78rem", color: INK.muted, lineHeight: 1.45 }}>
+            The <strong style={{ color: INK.secondary }}>Human</strong> column is the one number
+            here nobody measured on a machine. Four blind clips, best to worst, up to three
+            times &mdash; you never get a clip you have already ranked.
+          </span>
+        </div>
+
+        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
+          {run.caption}{run.caption ? " " : ""}
+          Human is reader preference from those rankings, scored 0&ndash;100 by Bradley-Terry and
+          updated live; an engine shows a dash until enough people have ranked it.
         </figcaption>
       </figure>
 

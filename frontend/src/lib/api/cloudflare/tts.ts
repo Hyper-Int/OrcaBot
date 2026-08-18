@@ -10,9 +10,16 @@ import { API } from "@/config/env";
 import { apiGet, apiPost } from "../client";
 
 export interface TtsBallot {
-  ballotId: string;
+  ballotId?: string;
   /** Configuration ids to rank, already shuffled. Never includes which is the anchor. */
-  items: string[];
+  items?: string[];
+  /** Set instead of a ballot when this voter cannot have another: "limit" once
+   *  they have submitted their allowance, "clips" if they have somehow ranked
+   *  nearly everything. Returned as a 200 rather than an error status so the
+   *  reason survives to the UI instead of collapsing into a thrown fetch. */
+  exhausted?: "limit" | "clips";
+  submitted?: number;
+  max?: number;
 }
 
 export interface TtsScore {

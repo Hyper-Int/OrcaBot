@@ -70,7 +70,7 @@ export interface TtsPreferenceDialogProps {
   onClose: (submitted: boolean) => void;
 }
 
-type Phase = "loading" | "ranking" | "confirm" | "sending" | "revealed" | "error";
+type Phase = "loading" | "ranking" | "confirm" | "sending" | "revealed" | "error" | "exhausted";
 
 interface Drag {
   config: string;
@@ -112,6 +112,8 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
   const [drag, setDrag] = React.useState<Drag | null>(null);
   const [overSlot, setOverSlot] = React.useState<number | null>(null);
   const [announcement, setAnnouncement] = React.useState("");
+  /** How many of this voter's allowance is used, for the exhausted message. */
+  const [quota, setQuota] = React.useState<{ submitted: number; max: number } | null>(null);
   const { stop } = player;
 
   const slotRefs = React.useRef<(HTMLElement | null)[]>([]);
@@ -121,6 +123,11 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
     fetchTtsBallot()
       .then((b) => {
         if (!live) return;
+        if (b.exhausted || !b.ballotId || !b.items) {
+          setQuota({ submitted: b.submitted ?? 0, max: b.max ?? 0 });
+          setPhase("exhausted");
+          return;
+        }
         // A clip with no audio cannot be ranked by ear, so drop it rather than
         // let it sit unplayable and block the submit gate.
         const usable = b.items.filter((c) => sampleOf(c));
@@ -309,7 +316,21 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
           boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
         }}
       >
-        {phase === "error" ? (
+        {phase === "exhausted" ? (
+          <>
+            <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem", color: INK.primary }}>
+              That is your lot — thank you
+            </h2>
+            <p style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
+              You have ranked {quota?.max ?? 3} sets, which is the most one person can
+              contribute. The cap exists so no single pair of ears can move a rating on its
+              own; the scores in the table are the pooled result of everyone&apos;s.
+            </p>
+            <Actions>
+              <Button onClick={() => dismiss(false)} primary>Back to the results</Button>
+            </Actions>
+          </>
+        ) : phase === "error" ? (
           <>
             <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem", color: INK.primary }}>
               Ranking is unavailable
