@@ -1084,14 +1084,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // --- Open-weight TTS preference ballots (public, rate limited) ---------
   // GET /tts/ballot - issue a blind 4-item comparison set
   if (segments[0] === 'tts' && segments[1] === 'ballot' && segments.length === 2 && method === 'GET') {
-    const ipLimitResult = await checkRateLimitIp(request, env);
-    if (!ipLimitResult.allowed) return ipLimitResult.response!;
+    // No IP check here: unauthenticated requests already passed the global one
+    // above, and a second call spends a second token for the same request -
+    // halving the budget for exactly the readers this endpoint is for. The real
+    // abuse control is the per-voter ballot cap in the handler.
     return tts.issueBallot(env, request);
   }
   // POST /tts/ballot - submit a ranking for an issued ballot
   if (segments[0] === 'tts' && segments[1] === 'ballot' && segments.length === 2 && method === 'POST') {
-    const ipLimitResult = await checkRateLimitIp(request, env);
-    if (!ipLimitResult.allowed) return ipLimitResult.response!;
     const data = await request.json() as { ballotId?: string; ranking?: string[] };
     return tts.submitBallot(env, request, data);
   }

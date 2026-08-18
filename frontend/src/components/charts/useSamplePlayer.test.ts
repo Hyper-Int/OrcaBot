@@ -184,4 +184,66 @@ describe("useSamplePlayer", () => {
 
     expect(contextsBuilt).toBe(0);
   });
+
+  it("plays the clip that was clicked last, not the one that loads last", async () => {
+    // Both clips are still loading, so neither is "playing" yet - the guard has
+    // to be a generation, not a check for whether something is sounding.
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    act(() => { void result.current.toggle("first", "first.mp3"); });
+    act(() => { void result.current.toggle("second", "second.mp3"); });
+    await act(async () => {
+      // Deliberately settle them out of order: the earlier click lands last.
+      const [a, b] = pendingFetches;
+      pendingFetches = [];
+      b(); a();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(result.current.playing).toBe("second");
+  });
+
+  it("does not resurrect a clip that was stopped while it was loading", async () => {
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    act(() => { void result.current.toggle("a", "a.mp3"); });
+    act(() => { result.current.stop(); });
+    await act(async () => {
+      releaseFetches();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(result.current.playing).toBeNull();
+  });
+
+  it("claims the gesture before downloading an uncached clip", async () => {
+    // Safari grants playback to the element on a play() made while the click is
+    // live. An uncached clip has a fetch in the way, so a silent frame is played
+    // first to take the grant while it is still there.
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    act(() => { void result.current.toggle("a", "a.mp3"); });
+
+    expect(elements[0]?.src.startsWith("data:audio/mpeg")).toBe(true);
+    expect(elements[0]?.paused).toBe(false);
+
+    await act(async () => {
+      releaseFetches();
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+    expect(elements[0]?.src).toBe("blob:clip");
+    expect(result.current.playing).toBe("a");
+  });
+
+  it("does not spend a silent frame when the clip is already cached", async () => {
+    const { result } = renderHook(() => useSamplePlayer("/a/"));
+    await click(() => void result.current.toggle("a", "a.mp3"));
+    act(() => { result.current.stop(); });
+    const srcs: string[] = [];
+    Object.defineProperty(elements[0], "src", {
+      get() { return this._s ?? ""; },
+      set(v: string) { this._s = v; srcs.push(v); },
+    });
+    await click(() => void result.current.toggle("a", "a.mp3"));
+
+    expect(srcs.some((u) => u.startsWith("data:"))).toBe(false);
+    expect(result.current.playing).toBe("a");
+  });
 });

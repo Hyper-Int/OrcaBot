@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-sample-player-v5-element-only
+// REVISION: tts-sample-player-v6-gesture-and-generation
 // Shared clip playback for the TTS benchmark: the results table and the blind
 // ranking dialog both drive this one hook, so there is a single media element, a
 // single cache of fetched clips, and only ever one clip audible at a time.
@@ -34,7 +34,14 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-sample-player-v5-element-only";
+/** A single silent MP3 frame, inline so claiming the gesture costs no request.
+ *  Played only to spend the activation on the element before a clip download. */
+const SILENT_MP3 =
+  "data:audio/mpeg;base64,//uQxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA" +
+  "gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgID/////////////////////" +
+  "//////////////////////////////8AAAA5TEFNRTMuOTlyAc0AAAAAAAAAABSAJAJAQgAAgAAAAnGMHkkIAAAA";
+
+const MODULE_REVISION = "tts-sample-player-v6-gesture-and-generation";
 if (typeof window !== "undefined") {
   console.log(`[tts-sample-player] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -70,6 +77,14 @@ export function useSamplePlayer(base: string): SamplePlayer {
   const cacheRef = React.useRef<Map<string, string>>(new Map());
   const inflightRef = React.useRef<Map<string, Promise<string>>>(new Map());
   const warmedRef = React.useRef(false);
+  /** Bumped on every toggle and every stop, so a fetch that lands after the
+   *  reader has moved on knows it is stale. Without it two clips loading at
+   *  once both pass the check - neither is playing yet - and whichever
+   *  resolves last takes the element, which may be the earlier click. */
+  const genRef = React.useRef(0);
+  /** Whether this element has ever played. The first play is the only one that
+   *  needs a live gesture; after it the element keeps the grant. */
+  const unlockedRef = React.useRef(false);
 
   /** One element for the life of the page, reused by changing src. iOS grants
    *  playback to an element the reader has started once and holds that grant as
@@ -115,6 +130,7 @@ export function useSamplePlayer(base: string): SamplePlayer {
 
   const stop = React.useCallback(() => {
     const el = elRef.current;
+    genRef.current++;
     playingRef.current = null;
     if (el) {
       el.onended = null;
@@ -148,25 +164,37 @@ export function useSamplePlayer(base: string): SamplePlayer {
       if (playing === key) { stop(); return; }
       stop();
 
-      // Point the element at something inside the click itself. Safari ties its
-      // permission to the element, not to the page, and grants it on a play()
-      // that happens while the gesture is live - so the first play of the page
-      // must not wait on a fetch to get there. A cached clip is played straight
-      // away; an uncached one gets play() called on the pending source, which is
-      // the same element the reader just authorised.
       const el = element();
+      const gen = ++genRef.current;
+
+      // Spend the gesture now, before the fetch. Safari ties playback
+      // permission to the element and grants it on a play() made while the
+      // activation is live; an uncached clip has a download between the click
+      // and its play(), and activation does not reliably survive that. Half a
+      // millisecond of silence claims the grant while it is still there, and
+      // every later play - including this one - inherits it.
+      if (!unlockedRef.current && !cacheRef.current.has(file)) {
+        unlockedRef.current = true;
+        el.src = SILENT_MP3;
+        void el.play().catch(() => { unlockedRef.current = false; });
+      }
+
       setLoading(key);
       try {
-        const cached = cacheRef.current.get(file);
-        const url = cached ?? (await load(file));
-        if (playingRef.current !== null && playingRef.current !== key) return;
+        const url = cacheRef.current.get(file) ?? (await load(file));
+        // Stale: the reader clicked something else, or stopped, while this was
+        // in flight. Checking a generation rather than "is anything playing"
+        // catches the case where neither clip has started yet.
+        if (genRef.current !== gen) return;
         el.onended = null;
         el.src = url;
         el.currentTime = 0;
         await el.play();
+        if (genRef.current !== gen) { el.pause(); return; }
+        unlockedRef.current = true;
         playingRef.current = key;
         el.onended = () => {
-          if (playingRef.current !== key) return;
+          if (genRef.current !== gen || playingRef.current !== key) return;
           playingRef.current = null;
           setPlaying(null);
           // Only a clip that ran to completion counts as heard; the ranking

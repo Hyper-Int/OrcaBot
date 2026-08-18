@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-preference-dialog-v3-slots
+// REVISION: tts-preference-dialog-v4-honest-submit
 // The blind ranking that fills the table's Human column.
 //
 // Word error rate measures intelligibility and nothing else, so the table is
@@ -39,7 +39,7 @@ import * as React from "react";
 import { fetchTtsBallot, submitTtsBallot } from "@/lib/api/cloudflare/tts";
 import type { SamplePlayer } from "./useSamplePlayer";
 
-const MODULE_REVISION = "tts-preference-dialog-v3-slots";
+const MODULE_REVISION = "tts-preference-dialog-v4-honest-submit";
 if (typeof window !== "undefined") {
   console.log(`[tts-preference-dialog] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -98,6 +98,11 @@ const DRAG_THRESHOLD = 6;
 
 export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPreferenceDialogProps) {
   const [phase, setPhase] = React.useState<Phase>("loading");
+  /** Whether the server actually took the ranking. A failed submit still shows
+   *  the reveal, so this is the only thing separating "thank you" from an
+   *  honest "that did not reach us" - and it is what the caller records, so a
+   *  lost ballot does not count as having been asked and answered. */
+  const [counted, setCounted] = React.useState(false);
   const [ballotId, setBallotId] = React.useState<string | null>(null);
   /** The issued clips, in the order the server shuffled them. Never re-ordered:
    *  this is identity, not ranking. */
@@ -284,10 +289,23 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
     const ranking = slots.filter((c): c is string => !!c);
     try {
       await submitTtsBallot(ballotId, ranking);
+      setCounted(true);
       setPhase("revealed");
     } catch {
-      // The ranking is lost either way; showing the names is the one thing
-      // still worth giving them for the effort.
+      // One retry, because the common failures here are transient: a rate
+      // limit shared with the page's own requests, or a dropped connection on
+      // a phone. A second attempt costs the reader nothing.
+      try {
+        await new Promise((r) => setTimeout(r, 700));
+        await submitTtsBallot(ballotId, ranking);
+        setCounted(true);
+      } catch {
+        // Still reveal the names - they were earned by the listening either
+        // way - but do not claim the ballot counted, and tell the caller it
+        // did not so the reader can be asked again rather than being recorded
+        // as having voted.
+        setCounted(false);
+      }
       setPhase("revealed");
     }
   };
@@ -301,7 +319,7 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
       role="dialog"
       aria-modal="true"
       aria-label="Rank speech samples"
-      onClick={(e) => { if (e.target === e.currentTarget) dismiss(phase === "revealed"); }}
+      onClick={(e) => { if (e.target === e.currentTarget) dismiss(phase === "revealed" && counted); }}
       style={{
         position: "fixed", inset: 0, zIndex: 1000, display: "flex",
         alignItems: "center", justifyContent: "center", padding: "1rem",
@@ -394,11 +412,20 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
         ) : phase === "revealed" ? (
           <>
             <h2 style={{ margin: "0 0 0.5rem", fontSize: "1.05rem", color: INK.primary }}>
-              Thank you — that is one ballot
+              {counted ? "Thank you — that is one ballot" : "That ranking did not reach us"}
             </h2>
             <p style={{ margin: "0 0 1rem", fontSize: "0.88rem", lineHeight: 1.5 }}>
-              Here is what you ranked. Every engine needs a handful of ballots before a
-              number appears in the table&apos;s Human column.
+              {counted ? (
+                <>
+                  Here is what you ranked. Every engine needs a handful of ballots before a
+                  number appears in the table&apos;s Human column.
+                </>
+              ) : (
+                <>
+                  Twice, so it is us rather than you. Here is what you ranked anyway, and the
+                  offer stands &mdash; the button under the table will ask again.
+                </>
+              )}
             </p>
             <ol style={{ margin: "0 0 1.25rem", paddingLeft: "1.25rem", fontSize: "0.9rem", lineHeight: 1.9 }}>
               {ranked.map((c) => (
@@ -409,7 +436,7 @@ export function TtsPreferenceDialog({ player, sampleOf, nameOf, onClose }: TtsPr
               ))}
             </ol>
             <Actions>
-              <Button onClick={() => dismiss(true)} primary>Go to the results</Button>
+              <Button onClick={() => dismiss(counted)} primary>Go to the results</Button>
             </Actions>
           </>
         ) : (
