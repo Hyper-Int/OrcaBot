@@ -56,7 +56,7 @@ face value.
   `ar-lm` samples audio tokens one at a time: length is emergent, cloning and emotion
   become possible, and real-time factor is floored by sequential decoding regardless of
   quantization.
-- **Peak RSS** is dominated by the runtime rather than the model. Engines served by the C++
+- **RSS** is peak resident memory, and is dominated by the runtime rather than the model. Engines served by the C++
   binary carry no interpreter; those running in Python carry torch, transformers and their
   dependency trees.
 

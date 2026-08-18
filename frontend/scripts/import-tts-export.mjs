@@ -58,6 +58,9 @@ const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
 const RENAME_COLUMNS = {
   "Total disk": "Disk",
   "WER base": "WER",
+  // "Peak" is the only kind of RSS reported here, so it says nothing the column
+  // does not already imply.
+  "Peak RSS": "RSS",
   // x-bar: it is a mean, and "Avg" spent five characters saying so in a column
   // whose values are four wide.
   "Avg synth": "x\u0304 synth",
