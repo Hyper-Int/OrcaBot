@@ -47,15 +47,24 @@ const WITHIN_CUTOFF = ROWS.filter((r) => rtfOf(r) <= RTF_CUTOFF).length;
 const HUMAN_COL = 1;
 const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
 
+/** Notes became an icon: as text it was the widest column in the table and the
+ *  only one that wrapped, which set the height of every row for a sentence most
+ *  readers do not want on every line. */
+const NOTES_COL = COLUMNS.indexOf("Notes");
+
+/** Note popup width. Fixed rather than content-sized so every note wraps the
+ *  same way and the position can be computed before it renders. */
+const NOTE_WIDTH = 320;
+
 /** Opening sort: compute per phrase, cheapest first. Word error was the old
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
  *  Cost per phrase is the axis every reader is actually shopping on. */
 const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
 
-/** The full table measures 1530px; past that, extra width is dead space.
- *  Re-measure if columns change. */
-const MAX_TABLE_WIDTH = 1550;
+/** The full table measures 1377px now that Notes is an icon; past that, extra
+ *  width just stretches the columns. Re-measure if columns change. */
+const MAX_TABLE_WIDTH = 1400;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
@@ -101,6 +110,38 @@ export function TtsResultsTable() {
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [realtimeOnly, setRealtimeOnly] = React.useState(false);
+  /** The note being shown, with the anchor it was opened from. Positioned fixed
+   *  rather than inside the cell: the table scrolls horizontally, and anything
+   *  absolutely placed within it is clipped at the container edge - which is
+   *  exactly where the Notes column sits. */
+  //
+  // `pinned` is the difference between a note that follows the pointer away and
+  // one that stays. It also has to exist for click to work at all: a tap fires
+  // mouseenter *then* click, so a handler that simply toggled would open on the
+  // first and close on the second, and the icon would look dead to anyone
+  // without a mouse.
+  const [note, setNote] = React.useState<
+    { config: string; text: string; x: number; y: number; w: number; pinned: boolean } | null
+  >(null);
+  const openNote = (e: React.SyntheticEvent, config: string, text: string, pinned = false) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // Position by the box's own left edge, with an explicit width, rather than
+    // centring with translateX(-50%). A fixed element only gets the space from
+    // `left` to the viewport edge, so centring on an icon near the right - which
+    // is where the Notes column is - shrink-wrapped the note to 75px and turned
+    // it into a vertical column of words on a phone.
+    const w = Math.min(NOTE_WIDTH, window.innerWidth - 16);
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    setNote((prev) => ({
+      config, text, w,
+      x: left,
+      y: r.bottom + 6,
+      // Hovering a different row while one is pinned should not silently unpin.
+      pinned: pinned || (prev?.config === config && prev.pinned),
+    }));
+  };
+  const closeIfNotPinned = (config: string) =>
+    setNote((n) => (n && n.config === config && !n.pinned ? null : n));
   const [showBallot, setShowBallot] = React.useState(false);
   const pendingRef = React.useRef<Row | null>(null);
   const player = useSamplePlayer(AUDIO_BASE);
@@ -182,6 +223,30 @@ export function TtsResultsTable() {
     player.warm(ROWS.map((r) => r.sample).filter((s): s is string => !!s));
     playRow(pending);
   }, [showBallot, player, playRow]);
+
+  // Escape closes, and so does anything else the reader does with the page. A
+  // tooltip that survives a scroll ends up floating over unrelated rows.
+  React.useEffect(() => {
+    if (!note) return;
+    const close = () => setNote(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    // Anywhere that is not this icon dismisses a pinned note - otherwise the
+    // only way to close one on a touch screen is to find it again.
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest?.('button[aria-label^="Note on"]')) close();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [note]);
 
   const th: React.CSSProperties = {
     // Deliberately not sticky. A sticky header overlays the rows scrolled under
@@ -273,18 +338,28 @@ export function TtsResultsTable() {
                     <th key={c} style={th} aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
                       <button
                         type="button"
-                        onClick={() => onHeader(i)}
-                        title={i === HUMAN_COL ? humanHelp : "Sort by this column"}
+                        onClick={() => (i === NOTES_COL ? undefined : onHeader(i))}
+                        disabled={i === NOTES_COL}
+                        title={
+                          i === NOTES_COL
+                            ? "Hover or tap a row's note icon"
+                            : i === HUMAN_COL
+                              ? humanHelp
+                              : "Sort by this column"
+                        }
                         style={{
                           font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
                           border: "none", padding: "0.5rem 0.6rem", width: "100%", textAlign: i === 0 ? "left" : "right",
-                          cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap",
+                          cursor: i === NOTES_COL ? "default" : "pointer",
+                          fontWeight: 600, whiteSpace: "nowrap",
                         }}
                       >
                         {c}
-                        <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
-                          {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
-                        </span>
+                        {i !== NOTES_COL && (
+                          <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
+                            {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
+                          </span>
+                        )}
                       </button>
                     </th>
                   );
@@ -302,17 +377,44 @@ export function TtsResultsTable() {
                         key={ci}
                         style={{
                           padding: "0.35rem 0.6rem",
-                          textAlign: ci === 0 || c.align === "left" ? "left" : "right",
+                          textAlign:
+                            ci === NOTES_COL ? "center" : ci === 0 || c.align === "left" ? "left" : "right",
                           color:
                             ci === HUMAN_COL
                               ? c.sort ? INK.primary : INK.muted
                               : c.tone ? TONE[c.tone] ?? INK.secondary : INK.secondary,
-                          whiteSpace: ci === COLUMNS.length - 1 ? "normal" : "nowrap",
-                          minWidth: ci === COLUMNS.length - 1 ? 220 : undefined,
+                          whiteSpace: "nowrap",
                           fontWeight: ci === HUMAN_COL && c.sort ? 600 : undefined,
                         }}
                       >
-                        {ci === 0 ? (
+                        {ci === NOTES_COL ? (
+                          c.v.trim() ? (
+                            <button
+                              type="button"
+                              onClick={(e) =>
+                                note?.config === r.config && note.pinned
+                                  ? setNote(null)
+                                  : openNote(e, r.config, c.v, true)
+                              }
+                              onMouseEnter={(e) => openNote(e, r.config, c.v)}
+                              onMouseLeave={() => closeIfNotPinned(r.config)}
+                              onFocus={(e) => openNote(e, r.config, c.v)}
+                              onBlur={() => closeIfNotPinned(r.config)}
+                              aria-expanded={note?.config === r.config}
+                              aria-label={`Note on ${r.display}`}
+                              style={{
+                                width: 20, height: 20, borderRadius: 999, padding: 0, cursor: "pointer",
+                                border: `1px solid ${note?.config === r.config ? ACCENT : AXIS}`,
+                                background: note?.config === r.config ? ACCENT : "transparent",
+                                color: note?.config === r.config ? "#fff" : INK.muted,
+                                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                fontSize: "0.62rem", lineHeight: 1, fontWeight: 700,
+                              }}
+                            >
+                              <span aria-hidden="true">i</span>
+                            </button>
+                          ) : null
+                        ) : ci === 0 ? (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem" }}>
                             <button
                               type="button"
@@ -362,6 +464,25 @@ export function TtsResultsTable() {
           </button>.
         </figcaption>
       </figure>
+
+      {/* Fixed, and a sibling of the table rather than a child of the scrolling
+          container, which would clip it at exactly the edge the Notes column sits
+          against. Inert so it cannot swallow the pointer leaving the icon. */}
+      {note && (
+        <div
+          role="tooltip"
+          style={{
+            position: "fixed", left: note.x, top: note.y,
+            zIndex: 60, width: note.w, pointerEvents: "none",
+            background: "#0b1a2e", border: `1px solid ${AXIS}`, borderRadius: 8,
+            padding: "0.5rem 0.7rem", fontSize: "0.78rem", lineHeight: 1.45,
+            color: INK.secondary, boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+            whiteSpace: "normal",
+          }}
+        >
+          {note.text}
+        </div>
+      )}
 
       {showBallot && (
         <TtsPreferenceDialog
