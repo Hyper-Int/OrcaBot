@@ -56,6 +56,20 @@ const NOTES_COL = COLUMNS.indexOf("Notes");
  *  same way and the position can be computed before it renders. */
 const NOTE_WIDTH = 320;
 
+const CLASS_COL = COLUMNS.indexOf("Class");
+/** What the architecture codes mean, keyed by the export's own value - the sort
+ *  key still reads "stoch-ff" even though the cell now prints "st-ff". These are
+ *  the same definitions the article gives; the codes are unreadable without
+ *  them, and nobody reads a column guide before a table. */
+const CLASS_DESC: Record<string, string> = {
+  "det-ff":
+    "Deterministic feed-forward: one forward pass with a fixed duration predictor. Timing is identical every run and it cannot hallucinate words.",
+  "stoch-ff":
+    "Stochastic feed-forward: the same shape with sampling inside, so the output length varies between runs.",
+  "ar-lm":
+    "Autoregressive LM: samples audio tokens one at a time. Length is emergent, cloning and emotion become possible, and speed is floored by sequential decoding however much you quantize.",
+};
+
 const LICENCE_COL = COLUMNS.indexOf("Licence");
 /** Widest licence that should fit whole: "NeuTTS, <$5M" measures 90px at this
  *  font. Anything longer - only "CPML (non-commercial)" at 144px today - is
@@ -67,13 +81,13 @@ const LICENCE_MAX = 92;
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
  *  Cost per phrase is the axis every reader is actually shopping on. */
-const DEFAULT_SORT = { col: COLUMNS.indexOf("Avg synth"), dir: "asc" as const };
+const DEFAULT_SORT = { col: COLUMNS.indexOf("x̄ synth"), dir: "asc" as const };
 
-/** The table's natural width, with Notes collapsed to an icon and the cell
+/** The table's natural width, with Notes an icon, Avg audio gone and the cell
  *  padding trimmed. Past this the columns just stretch, so the breakout stops
  *  here rather than filling whatever the viewport offers. Re-measure if columns
  *  or padding change. */
-const MAX_TABLE_WIDTH = 1260;
+const MAX_TABLE_WIDTH = 1180;
 
 /** Remembers that this reader has already been asked, so they are asked once. */
 const BALLOT_KEY = "orcabot.tts.ballot.v1";
@@ -423,6 +437,14 @@ export function TtsResultsTable() {
                               <span aria-hidden="true">i</span>
                             </button>
                           ) : null
+                        ) : ci === CLASS_COL && CLASS_DESC[c.sort] ? (
+                          <span
+                            onMouseEnter={(e) => openNote(e, `${r.config}:cls`, CLASS_DESC[c.sort])}
+                            onMouseLeave={() => closeIfNotPinned(`${r.config}:cls`)}
+                            style={{ borderBottom: `1px dotted ${INK.muted}`, cursor: "help" }}
+                          >
+                            {c.v}
+                          </span>
                         ) : ci === LICENCE_COL && c.v ? (
                           <span
                             // Only pops up when the text is actually clipped, so

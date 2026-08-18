@@ -84,7 +84,7 @@ const ENGINES: Engine[] = (
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: Number(r.cells[col("Avg synth")].sort),
+    synth: Number(r.cells[col("x̄ synth")].sort),
     disk: Number(r.cells[col("Disk")].sort),
     rtf: Number(r.cells[col("RTF")].sort),
   };

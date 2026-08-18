@@ -75,12 +75,12 @@ const POINTS: Point[] = (
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: Number(r.cells[col("Avg synth")].sort),
+    synth: Number(r.cells[col("x̄ synth")].sort),
     wer: Number(r.cells[col("WER")].sort) * 100,
     disk: Number(r.cells[col("Disk")].sort),
     rtf: Number(r.cells[col("RTF")].sort),
     werText: r.cells[col("WER")].v,
-    synthText: r.cells[col("Avg synth")].v,
+    synthText: r.cells[col("x̄ synth")].v,
   };
 });
 

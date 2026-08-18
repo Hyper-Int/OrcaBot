@@ -37,7 +37,7 @@ face value.
 
 - **RTF** is compute seconds per second of audio, the conventional measure. It **flatters
   any engine that emits excess silence**, because padding inflates the denominator. Prefer
-  **Avg synth**, which is compute per phrase: every engine speaks the same corpus, so it
+  **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
   `medium.en` was run too, but it did not finish for nineteen of the thirty-four
@@ -52,7 +52,7 @@ face value.
   different.
 - **Class** describes the architecture. `det-ff` is a single forward pass with a
   deterministic duration predictor, so timing is identical every run and it cannot
-  hallucinate. `stoch-ff` is the same shape with sampling inside, so output length varies.
+  hallucinate. `st-ff` is the same shape with sampling inside, so output length varies.
   `ar-lm` samples audio tokens one at a time: length is emergent, cloning and emotion
   become possible, and real-time factor is floored by sequential decoding regardless of
   quantization.

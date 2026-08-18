@@ -43,7 +43,7 @@ const OUT_AUDIO = "public/benchmarks/tts";
  *  clip, so it is indicative rather than a mean, and it earns its width less
  *  than it costs in a table this wide - the caveat it exists to explain lives in
  *  the methodology instead. */
-const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in", "WER med"]);
+const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in", "WER med", "Avg audio"]);
 
 /** Configurations the comparison does not show. The NeuTTS-2E CPU builds are
  *  the same weights as the rows that remain, run on a slower path: they tripled
@@ -55,7 +55,13 @@ const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
  *  Only one word error rate is shown, so it does not need qualifying: base.en
  *  is the recogniser that completed for every configuration, where medium.en
  *  did not. */
-const RENAME_COLUMNS = { "Total disk": "Disk", "WER base": "WER" };
+const RENAME_COLUMNS = {
+  "Total disk": "Disk",
+  "WER base": "WER",
+  // x-bar: it is a mean, and "Avg" spent five characters saying so in a column
+  // whose values are four wide.
+  "Avg synth": "x\u0304 synth",
+};
 
 /** Where each project states its own licence: its LICENSE file, or the model
  *  card that declares it. Deliberately not opensource.org and friends - those
@@ -159,6 +165,8 @@ const MODEL_URLS = {
 /** Cell text rewrites, by column. NeuTTS's licence is a sentence rather than an
  *  SPDX id, and spelled out it is the widest cell in the column. */
 const REWRITE = {
+  // "stoch-ff" was the widest value in a column of six-character codes.
+  Class: (v) => (v === "stoch-ff" ? "st-ff" : v),
   // Replacement is a function, not a string: "$5m" as a string literal is a
   // capture-group reference to any future group 5 in that pattern, and would
   // silently start substituting instead of printing.

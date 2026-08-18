@@ -18,8 +18,7 @@
     "WER",
     "PESQ",
     "RTF",
-    "Avg synth",
-    "Avg audio",
+    "x̄ synth",
     "Notes"
   ],
   "rows": [
@@ -38,7 +37,7 @@
           "href": "https://github.com/rhasspy/piper"
         },
         {
-          "v": "stoch-ff",
+          "v": "st-ff",
           "sort": "stoch-ff",
           "tone": "",
           "align": "left",
@@ -112,13 +111,6 @@
           "v": "0.12s",
           "sort": "0.1233",
           "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.09s",
-          "sort": "3.0912",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -219,13 +211,6 @@
         {
           "v": "3.19s",
           "sort": "3.1940",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.28s",
-          "sort": "3.2757",
           "tone": "",
           "align": "",
           "restricted": false
@@ -332,13 +317,6 @@
           "restricted": false
         },
         {
-          "v": "4.16s",
-          "sort": "4.1615",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Smallest model in the benchmark at 43 MB. Non-autoregressive, so no sampling and no runaways.",
           "sort": "Smallest model in the benchmark at 43 MB",
           "tone": "",
@@ -435,13 +413,6 @@
         {
           "v": "0.78s",
           "sort": "0.7806",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.40s",
-          "sort": "4.3996",
           "tone": "",
           "align": "",
           "restricted": false
@@ -548,13 +519,6 @@
           "restricted": false
         },
         {
-          "v": "3.86s",
-          "sort": "3.8576",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "The largest KittenTTS, and what talkito loads by default.",
           "sort": "The largest KittenTTS, and what talkito ",
           "tone": "",
@@ -651,13 +615,6 @@
         {
           "v": "2.47s",
           "sort": "2.4675",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.39s",
-          "sort": "3.3905",
           "tone": "",
           "align": "",
           "restricted": false
@@ -764,13 +721,6 @@
           "restricted": false
         },
         {
-          "v": "4.40s",
-          "sort": "4.3996",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "The middle of KittenTTS's three sizes, and the package default.",
           "sort": "The middle of KittenTTS's three sizes, a",
           "tone": "",
@@ -872,13 +822,6 @@
           "restricted": false
         },
         {
-          "v": "2.88s",
-          "sort": "2.8843",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "MIT, best fp32 quality here. PerTh watermarking; own venv.",
           "sort": "MIT, best fp32 quality here. PerTh water",
           "tone": "",
@@ -902,7 +845,7 @@
           "href": "https://github.com/SWivid/F5-TTS"
         },
         {
-          "v": "stoch-ff",
+          "v": "st-ff",
           "sort": "stoch-ff",
           "tone": "",
           "align": "left",
@@ -976,13 +919,6 @@
           "v": "8.34s",
           "sort": "8.3435",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.10s",
-          "sort": "3.1018",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -1087,13 +1023,6 @@
           "restricted": false
         },
         {
-          "v": "3.20s",
-          "sort": "3.2000",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "4.4 GB f16 and 11x real time, but second-best accuracy measured.",
           "sort": "4.4 GB f16 and 11x real time, but second",
           "tone": "",
@@ -1190,13 +1119,6 @@
         {
           "v": "0.79s",
           "sort": "0.7935",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.75s",
-          "sort": "3.7458",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1303,13 +1225,6 @@
           "restricted": false
         },
         {
-          "v": "4.30s",
-          "sort": "4.2994",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Coqui XTTS v2. Clones from a reference clip; scored against a piper sample as reference.",
           "sort": "Coqui XTTS v2. Clones from a reference c",
           "tone": "",
@@ -1406,13 +1321,6 @@
         {
           "v": "1.89s",
           "sort": "1.8868",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.13s",
-          "sort": "4.1314",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1519,13 +1427,6 @@
           "restricted": false
         },
         {
-          "v": "3.95s",
-          "sort": "3.9485",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "A dead heat with CPU: the path PR #123 targeted has nothing to win.",
           "sort": "A dead heat with CPU: the path PR #123 t",
           "tone": "",
@@ -1627,13 +1528,6 @@
           "restricted": false
         },
         {
-          "v": "3.17s",
-          "sort": "3.1743",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Quantization costs 4 points, refuting the ASR-identical claim.",
           "sort": "Quantization costs 4 points, refuting th",
           "tone": "",
@@ -1730,13 +1624,6 @@
         {
           "v": "2.67s",
           "sort": "2.6705",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.71s",
-          "sort": "3.7124",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1843,13 +1730,6 @@
           "restricted": false
         },
         {
-          "v": "4.32s",
-          "sort": "4.3244",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Best 2E configuration. Reachable only via an undocumented split-device call.",
           "sort": "Best 2E configuration. Reachable only vi",
           "tone": "",
@@ -1946,13 +1826,6 @@
         {
           "v": "3.99s",
           "sort": "3.9852",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.40s",
-          "sort": "3.3962",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2059,13 +1932,6 @@
           "restricted": false
         },
         {
-          "v": "3.14s",
-          "sort": "3.1433",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "6 points worse than fp32 and no faster than q8.",
           "sort": "6 points worse than fp32 and no faster t",
           "tone": "",
@@ -2089,7 +1955,7 @@
           "href": "https://github.com/yl4579/StyleTTS2"
         },
         {
-          "v": "stoch-ff",
+          "v": "st-ff",
           "sort": "stoch-ff",
           "tone": "",
           "align": "left",
@@ -2167,13 +2033,6 @@
           "restricted": false
         },
         {
-          "v": "4.22s",
-          "sort": "4.2229",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Phoneme model that still needs digit normalization (+20% gap).",
           "sort": "Phoneme model that still needs digit nor",
           "tone": "",
@@ -2197,7 +2056,7 @@
           "href": "https://github.com/myshell-ai/MeloTTS"
         },
         {
-          "v": "stoch-ff",
+          "v": "st-ff",
           "sort": "stoch-ff",
           "tone": "",
           "align": "left",
@@ -2270,13 +2129,6 @@
         {
           "v": "0.69s",
           "sort": "0.6907",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.95s",
-          "sort": "3.9482",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2377,13 +2229,6 @@
           "v": "5.02s",
           "sort": "5.0156",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.32s",
-          "sort": "3.3185",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -2489,13 +2334,6 @@
           "restricted": false
         },
         {
-          "v": "4.08s",
-          "sort": "4.0757",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "9 languages plus 18 Chinese dialects; 8-voice baked bank.",
           "sort": "9 languages plus 18 Chinese dialects; 8-",
           "tone": "",
@@ -2591,13 +2429,6 @@
           "v": "0.98s",
           "sort": "0.9759",
           "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7.63s",
-          "sort": "7.6339",
-          "tone": "bad",
           "align": "",
           "restricted": false
         },
@@ -2703,13 +2534,6 @@
           "restricted": false
         },
         {
-          "v": "7.21s",
-          "sort": "7.2056",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
           "sort": "Non-autoregressive, 120 MB. Output carri",
           "tone": "",
@@ -2807,13 +2631,6 @@
           "v": "7.53s",
           "sort": "7.5334",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.54s",
-          "sort": "3.5448",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -2919,13 +2736,6 @@
           "restricted": false
         },
         {
-          "v": "2.98s",
-          "sort": "2.9828",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Best PESQ measured here, but 8x real time.",
           "sort": "Best PESQ measured here, but 8x real tim",
           "tone": "",
@@ -3023,13 +2833,6 @@
           "v": "11.97s",
           "sort": "11.9702",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.75s",
-          "sort": "4.7486",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -3135,13 +2938,6 @@
           "restricted": false
         },
         {
-          "v": "3.06s",
-          "sort": "3.0617",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "1B multilingual. Middling accuracy, unremarkable throughout.",
           "sort": "1B multilingual. Middling accuracy, unre",
           "tone": "",
@@ -3165,7 +2961,7 @@
           "href": "https://huggingface.co/facebook/mms-tts"
         },
         {
-          "v": "stoch-ff",
+          "v": "st-ff",
           "sort": "stoch-ff",
           "tone": "",
           "align": "left",
@@ -3239,13 +3035,6 @@
           "v": "0.46s",
           "sort": "0.4615",
           "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.78s",
-          "sort": "3.7819",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -3351,13 +3140,6 @@
           "restricted": false
         },
         {
-          "v": "1.95s",
-          "sort": "1.9509",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "16 kHz output - duller than everything else regardless of accuracy.",
           "sort": "16 kHz output - duller than everything e",
           "tone": "",
@@ -3455,13 +3237,6 @@
           "v": "5.27s",
           "sort": "5.2688",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.22s",
-          "sort": "4.2224",
-          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -3567,13 +3342,6 @@
           "restricted": false
         },
         {
-          "v": "8.01s",
-          "sort": "8.0138",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
           "v": "Partial run: too slow to finish the corpus in the time allowed.",
           "sort": "Partial run: too slow to finish the corp",
           "tone": "",
@@ -3671,13 +3439,6 @@
           "v": "17.86s",
           "sort": "17.8594",
           "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.18s",
-          "sort": "4.1754",
-          "tone": "",
           "align": "",
           "restricted": false
         },
