@@ -57,15 +57,54 @@ const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
  *  did not. */
 const RENAME_COLUMNS = { "Total disk": "Disk", "WER base": "WER" };
 
-/** Canonical licence texts. Only SPDX-style identifiers with a stable, official
- *  home are linked; NeuTTS's bespoke terms and "?" are left as plain text
- *  because there is no authoritative page to point at, and guessing one is
- *  worse than not linking. */
-const LICENCE_URLS = {
-  "MIT": "https://opensource.org/license/mit",
-  "Apache-2.0": "https://www.apache.org/licenses/LICENSE-2.0",
-  "CC-BY-4.0": "https://creativecommons.org/licenses/by/4.0/",
-  "CC-BY-NC-4.0": "https://creativecommons.org/licenses/by-nc/4.0/",
+/** Where each project states its own licence: its LICENSE file, or the model
+ *  card that declares it. Deliberately not opensource.org and friends - those
+ *  explain what MIT is, they do not evidence that this model is under it, which
+ *  is the whole point of the link.
+ *
+ *  Resolved and verified per repo rather than constructed: GitHub's licence API
+ *  finds the file whatever it is called, and the Hugging Face repos were probed
+ *  for LICENSE before falling back to the card.
+ *
+ *  Two point at a model card rather than the repo's LICENSE, because the repo
+ *  licenses the *code* and this benchmark measures *weights*, and for these two
+ *  they differ: F5-TTS is MIT as code and cc-by-nc-4.0 as weights, NeMo is
+ *  Apache-2.0 as a framework while the FastPitch checkpoint is cc-by-4.0. The
+ *  card is what evidences the licence the table prints.
+ *
+ *  Three rows have none. Dots-TTS is listed "?" here while its repo declares
+ *  Apache-2.0, so there is nothing consistent to point at; OmniVoice has no
+ *  upstream card at all; BananaMind TTS has no findable home.
+ */
+const LICENCE_PROOF_URLS = {
+  "bark": "https://github.com/suno-ai/bark/blob/main/LICENSE",
+  "chatterbox": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+  "chatterbox-q4": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+  "chatterbox-q8": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+  "chatterbox-turbo": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
+  "cosyvoice3": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE",
+  "cosyvoice3-rl": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE",
+  "csm": "https://github.com/SesameAILabs/csm/blob/main/LICENSE",
+  "f5-tts": "https://huggingface.co/SWivid/F5-TTS",
+  "fastpitch": "https://huggingface.co/nvidia/tts_en_fastpitch",
+  "kittentts": "https://huggingface.co/KittenML/kitten-tts-nano-0.1/blob/main/README.md",
+  "kokoro": "https://huggingface.co/hexgrad/Kokoro-82M/blob/main/README.md",
+  "melotts": "https://github.com/myshell-ai/MeloTTS/blob/main/LICENSE",
+  "mms-tts": "https://huggingface.co/facebook/mms-tts/blob/main/README.md",
+  "nt-2e-fp32-mps": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE",
+  "nt-2e-q4-metal": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE",
+  "nt-2e-q8-metal": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE",
+  "parler-tts": "https://github.com/huggingface/parler-tts/blob/main/LICENSE",
+  "piper": "https://github.com/rhasspy/piper/blob/master/LICENSE.md",
+  "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS/blob/main/LICENSE",
+  "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
+  "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
+  "tada-1b": "https://huggingface.co/HumeAI/tada-1b/blob/main/LICENSE",
+  "tada-3b": "https://huggingface.co/HumeAI/tada-3b-ml/blob/main/LICENSE",
+  "vibevoice": "https://github.com/microsoft/VibeVoice/blob/main/LICENSE",
+  "vibevoice-1.5b": "https://huggingface.co/microsoft/VibeVoice-1.5B/blob/main/README.md",
+  "xtts": "https://huggingface.co/coqui/XTTS-v2/blob/main/LICENSE.txt",
+  "zonos": "https://github.com/Zyphra/Zonos/blob/main/LICENSE",
 };
 
 /** Where each model actually lives. Kept here rather than in the export, which
@@ -248,6 +287,9 @@ const audioAvailable = new Set(
 );
 
 const rows = rawRows.map(([, rowAttrs, inner]) => {
+  // Resolved up front: the cell mapper below needs it, and it is derived from
+  // the first cell rather than from the loop variable.
+  const config = (inner.match(/<td class="l name" data-sort="([^"]+)"/) ?? [])[1] ?? "";
   const tds = [...inner.matchAll(/<td\b([^>]*)>([\s\S]*?)<\/td>/g)].map((m) => {
     const a = attrs(m[0].slice(0, m[0].indexOf(">") + 1));
     const cls = a.class ?? "";
@@ -275,7 +317,6 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
     process.exit(1);
   }
 
-  const config = tds[0].sort;
   // The name cell can carry a qualifier the id does not, e.g. "zonos (partial)".
   const qualifier = tds[0].v.replace(config, "").trim();
   const display = (DISPLAY[config] ?? config) + (qualifier ? ` ${qualifier}` : "");
@@ -285,8 +326,8 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
     .map((c, i) => {
       const rewrite = REWRITE[headers[i]];
       const cell = rewrite ? { ...c, v: rewrite(c.v) } : c;
-      if (headers[i] === "Licence" && LICENCE_URLS[cell.v]) {
-        return { ...cell, href: LICENCE_URLS[cell.v] };
+      if (headers[i] === "Licence" && LICENCE_PROOF_URLS[config]) {
+        return { ...cell, href: LICENCE_PROOF_URLS[config] };
       }
       return cell;
     })
