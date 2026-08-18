@@ -676,24 +676,24 @@ export function TtsResultsTable() {
             here nobody measured on a machine. Four blind clips, best to worst, up to three
             times &mdash; you never get a clip you have already ranked.
           </span>
-        </div>
-
-        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
-          {run.caption}{run.caption ? " " : ""}
-          Human is reader preference from those rankings, scored 0&ndash;100 by Bradley-Terry and
-          updated live; an engine shows a dash until enough people have ranked it.{" "}
+          {/* Beside the other control rather than trailing the caption, where it
+              was the same grey as the prose around it and read as a phrase. A
+              reader who has heard nothing is hunting for a button. */}
           <button
             type="button"
             onClick={() => setDiag((d) => (d ? null : { report: player.report(), probe: null }))}
+            aria-expanded={diag !== null}
             style={{
-              font: "inherit", fontSize: "0.78rem", color: INK.muted, background: "none",
-              border: "none", padding: 0, cursor: "pointer", textDecoration: "underline",
-              textDecorationStyle: "dotted",
+              font: "inherit", fontSize: "0.8rem", fontWeight: 600,
+              padding: "0.35rem 0.8rem", borderRadius: 999, cursor: "pointer",
+              border: `1px solid ${diag ? ACCENT : AXIS}`, background: "transparent",
+              color: diag ? ACCENT : INK.secondary,
+              flexShrink: 0, marginLeft: "auto",
             }}
           >
             No sound?
           </button>
-        </figcaption>
+        </div>
 
         {/* A page whose whole point is listening owes the reader an answer when
             it stays silent. Browsers differ on what they will let a page play
@@ -748,6 +748,13 @@ export function TtsResultsTable() {
             </pre>
           </div>
         )}
+
+        <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
+          {run.caption}{run.caption ? " " : ""}
+          Human is reader preference from those rankings, scored 0&ndash;100 by Bradley-Terry and
+          updated live; an engine shows a dash until enough people have ranked it.
+        </figcaption>
+
       </figure>
 
       {/* Fixed, and a sibling of the table rather than a child of the scrolling
