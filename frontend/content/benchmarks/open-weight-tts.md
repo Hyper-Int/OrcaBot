@@ -64,15 +64,15 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the eleven
+**Nothing is filtered out.** Every configuration compared is listed, including the twelve
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
-above the table hides anything above 2.1x for readers who only care about what can be
-spoken live.
+above the table hides anything above 2x for readers who only care about what can be spoken
+live, and sorting by RTF or compute per phrase draws a line at the cutoff so the two groups
+are visible at once.
 
-The cutoff sits just above 2.0 so Chatterbox Q4 survives it at 2.03x. Worth knowing when
-reading that row: RTF counts silence, and against speech alone the same configuration is
-2.59x, so it is the one that is only nominally real time.
+The line falls at 2x exactly. Nothing sits awkwardly against it: the slowest engine that
+keeps up is OmniVoice at 1.51x, and the fastest that does not is Chatterbox Q4 at 2.03x.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.

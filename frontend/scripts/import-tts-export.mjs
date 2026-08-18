@@ -364,7 +364,7 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
 
 const rtfCol = columns.indexOf("RTF");
 const rtfOf = (r) => Number(r.cells[rtfCol].sort);
-const RTF_CUTOFF = 2.1;
+const RTF_CUTOFF = 2;
 
 const run = {
   benchmark: "open-weight-tts",

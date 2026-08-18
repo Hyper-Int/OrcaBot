@@ -77,6 +77,15 @@ const LICENCE_COL = COLUMNS.indexOf("Licence");
  *  of a column that is otherwise four characters wide. */
 const LICENCE_MAX = 92;
 
+/** RTF index in the *rendered* columns, which is one further along than in the
+ *  run data because Human is spliced in ahead of it. Reading the un-spliced
+ *  index here would test the wrong column entirely. */
+const RTF_COL_RENDERED = COLUMNS.indexOf("RTF");
+/** The two orderings where "can it keep up" is the axis, and so the only two
+ *  where a line drawn at the cutoff means anything. Under any other sort the
+ *  fast and slow engines interleave and the boundary is not a place. */
+const BOUNDARY_SORTS = new Set(["RTF", "x\u0304 synth"]);
+
 /** Opening sort: compute per phrase, cheapest first. Word error was the old
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
@@ -271,6 +280,24 @@ export function TtsResultsTable() {
     };
   }, [note]);
 
+  /** Label for the rule drawn between the engines that keep up and those that do
+   *  not, or null where no rule belongs. Only shown when everything is listed -
+   *  with the filter on there is nothing on the far side to divide from - and
+   *  only under a sort where the two groups are actually contiguous. */
+  const boundaryAfter = (i: number): string | null => {
+    if (realtimeOnly || !sort || !BOUNDARY_SORTS.has(COLUMNS[sort.col])) return null;
+    const next = rows[i + 1];
+    if (!next) return null;
+    const here = Number(rows[i].cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
+    const there = Number(next.cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
+    if (here === there) return null;
+    // Which side is which depends on the sort direction, so say it rather than
+    // leaving the reader to infer it from a bare line.
+    return here
+      ? `slower than real time below \u2014 over ${RTF_CUTOFF}\u00d7`
+      : `real time below \u2014 ${RTF_CUTOFF}\u00d7 and under`;
+  };
+
   const th: React.CSSProperties = {
     // Deliberately not sticky. A sticky header overlays the rows scrolled under
     // it, which swallows clicks on the play buttons; the rows nearly fit one
@@ -390,11 +417,11 @@ export function TtsResultsTable() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {rows.map((r, ri) => {
                 const isPlaying = player.playing === r.config;
                 const isLoading = player.loading === r.config;
-                return (
-                  <tr key={r.config} style={{ borderBottom: `1px solid ${AXIS}` }}>
+                const row = (
+                  <tr style={{ borderBottom: `1px solid ${AXIS}` }}>
                     {r.cells.map((c, ci) => (
                       <td
                         key={ci}
@@ -489,6 +516,33 @@ export function TtsResultsTable() {
                       </td>
                     ))}
                   </tr>
+                );
+                const divider = boundaryAfter(ri);
+                return divider ? (
+                  <React.Fragment key={r.config}>
+                    {row}
+                    <tr aria-hidden="true">
+                      <td
+                        colSpan={COLUMNS.length}
+                        style={{
+                          padding: 0, borderBottom: `2px solid ${ACCENT}`,
+                          position: "relative", height: 26,
+                        }}
+                      >
+                        <span
+                          style={{
+                            position: "absolute", left: "0.45rem", bottom: 3,
+                            fontSize: "0.68rem", letterSpacing: "0.04em",
+                            color: ACCENT, textTransform: "uppercase", fontWeight: 700,
+                          }}
+                        >
+                          {divider}
+                        </span>
+                      </td>
+                    </tr>
+                  </React.Fragment>
+                ) : (
+                  <React.Fragment key={r.config}>{row}</React.Fragment>
                 );
               })}
             </tbody>
