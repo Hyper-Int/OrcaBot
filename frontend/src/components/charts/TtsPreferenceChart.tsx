@@ -37,6 +37,7 @@
 
 import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
+import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
 const MODULE_REVISION = "tts-preference-chart-v2-human-axis";
@@ -112,9 +113,10 @@ interface Point extends Engine { rating: number }
 export function TtsPreferenceChart() {
   const { ratings, minBallots } = useTtsScores();
   const [hover, setHover] = React.useState<Point | null>(null);
-  // Which class is isolated, if any. Isolating dims the others rather than
-  // removing them, so the cloud they form stays visible as context.
-  const [focus, setFocus] = React.useState<string | null>(null);
+  // Shared with the results table, so one selection governs the page. Selected
+  // classes stay lit and the rest dim rather than disappear, keeping the cloud
+  // they form as context - a scatter with points removed loses its scale.
+  const { active: classFilter, toggle: toggleClass, shows: classShows } = useClassFilter();
 
   const points: Point[] = React.useMemo(
     () =>
@@ -129,7 +131,7 @@ export function TtsPreferenceChart() {
   // and a placeholder would be a promise the page cannot keep on its own.
   if (points.length < MIN_ENGINES_TO_PLOT) return null;
 
-  const isLit = (p: Point) => !focus || p.cls === focus;
+  const isLit = (p: Point) => classShows(p.cls);
   // Only label the extremes; at this density a name on every point is noise.
   const byRating = [...points].sort((a, b) => b.rating - a.rating);
   const cheapest = [...points].sort((a, b) => a.synth - b.synth)[0];
@@ -152,12 +154,12 @@ export function TtsPreferenceChart() {
           isolating a class never repaints the classes that remain. */}
       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
         {CLASSES.map((c) => {
-          const active = focus === c.id;
+          const active = classFilter.has(c.id);
           return (
             <button
               key={c.id}
               type="button"
-              onClick={() => setFocus((f) => (f === c.id ? null : c.id))}
+              onClick={() => toggleClass(c.id)}
               aria-pressed={active}
               style={{
                 display: "inline-flex", alignItems: "center", gap: "0.4rem",

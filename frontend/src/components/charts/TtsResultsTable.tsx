@@ -18,6 +18,7 @@ import * as React from "react";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
 import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
 import { useSamplePlayer } from "./useSamplePlayer";
+import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
 const MODULE_REVISION = "tts-results-table-v2-human-column";
@@ -161,9 +162,9 @@ export function TtsResultsTable() {
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [realtimeOnly, setRealtimeOnly] = React.useState(false);
-  /** Classes to keep. Empty means all of them, so the default needs no special
-   *  case and clearing the last chip returns to showing everything. */
-  const [classFilter, setClassFilter] = React.useState<Set<string>>(new Set());
+  // Shared with the charts: one class selection governs the whole page, so
+  // filtering to ar-lm in the table narrows the plot below it too.
+  const { active: classFilter, toggle: toggleClass, clear: clearClasses, shows: classShows } = useClassFilter();
   /** The note being shown, with the anchor it was opened from. Positioned fixed
    *  rather than inside the cell: the table scrolls horizontally, and anything
    *  absolutely placed within it is clipped at the container edge - which is
@@ -211,7 +212,7 @@ export function TtsResultsTable() {
     const visible = ROWS.filter(
       (r) =>
         (!realtimeOnly || rtfOf(r) <= RTF_CUTOFF) &&
-        (classFilter.size === 0 || classFilter.has(classOf(r)))
+        classShows(classOf(r))
     );
     const withHuman = visible.map((r) => {
       const rating = ratings.get(r.config);
@@ -233,7 +234,7 @@ export function TtsResultsTable() {
         typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [classFilter, ratings, realtimeOnly, sort]);
+  }, [classShows, ratings, realtimeOnly, sort]);
 
   // asc -> desc -> back to the default, never to "unsorted". Unsorted rendered
   // the export's own row order, which is neither the default the reader arrived
@@ -402,14 +403,7 @@ export function TtsResultsTable() {
                   type="button"
                   aria-pressed={on}
                   title={CLASS_DESC[c.key]}
-                  onClick={() =>
-                    setClassFilter((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(c.key)) next.delete(c.key);
-                      else next.add(c.key);
-                      return next;
-                    })
-                  }
+                  onClick={() => toggleClass(c.key)}
                   style={{
                     display: "inline-flex", alignItems: "center", gap: "0.35rem",
                     font: "inherit", fontWeight: 600, padding: "0.3rem 0.6rem", borderRadius: 999,
@@ -436,7 +430,7 @@ export function TtsResultsTable() {
           {(realtimeOnly || classFilter.size > 0) && (
             <button
               type="button"
-              onClick={() => { setRealtimeOnly(false); setClassFilter(new Set()); }}
+              onClick={() => { setRealtimeOnly(false); clearClasses(); }}
               style={{
                 font: "inherit", color: INK.muted, background: "none", border: "none",
                 padding: 0, textDecoration: "underline", cursor: "pointer",
