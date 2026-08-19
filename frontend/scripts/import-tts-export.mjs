@@ -112,6 +112,11 @@ const LICENCE_PROOF_URLS = {
   "parler-tts": "https://github.com/huggingface/parler-tts/blob/main/LICENSE",
   "piper": "https://github.com/rhasspy/piper/blob/master/LICENSE.md",
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS/blob/main/LICENSE",
+  // The model cards rather than the repositories: both declare the licence the
+  // weights carry, which is what this column states. Supertonic is the standing
+  // reminder that the two can differ.
+  "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
@@ -156,6 +161,10 @@ const MODEL_URLS = {
   "zonos": "https://github.com/Zyphra/Zonos",
   "fastpitch": "https://github.com/NVIDIA-NeMo/Speech",
   "qwen3-tts": "https://github.com/QwenLM/Qwen3-TTS",
+  // VoiceDesign has its own checkpoint, so it points at that rather than at the
+  // family repository the base model uses.
+  "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice",
   "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
@@ -256,6 +265,8 @@ const DISPLAY = {
   "omnivoice": "OmniVoice",
   "parler-tts": "Parler-TTS",
   "qwen3-tts": "Qwen3-TTS",
+  "qwen3-tts-vd": "Qwen3-TTS VoiceDesign",
+  "orpheus-q4": "Orpheus 3B Q4",
   "speecht5": "SpeechT5",
   "styletts2": "StyleTTS2",
   "vibevoice": "VibeVoice",

@@ -528,6 +528,107 @@
       ]
     },
     {
+      "config": "qwen3-tts-vd",
+      "display": "Qwen3-TTS VoiceDesign",
+      "group": "",
+      "sample": "qwen3-tts-vd.mp3?v=8e0a395c",
+      "cells": [
+        {
+          "v": "Qwen3-TTS VoiceDesign",
+          "sort": "qwen3-tts-vd",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        },
+        {
+          "v": "1.7B",
+          "sort": "1700.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-01",
+          "sort": "202601",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.3 GB",
+          "sort": "3379.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0552",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.99",
+          "sort": "3.99",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.87x",
+          "sort": "0.8652",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.00s",
+          "sort": "3.0011",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Qwen3-TTS VoiceDesign at 1.7B: the speaker comes from a written description, not a reference clip.",
+          "sort": "Qwen3-TTS VoiceDesign at 1.7B: the speak",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "kittentts-mini",
       "display": "KittenTTS Mini",
       "group": "",
@@ -1329,6 +1430,107 @@
         {
           "v": "Coqui XTTS v2. Clones from a reference clip; scored against a piper sample as reference.",
           "sort": "Coqui XTTS v2. Clones from a reference c",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "orpheus-q4",
+      "display": "Orpheus 3B Q4",
+      "group": "",
+      "sample": "orpheus-q4.mp3?v=4ef715a3",
+      "cells": [
+        {
+          "v": "Orpheus 3B Q4",
+          "sort": "orpheus-q4",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/canopyai/Orpheus-TTS"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft"
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-03",
+          "sort": "202503",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.7 GB",
+          "sort": "2764.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0823",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.77",
+          "sort": "3.77",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.09x",
+          "sort": "8.0894",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "41.72s",
+          "sort": "41.7196",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Llama-3.2-3B finetune over SNAC: the largest LM backbone here, at 5.4x real time.",
+          "sort": "Llama-3.2-3B finetune over SNAC: the lar",
           "tone": "",
           "align": "",
           "restricted": false

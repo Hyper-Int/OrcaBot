@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v4-supertone
+// REVISION: tts-vendor-list-v5-canopy
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v4-supertone";
+const MODULE_REVISION = "tts-vendor-list-v5-canopy";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -53,6 +53,7 @@ const VENDORS: Vendor[] = [
   { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/studio-dots-ai/dots.tts" },
   { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
   { name: "Supertone", icon: "supertone-inc.png", url: "https://github.com/supertone-inc/supertonic" },
+  { name: "Canopy Labs", icon: "canopyai.png", url: "https://github.com/canopyai/Orpheus-TTS" },
 ].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
 const ICON_BASE = "/icons/tts/";
