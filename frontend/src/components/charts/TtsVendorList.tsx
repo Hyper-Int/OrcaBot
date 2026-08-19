@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v5-canopy
+// REVISION: tts-vendor-list-v6-two-rows
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v5-canopy";
+const MODULE_REVISION = "tts-vendor-list-v6-two-rows";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -64,14 +64,20 @@ const ICON_BASE = "/icons/tts/";
 // inflated these chips from 36px tall to 92px. Both need beating on specificity.
 const CSS = `
 .tts-vendors-figure ul.tts-vendors {
-  display: flex; flex-wrap: wrap; gap: 6px;
+  display: flex; flex-wrap: wrap; gap: 5px;
   margin: 0; padding: 0; list-style: none;
 }
 .tts-vendors-figure ul.tts-vendors > li { margin: 0; padding: 0; list-style: none; }
 .tts-vendors a.tts-vendor-chip {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 7px 11px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
-  font-size: 0.8rem; font-weight: 500; line-height: 1;
+  display: inline-flex; align-items: center; gap: 7px;
+  /* Horizontal padding only, twice now: each new vendor costs a chip, and the
+     prose column this sits in is a fixed 1104px, so the row count is set purely
+     by chip width. Trimming the sides keeps the height at 32px and the logos at
+     16px - shrinking either would be visible, where two pixels of padding is
+     not. Twenty-one chips currently fit 11 + 10 with about 30px to spare, so
+     the next vendor after that needs another pass rather than another trim. */
+  padding: 7px 9px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
+  font-size: 0.78rem; font-weight: 500; line-height: 1;
   color: var(--foreground, #e8edf5);
   text-decoration: none; white-space: nowrap; background: var(--background-elevated, #0d1526);
 }
