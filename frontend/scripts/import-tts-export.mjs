@@ -197,6 +197,11 @@ const CELL_OVERRIDES = {
     // contradicts two columns to its left.
     Notes: { v: "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card." },
   },
+  // The export dates this 2026-03, but the configuration measured is the 99M
+  // v3 checkpoint - four ONNX graphs, native 44.1 kHz, 31 languages - and that
+  // shipped at the end of April 2026. March belongs to an earlier checkpoint;
+  // v1 was 66M and v2, from January, covered five languages.
+  supertonic: { Released: { v: "2026-04", sort: "202604" } },
   // Banaxi-Tech's card states "9.5M params"; it already declared apache-2.0,
   // which is what the export had, so only the size was missing.
   "bananamind-tts": { Params: { v: "9.5M", sort: "9.5" } },
