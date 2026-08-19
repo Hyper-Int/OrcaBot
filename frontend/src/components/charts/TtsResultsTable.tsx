@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v6-unlock-on-ballot-close
+// REVISION: tts-results-table-v7-min-three
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v6-unlock-on-ballot-close";
+const MODULE_REVISION = "tts-results-table-v7-min-three";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -219,7 +219,10 @@ export function TtsResultsTable() {
       const human: Cell =
         rating == null
           ? { v: "—", sort: "", tone: "", align: "" }
-          : { v: rating.toFixed(1), sort: String(rating), tone: "", align: "" };
+          // Whole points. A tenth of a point on a measurement worth about
+          // twenty either way is a precision the ballots cannot support, and a
+          // decimal reads as one. Sorting still uses the full value.
+          : { v: String(Math.round(rating)), sort: String(rating), tone: "", align: "" };
       return { ...r, cells: [r.cells[0], human, ...r.cells.slice(1)] };
     });
     if (!sort) return withHuman;
@@ -682,7 +685,9 @@ export function TtsResultsTable() {
         <figcaption style={{ marginTop: "0.6rem", fontSize: "0.78rem", color: INK.muted }}>
           {run.caption}{run.caption ? " " : ""}
           Human is reader preference from those rankings, scored 0&ndash;100 by Bradley-Terry and
-          updated live; an engine shows a dash until enough people have ranked it.
+          updated live; an engine shows a dash until at least {minBallots ?? 3} people have ranked
+          it. These are early numbers &mdash; at this many ballots a score is worth about twenty
+          points either way, so read the column as a rough ordering rather than a measurement.
         </figcaption>
 
       </figure>

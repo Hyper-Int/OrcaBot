@@ -49,8 +49,21 @@ const ANCHORS = ['bark', 'vibevoice-1.5b'];
 const ANCHOR_RATE = 0.34;
 const ITEMS_PER_BALLOT = 4;
 
-/** Below this, a configuration shows no human score rather than a noisy one. */
-export const MIN_BALLOTS_TO_SHOW = 8;
+/** Below this, a configuration shows no human score rather than a noisy one.
+ *
+ *  Three, not eight. Simulating this estimator - the same MM fit, ballots drawn
+ *  from the Plackett-Luce model Bradley-Terry assumes - shows the threshold buys
+ *  almost no accuracy at the volumes this page sees. At 30 ballots a shown
+ *  rating carries about +/-20 points either way whether the cutoff is 3 or 5,
+ *  because precision is set by the total number of ballots, not by the cutoff;
+ *  all a higher cutoff does is hide rows. At 8 it hid every row.
+ *
+ *  What the cutoff still earns is the exclusion of a configuration seen once or
+ *  twice, whose rating is barely distinguishable from noise. Three is where the
+ *  correlation with the truth starts to hold up (r ~ 0.70 at today's volume,
+ *  0.89 by 120 ballots), and the column is rounded to whole points so it does
+ *  not imply a precision it does not have. */
+export const MIN_BALLOTS_TO_SHOW = 3;
 
 /** Ballots one voter may contribute. Enough that someone willing to listen adds
  *  real signal, few enough that no single pair of ears can move a rating on its

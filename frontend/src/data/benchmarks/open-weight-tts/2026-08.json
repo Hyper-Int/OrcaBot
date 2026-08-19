@@ -1125,8 +1125,8 @@
           "restricted": false
         },
         {
-          "v": "MIT, and the best of the chatterbox family on both axes. PerTh watermarking; own venv.",
-          "sort": "MIT, and the best of the chatterbox fami",
+          "v": "MIT, and the family's best PESQ at 3.61 - but turbo is more accurate and 4x faster. PerTh watermarking; own venv.",
+          "sort": "MIT, and the family's best PESQ at 3.61 ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1529,7 +1529,7 @@
           "restricted": false
         },
         {
-          "v": "Llama-3.2-3B finetune over SNAC: the largest LM backbone here, at 5.4x real time.",
+          "v": "Llama-3.2-3B finetune over SNAC: the largest LM backbone here, and the slowest at 8.1x real time.",
           "sort": "Llama-3.2-3B finetune over SNAC: the lar",
           "tone": "",
           "align": "",
@@ -1630,8 +1630,8 @@
           "restricted": false
         },
         {
-          "v": "Q8 on Metal, 3.5 points behind the same weights on CPU - the same split the q4 pair shows.",
-          "sort": "Q8 on Metal, 3.5 points behind the same ",
+          "v": "The fastest 2E configuration at 0.46x, but 3.5 points behind the same weights on CPU.",
+          "sort": "The fastest 2E configuration at 0.46x, b",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2034,8 +2034,8 @@
           "restricted": false
         },
         {
-          "v": "The fastest 2E configuration at 0.46x. Reachable only via an undocumented split-device call.",
-          "sort": "The fastest 2E configuration at 0.46x. R",
+          "v": "0.48x, just behind q8-metal. Reachable only via an undocumented split-device call.",
+          "sort": "0.48x, just behind q8-metal. Reachable o",
           "tone": "",
           "align": "",
           "restricted": false
