@@ -86,6 +86,9 @@ const RENAME_COLUMNS = {
  *  upstream card at all; BananaMind TTS has no findable home.
  */
 const LICENCE_PROOF_URLS = {
+  // Code is MIT, weights are OpenRAIL-M - the table states the weights licence,
+  // so the proof has to be the weights' own LICENSE rather than the repo's.
+  "supertonic": "https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE",
   "bark": "https://github.com/suno-ai/bark/blob/main/LICENSE",
   "chatterbox": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
   "chatterbox-q4": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE",
@@ -128,6 +131,7 @@ const LICENCE_PROOF_URLS = {
  *  outright for OmniVoice), and a plausible-looking wrong link is worse than
  *  none. */
 const MODEL_URLS = {
+  "supertonic": "https://github.com/supertone-inc/supertonic",
   "piper": "https://github.com/rhasspy/piper",
   "kokoro": "https://huggingface.co/hexgrad/Kokoro-82M",
   "bark": "https://github.com/suno-ai/bark",
@@ -220,6 +224,9 @@ const REWRITE = {
  *  those verbatim misspells every product on the page. Anything not listed falls
  *  back to the raw id, which is visible enough to get noticed and fixed. */
 const DISPLAY = {
+  // 99M parameters across four ONNX graphs at 44.1 kHz is the v3 checkpoint;
+  // v1 was 66M. See the note flagged with this import about its release date.
+  "supertonic": "Supertonic 3",
   "piper": "Piper",
   "bark": "Bark",
   "chatterbox": "Chatterbox",

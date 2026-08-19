@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-18",
+  "label": "2026-08-19",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -22,6 +22,107 @@
     "Notes"
   ],
   "rows": [
+    {
+      "config": "supertonic",
+      "display": "Supertonic 3",
+      "group": "",
+      "sample": "supertonic.mp3?v=587b3efc",
+      "cells": [
+        {
+          "v": "Supertonic 3",
+          "sort": "supertonic",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/supertone-inc/supertonic"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "OpenRAIL-M",
+          "sort": "OpenRAIL-M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE"
+        },
+        {
+          "v": "99M",
+          "sort": "99.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-03",
+          "sort": "202603",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "380 MB",
+          "sort": "380.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "380 MB",
+          "sort": "380.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "882 MB",
+          "sort": "882.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4%",
+          "sort": "0.0361",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.78",
+          "sort": "3.78",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.22x",
+          "sort": "0.2214",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.84s",
+          "sort": "0.8430",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "99M params across four fp32 ONNX graphs, so 380 MB on disk despite the parameter count. Native 44.1 kHz, resampled to 24 kHz here. Weights are OpenRAIL-M, not the MIT of the sample code.",
+          "sort": "99M params across four fp32 ONNX graphs,",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
     {
       "config": "piper",
       "display": "Piper",
@@ -2245,6 +2346,107 @@
       ]
     },
     {
+      "config": "fastpitch",
+      "display": "FastPitch",
+      "group": "",
+      "sample": "fastpitch.mp3?v=58a1c73a",
+      "cells": [
+        {
+          "v": "FastPitch",
+          "sort": "fastpitch",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/NVIDIA-NeMo/Speech"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-4.0",
+          "sort": "CC-BY-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/tts_en_fastpitch"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2021-06",
+          "sort": "202106",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "120 MB",
+          "sort": "120.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "120 MB",
+          "sort": "120.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "376 MB",
+          "sort": "376.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14%",
+          "sort": "0.1364",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.72",
+          "sort": "2.72",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.05x",
+          "sort": "0.0535",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.39s",
+          "sort": "0.3858",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
+          "sort": "Non-autoregressive, 120 MB. Output carri",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "cosyvoice3",
       "display": "CosyVoice3",
       "group": "",
@@ -2440,107 +2642,6 @@
         {
           "v": "38 MB. Output carries a spoken AI disclosure, removed before scoring.",
           "sort": "38 MB. Output carries a spoken AI disclo",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "fastpitch",
-      "display": "FastPitch",
-      "group": "",
-      "sample": "fastpitch.mp3?v=58a1c73a",
-      "cells": [
-        {
-          "v": "FastPitch",
-          "sort": "fastpitch",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/NVIDIA-NeMo/Speech"
-        },
-        {
-          "v": "det-ff",
-          "sort": "det-ff",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "CC-BY-4.0",
-          "sort": "CC-BY-4.0",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/tts_en_fastpitch"
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2021-06",
-          "sort": "202106",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "120 MB",
-          "sort": "120.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "120 MB",
-          "sort": "120.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "376 MB",
-          "sort": "376.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "15%",
-          "sort": "0.1530",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.72",
-          "sort": "2.72",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.05x",
-          "sort": "0.0509",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.37s",
-          "sort": "0.3667",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
-          "sort": "Non-autoregressive, 120 MB. Output carri",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2952,107 +3053,6 @@
       ]
     },
     {
-      "config": "mms-tts",
-      "display": "MMS-TTS",
-      "group": "",
-      "sample": "mms-tts.mp3?v=6a891650",
-      "cells": [
-        {
-          "v": "MMS-TTS",
-          "sort": "mms-tts",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/facebook/mms-tts"
-        },
-        {
-          "v": "st-ff",
-          "sort": "stoch-ff",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "CC-BY-NC-4.0",
-          "sort": "CC-BY-NC-4.0",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/facebook/mms-tts/blob/main/README.md"
-        },
-        {
-          "v": "36M",
-          "sort": "36.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2023-05",
-          "sort": "202305",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "145 MB",
-          "sort": "145.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "145 MB",
-          "sort": "145.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "742 MB",
-          "sort": "742.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "22%",
-          "sort": "0.2240",
-          "tone": "warn",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.43",
-          "sort": "3.43",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.12x",
-          "sort": "0.1220",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.46s",
-          "sort": "0.4615",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Meta MMS: a VITS per language, 1100+ of them. The only engine here not served by the C++ runtime.",
-          "sort": "Meta MMS: a VITS per language, 1100+ of ",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
       "config": "speecht5",
       "display": "SpeechT5",
       "group": "",
@@ -3147,6 +3147,107 @@
         {
           "v": "16 kHz output - duller than everything else regardless of accuracy.",
           "sort": "16 kHz output - duller than everything e",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "mms-tts",
+      "display": "MMS-TTS",
+      "group": "",
+      "sample": "mms-tts.mp3?v=6a891650",
+      "cells": [
+        {
+          "v": "MMS-TTS",
+          "sort": "mms-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/facebook/mms-tts"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-NC-4.0",
+          "sort": "CC-BY-NC-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/facebook/mms-tts/blob/main/README.md"
+        },
+        {
+          "v": "36M",
+          "sort": "36.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-05",
+          "sort": "202305",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "742 MB",
+          "sort": "742.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "25%",
+          "sort": "0.2513",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.43",
+          "sort": "3.43",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.14x",
+          "sort": "0.1446",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.54s",
+          "sort": "0.5443",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Meta MMS: a VITS per language, 1100+ of them. The only engine here not served by the C++ runtime.",
+          "sort": "Meta MMS: a VITS per language, 1100+ of ",
           "tone": "",
           "align": "",
           "restricted": false

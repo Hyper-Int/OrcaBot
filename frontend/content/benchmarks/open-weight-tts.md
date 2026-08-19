@@ -40,7 +40,7 @@ face value.
   **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for eighteen of the thirty-three
+  `medium.en` was run too, but it did not finish for nineteen of the thirty-four
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones — so the true spread between engines is **wider** than this column
