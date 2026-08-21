@@ -34,7 +34,7 @@ report is built it is copied over the placeholder and the next refresh picks it 
 
 ## Four things the sandbox forces
 
-All four were found by running it, not by reading it. Three of them fail *quietly* --
+All four were found by running it, not by reading it. Two of them fail *quietly* --
 the run still exits 0 and still publishes a page.
 
 **HTTPS clones, not submodules.** talkito's `.gitmodules` points at
@@ -45,7 +45,7 @@ repos over HTTPS instead and arranges them as
     /workspace/talkito/              talkito
     /workspace/talkito/benchmark/    talkito-benchmark
 
-The harness now ships inside talkito-benchmark, so `tests-repo` is no longer needed.
+The harness ships inside talkito-benchmark, so `tests-repo` is not needed.
 `tools/paths.py` still wants a talkito **checkout** rather than the installed package
 -- it looks for `talkito/tts.py` -- and `benchmark/` inside `talkito/` is the layout it
 resolves via `../..`.
@@ -58,16 +58,16 @@ boot command.
 cannot ask a human, and a boot command has no TTY. Without it every phrase fails with
 `Piper model unavailable` -- and the sweep still reports `rc=0`, having published a
 table reading `0/84 phrases, WER 0.0%, RTF 0.00x`. A green run measuring nothing is
-the worst failure here, so this variable is not optional.
+the worst failure available here, so this variable is not optional.
 
-**`TTS_SAMPLE_DIR`, set per step.** `build_benchmark_page.py` and `build_export.py`
-default it to a hardcoded `/Users/robertmacrae/.cache/...` path, so anywhere else they
-find no clips and build a table with nothing to play. `make_samples.py` resolves the
-same variable with `expanduser` and writes its mp3s into an `mp3` subdirectory, so the
-two only agree when it is set explicitly -- and they want *different* values, which is
-why the boot command sets it on the `benchmark.py` line rather than once at the top.
-ffmpeg is installed for the same reason: `make_samples.py` shells out to it for the
-wav-to-mp3 step and the sandbox image ships without it.
+**ffmpeg.** `make_samples.py` shells out to it for the wav-to-mp3 step and the sandbox
+image ships without it. Missing, every number is still correct and only the play
+button is lost -- which is most of the point of the page.
+
+**`TTS_SAMPLE_DIR` is deliberately not set.** The three scripts want different
+directories: `make_samples.py` writes mp3s into an `mp3` subdirectory that the page
+builder reads and the export builder does not. Each now defaults correctly on its own,
+so setting one value for all of them is a way to break the export, not fix it.
 
 ## Running more than piper
 
@@ -92,18 +92,13 @@ easy to make by accident.
 dependency install, weight download, 84-phrase sweep, Whisper scoring, page build and
 serving. The run takes about three and a half minutes for piper and finishes
 
-    piper                  82/84  phrases   WER  5.0%   RTF  0.07x
+    piper                  82/84  phrases   WER  5.3%   RTF  0.08x
 
 against 4% and 0.04x for the published Apple M2 figures -- close, and real-time factor
 is wall-clock so a throttled container is expected to read higher.
 
-The report reaches the browser block at 51 KB with the listening clip embedded.
-
-One cosmetic gap remains: `build_export.py` reports `0 audio samples` because the
-single `TTS_SAMPLE_DIR` it shares with the page builder points at the mp3
-subdirectory. That affects only the counter and the zip's `samples/` folder, not the
-page, which is what the browser block shows. The real fix is upstream -- neither
-builder should carry a hardcoded home directory.
+The report reaches the browser block at 50 KB with the listening clip embedded, and
+the export zip carries `samples/piper.mp3` alongside it.
 
 ## Seeding
 
