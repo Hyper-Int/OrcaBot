@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint src/",
     "check-catalogs": "node scripts/check-catalogs.mjs",
+    "build-og-tts": "node scripts/build-og-tts.mjs",
     "test": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

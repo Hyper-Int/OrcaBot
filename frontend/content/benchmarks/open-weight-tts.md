@@ -3,6 +3,7 @@ title: Testing open-weight Text To Speech models
 date: 2026-08-17
 description: Every open-weight TTS engine that can run on a consumer laptop, tested for WER using Whisper.
 author: Rob Macrae
+ogImage: /benchmarks/og-open-weight-tts.png
 toc: false
 ---
 
