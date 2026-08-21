@@ -52,6 +52,7 @@ import { createApiToken, listApiTokens, revokeApiToken, revokeSelfApiToken } fro
 import { checkAndCacheSandbоxHealth, getCachedHealth } from './health/checker';
 import { sendEmail, buildInterestThankYouEmail, buildInterestNotificationEmail, buildTemplateReviewEmail } from './email/resend';
 import * as blog from './blog/handler';
+import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
 
@@ -994,6 +995,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       || segments[0] === 'webhooks'       // Webhooks (Stripe, messaging)
       || segments[0] === 'internal'       // Internal sandbox routes
       || segments[0] === 'analytics'      // Analytics event ingestion
+      || segments[0] === 'tts'            // Public TTS preference ballots
       || (segments[0] === 'users' && segments[1] === 'me') // User info
       || (segments[0] === 'user' && segments[1] === 'setup'); // AI provider onboarding
     if (!isExemptRoute) {
@@ -1077,6 +1079,25 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
       console.error('Failed to send interest registration emails:', error);
       return Response.json({ error: 'E79408: Failed to register interest. Please try again.' }, { status: 500 });
     }
+  }
+
+  // --- Open-weight TTS preference ballots (public, rate limited) ---------
+  // GET /tts/ballot - issue a blind 4-item comparison set
+  if (segments[0] === 'tts' && segments[1] === 'ballot' && segments.length === 2 && method === 'GET') {
+    // No IP check here: unauthenticated requests already passed the global one
+    // above, and a second call spends a second token for the same request -
+    // halving the budget for exactly the readers this endpoint is for. The real
+    // abuse control is the per-voter ballot cap in the handler.
+    return tts.issueBallot(env, request);
+  }
+  // POST /tts/ballot - submit a ranking for an issued ballot
+  if (segments[0] === 'tts' && segments[1] === 'ballot' && segments.length === 2 && method === 'POST') {
+    const data = await request.json() as { ballotId?: string; ranking?: string[] };
+    return tts.submitBallot(env, request, data);
+  }
+  // GET /tts/scores - Bradley-Terry ratings over counted ballots
+  if (segments[0] === 'tts' && segments[1] === 'scores' && segments.length === 2 && method === 'GET') {
+    return tts.getScores(env);
   }
 
   // POST /blog/subscribe - Subscribe to blog notifications (no auth required)

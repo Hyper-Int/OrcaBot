@@ -87,6 +87,9 @@ function buildSection({ name, dir, out }) {
       // Social-card image (Open Graph / Twitter). Kept separate from coverImage
       // so it drives the link preview WITHOUT injecting a hero into the article.
       ogImage: frontmatter.ogImage || null,
+      // Opt a post out of the side index. Long, heading-dense posts want it;
+      // a short one is just a list of four links beside three paragraphs.
+      toc: frontmatter.toc === "false" || frontmatter.toc === false ? false : true,
       headings: extractHeadings(content),
       content,
     };

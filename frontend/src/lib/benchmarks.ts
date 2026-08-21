@@ -28,6 +28,9 @@ export interface Benchmark {
   coverImage?: string | null;
   coverVideo?: string | null;
   ogImage?: string | null;
+  /** Whether to show the side index. Defaults true; set `toc: false` in the
+   *  frontmatter for posts short enough that the index is longer than the read. */
+  toc?: boolean;
   headings: TocHeading[];
   content: string;
 }
@@ -37,7 +40,7 @@ export type BenchmarkMeta = Omit<Benchmark, "content">;
 const posts = postsData as Benchmark[];
 
 export function getAllPosts(): BenchmarkMeta[] {
-  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo, ogImage, headings }) => ({
+  return posts.map(({ slug, title, date, description, author, coverImage, coverVideo, ogImage, toc, headings }) => ({
     slug,
     title,
     date,
@@ -46,6 +49,7 @@ export function getAllPosts(): BenchmarkMeta[] {
     coverImage,
     coverVideo,
     ogImage,
+    toc,
     headings: headings ?? [],
   }));
 }

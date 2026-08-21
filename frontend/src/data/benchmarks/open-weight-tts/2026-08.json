@@ -1,0 +1,3662 @@
+{
+  "benchmark": "open-weight-tts",
+  "run": "2026-08",
+  "label": "2026-08-19",
+  "machine": "Apple M2, macOS",
+  "corpus": "84 phrases",
+  "rtfCutoff": 2,
+  "caption": "Sorted by compute per phrase, fastest first. Every configuration measured is listed, including the ones far too slow to keep up with their own speech; the filter above hides anything above 2x real time.",
+  "columns": [
+    "Sample · Configuration",
+    "Class",
+    "Licence",
+    "Params",
+    "Released",
+    "Weights",
+    "Disk",
+    "RSS",
+    "WER",
+    "PESQ",
+    "RTF",
+    "x̄ synth",
+    "Notes"
+  ],
+  "rows": [
+    {
+      "config": "supertonic",
+      "display": "Supertonic 3",
+      "group": "",
+      "sample": "supertonic.mp3?v=587b3efc",
+      "cells": [
+        {
+          "v": "Supertonic 3",
+          "sort": "supertonic",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/supertone-inc/supertonic"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "OpenRAIL-M",
+          "sort": "OpenRAIL-M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE"
+        },
+        {
+          "v": "99M",
+          "sort": "99.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-04",
+          "sort": "202604",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "380 MB",
+          "sort": "380.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "380 MB",
+          "sort": "380.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "882 MB",
+          "sort": "882.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4%",
+          "sort": "0.0361",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.78",
+          "sort": "3.78",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.22x",
+          "sort": "0.2214",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.84s",
+          "sort": "0.8430",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "99M params across four fp32 ONNX graphs, so 380 MB on disk despite the parameter count. Native 44.1 kHz, resampled to 24 kHz here. Weights are OpenRAIL-M, not the MIT of the sample code.",
+          "sort": "99M params across four fp32 ONNX graphs,",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "piper",
+      "display": "Piper",
+      "group": "",
+      "sample": "piper.mp3?v=6e326b91",
+      "cells": [
+        {
+          "v": "Piper",
+          "sort": "piper",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/rhasspy/piper"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/rhasspy/piper/blob/master/LICENSE.md"
+        },
+        {
+          "v": "16M",
+          "sort": "16.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-06",
+          "sort": "202306",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "60 MB",
+          "sort": "60.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "451 MB",
+          "sort": "451.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "338 MB",
+          "sort": "338.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4%",
+          "sort": "0.0375",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.10",
+          "sort": "4.10",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.04x",
+          "sort": "0.0399",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.12s",
+          "sort": "0.1233",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "No torch at all. Peaks at full scale - check for clipping.",
+          "sort": "No torch at all. Peaks at full scale - c",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox-turbo",
+      "display": "Chatterbox Turbo",
+      "group": "",
+      "sample": "chatterbox-turbo.mp3?v=6ca98b6a",
+      "cells": [
+        {
+          "v": "Chatterbox Turbo",
+          "sort": "chatterbox-turbo",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-08",
+          "sort": "202508",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "980 MB",
+          "sort": "980.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "980 MB",
+          "sort": "980.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4%",
+          "sort": "0.0430",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.30",
+          "sort": "3.30",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.98x",
+          "sort": "0.9751",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.19s",
+          "sort": "3.1940",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Distilled chatterbox, and joint-best accuracy here at 4%. Base q8 measures 2.22x.",
+          "sort": "Distilled chatterbox, and joint-best acc",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-micro",
+      "display": "KittenTTS Micro",
+      "group": "",
+      "sample": "kittentts-micro.mp3?v=e2ada29e",
+      "cells": [
+        {
+          "v": "KittenTTS Micro",
+          "sort": "kittentts-micro",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-micro-0.8"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-micro-0.8/blob/main/README.md"
+        },
+        {
+          "v": "40M",
+          "sort": "40.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "43 MB",
+          "sort": "43.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "43 MB",
+          "sort": "43.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "681 MB",
+          "sort": "681.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0457",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.69",
+          "sort": "3.69",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.18x",
+          "sort": "0.1810",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.75s",
+          "sort": "0.7533",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The most accurate KittenTTS here at 43 MB. Non-autoregressive, so no sampling and no runaways.",
+          "sort": "The most accurate KittenTTS here at 43 M",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-nano-int8",
+      "display": "KittenTTS Nano INT8",
+      "group": "",
+      "sample": "kittentts-nano-int8.mp3?v=d2c08d2a",
+      "cells": [
+        {
+          "v": "KittenTTS Nano INT8",
+          "sort": "kittentts-nano-int8",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-int8/blob/main/README.md"
+        },
+        {
+          "v": "54M",
+          "sort": "54.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "26 MB",
+          "sort": "26.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "26 MB",
+          "sort": "26.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "589 MB",
+          "sort": "589.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0546",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.52",
+          "sort": "3.52",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.18x",
+          "sort": "0.1774",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.78s",
+          "sort": "0.7806",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "int8 of the same nano weights at 26 MB. Non-autoregressive, so quantisation cannot cause the sampling failures seen in the LM models.",
+          "sort": "int8 of the same nano weights at 26 MB. ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "qwen3-tts-vd",
+      "display": "Qwen3-TTS VoiceDesign",
+      "group": "",
+      "sample": "qwen3-tts-vd.mp3?v=8e0a395c",
+      "cells": [
+        {
+          "v": "Qwen3-TTS VoiceDesign",
+          "sort": "qwen3-tts-vd",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        },
+        {
+          "v": "1.7B",
+          "sort": "1700.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-01",
+          "sort": "202601",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.3 GB",
+          "sort": "3379.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0552",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.99",
+          "sort": "3.99",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.87x",
+          "sort": "0.8652",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.00s",
+          "sort": "3.0011",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Qwen3-TTS VoiceDesign at 1.7B: the speaker comes from a written description, not a reference clip.",
+          "sort": "Qwen3-TTS VoiceDesign at 1.7B: the speak",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-mini",
+      "display": "KittenTTS Mini",
+      "group": "",
+      "sample": "kittentts-mini.mp3?v=5b4feeb1",
+      "cells": [
+        {
+          "v": "KittenTTS Mini",
+          "sort": "kittentts-mini",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-mini-0.8"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-mini-0.8/blob/main/README.md"
+        },
+        {
+          "v": "73M",
+          "sort": "73.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "78 MB",
+          "sort": "78.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "78 MB",
+          "sort": "78.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "785 MB",
+          "sort": "785.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0558",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.65",
+          "sort": "3.65",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.49x",
+          "sort": "0.4872",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.88s",
+          "sort": "1.8795",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The largest KittenTTS, and what talkito loads by default.",
+          "sort": "The largest KittenTTS, and what talkito ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "dots-tts",
+      "display": "Dots-TTS",
+      "group": "",
+      "sample": "dots-tts.mp3?v=95c4bd16",
+      "cells": [
+        {
+          "v": "Dots-TTS",
+          "sort": "dots-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-06",
+          "sort": "202506",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.3 GB",
+          "sort": "4403.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.9 GB",
+          "sort": "5017.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0569",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.57",
+          "sort": "3.57",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14.22x",
+          "sort": "14.2218",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "51.01s",
+          "sort": "51.0087",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.4 GB f16 and 11x real time, for 6% WER - mid-pack accuracy.",
+          "sort": "4.4 GB f16 and 11x real time, for 6% WER",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "qwen3-tts",
+      "display": "Qwen3-TTS",
+      "group": "",
+      "sample": "qwen3-tts.mp3?v=c11c9163",
+      "cells": [
+        {
+          "v": "Qwen3-TTS",
+          "sort": "qwen3-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenLM/Qwen3-TTS"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenLM/Qwen3-TTS/blob/main/LICENSE"
+        },
+        {
+          "v": "0.6B",
+          "sort": "600.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-01",
+          "sort": "202601",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.3 GB",
+          "sort": "1331.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.3 GB",
+          "sort": "1331.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.2 GB",
+          "sort": "2252.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0575",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.55",
+          "sort": "3.55",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.73x",
+          "sort": "0.7278",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.47s",
+          "sort": "2.4675",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Alibaba's 0.6B at a 12 Hz codec - the direct architectural rival.",
+          "sort": "Alibaba's 0.6B at a 12 Hz codec - the di",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kittentts-nano",
+      "display": "KittenTTS Nano",
+      "group": "",
+      "sample": "kittentts-nano.mp3?v=fbb8b5df",
+      "cells": [
+        {
+          "v": "KittenTTS Nano",
+          "sort": "kittentts-nano",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/KittenML/kitten-tts-nano-0.8-fp32/blob/main/README.md"
+        },
+        {
+          "v": "54M",
+          "sort": "54.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-02",
+          "sort": "202602",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "57 MB",
+          "sort": "57.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "57 MB",
+          "sort": "57.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "616 MB",
+          "sort": "616.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0592",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.54",
+          "sort": "3.54",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.06x",
+          "sort": "0.0632",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.28s",
+          "sort": "0.2779",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The fp32 middle size of KittenTTS's four. Not the default - talkito loads mini.",
+          "sort": "The fp32 middle size of KittenTTS's four",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox",
+      "display": "Chatterbox",
+      "group": "",
+      "sample": "chatterbox.mp3?v=5d698986",
+      "cells": [
+        {
+          "v": "Chatterbox",
+          "sort": "chatterbox",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-04",
+          "sort": "202504",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.0 GB",
+          "sort": "3072.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.2 GB",
+          "sort": "4300.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.5 GB",
+          "sort": "3584.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0631",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.61",
+          "sort": "3.61",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.19x",
+          "sort": "4.1945",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "12.10s",
+          "sort": "12.0982",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "MIT, and the family's best PESQ at 3.61 - but turbo is more accurate and 4x faster. PerTh watermarking; own venv.",
+          "sort": "MIT, and the family's best PESQ at 3.61 ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "f5-tts",
+      "display": "F5-TTS",
+      "group": "",
+      "sample": "f5-tts.mp3?v=d66c2cec",
+      "cells": [
+        {
+          "v": "F5-TTS",
+          "sort": "f5-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/SWivid/F5-TTS"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-NC-4.0",
+          "sort": "CC-BY-NC-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/SWivid/F5-TTS"
+        },
+        {
+          "v": "0.34B",
+          "sort": "340.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2024-10",
+          "sort": "202410",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "953 MB",
+          "sort": "953.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "953 MB",
+          "sort": "953.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.1 GB",
+          "sort": "1126.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0633",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.36",
+          "sort": "2.36",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.69x",
+          "sort": "2.6899",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.34s",
+          "sort": "8.3435",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Flow matching: non-autoregressive, but iterative.",
+          "sort": "Flow matching: non-autoregressive, but i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kokoro",
+      "display": "Kokoro",
+      "group": "",
+      "sample": "kokoro.mp3?v=17f424fa",
+      "cells": [
+        {
+          "v": "Kokoro",
+          "sort": "kokoro",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/hexgrad/Kokoro-82M"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/hexgrad/Kokoro-82M/blob/main/README.md"
+        },
+        {
+          "v": "82M",
+          "sort": "82.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2024-12",
+          "sort": "202412",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "313 MB",
+          "sort": "313.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.4 GB",
+          "sort": "1433.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0684",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.70",
+          "sort": "3.70",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.21x",
+          "sort": "0.2118",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.79s",
+          "sort": "0.7935",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Deterministic timing. Weakest on very short utterances.",
+          "sort": "Deterministic timing. Weakest on very sh",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "xtts",
+      "display": "XTTS",
+      "group": "",
+      "sample": "xtts.mp3?v=ac705b6a",
+      "cells": [
+        {
+          "v": "XTTS",
+          "sort": "xtts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/coqui/XTTS-v2"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CPML (non-commercial)",
+          "sort": "CPML (non-commercial)",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/coqui/XTTS-v2/blob/main/LICENSE.txt"
+        },
+        {
+          "v": "0.47B",
+          "sort": "470.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-11",
+          "sort": "202311",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.8 GB",
+          "sort": "1843.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.8 GB",
+          "sort": "1843.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.0 GB",
+          "sort": "4096.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0803",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.00",
+          "sort": "4.00",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.72x",
+          "sort": "4.7168",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "20.28s",
+          "sort": "20.2795",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Coqui XTTS v2. Clones from a reference clip; scored against a piper sample as reference.",
+          "sort": "Coqui XTTS v2. Clones from a reference c",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "orpheus-q4",
+      "display": "Orpheus 3B Q4",
+      "group": "",
+      "sample": "orpheus-q4.mp3?v=4ef715a3",
+      "cells": [
+        {
+          "v": "Orpheus 3B Q4",
+          "sort": "orpheus-q4",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/canopyai/Orpheus-TTS"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft"
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-03",
+          "sort": "202503",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.7 GB",
+          "sort": "2764.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0823",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.77",
+          "sort": "3.77",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.09x",
+          "sort": "8.0894",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "41.72s",
+          "sort": "41.7196",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Llama-3.2-3B finetune over SNAC: the largest LM backbone here, and the slowest at 8.1x real time.",
+          "sort": "Llama-3.2-3B finetune over SNAC: the lar",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "nt-2e-q8-metal",
+      "display": "NeuTTS-2E Q8",
+      "group": "neu",
+      "sample": "nt-2e-q8-metal.mp3?v=9f6e6a25",
+      "cells": [
+        {
+          "v": "NeuTTS-2E Q8",
+          "sort": "nt-2e-q8-metal",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE"
+        },
+        {
+          "v": "0.24B",
+          "sort": "240.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "645 MB",
+          "sort": "645.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.0 GB",
+          "sort": "2048.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9%",
+          "sort": "0.0891",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.62",
+          "sort": "3.62",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.46x",
+          "sort": "0.4567",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.89s",
+          "sort": "1.8868",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The fastest 2E configuration at 0.46x, but 3.5 points behind the same weights on CPU.",
+          "sort": "The fastest 2E configuration at 0.46x, b",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "nt-2e-fp32-mps",
+      "display": "NeuTTS-2E FP32",
+      "group": "neu",
+      "sample": "nt-2e-fp32-mps.mp3?v=130f14fb",
+      "cells": [
+        {
+          "v": "NeuTTS-2E FP32",
+          "sort": "nt-2e-fp32-mps",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE"
+        },
+        {
+          "v": "0.24B",
+          "sort": "240.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "771 MB",
+          "sort": "771.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.2 GB",
+          "sort": "2252.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.1 GB",
+          "sort": "1126.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9%",
+          "sort": "0.0929",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.29",
+          "sort": "3.29",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.44x",
+          "sort": "2.4415",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9.64s",
+          "sort": "9.6402",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "A dead heat with CPU: the path PR #123 targeted has nothing to win.",
+          "sort": "A dead heat with CPU: the path PR #123 t",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox-q8",
+      "display": "Chatterbox Q8",
+      "group": "",
+      "sample": "chatterbox-q8.mp3?v=d8dfba9e",
+      "cells": [
+        {
+          "v": "Chatterbox Q8",
+          "sort": "chatterbox-q8",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-04",
+          "sort": "202504",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1004 MB",
+          "sort": "1004.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1022 MB",
+          "sort": "1022.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.4 GB",
+          "sort": "1433.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "10%",
+          "sort": "0.1048",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.15",
+          "sort": "3.15",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.22x",
+          "sort": "2.2156",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7.03s",
+          "sort": "7.0331",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Quantization costs 4 points, refuting the ASR-identical claim.",
+          "sort": "Quantization costs 4 points, refuting th",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "vibevoice",
+      "display": "VibeVoice",
+      "group": "",
+      "sample": "vibevoice.mp3?v=254bd085",
+      "cells": [
+        {
+          "v": "VibeVoice",
+          "sort": "vibevoice",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/microsoft/VibeVoice"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/microsoft/VibeVoice/blob/main/LICENSE"
+        },
+        {
+          "v": "1.02B",
+          "sort": "1020.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-08",
+          "sort": "202508",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "668 MB",
+          "sort": "668.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "686 MB",
+          "sort": "686.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.3 GB",
+          "sort": "1331.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "11%",
+          "sort": "0.1074",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.21",
+          "sort": "3.21",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.72x",
+          "sort": "0.7193",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.67s",
+          "sort": "2.6705",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Small deployed footprint for an LM engine, at 686 MB. 1.02B despite a 0.5b filename.",
+          "sort": "Small deployed footprint for an LM engin",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "nt-2e-q4-metal",
+      "display": "NeuTTS-2E Q4",
+      "group": "neu",
+      "sample": "nt-2e-q4-metal.mp3?v=47039dd7",
+      "cells": [
+        {
+          "v": "NeuTTS-2E Q4",
+          "sort": "nt-2e-q4-metal",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE"
+        },
+        {
+          "v": "0.24B",
+          "sort": "240.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "585 MB",
+          "sort": "585.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.0 GB",
+          "sort": "2048.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "11%",
+          "sort": "0.1092",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.13",
+          "sort": "3.13",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.48x",
+          "sort": "0.4842",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.09s",
+          "sort": "2.0940",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.48x, just behind q8-metal. Reachable only via an undocumented split-device call.",
+          "sort": "0.48x, just behind q8-metal. Reachable o",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "cosyvoice3-rl",
+      "display": "CosyVoice3 RL",
+      "group": "",
+      "sample": "cosyvoice3-rl.mp3?v=13929837",
+      "cells": [
+        {
+          "v": "CosyVoice3 RL",
+          "sort": "cosyvoice3-rl",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE"
+        },
+        {
+          "v": "0.64B",
+          "sort": "640.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-01",
+          "sort": "202501",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "384 MB",
+          "sort": "384.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "384 MB",
+          "sort": "384.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1023 MB",
+          "sort": "1023.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "12%",
+          "sort": "0.1174",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.67",
+          "sort": "3.67",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.17x",
+          "sort": "1.1734",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.99s",
+          "sort": "3.9852",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "CosyVoice 3 with RL post-training, a third the size of the base LLM.",
+          "sort": "CosyVoice 3 with RL post-training, a thi",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox-q4",
+      "display": "Chatterbox Q4",
+      "group": "",
+      "sample": "chatterbox-q4.mp3?v=83de8f42",
+      "cells": [
+        {
+          "v": "Chatterbox Q4",
+          "sort": "chatterbox-q4",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-04",
+          "sort": "202504",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "637 MB",
+          "sort": "637.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "655 MB",
+          "sort": "655.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "12%",
+          "sort": "0.1183",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.98",
+          "sort": "2.98",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.03x",
+          "sort": "2.0326",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.39s",
+          "sort": "6.3891",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6 points worse than fp32 and no faster than q8.",
+          "sort": "6 points worse than fp32 and no faster t",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "styletts2",
+      "display": "StyleTTS2",
+      "group": "",
+      "sample": "styletts2.mp3?v=f895a04a",
+      "cells": [
+        {
+          "v": "StyleTTS2",
+          "sort": "styletts2",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/yl4579/StyleTTS2"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "~2023",
+          "sort": "202300",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "870 MB",
+          "sort": "870.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.8 GB",
+          "sort": "1843.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "12%",
+          "sort": "0.1194",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.69",
+          "sort": "3.69",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.69x",
+          "sort": "0.6902",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.91s",
+          "sort": "2.9146",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Phoneme model that still needs digit normalization (+20% gap).",
+          "sort": "Phoneme model that still needs digit nor",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "melotts",
+      "display": "MeloTTS",
+      "group": "",
+      "sample": "melotts.mp3?v=cc97d4fa",
+      "cells": [
+        {
+          "v": "MeloTTS",
+          "sort": "melotts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/myshell-ai/MeloTTS"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/myshell-ai/MeloTTS/blob/main/LICENSE"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2024-02",
+          "sort": "202402",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "198 MB",
+          "sort": "198.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.9 GB",
+          "sort": "2969.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "587 MB",
+          "sort": "587.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "13%",
+          "sort": "0.1252",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.79",
+          "sort": "3.79",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.17x",
+          "sort": "0.1749",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.69s",
+          "sort": "0.6907",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "198 MB of weights in a 3 GB install; 774 MB is a Japanese dictionary.",
+          "sort": "198 MB of weights in a 3 GB install; 774",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "omnivoice",
+      "display": "OmniVoice",
+      "group": "",
+      "sample": "omnivoice.mp3?v=207aab3d",
+      "cells": [
+        {
+          "v": "OmniVoice",
+          "sort": "omnivoice",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/k2-fsa/OmniVoice"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://github.com/k2-fsa/OmniVoice/blob/master/LICENSE"
+        },
+        {
+          "v": "0.8B",
+          "sort": "800.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-04",
+          "sort": "202604",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.2 GB",
+          "sort": "2252.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14%",
+          "sort": "0.1364",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.50",
+          "sort": "3.50",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.51x",
+          "sort": "1.5114",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.02s",
+          "sort": "5.0156",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
+          "sort": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "fastpitch",
+      "display": "FastPitch",
+      "group": "",
+      "sample": "fastpitch.mp3?v=58a1c73a",
+      "cells": [
+        {
+          "v": "FastPitch",
+          "sort": "fastpitch",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/NVIDIA-NeMo/Speech"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-4.0",
+          "sort": "CC-BY-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/tts_en_fastpitch"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2021-06",
+          "sort": "202106",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "120 MB",
+          "sort": "120.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "120 MB",
+          "sort": "120.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "376 MB",
+          "sort": "376.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14%",
+          "sort": "0.1364",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.72",
+          "sort": "2.72",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.05x",
+          "sort": "0.0535",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.39s",
+          "sort": "0.3858",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
+          "sort": "Non-autoregressive, 120 MB. Output carri",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "cosyvoice3",
+      "display": "CosyVoice3",
+      "group": "",
+      "sample": "cosyvoice3.mp3?v=8dcf6959",
+      "cells": [
+        {
+          "v": "CosyVoice3",
+          "sort": "cosyvoice3",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/QwenAudio/CosyVoice/blob/main/LICENSE"
+        },
+        {
+          "v": "0.64B",
+          "sort": "640.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-07",
+          "sort": "202507",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "999 MB",
+          "sort": "999.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14%",
+          "sort": "0.1408",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.34",
+          "sort": "3.34",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.98x",
+          "sort": "0.9839",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.01s",
+          "sort": "4.0101",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9 languages plus 18 Chinese dialects; 8-voice baked bank.",
+          "sort": "9 languages plus 18 Chinese dialects; 8-",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "bananamind-tts",
+      "display": "BananaMind TTS",
+      "group": "",
+      "sample": "bananamind-tts.mp3?v=cf3f65fb",
+      "cells": [
+        {
+          "v": "BananaMind TTS",
+          "sort": "bananamind-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2/blob/main/LICENSE"
+        },
+        {
+          "v": "9.5M",
+          "sort": "9.5",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "38 MB",
+          "sort": "38.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "38 MB",
+          "sort": "38.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "246 MB",
+          "sort": "246.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "14%",
+          "sort": "0.1426",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.64",
+          "sort": "2.64",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.13x",
+          "sort": "0.1278",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.98s",
+          "sort": "0.9759",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "38 MB. Output carries a spoken AI disclosure, removed before scoring.",
+          "sort": "38 MB. Output carries a spoken AI disclo",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "tada-3b",
+      "display": "Tada 3B",
+      "group": "",
+      "sample": "tada-3b.mp3?v=cc91942e",
+      "cells": [
+        {
+          "v": "Tada 3B",
+          "sort": "tada-3b",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/HumeAI/tada-3b-ml"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Llama 3.2 Community",
+          "sort": "Llama 3.2 Community",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/HumeAI/tada-3b-ml/blob/main/LICENSE"
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-09",
+          "sort": "202509",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.4 GB",
+          "sort": "6553.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.4 GB",
+          "sort": "6553.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.4 GB",
+          "sort": "8601.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "16%",
+          "sort": "0.1593",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.26",
+          "sort": "2.26",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.13x",
+          "sort": "2.1252",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7.53s",
+          "sort": "7.5334",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3B sibling of tada-1b: three times the weights, three points better.",
+          "sort": "3B sibling of tada-1b: three times the w",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "zonos",
+      "display": "Zonos",
+      "group": "",
+      "sample": "zonos.mp3?v=dc94eccd",
+      "cells": [
+        {
+          "v": "Zonos",
+          "sort": "zonos",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/Zyphra/Zonos"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/Zyphra/Zonos/blob/main/LICENSE"
+        },
+        {
+          "v": "1.6B",
+          "sort": "1600.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-02",
+          "sort": "202502",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "17%",
+          "sort": "0.1657",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.02",
+          "sort": "4.02",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "11.07x",
+          "sort": "11.0727",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "34.78s",
+          "sort": "34.7792",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Second-best PESQ here after piper, but 8x real time.",
+          "sort": "Second-best PESQ here after piper, but 8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "csm",
+      "display": "CSM",
+      "group": "",
+      "sample": "csm.mp3?v=a9819fb6",
+      "cells": [
+        {
+          "v": "CSM",
+          "sort": "csm",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/SesameAILabs/csm"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/SesameAILabs/csm/blob/main/LICENSE"
+        },
+        {
+          "v": "1.78B",
+          "sort": "1780.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "~2025",
+          "sort": "202500",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.3 GB",
+          "sort": "1331.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.4 GB",
+          "sort": "1433.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "18%",
+          "sort": "0.1799",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.39",
+          "sort": "3.39",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.52x",
+          "sort": "2.5208",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "11.97s",
+          "sort": "11.9702",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.78B as served; the CSM-1B name covers the backbone only.",
+          "sort": "1.78B as served; the CSM-1B name covers ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "tada-1b",
+      "display": "Tada 1B",
+      "group": "",
+      "sample": "tada-1b.mp3?v=8f5c9027",
+      "cells": [
+        {
+          "v": "Tada 1B",
+          "sort": "tada-1b",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/HumeAI/tada-1b"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Llama 3.2 Community",
+          "sort": "Llama 3.2 Community",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/HumeAI/tada-1b/blob/main/LICENSE"
+        },
+        {
+          "v": "1B",
+          "sort": "1000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-09",
+          "sort": "202509",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.0 GB",
+          "sort": "3072.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "19%",
+          "sort": "0.1894",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.82",
+          "sort": "1.82",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.24x",
+          "sort": "1.2394",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.79s",
+          "sort": "3.7947",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1B multilingual. Middling accuracy, unremarkable throughout.",
+          "sort": "1B multilingual. Middling accuracy, unre",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "speecht5",
+      "display": "SpeechT5",
+      "group": "",
+      "sample": "speecht5.mp3?v=38c871a3",
+      "cells": [
+        {
+          "v": "SpeechT5",
+          "sort": "speecht5",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/speecht5_tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md"
+        },
+        {
+          "v": "157M",
+          "sort": "157.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-02",
+          "sort": "202302",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "300 MB",
+          "sort": "300.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "318 MB",
+          "sort": "318.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "474 MB",
+          "sort": "474.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "24%",
+          "sort": "0.2420",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.67",
+          "sort": "1.67",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.23x",
+          "sort": "0.2276",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.44s",
+          "sort": "0.4440",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "16 kHz output - duller than everything else regardless of accuracy.",
+          "sort": "16 kHz output - duller than everything e",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "mms-tts",
+      "display": "MMS-TTS",
+      "group": "",
+      "sample": "mms-tts.mp3?v=6a891650",
+      "cells": [
+        {
+          "v": "MMS-TTS",
+          "sort": "mms-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/facebook/mms-tts"
+        },
+        {
+          "v": "st-ff",
+          "sort": "stoch-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-NC-4.0",
+          "sort": "CC-BY-NC-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/facebook/mms-tts/blob/main/README.md"
+        },
+        {
+          "v": "36M",
+          "sort": "36.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-05",
+          "sort": "202305",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "145 MB",
+          "sort": "145.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "742 MB",
+          "sort": "742.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "25%",
+          "sort": "0.2513",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.43",
+          "sort": "3.43",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.14x",
+          "sort": "0.1446",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.54s",
+          "sort": "0.5443",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Meta MMS: a VITS per language, 1100+ of them. The only engine here not served by the C++ runtime.",
+          "sort": "Meta MMS: a VITS per language, 1100+ of ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "vibevoice-1.5b",
+      "display": "VibeVoice 1.5B",
+      "group": "",
+      "sample": "vibevoice-1.5b.mp3?v=04e0b430",
+      "cells": [
+        {
+          "v": "VibeVoice 1.5B",
+          "sort": "vibevoice-1.5b",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/VibeVoice-1.5B"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/microsoft/VibeVoice-1.5B/blob/main/README.md"
+        },
+        {
+          "v": "1.5B",
+          "sort": "1500.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-08",
+          "sort": "202508",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "37%",
+          "sort": "0.3703",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.60",
+          "sort": "1.60",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.25x",
+          "sort": "1.2478",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.27s",
+          "sort": "5.2688",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Larger than the 1.02B vibevoice and markedly worse.",
+          "sort": "Larger than the 1.02B vibevoice and mark",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "bark",
+      "display": "Bark",
+      "group": "",
+      "sample": "bark.mp3?v=c4f17bee",
+      "cells": [
+        {
+          "v": "Bark",
+          "sort": "bark",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/suno-ai/bark"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/suno-ai/bark/blob/main/LICENSE"
+        },
+        {
+          "v": "404M",
+          "sort": "404.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2023-04",
+          "sort": "202304",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "414 MB",
+          "sort": "414.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "432 MB",
+          "sort": "432.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "624 MB",
+          "sort": "624.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "55%",
+          "sort": "0.5539",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.10",
+          "sort": "2.10",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.28x",
+          "sort": "4.2773",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "17.86s",
+          "sort": "17.8594",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Unusable. Invents lead-in words never present in the input.",
+          "sort": "Unusable. Invents lead-in words never pr",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    }
+  ]
+}

@@ -7,11 +7,11 @@ import { getPost, getAllPosts } from "@/lib/benchmarks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ScrollVideo } from "@/components/ScrollVideo";
 import { BenchmarkToc } from "@/components/BenchmarkToc";
+import { BenchmarkTabs } from "@/components/BenchmarkTabs";
 import { MarkdownChart } from "@/components/charts/MarkdownChart";
 import { SortableTable } from "@/components/SortableTable";
 
@@ -20,6 +20,18 @@ import { SortableTable } from "@/components/SortableTable";
  *  chart module would be a client reference and cannot be called during SSR. */
 function isChartFence(className?: string): boolean {
   return typeof className === "string" && className.split(" ").includes("language-chart");
+}
+
+/** The fence language of a <pre>'s <code> child, as a class string. hast keeps
+ *  className as an array, which isChartFence does not accept. */
+function fenceLanguageOf(node: unknown): string {
+  const kids = (node as { children?: unknown[] } | undefined)?.children;
+  const first = kids?.[0] as
+    | { tagName?: string; properties?: { className?: unknown } }
+    | undefined;
+  if (first?.tagName !== "code") return "";
+  const cls = first.properties?.className;
+  return Array.isArray(cls) ? cls.join(" ") : typeof cls === "string" ? cls : "";
 }
 
 const MODULE_REVISION = "benchmarks-v1-post";
@@ -77,6 +89,8 @@ export default async function BenchmarkPage({ params }: Props) {
   const post = getPost(slug);
   if (!post) notFound();
 
+  const showToc = post.toc !== false;
+
   // Lead the side menu with the article title, then its headings.
   const tocItems = [
     { text: post.title, slug: post.slug, depth: 1 },
@@ -84,12 +98,16 @@ export default async function BenchmarkPage({ params }: Props) {
   ];
 
   return (
-    <div style={{ maxWidth: "76rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
+    <div style={{ maxWidth: "80rem", margin: "0 auto", display: "flex", gap: "2.5rem" }}>
       <style
         dangerouslySetInnerHTML={{
           __html: `@media (max-width: 1023px) { .benchmarks-toc-aside { display: none !important; } }`,
         }}
       />
+      {/* The side index is opt-out per post: a benchmark with four headings gets
+          an index nearly as long as the article, which is furniture rather than
+          navigation. Set `toc: false` in the frontmatter. */}
+      {showToc && (
       <aside
         className="benchmarks-toc-aside"
         style={{
@@ -105,24 +123,26 @@ export default async function BenchmarkPage({ params }: Props) {
       >
         <BenchmarkToc items={tocItems} />
       </aside>
+      )}
 
-      <div style={{ flex: 1, minWidth: 0, maxWidth: "44rem" }} className="px-6 py-12 pb-24">
-      {/* Back link */}
-      <div style={{ marginBottom: "2rem" }}>
-        <Link
-          href="/benchmarks"
-          style={{
-            fontSize: "0.85rem",
-            color: "var(--foreground-muted)",
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.35rem",
-          }}
-        >
-          ← All benchmarks
-        </Link>
-      </div>
+      {/* Centred when there is no side index, or the column keeps the space the
+          aside would have taken and the page reads as though something failed
+          to load. */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          // Wider without the index: the space the aside would have taken goes
+          // to the content rather than to the margins.
+          maxWidth: showToc ? "60rem" : "72rem",
+          marginInline: showToc ? undefined : "auto",
+        }}
+        className="px-6 py-12 pb-24"
+      >
+      {/* No "all benchmarks" back link: /benchmarks now redirects straight to
+          the default benchmark, so the link either did nothing or silently threw
+          you onto a different benchmark. The tabs below are the navigation. */}
+      <BenchmarkTabs active={slug} />
 
       {/* Cover image/video */}
       {post.coverVideo ? (
@@ -215,6 +235,13 @@ export default async function BenchmarkPage({ params }: Props) {
           components={{
             // Column headers sort the rows; see SortableTable.
             table: ({ node }) => <SortableTable node={node as never} />,
+            // A chart fence is a React component, not code, so it must not stay
+            // wrapped in <pre>: `white-space: pre` inherits into the chart and
+            // stops captions and labels wrapping, running them off the page.
+            pre({ node, children, ...props }) {
+              if (isChartFence(fenceLanguageOf(node))) return <>{children}</>;
+              return <pre {...props}>{children}</pre>;
+            },
             // `node` is react-markdown's hast node; strip it so it never lands
             // on the DOM element as an unknown attribute.
             code({ className, children, node: _node, ...props }) {
