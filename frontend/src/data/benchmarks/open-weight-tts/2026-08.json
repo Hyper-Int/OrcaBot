@@ -822,8 +822,8 @@
           "restricted": false
         },
         {
-          "v": "4.4 GB f16 and 11x real time, for 6% WER - mid-pack accuracy.",
-          "sort": "4.4 GB f16 and 11x real time, for 6% WER",
+          "v": "4.4 GB f16 and 14.2x real time, the slowest here, for 6% WER - mid-pack accuracy.",
+          "sort": "4.4 GB f16 and 14.2x real time, the slow",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1428,8 +1428,8 @@
           "restricted": false
         },
         {
-          "v": "The same 3B at q8. Only three quants are published and none reach real time.",
-          "sort": "The same 3B at q8. Only three quants are",
+          "v": "The same 3B at q8: half a point more accurate than q4 and slower, which is the ordering a sound conversion gives.",
+          "sort": "The same 3B at q8: half a point more acc",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1630,8 +1630,8 @@
           "restricted": false
         },
         {
-          "v": "Llama-3.2-3B finetune over SNAC: the largest LM backbone here, and the slowest at 8.1x real time.",
-          "sort": "Llama-3.2-3B finetune over SNAC: the lar",
+          "v": "Llama-3.2-3B finetune over SNAC, 2.4 GB at q4_k and 8.1x real time.",
+          "sort": "Llama-3.2-3B finetune over SNAC, 2.4 GB ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3145,8 +3145,8 @@
           "restricted": false
         },
         {
-          "v": "Second-best PESQ here after piper, but 8x real time.",
-          "sort": "Second-best PESQ here after piper, but 8",
+          "v": "Second-best PESQ here after piper, but 11x real time.",
+          "sort": "Second-best PESQ here after piper, but 1",
           "tone": "",
           "align": "",
           "restricted": false
