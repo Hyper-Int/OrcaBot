@@ -116,7 +116,9 @@ const LICENCE_PROOF_URLS = {
   // weights carry, which is what this column states. Supertonic is the standing
   // reminder that the two can differ.
   "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  // Both quantizations are the same weights off the same card, so they cite it.
   "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
+  "orpheus-q8": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
@@ -165,6 +167,7 @@ const MODEL_URLS = {
   // family repository the base model uses.
   "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
   "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
+  "orpheus-q8": "https://github.com/canopyai/Orpheus-TTS",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice",
   "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
@@ -267,6 +270,7 @@ const DISPLAY = {
   "qwen3-tts": "Qwen3-TTS",
   "qwen3-tts-vd": "Qwen3-TTS VoiceDesign",
   "orpheus-q4": "Orpheus 3B Q4",
+  "orpheus-q8": "Orpheus 3B Q8",
   "speecht5": "SpeechT5",
   "styletts2": "StyleTTS2",
   "vibevoice": "VibeVoice",

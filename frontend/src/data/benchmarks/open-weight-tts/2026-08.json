@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-19",
+  "label": "2026-08-21",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -1329,6 +1329,107 @@
         {
           "v": "Deterministic timing. Weakest on very short utterances.",
           "sort": "Deterministic timing. Weakest on very sh",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "orpheus-q8",
+      "display": "Orpheus 3B Q8",
+      "group": "",
+      "sample": "orpheus-q8.mp3?v=1b15da0d",
+      "cells": [
+        {
+          "v": "Orpheus 3B Q8",
+          "sort": "orpheus-q8",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/canopyai/Orpheus-TTS"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft"
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-03",
+          "sort": "202503",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.7 GB",
+          "sort": "3788.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.7 GB",
+          "sort": "3788.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.0 GB",
+          "sort": "4096.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0770",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.81",
+          "sort": "3.81",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.62x",
+          "sort": "8.6208",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "43.80s",
+          "sort": "43.8036",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The same 3B at q8. Only three quants are published and none reach real time.",
+          "sort": "The same 3B at q8. Only three quants are",
           "tone": "",
           "align": "",
           "restricted": false
