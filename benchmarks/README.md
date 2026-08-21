@@ -10,12 +10,20 @@ results surface in a browser/note block.
 | Benchmark | Dir | Runnable? | Execution model |
 |-----------|-----|-----------|-----------------|
 | slop-code-bench | [`slopcodebench/`](slopcodebench/) | ✅ yes | **Host** (no Docker) via the fork's tmux executor |
+| Open-weight TTS | [`talkito-tts/`](talkito-tts/) | ⚠️ blocked upstream | **Host**, one PTY; no agent, no keys — see its README |
 | SWE-bench (Lite/Verified/Full) | [`swebench/`](swebench/) | ✅ yes | Inference on host + **Docker-per-task** eval (Modal or DinD) |
 | SWE-bench Pro (public 731) | [`swebench-pro/`](swebench-pro/) | ✅ yes | Inference on host + **Docker-per-task** eval (`--use_local_docker` or Modal) |
 | Terminal-Bench 2.1 | [`terminal-bench/`](terminal-bench/) | ✅ yes | **Harbor** harness; Docker-per-task (or `--env daytona`/Modal remote) |
 | FrontierCode (Diamond) | [`frontiercode/`](frontiercode/) | ❌ no | **Closed / submission-only** — no public harness, see the note |
 
 ## Two architecture families
+
+These describe the *coding* benchmarks, where something has to run an agent under
+test. The TTS benchmark belongs to neither: it measures speech engines rather than
+agents, so it has no agent-under-test, needs no provider key, and its entire run is
+one terminal's boot command with a browser block reading the report. It is the only
+template here that skips the config wizard and the orchestrator entirely — see
+[`talkito-tts/`](talkito-tts/).
 
 **Family A — host-executable.** The agent-under-test runs directly in the
 Orcabot sandbox VM; no inner container. The sandbox VM *is* the isolation

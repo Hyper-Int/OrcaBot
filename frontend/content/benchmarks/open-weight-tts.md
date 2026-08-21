@@ -10,6 +10,13 @@ We tested all the open weight TTS models against the same corpus, using Whisper 
 
 Every row can be played, so you can hear what a word error rate actually sounds like.
 
+**You can run this yourself.** The harness, the corpus and the scoring are open, and
+[talkito-benchmark](https://github.com/robdmac/talkito-benchmark) regenerates every number on this
+page from nothing — there are no stored results in it. A single engine takes minutes
+(`python3 tools/benchmark.py --only piper`); the full sweep is around eleven hours, most of it
+spent downloading weights on the first run. In Orcabot, the **TTS Benchmark Runner** template
+does the whole thing in one terminal and shows the report next to it.
+
 ```chart
 tts-vendors
 ```

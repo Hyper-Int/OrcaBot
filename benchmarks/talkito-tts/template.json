@@ -1,0 +1,41 @@
+{
+  "_comment": "Importable Orcabot dashboard template. Unlike the other benchmark templates this one needs no orchestrator, no agent and no API key: the terminal's boot command runs the whole benchmark and serves its report on localhost, and the browser block is pointed at that server. Seed with bin/seed-benchmark-templates.",
+  "name": "TTS Benchmark Runner",
+  "description": "Run the open-weight TTS benchmark and read its report",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "runner",
+      "type": "terminal",
+      "content": "{\"name\": \"TTS benchmark\", \"agentic\": false, \"bootCommand\": \"MODELS=piper\\nPORT=8099\\nROOT=/workspace/talkito\\nBENCH=$ROOT/benchmark\\nSERVE=/workspace/tts-report\\necho \\\"== Orcabot: talkito TTS benchmark ($MODELS) ==\\\"\\n\\n# Serve a placeholder first, so the browser block has something at a stable URL from\\n# the first second rather than an error until the run finishes.\\nmkdir -p \\\"$SERVE\\\"\\n[ -f \\\"$SERVE/index.html\\\" ] || printf '%s' '<!doctype html><meta http-equiv=\\\"refresh\\\" content=\\\"10\\\"><title>TTS benchmark</title><body style=\\\"font:15px/1.6 system-ui;padding:2rem;max-width:34rem\\\"><h2>Benchmark running...</h2><p>This page reloads every 10 seconds. The report replaces it when the run finishes.</p></body>' > \\\"$SERVE/index.html\\\"\\ncurl -sf -o /dev/null --max-time 2 \\\"http://127.0.0.1:$PORT/\\\" || ( cd \\\"$SERVE\\\" && nohup python3 -m http.server \\\"$PORT\\\" >/workspace/.tts-serve.log 2>&1 & )\\n\\n# talkito's .gitmodules uses git@github.com: URLs and the sandbox has no SSH key, so\\n# --recurse-submodules fails. Clone the three public repos over HTTPS instead.\\n# benchmark/ living inside talkito/ is exactly the layout tools/paths.py resolves.\\n[ -d \\\"$ROOT/.git\\\" ]            || git clone --depth 1 https://github.com/robdmac/talkito.git \\\"$ROOT\\\"\\n[ -d \\\"$BENCH/.git\\\" ]           || git clone --depth 1 https://github.com/robdmac/talkito-benchmark.git \\\"$BENCH\\\"\\n[ -d \\\"$ROOT/tests-repo/.git\\\" ] || git clone --depth 1 https://github.com/robdmac/talkito-tests.git \\\"$ROOT/tests-repo\\\"\\n\\n# piper needs no torch at all, and faster-whisper scores on CPU through CTranslate2,\\n# so the whole piper arm installs in seconds. Heavier models would need much more.\\npython3 -c 'import piper'          2>/dev/null || pip3 install --break-system-packages -q piper-tts\\npython3 -c 'import faster_whisper' 2>/dev/null || pip3 install --break-system-packages -q faster-whisper\\n\\ncd \\\"$BENCH\\\" || exec bash\\n# The listening clip has to exist before the page is built, or the table is numbers\\n# with nothing to play. benchmark.py builds the page at the end, so samples come first.\\npython3 tools/make_samples.py $(echo \\\"$MODELS\\\" | tr , ' ')\\n# --only skips the interactive picker, which needs a TTY it does not have here.\\npython3 tools/benchmark.py --only \\\"$MODELS\\\"\\nrc=$?\\nif [ -f tts-benchmark.html ]; then\\n  cp -f tts-benchmark.html \\\"$SERVE/index.html\\\"\\n  echo \\\"report published -> http://localhost:$PORT/\\\"\\nelse\\n  echo \\\"no tts-benchmark.html was produced; measurements (if any) are under $BENCH/tools/\\\"\\nfi\\necho \\\"[tts benchmark done rc=$rc]\\\"\\nexec bash\", \"subagentIds\": [], \"skillIds\": [], \"mcpToolIds\": []}",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "width": 560,
+        "height": 560
+      }
+    },
+    {
+      "placeholderId": "report",
+      "type": "browser",
+      "content": "http://localhost:8099/",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "size": {
+        "width": 900,
+        "height": 620
+      }
+    }
+  ],
+  "edges": [],
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  },
+  "setupGuide": "# talkito TTS benchmark\n\nThis template runs the open-weight TTS benchmark from\n[talkito-benchmark](https://github.com/robdmac/talkito-benchmark) end to end inside\none terminal, and shows the report it produces in the browser block beside it.\n\nUnlike the other benchmark templates there is **no orchestrator**. Nothing here needs\nOrcabot chat, an agent, or an API key: the terminal's boot command is the whole run,\nand the browser block is pointed at a local web server the same command starts. Start\nthe dashboard and it goes.\n\n## What the terminal does\n\n1. Serves a placeholder page on `localhost:8099`, so the browser block has a stable\n   URL immediately instead of an error until the run finishes.\n2. Clones `talkito`, `talkito-benchmark` and `talkito-tests` over **HTTPS**. talkito's\n   `.gitmodules` uses `git@github.com:` URLs, which cannot work in the sandbox (no SSH\n   key), so `--recurse-submodules` is deliberately not used. Cloning `benchmark/` into\n   `talkito/` reproduces the layout `tools/paths.py` expects.\n3. Installs `piper-tts` and `faster-whisper`. Piper uses no torch at all and\n   faster-whisper scores on CPU via CTranslate2, so this arm is small and quick.\n4. Synthesizes the one listening clip per model (`make_samples.py`) **before** the\n   sweep, because `benchmark.py` builds the page at the end and a sample produced\n   afterwards would not be in it.\n5. Runs `python3 tools/benchmark.py --only piper`, which sweeps the 84-phrase corpus,\n   transcribes each clip back with Whisper, scores word error rate, then rebuilds the\n   page and the export zip.\n6. Copies `tts-benchmark.html` over the placeholder, so the browser block shows the\n   report on its next refresh.\n\n## Running more models\n\n`MODELS` on the first line of the boot command is the only thing to change. It is\npassed to `--only`, so it is comma-separated:\n\n    MODELS=piper              # the default: minutes\n    MODELS=piper,kokoro       # kokoro pulls torch, so expect a long first run\n    MODELS=piper,kittentts\n\nThere are 73 providers. A **full sweep is around 11 hours** and much longer on a\nfirst run, because every engine downloads its own weights -- which is why this\ntemplate ships pinned to piper rather than to everything.\n\n## Reading the result\n\nThe report is the same page the published benchmark is built from: one row per\nconfiguration, with word error rate, real-time factor, compute per phrase, PESQ and a\nplay button per row. `tts-benchmark-export.zip` beside it is the shareable archive\n(page + measurements + audio).\n\nMeasurements are saved per unit as they complete, so an interrupted run keeps its\nfinished work and re-running resumes rather than restarting. `--keep` adds to existing\nmeasurements instead of replacing them.\n\n## If the run stops early\n\nThe terminal drops to a shell either way and prints `[tts benchmark done rc=N]`.\n`rc` is `benchmark.py`'s exit code -- non-zero means at least one provider failed, and\nthe per-provider output above it says which. The page and the zip can always be\nrebuilt from stored measurements alone:\n\n    cd /workspace/talkito/benchmark\n    python3 tools/build_benchmark_page.py tts-benchmark.html\n"
+}
