@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: tts-ballots-v2-full-config-set
+// REVISION: tts-ballots-v3-balanced-selection
 
 import type { Env } from '../types';
 
-const MODULE_REVISION = 'tts-ballots-v2-full-config-set';
+const MODULE_REVISION = 'tts-ballots-v3-balanced-selection';
 console.log(`[tts] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /** The run these ballots score. Bumped when a new TTS run replaces the samples. */
@@ -79,6 +79,57 @@ function shuffle<T>(a: T[]): T[] {
   return out;
 }
 
+/** How often each configuration has already been ranked, across counted ballots.
+ *
+ *  Aggregated in SQL rather than by reading every ballot into the worker, because
+ *  unlike the score computation this runs on every ballot issued, not only when
+ *  the table is rendered.
+ *
+ *  Counted ballots only, matching what the scores are built from: an issued and
+ *  abandoned ballot has told us nothing about the clips it offered, so treating
+ *  it as coverage would starve exactly the configurations that were offered and
+ *  never ranked. */
+async function appearanceCounts(env: Env): Promise<Map<string, number>> {
+  const { results } = await env.DB.prepare(
+    `SELECT je.value AS config, COUNT(*) AS n
+       FROM tts_ballots, json_each(tts_ballots.ranking_json) je
+      WHERE run = ? AND status = 'counted'
+      GROUP BY je.value`
+  ).bind(RUN).all<{ config: string; n: number }>();
+  return new Map((results ?? []).map((r) => [String(r.config), Number(r.n)]));
+}
+
+/** Weighted sample without replacement, favouring the configurations ranked least.
+ *
+ *  Efraimidis-Spirakis: give each item the key u^(1/w) for u uniform on (0,1) and
+ *  take the k largest. One pass, no rejection loop, and a correct weighted sample
+ *  without replacement - which matters because a ballot must never offer the same
+ *  clip twice.
+ *
+ *  The weight is 1/(count+1), not a strict least-ranked-first ordering, and the
+ *  randomness is the point rather than a compromise. Always serving the k rarest
+ *  together would make the same under-sampled configurations appear as a set every
+ *  time, and Bradley-Terry needs the comparison graph connected: a clique that is
+ *  only ever ranked against itself cannot be placed on the same scale as the rest,
+ *  however many ballots it collects. Weighting pulls the counts level while every
+ *  pairing stays reachable.
+ *
+ *  1/(count+1) also self-attenuates. Early on, when 2 against 9 is the difference
+ *  between invisible and well-measured, it biases by more than 3x; once everything
+ *  sits in the twenties the ratio is near 1 and selection is effectively uniform
+ *  again, which is what you want when the deficits no longer matter. */
+export function pickLeastRanked(pool: string[], k: number, counts: Map<string, number>): string[] {
+  if (k >= pool.length) return shuffle(pool);
+  return pool
+    .map((config) => ({
+      config,
+      key: Math.random() ** ((counts.get(config) ?? 0) + 1),
+    }))
+    .sort((a, b) => b.key - a.key)
+    .slice(0, k)
+    .map((x) => x.config);
+}
+
 /** Coarse voter fingerprint for rate limiting and dedup. Hashed, never stored raw. */
 async function voterHash(request: Request): Promise<string> {
   const ip = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? '';
@@ -123,17 +174,24 @@ export async function issueBallot(env: Env, request: Request): Promise<Response>
     return Response.json({ exhausted: 'clips', submitted, max: MAX_BALLOTS_PER_VOTER });
   }
 
+  // Selection is biased toward whatever has been ranked least. Uniform sampling
+  // leaves the counts Poisson-spread - at 43 ballots that was 2 to 9 appearances
+  // against a mean of 4.7, with six configurations stranded under the cutoff and
+  // therefore invisible, while others were measured twice over.
+  const counts = await appearanceCounts(env);
+
   // The anchor has to be one they have not heard either, or the attention check
-  // is just a memory test.
+  // is just a memory test. Which of the two, though, follows the same rule as
+  // everything else.
   const freshAnchors = ANCHORS.filter((a) => fresh.includes(a));
   const anchor =
     freshAnchors.length && Math.random() < ANCHOR_RATE
-      ? freshAnchors[Math.floor(Math.random() * freshAnchors.length)]
+      ? pickLeastRanked(freshAnchors, 1, counts)[0]
       : null;
 
   const pool = fresh.filter((c) => c !== anchor);
   const want = Math.min(ITEMS_PER_BALLOT, fresh.length) - (anchor ? 1 : 0);
-  const picked = shuffle(pool).slice(0, want);
+  const picked = pickLeastRanked(pool, want, counts);
   const items = shuffle(anchor ? [...picked, anchor] : picked);
 
   const id = crypto.randomUUID();
