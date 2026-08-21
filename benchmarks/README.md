@@ -10,7 +10,7 @@ results surface in a browser/note block.
 | Benchmark | Dir | Runnable? | Execution model |
 |-----------|-----|-----------|-----------------|
 | slop-code-bench | [`slopcodebench/`](slopcodebench/) | ✅ yes | **Host** (no Docker) via the fork's tmux executor |
-| Open-weight TTS | [`talkito-tts/`](talkito-tts/) | ⚠️ blocked upstream | **Host**, one PTY; no agent, no keys — see its README |
+| Open-weight TTS | [`talkito-tts/`](talkito-tts/) | ✅ yes | **Host**, one PTY; no agent, no keys, ~3.5 min for piper |
 | SWE-bench (Lite/Verified/Full) | [`swebench/`](swebench/) | ✅ yes | Inference on host + **Docker-per-task** eval (Modal or DinD) |
 | SWE-bench Pro (public 731) | [`swebench-pro/`](swebench-pro/) | ✅ yes | Inference on host + **Docker-per-task** eval (`--use_local_docker` or Modal) |
 | Terminal-Bench 2.1 | [`terminal-bench/`](terminal-bench/) | ✅ yes | **Harbor** harness; Docker-per-task (or `--env daytona`/Modal remote) |
@@ -80,8 +80,10 @@ instead — direct INSERT is the local/curated path.
 
 ## Status
 
-All templates here are **prototypes**. slop-code-bench is validated end-to-end
-(see its README). The Family-B templates are grounded in each harness's real
+All templates here are **prototypes**. slop-code-bench and the open-weight TTS
+benchmark are validated end-to-end (see their READMEs); the TTS one is the
+cheapest to re-verify, since a piper run is about three and a half minutes and
+needs no key. The Family-B templates are grounded in each harness's real
 commands but are **not** validated end-to-end from here, because they need a
 Docker-capable backend (Modal token or DinD sandbox) + provider keys that aren't
 available in this environment. Each dir's README states exactly what's verified

@@ -32,25 +32,42 @@ that refreshes every ten seconds. Without that, the browser block would show a
 connection error for the whole run and only become useful at the very end. When the
 report is built it is copied over the placeholder and the next refresh picks it up.
 
-## Two things the sandbox forces
+## Four things the sandbox forces
+
+All four were found by running it, not by reading it. Three of them fail *quietly* --
+the run still exits 0 and still publishes a page.
 
 **HTTPS clones, not submodules.** talkito's `.gitmodules` points at
-`git@github.com:robdmac/…` for both submodules. The sandbox has no SSH key, so
-`git clone --recurse-submodules` cannot work. The boot command clones the three public
+`git@github.com:robdmac/...`, and the sandbox has no SSH key, so
+`git clone --recurse-submodules` cannot work. The boot command clones the two public
 repos over HTTPS instead and arranges them as
 
     /workspace/talkito/              talkito
     /workspace/talkito/benchmark/    talkito-benchmark
-    /workspace/talkito/tests-repo/   talkito-tests
 
-which is the "submodule position" `benchmark/tools/paths.py` resolves via `../..`.
-The sandbox image installs the talkito *package* but keeps no checkout
-(`sandbox/docker/Dockerfile` clones with `--no-recurse-submodules` and deletes the
-tree afterwards), so all three have to be fetched at run time.
+The harness now ships inside talkito-benchmark, so `tests-repo` is no longer needed.
+`tools/paths.py` still wants a talkito **checkout** rather than the installed package
+-- it looks for `talkito/tts.py` -- and `benchmark/` inside `talkito/` is the layout it
+resolves via `../..`.
 
 **`--only`, never the picker.** `tools/benchmark.py` with no arguments opens an
-interactive checklist. It reads from stdin and exits on EOF, so it cannot be driven
-from a boot command. `--only` names the models directly and skips it.
+interactive checklist that reads stdin and exits on EOF, so it cannot be driven from a
+boot command.
+
+**`TALKITO_AUTO_APPROVE_DOWNLOADS=1`.** talkito refuses to fetch model weights when it
+cannot ask a human, and a boot command has no TTY. Without it every phrase fails with
+`Piper model unavailable` -- and the sweep still reports `rc=0`, having published a
+table reading `0/84 phrases, WER 0.0%, RTF 0.00x`. A green run measuring nothing is
+the worst failure here, so this variable is not optional.
+
+**`TTS_SAMPLE_DIR`, set per step.** `build_benchmark_page.py` and `build_export.py`
+default it to a hardcoded `/Users/robertmacrae/.cache/...` path, so anywhere else they
+find no clips and build a table with nothing to play. `make_samples.py` resolves the
+same variable with `expanduser` and writes its mp3s into an `mp3` subdirectory, so the
+two only agree when it is set explicitly -- and they want *different* values, which is
+why the boot command sets it on the `benchmark.py` line rather than once at the top.
+ffmpeg is installed for the same reason: `make_samples.py` shells out to it for the
+wav-to-mp3 step and the sandbox image ships without it.
 
 ## Running more than piper
 
@@ -71,17 +88,22 @@ easy to make by accident.
 
 ## Status
 
-**Prototype, not yet validated end to end.** The template's own mechanics — clone
-layout, dependency install, report serving, browser wiring — are testable and tested.
-The benchmark run itself is currently blocked upstream:
-`benchmark/tools/paths.py` requires `tests-repo/test_tts_asr_roundtrip.py`, and that
-file is not in the public `talkito-tests` repo. Until it is published, a clean clone
-fails at import with
+**Validated end to end in the Docker sandbox**, from an empty workspace: clone,
+dependency install, weight download, 84-phrase sweep, Whisper scoring, page build and
+serving. The run takes about three and a half minutes for piper and finishes
 
-    RuntimeError: cannot find talkito. Set TALKITO_ROOT to a checkout containing
-    tests-repo/test_tts_asr_roundtrip.py
+    piper                  82/84  phrases   WER  5.0%   RTF  0.07x
 
-This affects anyone trying to run the benchmark, not just this template.
+against 4% and 0.04x for the published Apple M2 figures -- close, and real-time factor
+is wall-clock so a throttled container is expected to read higher.
+
+The report reaches the browser block at 51 KB with the listening clip embedded.
+
+One cosmetic gap remains: `build_export.py` reports `0 audio samples` because the
+single `TTS_SAMPLE_DIR` it shares with the page builder points at the mp3
+subdirectory. That affects only the counter and the zip's `samples/` folder, not the
+page, which is what the browser block shows. The real fix is upstream -- neither
+builder should carry a hardcoded home directory.
 
 ## Seeding
 
