@@ -76,14 +76,14 @@ which removes an egress approval prompt for `deb.nodesource.com`. The sandbox im
 installs Node from NodeSource at build time and leaves the apt source configured, so
 *any* `apt-get update` inside the sandbox reaches for it. The table is numbers.
 
-**The published page needs its encoding declared.** The report carries no
-`<meta charset>` and `python3 -m http.server` sends `text/html` with no charset either,
-so a browser falls back to its locale default and renders every em dash as mojibake —
-`TTS Engine Benchmark — 24 configurations` arriving as `Ã¢â¬â`. The bytes are valid
-UTF-8; only the declaration is missing. The boot command prepends the meta tag to the
-*published copy* rather than patching the source, so the export zip stays byte-identical
-to what the tools wrote. The real fix belongs upstream in `tools/page_template.html`,
-which would also fix the zip and any copy opened from disk.
+**The published page's encoding is declared upstream now.** It was not: the report
+carried no `<meta charset>` and `python3 -m http.server` sends `text/html` with no
+charset either, so a browser fell back to its locale default and read valid UTF-8 as
+cp1252 — `TTS Engine Benchmark — 24 configurations` arriving with garbage where the em
+dash should be. `tools/page_template.html` declares it now, so the boot command simply
+copies. It keeps a fallback that prepends the tag when a page lacks one, because the
+failure is silent and total, and it writes to the published copy rather than the source
+so the export zip stays byte-identical to what the tools wrote.
 
 ## Choosing engines
 
