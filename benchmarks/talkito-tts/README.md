@@ -68,27 +68,22 @@ advance. Without it every phrase fails with `Piper model unavailable` and the sw
 still reports `rc=0`, having published a table reading `0/84 phrases, WER 0.0%,
 RTF 0.00x`. A green run measuring nothing is the worst failure available here.
 
-**ffmpeg.** `make_samples.py` shells out to it for the wav-to-mp3 step and the sandbox
-image ships without it. Missing, every number is still correct and only the play
-button is lost — which is most of the point of the page.
+**No listening clips, and therefore no ffmpeg.** `make_samples.py` exists to embed one
+playable clip per engine, and it shells out to ffmpeg for the wav-to-mp3 step. Audio
+does not reach the reader through the browser block, so the clips are not synthesized
+at all — which removes ffmpeg, which removes the only `apt-get` this template ran,
+which removes an egress approval prompt for `deb.nodesource.com`. The sandbox image
+installs Node from NodeSource at build time and leaves the apt source configured, so
+*any* `apt-get update` inside the sandbox reaches for it. The table is numbers.
 
-**Samples come after the run, not before.** `benchmark.py` sweeps and builds the page
-but never synthesizes the listening clips the page embeds, and in interactive mode
-*which* engines to sample is only known once the reader has chosen. So the boot command
-reads the selection back out of `tools/sweep_rerun.json` after the run, synthesizes
-clips for exactly those, and rebuilds the page and the export.
-
-**The page has to exist before it can be rebuilt.** `build_benchmark_page.py`
-substitutes into an existing page rather than writing one, and `benchmark.py` only
-seeds that page on a run it actually completes. Quit the picker with prior
-measurements already on disk and the rebuild dies on `FileNotFoundError` with every
-clip already synthesized, so the boot command seeds from `tools/page_template.html`
-first.
-
-**`TTS_SAMPLE_DIR` is deliberately not set.** The three scripts want different
-directories: `make_samples.py` writes mp3s into an `mp3` subdirectory that the page
-builder reads and the export builder does not. Each defaults correctly on its own, so
-setting one value for all of them is a way to break the export, not fix it.
+**The published page needs its encoding declared.** The report carries no
+`<meta charset>` and `python3 -m http.server` sends `text/html` with no charset either,
+so a browser falls back to its locale default and renders every em dash as mojibake —
+`TTS Engine Benchmark — 24 configurations` arriving as `Ã¢â¬â`. The bytes are valid
+UTF-8; only the declaration is missing. The boot command prepends the meta tag to the
+*published copy* rather than patching the source, so the export zip stays byte-identical
+to what the tools wrote. The real fix belongs upstream in `tools/page_template.html`,
+which would also fix the zip and any copy opened from disk.
 
 ## Choosing engines
 
@@ -115,10 +110,9 @@ against 4% and 0.04x for the published Apple M2 figures — close, and real-time
 is wall-clock so a throttled container is expected to read higher.
 
 The picker was driven under a real PTY to confirm it renders and takes input the way a
-terminal block presents it, and the quit-without-running path was tested separately
-because that is the one that exposed the missing-page bug above. The report reaches the
-browser block at about 50 KB with the listening clip embedded, and the export zip
-carries `samples/piper.mp3` alongside it.
+terminal block presents it, and the quit-without-running path was tested separately.
+The report reaches the browser block as a table of numbers with its encoding declared;
+nothing is playable, by design.
 
 ## Seeding
 
