@@ -45,6 +45,36 @@ const OUT_AUDIO = "public/benchmarks/tts";
  *  the methodology instead. */
 const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in", "WER med", "Avg audio"]);
 
+/** Columns the page re-colours itself, keyed by the export's own header name, and
+ *  the displayed value at or below which a cell is green.
+ *
+ *  The export tones word error on the unrounded rate while the column prints whole
+ *  percents, so its threshold lands inside a displayed band: three rows all read
+ *  "8%" and only the first was green, because 7.70 was under the cutoff and 8.03
+ *  and 8.23 were over it. Two cells showing the same number in different colours
+ *  reads as a rendering fault, not as a distinction, and no reader can recover the
+ *  third decimal that justifies it.
+ *
+ *  So the threshold is applied to what is actually on the page. Identical text is
+ *  then guaranteed identical colour, whatever the export's own rounding does next.
+ *
+ *  warn and bad are left exactly where the export put them. They mark the 24%-and-
+ *  worse rows, which are not in question, and re-deriving them here would mean
+ *  owning a second threshold to keep in step with the first. */
+const GREEN_AT_OR_BELOW = { "WER base": 6 };
+
+/** The tone a cell should carry: the export's, unless this column is re-coloured. */
+function retone(header, cell) {
+  const limit = GREEN_AT_OR_BELOW[header];
+  if (limit === undefined) return cell.tone;
+  if (cell.tone === "warn" || cell.tone === "bad") return cell.tone;
+  const shown = Number(String(cell.v).replace("%", "").trim());
+  // A cell that is not a number at all - "·" for unmeasured - keeps whatever it
+  // had rather than being silently promoted to green by a NaN comparison.
+  if (!Number.isFinite(shown)) return cell.tone;
+  return shown <= limit ? "good" : "";
+}
+
 /** Configurations the comparison does not show. The NeuTTS-2E CPU builds are
  *  the same weights as the rows that remain, run on a slower path: they tripled
  *  the size of the NeuTTS band while saying nothing about the model, only about
@@ -417,11 +447,12 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
       const withOverride = override
         ? { ...cell, v: override.v, sort: override.sort ?? override.v }
         : cell;
+      // After the override, so a corrected value is coloured on what it now says.
+      const toned = { ...withOverride, tone: retone(headers[i], withOverride) };
       if (headers[i] === "Licence" && LICENCE_PROOF_URLS[config]) {
-        return { ...withOverride, href: LICENCE_PROOF_URLS[config] };
+        return { ...toned, href: LICENCE_PROOF_URLS[config] };
       }
-      if (override) return withOverride;
-      return cell;
+      return toned;
     })
     .filter((_, i) => keep[i]);
   cells[0] = { ...cells[0], v: display, ...(MODEL_URLS[config] ? { href: MODEL_URLS[config] } : {}) };
