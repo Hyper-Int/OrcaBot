@@ -10,7 +10,7 @@ results surface in a browser/note block.
 | Benchmark | Dir | Runnable? | Execution model |
 |-----------|-----|-----------|-----------------|
 | slop-code-bench | [`slopcodebench/`](slopcodebench/) | ✅ yes | **Host** (no Docker) via the fork's tmux executor |
-| Open-weight TTS | [`talkito-tts/`](talkito-tts/) | ✅ yes | **Host**, one PTY; no agent, no keys, ~3.5 min for piper |
+| Open-weight TTS | [`talkito-tts/`](talkito-tts/) | ✅ yes | **Host**, one PTY; no agent, no keys; reader picks engines interactively |
 | SWE-bench (Lite/Verified/Full) | [`swebench/`](swebench/) | ✅ yes | Inference on host + **Docker-per-task** eval (Modal or DinD) |
 | SWE-bench Pro (public 731) | [`swebench-pro/`](swebench-pro/) | ✅ yes | Inference on host + **Docker-per-task** eval (`--use_local_docker` or Modal) |
 | Terminal-Bench 2.1 | [`terminal-bench/`](terminal-bench/) | ✅ yes | **Harbor** harness; Docker-per-task (or `--env daytona`/Modal remote) |
@@ -74,9 +74,24 @@ benchmarks/bin/seed-benchmark-templates swebench   # just one, by dir name
 It upserts each `benchmarks/*/template.json` (delete-by-name then insert,
 `status='approved'`) against the desktop d1-shim (`D1_URL`, default
 `http://127.0.0.1:9001`). `slopcodebench/bin/scb-insert-template` is a thin
-wrapper that seeds only the SlopCodeBench template. For a **remote/cloud** control
-plane, export from an existing dashboard via the templates API (`POST /templates`)
-instead — direct INSERT is the local/curated path.
+wrapper that seeds only the SlopCodeBench template.
+
+For a **remote/cloud** control plane there is no code seed at all:
+`templates.seedStarterTemplates` returns early unless `SURFACE_TOKEN` is set, and only
+the desktop app sets it, so `starter-templates.json` never reaches production. Every
+production row is a direct insert. Use the script's `--sql` mode:
+
+```
+AUTHOR_ID=<a real production users.id> AUTHOR_NAME=Orcabot \
+  benchmarks/bin/seed-benchmark-templates --sql talkito-tts > /tmp/seed.sql
+cd controlplane && npx wrangler d1 execute orcabot-db-production --remote --file /tmp/seed.sql
+```
+
+`AUTHOR_ID` is not optional. It defaults to `dev-desktop`, which exists on the desktop
+shim but not in a cloud or wrangler-dev database, and `dashboard_templates.author_id`
+is a foreign key into `users` — the insert then fails with `FOREIGN KEY constraint
+failed`, quietly enough to look like success. Grep the output for `ERROR` rather than
+trusting a clean exit.
 
 ## Status
 
