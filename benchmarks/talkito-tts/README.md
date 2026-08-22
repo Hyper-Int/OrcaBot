@@ -22,12 +22,21 @@ parts are a terminal and a browser block.
 That also makes it the cheapest template here to run: no LLM calls, no API key, no
 tokens. It costs CPU time and nothing else.
 
-**The setup guide's job is to stop Orcabot chat from helping.** A `setupGuide` is a
-prompt addressed to chat, not documentation for a human. An earlier version of this
-one described the dashboard instead of instructing chat, so chat obligingly called
-`create_terminal` and `create_browser` — and the reader got two of each, with a second
-benchmark writing the same measurement files as the first. The guide now opens by
-saying the dashboard is already complete and forbids both calls by name.
+**It ships no `setupGuide`, deliberately.** That field is not documentation — it is a
+walkthrough brief for Orcabot chat, and its presence has two effects. The dashboards
+page sets `orcabot_initial_prompt` to "Walk me through setting up this dashboard.",
+which `ChatPanel` auto-sends on mount with the panel expanded. And the control plane
+injects the guide into *every* chat message on that dashboard, under a system prompt
+reading "Use your tools to do the work (… `create_terminal`/`create_browser` as
+needed)".
+
+An earlier version carried a guide that described the dashboard, and chat did as the
+wrapper told it: two terminals and two browsers, with a second benchmark writing the
+same measurement files as the first. Replacing the text with "do not create anything"
+only argued with the instruction wrapped around it. Removing the field removes the
+auto-prompt, the walkthrough system prompt, and the reason chat was invoked at all —
+so it stays minimised and silent, which is right for a dashboard with no keys, no
+provider choice, no config, and a terminal that starts itself.
 
 ## Architecture
 
