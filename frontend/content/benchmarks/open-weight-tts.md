@@ -1,6 +1,6 @@
 ---
 title: Testing open-weight Text To Speech models
-date: 2026-08-17
+date: 2026-08-22
 description: Every open-weight TTS engine that can run on a consumer laptop, tested for WER using Whisper.
 author: Rob Macrae
 ogImage: /benchmarks/og-open-weight-tts.png
@@ -13,10 +13,10 @@ Every row can be played, so you can hear what a word error rate actually sounds 
 
 **You can run this yourself.** The harness, the corpus and the scoring are open, and
 [talkito-benchmark](https://github.com/robdmac/talkito-benchmark) regenerates every number on this
-page from nothing — there are no stored results in it. A single engine takes minutes
+page from nothing. A single engine takes minutes
 (`python3 tools/benchmark.py --only piper`); the full sweep is around eleven hours, most of it
 spent downloading weights on the first run. In Orcabot, the **TTS Benchmark Runner** template
-does the whole thing in one terminal and shows the report next to it.
+does the whole thing in one terminal and shows the report in the built-in browser.
 
 ```chart
 tts-vendors
@@ -51,7 +51,7 @@ face value.
   `medium.en` was run too, but it did not finish for twenty-two of the thirty-seven
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
-  more than bad ones — so the true spread between engines is **wider** than this column
+  more than bad ones, so the true spread between engines is **wider** than this column
   shows, not narrower.
 - **PESQ** is a no-reference perceptual quality estimate from torchaudio's SQUIM, scored on
   the sample in the first column. It is a second axis word error cannot see, because word
