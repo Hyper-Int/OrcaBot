@@ -6,6 +6,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { SplashTransitionOverlay } from "@/components/SplashTransitionOverlay";
+import { WebAnalytics } from "@/components/WebAnalytics";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -102,6 +103,9 @@ export default function RootLayout({
             `,
           }}
         />
+        {/* Page views for readers who never sign in; the app's own analytics
+            only see authenticated users. No-ops without a beacon token. */}
+        <WebAnalytics />
       </head>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}
