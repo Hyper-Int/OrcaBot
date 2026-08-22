@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v58-cancel-pending-edge
-console.log(`[dashboard] REVISION: dashboard-v58-cancel-pending-edge loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v59-frame-on-load
+console.log(`[dashboard] REVISION: dashboard-v59-frame-on-load loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -81,7 +81,7 @@ import { Canvas } from "@/components/canvas";
 import { MobileFullscreenCanvas } from "@/components/mobile/MobileFullscreenCanvas";
 import { FullscreenControlBar } from "@/components/mobile/FullscreenControlBar";
 import { isCoarsePointerDevice } from "@/lib/openAuthPopup";
-import { findAvailableSpace } from "@/lib/canvas/placement";
+import { findAvailableSpace, frameToFit } from "@/lib/canvas/placement";
 import { DesktopVersionBadge } from "@/components/DesktopVersionBadge";
 import { CursorOverlay, PresenceList } from "@/components/multiplayer";
 import { useAuthStore } from "@/stores/auth-store";
@@ -821,6 +821,59 @@ export default function DashboardPage() {
     };
     tryApply();
   }, [data, dashboardId]);
+
+  // Frame every block once, the first time a dashboard's items render.
+  //
+  // ReactFlow's own fitView is off (see fitViewEnabled below) and cannot simply be
+  // turned on: it fits at mount, when the items are still in flight with the query,
+  // so it would frame an empty canvas and never run again. Blocks the reader creates
+  // are placed relative to the current viewport by findAvailableSpace and are visible
+  // by construction, which is why nothing framed them and nobody noticed.
+  //
+  // It shows up on a dashboard whose coordinates came from somewhere else. Every
+  // hand-written template ships viewport {x:0,y:0,zoom:1} - a typed placeholder
+  // rather than a computed frame - so a block at the origin renders underneath the
+  // header and behind the workspace sidebar. The templates exported from a real
+  // dashboard carry a genuine viewport and looked fine, which is why this survived.
+  //
+  // The sidebar overlays the canvas rather than shrinking it, so ReactFlow's padding
+  // cannot know about it; the centre is shifted right by half its width, the same
+  // correction ensureVisible makes.
+  const didInitialFrame = React.useRef(false);
+  React.useEffect(() => {
+    if (didInitialFrame.current || !data || items.length === 0) return;
+    let cancelled = false;
+    const tryFrame = () => {
+      if (cancelled || didInitialFrame.current) return;
+      const instance = reactFlowInstanceRef.current;
+      const container = canvasContainerRef.current;
+      // Same rAF retry as the template viewport above: the instance is not ready on
+      // the first render after the data lands.
+      if (!instance || !container) {
+        requestAnimationFrame(tryFrame);
+        return;
+      }
+      const frame = frameToFit(
+        items,
+        container.clientWidth,
+        container.clientHeight,
+        getSidebarWidth(sidebarCollapsed),
+      );
+      // null means the container has not been measured yet; try again next frame
+      // rather than locking in a zoom computed from nothing.
+      if (!frame) {
+        requestAnimationFrame(tryFrame);
+        return;
+      }
+      didInitialFrame.current = true;
+      instance.setCenter(frame.centerX, frame.centerY, { zoom: frame.zoom, duration: 0 });
+      viewportRef.current = instance.getViewport();
+    };
+    tryFrame();
+    return () => {
+      cancelled = true;
+    };
+  }, [data, items, sidebarCollapsed]);
 
   // Workspace sidebar session: pick the first active session from any terminal
   const workspaceSessionId = React.useMemo(() => {
