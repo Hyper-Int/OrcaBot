@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v6-two-rows
+// REVISION: tts-vendor-list-v7-new-vendors
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v6-two-rows";
+const MODULE_REVISION = "tts-vendor-list-v7-new-vendors";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -54,6 +54,13 @@ const VENDORS: Vendor[] = [
   { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
   { name: "Supertone", icon: "supertone-inc.png", url: "https://github.com/supertone-inc/supertonic" },
   { name: "Canopy Labs", icon: "canopyai.png", url: "https://github.com/canopyai/Orpheus-TTS" },
+  { name: "Kyutai", icon: "kyutai-labs.png", url: "https://github.com/kyutai-labs/pocket-tts" },
+  { name: "OpenBMB", icon: "OpenBMB.png", url: "https://github.com/OpenBMB/VoxCPM" },
+  { name: "IndexTeam", icon: "index-tts.png", url: "https://github.com/index-tts/index-tts" },
+  // StyleTTS2 is one author rather than an organisation, and was missing from
+  // this list long before the three above it - the chips were never checked
+  // against the table's own rows until now.
+  { name: "yl4579", icon: "yl4579.png", url: "https://github.com/yl4579/StyleTTS2" },
 ].sort((a, b) => a.name.localeCompare(b.name, "en"));
 
 const ICON_BASE = "/icons/tts/";
