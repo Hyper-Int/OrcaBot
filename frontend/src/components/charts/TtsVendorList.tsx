@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v7-new-vendors
+// REVISION: tts-vendor-list-v8-three-rows
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v7-new-vendors";
+const MODULE_REVISION = "tts-vendor-list-v8-three-rows";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -71,27 +71,31 @@ const ICON_BASE = "/icons/tts/";
 // inflated these chips from 36px tall to 92px. Both need beating on specificity.
 const CSS = `
 .tts-vendors-figure ul.tts-vendors {
-  display: flex; flex-wrap: wrap; gap: 5px;
+  display: flex; flex-wrap: wrap; gap: 8px;
   margin: 0; padding: 0; list-style: none;
 }
 .tts-vendors-figure ul.tts-vendors > li { margin: 0; padding: 0; list-style: none; }
 .tts-vendors a.tts-vendor-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  /* Horizontal padding only, twice now: each new vendor costs a chip, and the
-     prose column this sits in is a fixed 1104px, so the row count is set purely
-     by chip width. Trimming the sides keeps the height at 32px and the logos at
-     16px - shrinking either would be visible, where two pixels of padding is
-     not. Twenty-one chips currently fit 11 + 10 with about 30px to spare, so
-     the next vendor after that needs another pass rather than another trim. */
-  padding: 7px 9px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
-  font-size: 0.78rem; font-weight: 500; line-height: 1;
+  display: inline-flex; align-items: center; gap: 9px;
+  /* Sized for three rows, not squeezed into two. The prose column is a fixed
+     1104px, so row count is set purely by chip width, and this was trimmed twice
+     to hold twenty-one chips at 11 + 10. Twenty-five will not fit two rows at any
+     readable size - the only sizing that managed it was 0.70rem with 5px padding,
+     which shrinks every chip to tidy one row's wrapping.
+     So the constraint is dropped and the space used instead: at this size the
+     twenty-five wrap 8 + 9 + 8 with 167px spare on the last row, where the
+     trimmed size left 11 + 11 + 3 and 840px of it empty. Going further tips to
+     four rows at 0.88rem. Measured in-page rather than guessed; note the width
+     lives in the labels, so shrinking the logos buys no row at all. */
+  padding: 9px 14px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
+  font-size: 0.85rem; font-weight: 500; line-height: 1;
   color: var(--foreground, #e8edf5);
   text-decoration: none; white-space: nowrap; background: var(--background-elevated, #0d1526);
 }
 .tts-vendors a.tts-vendor-chip:hover,
 .tts-vendors a.tts-vendor-chip:focus-visible { border-color: #d95926; opacity: 1; }
 .tts-vendors a.tts-vendor-chip img {
-  width: 16px; height: 16px; margin: 0; display: inline-block;
+  width: 18px; height: 18px; margin: 0; display: inline-block;
   object-fit: contain; border-radius: 4px; flex-shrink: 0;
 }
 `;
