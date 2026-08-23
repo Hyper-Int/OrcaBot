@@ -1642,7 +1642,7 @@
       "config": "voxcpm2-tts",
       "display": "VoxCPM 0.5B",
       "group": "",
-      "sample": null,
+      "sample": "voxcpm2-tts.mp3?v=76ce9f86",
       "cells": [
         {
           "v": "VoxCPM 0.5B",
@@ -1675,8 +1675,8 @@
           "restricted": false
         },
         {
-          "v": "-",
-          "sort": "",
+          "v": "2024-12",
+          "sort": "202412",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1710,9 +1710,9 @@
           "restricted": false
         },
         {
-          "v": "3.83",
-          "sort": "3.83",
-          "tone": "good",
+          "v": "3.78",
+          "sort": "3.78",
+          "tone": "",
           "align": "",
           "restricted": false
         },
@@ -1731,8 +1731,8 @@
           "restricted": false
         },
         {
-          "v": "VoxCPM 0.5B at q4_k. Clones from the piper sample; registered but never measured until it was given one. PESQ is provisional over 42 of 84 clips.",
-          "sort": "VoxCPM 0.5B at q4_k. Clones from the pip",
+          "v": "OpenBMB VoxCPM on MiniCPM-4: tokenizer-free, modelling continuous speech space rather than discrete acoustic tokens. Upstream claim is 0.17x on GPU; this is q4_k on an M2. Clones from the piper sample.",
+          "sort": "OpenBMB VoxCPM on MiniCPM-4: tokenizer-f",
           "tone": "",
           "align": "",
           "restricted": false

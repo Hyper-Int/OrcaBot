@@ -9,8 +9,7 @@ toc: false
 
 We tested all the open weight TTS models against the same corpus, using Whisper medium to transcribe back to text.
 
-Almost every row can be played, so you can hear what a word error rate actually sounds
-like. VoxCPM is the exception: it was measured but has no published clip yet.
+Every row can be played, so you can hear what a word error rate actually sounds like.
 
 **You can run this yourself.** The harness, the corpus and the scoring are open, and
 [talkito-benchmark](https://github.com/robdmac/talkito-benchmark) regenerates every number on this

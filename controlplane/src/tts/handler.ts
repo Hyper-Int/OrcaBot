@@ -24,11 +24,11 @@ const CONFIGS = [
   'supertonic', 'piper', 'indextts', 'chatterbox-turbo', 'kittentts-micro',
   'kittentts-nano-int8', 'qwen3-tts-vd', 'kittentts-mini', 'dots-tts',
   'qwen3-tts', 'kittentts-nano', 'pocket-tts', 'chatterbox', 'f5-tts',
-  'kokoro', 'orpheus-q8', 'xtts', 'orpheus-q4', 'nt-2e-q8-metal',
-  'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
-  'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
-  'fastpitch', 'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm',
-  'tada-1b', 'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
+  'kokoro', 'orpheus-q8', 'voxcpm2-tts', 'xtts', 'orpheus-q4',
+  'nt-2e-q8-metal', 'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice',
+  'nt-2e-q4-metal', 'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts',
+  'omnivoice', 'fastpitch', 'cosyvoice3', 'bananamind-tts', 'tada-3b',
+  'zonos', 'csm', 'tada-1b', 'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
 ] as const;
 
 /**
