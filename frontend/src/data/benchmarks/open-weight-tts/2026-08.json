@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-21",
+  "label": "2026-08-23",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -218,6 +218,107 @@
         {
           "v": "No torch at all. Peaks at full scale - check for clipping.",
           "sort": "No torch at all. Peaks at full scale - c",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "indextts",
+      "display": "IndexTTS",
+      "group": "",
+      "sample": "indextts.mp3?v=3f702911",
+      "cells": [
+        {
+          "v": "IndexTTS",
+          "sort": "indextts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/index-tts/index-tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/IndexTeam/Index-TTS"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-04",
+          "sort": "202504",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "868 MB",
+          "sort": "868.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "868 MB",
+          "sort": "868.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.4 GB",
+          "sort": "3481.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4%",
+          "sort": "0.0427",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.09x",
+          "sort": "4.0888",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "16.46s",
+          "sort": "16.4642",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Bilibili IndexTTS: q8 GPT backbone plus a BigVGAN vocoder. Clones from the piper sample; with no reference it scores 0/12.",
+          "sort": "Bilibili IndexTTS: q8 GPT backbone plus ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -822,8 +923,8 @@
           "restricted": false
         },
         {
-          "v": "4.4 GB f16 and 14.2x real time, the slowest here, for 6% WER - mid-pack accuracy.",
-          "sort": "4.4 GB f16 and 14.2x real time, the slow",
+          "v": "2B continuous-latent autoregressive model, SOAR checkpoint at 4.4 GB f16: 14.2x real time for 6% WER. Their MeanFlow-distilled variants target latency and have no GGUF conversion, so this is not the configuration they position for speed.",
+          "sort": "2B continuous-latent autoregressive mode",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1026,6 +1127,107 @@
         {
           "v": "The fp32 middle size of KittenTTS's four. Not the default - talkito loads mini.",
           "sort": "The fp32 middle size of KittenTTS's four",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "pocket-tts",
+      "display": "Pocket TTS",
+      "group": "",
+      "sample": "pocket-tts.mp3?v=5dea55d6",
+      "cells": [
+        {
+          "v": "Pocket TTS",
+          "sort": "pocket-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/kyutai-labs/pocket-tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-4.0",
+          "sort": "CC-BY-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/kyutai/pocket-tts"
+        },
+        {
+          "v": "100M",
+          "sort": "100.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-01",
+          "sort": "202601",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "209 MB",
+          "sort": "209.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "209 MB",
+          "sort": "209.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "457 MB",
+          "sort": "457.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0601",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.61",
+          "sort": "3.61",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.27x",
+          "sort": "0.2745",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.87s",
+          "sort": "0.8665",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Kyutai Pocket TTS, 100M parameters. Faster than real time in 457 MB of peak RSS. Clones from the piper sample; with no reference it scores 0/70 with 42 runaways.",
+          "sort": "Kyutai Pocket TTS, 100M parameters. Fast",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1430,6 +1632,107 @@
         {
           "v": "The same 3B at q8: half a point more accurate than q4 and slower, which is the ordering a sound conversion gives.",
           "sort": "The same 3B at q8: half a point more acc",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "voxcpm2-tts",
+      "display": "VoxCPM 0.5B",
+      "group": "",
+      "sample": null,
+      "cells": [
+        {
+          "v": "VoxCPM 0.5B",
+          "sort": "voxcpm2-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/OpenBMB/VoxCPM"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/openbmb/VoxCPM-0.5B"
+        },
+        {
+          "v": "0.5B",
+          "sort": "500.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.6 GB",
+          "sort": "1638.4",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.7 GB",
+          "sort": "4812.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8%",
+          "sort": "0.0798",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.83",
+          "sort": "3.83",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.60x",
+          "sort": "2.6019",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9.27s",
+          "sort": "9.2725",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "VoxCPM 0.5B at q4_k. Clones from the piper sample; registered but never measured until it was given one. PESQ is provisional over 42 of 84 clips.",
+          "sort": "VoxCPM 0.5B at q4_k. Clones from the pip",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3145,8 +3448,8 @@
           "restricted": false
         },
         {
-          "v": "Second-best PESQ here after piper, but 11x real time.",
-          "sort": "Second-best PESQ here after piper, but 1",
+          "v": "PESQ 4.02, but 11x real time.",
+          "sort": "PESQ 4.02, but 11x real time.",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3549,7 +3852,7 @@
           "restricted": false
         },
         {
-          "v": "Meta MMS: a VITS per language, 1100+ of them. The only engine here not served by the C++ runtime.",
+          "v": "Meta MMS: a VITS per language, 1100+ of them, and one of eighteen rows run outside the C++ runtime.",
           "sort": "Meta MMS: a VITS per language, 1100+ of ",
           "tone": "",
           "align": "",

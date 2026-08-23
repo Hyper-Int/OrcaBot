@@ -149,6 +149,13 @@ const LICENCE_PROOF_URLS = {
   // Both quantizations are the same weights off the same card, so they cite it.
   "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "orpheus-q8": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
+  "indextts": "https://huggingface.co/IndexTeam/Index-TTS",
+  // Kyutai splits these: the code is MIT on GitHub, the weights CC-BY-4.0 on the
+  // card. This column states the weights licence, so the card is the proof.
+  "pocket-tts": "https://huggingface.co/kyutai/pocket-tts",
+  // The bare openbmb/VoxCPM path 401s; the 0.5B card is the one that exists, and
+  // it matches the 0.5B this row measures.
+  "voxcpm2-tts": "https://huggingface.co/openbmb/VoxCPM-0.5B",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
@@ -198,6 +205,9 @@ const MODEL_URLS = {
   "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
   "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
   "orpheus-q8": "https://github.com/canopyai/Orpheus-TTS",
+  "indextts": "https://github.com/index-tts/index-tts",
+  "pocket-tts": "https://github.com/kyutai-labs/pocket-tts",
+  "voxcpm2-tts": "https://github.com/OpenBMB/VoxCPM",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice",
   "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
@@ -301,6 +311,9 @@ const DISPLAY = {
   "qwen3-tts-vd": "Qwen3-TTS VoiceDesign",
   "orpheus-q4": "Orpheus 3B Q4",
   "orpheus-q8": "Orpheus 3B Q8",
+  "indextts": "IndexTTS",
+  "pocket-tts": "Pocket TTS",
+  "voxcpm2-tts": "VoxCPM 0.5B",
   "speecht5": "SpeechT5",
   "styletts2": "StyleTTS2",
   "vibevoice": "VibeVoice",
