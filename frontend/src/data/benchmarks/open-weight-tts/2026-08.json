@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-23",
+  "label": "2026-08-24",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -1437,6 +1437,410 @@
       ]
     },
     {
+      "config": "magpie-q6_k",
+      "display": "Magpie TTS Q6_K",
+      "group": "",
+      "sample": "magpie-q6_k.mp3?v=c45d5fc1",
+      "cells": [
+        {
+          "v": "Magpie TTS Q6_K",
+          "sort": "magpie-q6_k",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "557 MB",
+          "sort": "557.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "557 MB",
+          "sort": "557.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "655 MB",
+          "sort": "655.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0652",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.02",
+          "sort": "4.02",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.02x",
+          "sort": "2.0247",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.61s",
+          "sort": "6.6104",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-q5_k",
+      "display": "Magpie TTS Q5_K",
+      "group": "",
+      "sample": "magpie-q5_k.mp3?v=3048eb5c",
+      "cells": [
+        {
+          "v": "Magpie TTS Q5_K",
+          "sort": "magpie-q5_k",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "536 MB",
+          "sort": "536.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "536 MB",
+          "sort": "536.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "643 MB",
+          "sort": "643.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0663",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.05",
+          "sort": "4.05",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.98x",
+          "sort": "1.9840",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.64s",
+          "sort": "6.6365",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-f16",
+      "display": "Magpie TTS F16",
+      "group": "",
+      "sample": "magpie-f16.mp3?v=815bfba3",
+      "cells": [
+        {
+          "v": "Magpie TTS F16",
+          "sort": "magpie-f16",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "748 MB",
+          "sort": "748.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "748 MB",
+          "sort": "748.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "845 MB",
+          "sort": "845.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0671",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.13x",
+          "sort": "2.1301",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.98s",
+          "sort": "6.9771",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Half precision: 845 MB of peak RSS against q4_k's 622, for no measurable accuracy gain.",
+          "sort": "Half precision: 845 MB of peak RSS again",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-f32",
+      "display": "Magpie TTS F32",
+      "group": "",
+      "sample": "magpie-f32.mp3?v=517b39bb",
+      "cells": [
+        {
+          "v": "Magpie TTS F32",
+          "sort": "magpie-f32",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.2 GB",
+          "sort": "1228.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0680",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.02",
+          "sort": "4.02",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.82x",
+          "sort": "2.8189",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9.24s",
+          "sort": "9.2420",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Full precision: double q4_k's memory and the only variant meaningfully slower, for no measurable accuracy gain.",
+          "sort": "Full precision: double q4_k's memory and",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "kokoro",
       "display": "Kokoro",
       "group": "",
@@ -1531,6 +1935,208 @@
         {
           "v": "Deterministic timing. Weakest on very short utterances.",
           "sort": "Deterministic timing. Weakest on very sh",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-q8_0",
+      "display": "Magpie TTS Q8_0",
+      "group": "",
+      "sample": "magpie-q8_0.mp3?v=94efd914",
+      "cells": [
+        {
+          "v": "Magpie TTS Q8_0",
+          "sort": "magpie-q8_0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "595 MB",
+          "sort": "595.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "595 MB",
+          "sort": "595.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "694 MB",
+          "sort": "694.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0715",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.83x",
+          "sort": "1.8266",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.89s",
+          "sort": "5.8897",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-q4_k",
+      "display": "Magpie TTS Q4_K",
+      "group": "",
+      "sample": "magpie-q4_k.mp3?v=20511396",
+      "cells": [
+        {
+          "v": "Magpie TTS Q4_K",
+          "sort": "magpie-q4_k",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "det-ff",
+          "sort": "det-ff",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "516 MB",
+          "sort": "516.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "516 MB",
+          "sort": "516.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "622 MB",
+          "sort": "622.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0744",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.02",
+          "sort": "4.02",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.01x",
+          "sort": "2.0134",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.52s",
+          "sort": "6.5239",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Smallest of six published quantisations at 516 MB. Across three free-seed runs the six span 6.5-7.4% mean WER while single variants swing up to 2.4% between runs, so the ladder is not separable: precision buys memory here, not accuracy.",
+          "sort": "Smallest of six published quantisations ",
           "tone": "",
           "align": "",
           "restricted": false

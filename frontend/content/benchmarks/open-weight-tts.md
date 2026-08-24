@@ -48,7 +48,7 @@ face value.
   **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for twenty-five of the forty
+  `medium.en` was run too, but it did not finish for thirty-one of the forty-six
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones, so the true spread between engines is **wider** than this column
@@ -72,15 +72,19 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the fifteen
+**Nothing is filtered out.** Every configuration compared is listed, including the nineteen
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2x for readers who only care about what can be spoken
 live, and sorting by RTF or compute per phrase draws a line at the cutoff so the two groups
 are visible at once.
 
-The line falls at 2x exactly. Nothing sits awkwardly against it: the slowest engine that
-keeps up is OmniVoice at 1.51x, and the fastest that does not is Chatterbox Q4 at 2.03x.
+The line falls at 2x exactly, and two Magpie quantisations now sit either side of it: q5_k
+keeps up at 1.98x, q4_k does not at 2.01x. Three hundredths of a real-time factor separate
+two builds of one checkpoint that this table reports as otherwise indistinguishable, so near
+the boundary the **Real time only** control is a rough divide rather than a verdict. It used
+to be a clean one, with OmniVoice at 1.51x on one side and Chatterbox Q4 at 2.03x on the
+other, and it is worth saying that it no longer is.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.
@@ -93,8 +97,12 @@ scored on **trimmed** audio: scoring untrimmed rewards models that pad with sile
 to 0.78, because silence pulls the estimate toward the ceiling and only mediocre audio has
 room to rise.
 
-**Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
-Differences under roughly two points are not resolvable at this sample size.
+**Passes.** Autoregressive engines are averaged over two passes and feed-forward over one,
+except the six Magpie quantisations, which are averaged over three. Six builds of a single
+checkpoint differing only in precision need more samples than one run to say whether they
+differ at all -- and at three runs they still do not, spanning 6.5-7.4% mean word error
+while individual variants swing by up to 2.4% between runs. Differences under roughly two
+points are not resolvable at this sample size.
 
 ### Limitations
 
