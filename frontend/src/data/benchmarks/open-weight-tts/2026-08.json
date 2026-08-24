@@ -852,11 +852,11 @@
           "restricted": false
         },
         {
-          "v": "Fish Audio Research (non-commercial)",
-          "sort": "Fish Audio Research (non-commercial)",
+          "v": "Fish research (non-commercial)",
+          "sort": "Fish research (non-commercial)",
           "tone": "",
           "align": "left",
-          "restricted": false,
+          "restricted": true,
           "href": "https://huggingface.co/fishaudio/s2-pro"
         },
         {
@@ -923,8 +923,8 @@
           "restricted": false
         },
         {
-          "v": "Fish Audio S2 Pro at q8_0, served by audio.cpp. 5.9 GB of weights and 10.2x real time for PESQ 4.04 - quality at any price.",
-          "sort": "Fish Audio S2 Pro at q8_0, served by audio.cpp. 5.9 GB of weights and 10.2x real time for PESQ 4.04 - quality at any price.",
+          "v": "Fish Audio S2 Pro at q8_0, served by audio.cpp. PESQ 4.04 and 5.6% WER, bought with 5.9 GB of weights and 10.2x real time. Research licence: commercial use needs a separate agreement with Fish Audio.",
+          "sort": "Fish Audio S2 Pro at q8_0, served by aud",
           "tone": "",
           "align": "",
           "restricted": false
@@ -957,7 +957,7 @@
           "sort": "Apache-2.0",
           "tone": "",
           "align": "left",
-          "restricted": true,
+          "restricted": false,
           "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
         },
         {
@@ -1024,7 +1024,7 @@
           "restricted": false
         },
         {
-          "v": "2B continuous-latent autoregressive model, SOAR checkpoint at 4.4 GB f16: 14.2x real time for 6% WER. Their MeanFlow-distilled variants target latency and have no GGUF conversion, so this is not the configuration they position for speed.",
+          "v": "2B continuous-latent autoregressive model, SOAR checkpoint at 4.4 GB f16: 14.2x real time for 6% WER. Their MeanFlow-distilled variant is the dots-tts-mf row; against a like-for-like control it is worth 1.16x, and most of the gap between these two rows is crispasr f16 against audio.cpp q8_0 rather than the distillation.",
           "sort": "2B continuous-latent autoregressive mode",
           "tone": "",
           "align": "",
@@ -1428,8 +1428,8 @@
           "restricted": false
         },
         {
-          "v": "MIT, and the family's best PESQ at 3.61 - but turbo is more accurate and 4x faster. PerTh watermarking; own venv.",
-          "sort": "MIT, and the family's best PESQ at 3.61 ",
+          "v": "MIT, and PESQ 3.64 - but turbo beats it on every axis: 3.80 PESQ, 4% WER against 6%, and 4x faster. PerTh watermarking; own venv.",
+          "sort": "MIT, and PESQ 3.64 - but turbo beats it ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1630,7 +1630,7 @@
           "restricted": false
         },
         {
-          "v": "dots.tts MeanFlow distillation at q8_0, served by audio.cpp rather than crispasr. The same 2B model the dots-tts row measures as SOAR; the distillation targets latency, and a like-for-like comparison is still being measured.",
+          "v": "dots.tts MeanFlow distillation at q8_0, served by audio.cpp rather than crispasr. The same 2B model the dots-tts row measures as SOAR. Against dots-soar-acpp, which holds runtime and precision fixed, the distillation is worth 1.16x - the rest of the gap to the crispasr row is the runtime and the quantisation.",
           "sort": "dots.tts MeanFlow distillation at q8_0, ",
           "tone": "",
           "align": "",
@@ -1935,6 +1935,107 @@
         {
           "v": "Half precision: 845 MB of peak RSS against q4_k's 622, for no measurable accuracy gain.",
           "sort": "Half precision: 845 MB of peak RSS again",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "dots-soar-acpp",
+      "display": "Dots-TTS SOAR q8",
+      "group": "",
+      "sample": "dots-soar-acpp.mp3?v=cc1dd10c",
+      "cells": [
+        {
+          "v": "Dots-TTS SOAR q8",
+          "sort": "dots-soar-acpp",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
+        },
+        {
+          "v": "2B",
+          "sort": "2000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-06",
+          "sort": "202506",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.8 GB",
+          "sort": "2867.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.8 GB",
+          "sort": "2867.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.5 GB",
+          "sort": "5632.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0679",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.65",
+          "sort": "3.65",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.04x",
+          "sort": "5.0359",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "18.59s",
+          "sort": "18.5896",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "The SOAR checkpoint again, at q8_0 through audio.cpp instead of f16 through crispasr, as a control for the MeanFlow comparison. Same weights as the dots-tts row and 2.8x faster, so most of what looked like a distillation speedup was the runtime and the precision. Against this row the distillation is worth 1.16x, not 3.3x.",
+          "sort": "The SOAR checkpoint again, at q8_0 throu",
           "tone": "",
           "align": "",
           "restricted": false

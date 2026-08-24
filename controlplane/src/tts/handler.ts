@@ -25,12 +25,12 @@ const CONFIGS = [
   'kittentts-nano-int8', 'qwen3-tts-vd', 'kittentts-mini', 'fish-s2-pro',
   'dots-tts', 'qwen3-tts', 'kittentts-nano', 'pocket-tts', 'chatterbox',
   'f5-tts', 'dots-tts-mf', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16',
-  'magpie-f32', 'kokoro', 'magpie-q8_0', 'magpie-q4_k', 'orpheus-q8',
-  'voxcpm2-tts', 'xtts', 'orpheus-q4', 'nt-2e-q8-metal', 'nt-2e-fp32-mps',
-  'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal', 'cosyvoice3-rl',
-  'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice', 'cosyvoice3',
-  'bananamind-tts', 'tada-3b', 'zonos', 'csm', 'tada-1b', 'speecht5',
-  'mms-tts', 'vibevoice-1.5b', 'bark',
+  'dots-soar-acpp', 'magpie-f32', 'kokoro', 'magpie-q8_0', 'magpie-q4_k',
+  'orpheus-q8', 'voxcpm2-tts', 'xtts', 'orpheus-q4', 'nt-2e-q8-metal',
+  'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
+  'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
+  'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm', 'tada-1b',
+  'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
 ] as const;
 
 /**
