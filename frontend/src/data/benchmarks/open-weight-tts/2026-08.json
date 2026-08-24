@@ -1451,8 +1451,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -1552,8 +1552,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -1653,8 +1653,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -1754,8 +1754,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -1956,8 +1956,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -2057,8 +2057,8 @@
           "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
         },
         {
-          "v": "det-ff",
-          "sort": "det-ff",
+          "v": "ar-lm",
+          "sort": "ar-lm",
           "tone": "",
           "align": "left",
           "restricted": false
@@ -2135,7 +2135,7 @@
           "restricted": false
         },
         {
-          "v": "Smallest of six published quantisations at 516 MB. Across three free-seed runs the six span 6.5-7.4% mean WER while single variants swing up to 2.4% between runs, so the ladder is not separable: precision buys memory here, not accuracy.",
+          "v": "Smallest of six published quantisations at 516 MB. Autoregressive despite the size: the GGUF declares a causal decoder with a codebook refinement head, and syntheses vary run to run. Across three free-seed runs the six variants span 6.5-7.4% mean WER while a single variant swings up to 2.4%, so the ladder is not separable - precision buys memory, not accuracy.",
           "sort": "Smallest of six published quantisations ",
           "tone": "",
           "align": "",
