@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v9-memory-filter
+// REVISION: tts-results-table-v10-slider-axis-colour
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v9-memory-filter";
+const MODULE_REVISION = "tts-results-table-v10-slider-axis-colour";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -496,7 +496,11 @@ export function TtsResultsTable() {
               onChange={(e) => setRssStep(Number(e.target.value))}
               aria-label="Maximum peak memory"
               aria-valuetext={rssLimit === Infinity ? "any" : `under ${fmtMB(rssLimit)}`}
-              style={{ width: 132, accentColor: ACCENT, cursor: "pointer" }}
+              // The table's own border colour, not the accent. In accent orange the
+              // filled track read as a warning or a live state, which a budget the
+              // reader is simply choosing is not; this makes it part of the table's
+              // furniture instead.
+              style={{ width: 132, accentColor: AXIS, cursor: "pointer" }}
             />
             <span
               style={{
