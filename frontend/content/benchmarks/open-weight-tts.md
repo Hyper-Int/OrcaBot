@@ -76,8 +76,11 @@ face value.
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2x for readers who only care about what can be spoken
-live, and sorting by RTF or compute per phrase draws a line at the cutoff so the two groups
-are visible at once.
+live, and sorting by RTF draws a line at the cutoff so the two groups are visible at once.
+Compute per phrase used to draw it too, back when the two orderings agreed. Magpie's
+quantisations differ in how long they speak, so per-phrase compute and per-second compute
+now disagree near the line, and the rule is drawn only where the two groups are genuinely
+contiguous rather than at every crossing.
 
 The line falls at 2x exactly, and two Magpie quantisations now sit either side of it: q5_k
 keeps up at 1.98x, q4_k does not at 2.01x. Three hundredths of a real-time factor separate

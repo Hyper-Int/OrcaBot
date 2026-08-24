@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v7-min-three
+// REVISION: tts-results-table-v8-single-boundary
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v7-min-three";
+const MODULE_REVISION = "tts-results-table-v8-single-boundary";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -321,13 +321,40 @@ export function TtsResultsTable() {
    *  not, or null where no rule belongs. Only shown when everything is listed -
    *  with the filter on there is nothing on the far side to divide from - and
    *  only under a sort where the two groups are actually contiguous. */
-  const boundaryAfter = (i: number): string | null => {
+  /** The single index the rule belongs after, or null when the ordering does not
+   *  actually separate the two groups.
+   *
+   *  Contiguity used to be safe to assume from the sort column alone. Sorting by
+   *  RTF separates them by construction, and sorting by compute per phrase did
+   *  too, because the two agreed on order. Magpie's quantisations ended that:
+   *  RTF is compute per second of audio, so builds that differ in how long they
+   *  speak can order one way per phrase and the other way per second. Under the
+   *  default sort the cutoff is now crossed three times, and a rule drawn at
+   *  every crossing rendered the same band three times in one table, each one
+   *  claiming everything below it was slower.
+   *
+   *  So it is counted rather than assumed, which is what the comment above
+   *  BOUNDARY_SORTS always said the rule was. Exactly one crossing means the
+   *  groups are contiguous and the line is a place; more than one means they
+   *  interleave and there is no line to draw. */
+  const boundaryIndex = React.useMemo(() => {
     if (realtimeOnly || !sort || !BOUNDARY_SORTS.has(COLUMNS[sort.col])) return null;
+    const keepsUp = (r: (typeof rows)[number]) =>
+      Number(r.cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
+    let only: number | null = null;
+    for (let i = 0; i + 1 < rows.length; i++) {
+      if (keepsUp(rows[i]) === keepsUp(rows[i + 1])) continue;
+      if (only !== null) return null;
+      only = i;
+    }
+    return only;
+  }, [realtimeOnly, sort, rows]);
+
+  const boundaryAfter = (i: number): string | null => {
+    if (boundaryIndex === null || i !== boundaryIndex) return null;
     const next = rows[i + 1];
     if (!next) return null;
     const here = Number(rows[i].cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
-    const there = Number(next.cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
-    if (here === there) return null;
     // Which side is which depends on the sort direction, so say it rather than
     // leaving the reader to infer it from a bare line.
     // The subject stays put and the direction flips. Naming whichever group
