@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v8-single-boundary
+// REVISION: tts-results-table-v9-memory-filter
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v8-single-boundary";
+const MODULE_REVISION = "tts-results-table-v9-memory-filter";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -41,6 +41,25 @@ const RTF_COL = run.columns.indexOf("RTF");
 if (RTF_COL < 0) throw new Error(`[tts] no "RTF" column in run ${run.run}: have ${run.columns.join(", ")}`);
 const RTF_CUTOFF = run.rtfCutoff;
 const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
+
+const RSS_COL = run.columns.indexOf("RSS");
+if (RSS_COL < 0) throw new Error(`[tts] no "RSS" column in run ${run.run}: have ${run.columns.join(", ")}`);
+const rssOf = (r: Row) => Number(r.cells[RSS_COL].sort);
+
+/** Stops for the memory filter, in MB, with no limit as the last one.
+ *
+ *  Spaced by ratio rather than evenly. Peak RSS runs 246 MB to 8.6 GB, but
+ *  twenty of the forty-six engines fit inside a gigabyte and only three sit above
+ *  four, so an even track would spend most of its length separating the handful
+ *  of largest models and almost none of it where the reader is actually choosing.
+ *
+ *  A slider rather than a box to type in: the question this answers is "what fits
+ *  on the machine I have", which is a budget being felt out against the count, not
+ *  a number known in advance. It starts at no limit so the table is unfiltered
+ *  until someone asks for less. */
+const RSS_STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, Infinity];
+const fmtMB = (mb: number) =>
+  mb === Infinity ? "any" : mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`;
 
 /** The Human column is spliced in here, right after the engine name, so the
  *  live number is visible without scrolling the table sideways. */
@@ -162,6 +181,8 @@ export function TtsResultsTable() {
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [realtimeOnly, setRealtimeOnly] = React.useState(false);
+  const [rssStep, setRssStep] = React.useState(RSS_STEPS.length - 1);
+  const rssLimit = RSS_STEPS[rssStep];
   // Shared with the charts: one class selection governs the whole page, so
   // filtering to ar-lm in the table narrows the plot below it too.
   const { active: classFilter, toggle: toggleClass, clear: clearClasses, shows: classShows } = useClassFilter();
@@ -212,6 +233,7 @@ export function TtsResultsTable() {
     const visible = ROWS.filter(
       (r) =>
         (!realtimeOnly || rtfOf(r) <= RTF_CUTOFF) &&
+        rssOf(r) <= rssLimit &&
         classShows(classOf(r))
     );
     const withHuman = visible.map((r) => {
@@ -237,7 +259,7 @@ export function TtsResultsTable() {
         typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [classShows, ratings, realtimeOnly, sort]);
+  }, [classShows, ratings, realtimeOnly, rssLimit, sort]);
 
   // asc -> desc -> back to the default, never to "unsorted". Unsorted rendered
   // the export's own row order, which is neither the default the reader arrived
@@ -458,15 +480,42 @@ export function TtsResultsTable() {
               );
             })}
           </span>
+          {/* Memory budget. The value is shown as a size rather than a step index,
+              and carried on aria-valuetext for the same reason: "8" tells a reader
+              nothing, and the count beside it only says how many survived, not what
+              they survived. minWidth holds the label steady so the row does not
+              shuffle sideways while the handle is being dragged. */}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: INK.muted }}>
+            <span>Memory</span>
+            <input
+              type="range"
+              min={0}
+              max={RSS_STEPS.length - 1}
+              step={1}
+              value={rssStep}
+              onChange={(e) => setRssStep(Number(e.target.value))}
+              aria-label="Maximum peak memory"
+              aria-valuetext={rssLimit === Infinity ? "any" : `under ${fmtMB(rssLimit)}`}
+              style={{ width: 132, accentColor: ACCENT, cursor: "pointer" }}
+            />
+            <span
+              style={{
+                color: rssLimit === Infinity ? INK.muted : INK.primary,
+                minWidth: "5.2rem", fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {rssLimit === Infinity ? "any" : `under ${fmtMB(rssLimit)}`}
+            </span>
+          </label>
           <span style={{ color: INK.muted }} aria-live="polite">
             {rows.length === ROWS.length
               ? `${ROWS.length} configurations`
               : `${rows.length} of ${ROWS.length} configurations`}
           </span>
-          {(realtimeOnly || classFilter.size > 0) && (
+          {(realtimeOnly || classFilter.size > 0 || rssLimit !== Infinity) && (
             <button
               type="button"
-              onClick={() => { setRealtimeOnly(false); clearClasses(); }}
+              onClick={() => { setRealtimeOnly(false); clearClasses(); setRssStep(RSS_STEPS.length - 1); }}
               style={{
                 font: "inherit", color: INK.muted, background: "none", border: "none",
                 padding: 0, textDecoration: "underline", cursor: "pointer",
