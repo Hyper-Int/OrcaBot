@@ -831,6 +831,107 @@
       ]
     },
     {
+      "config": "fish-s2-pro",
+      "display": "Fish Audio S2 Pro",
+      "group": "",
+      "sample": "fish-s2-pro.mp3?v=57f02245",
+      "cells": [
+        {
+          "v": "Fish Audio S2 Pro",
+          "sort": "fish-s2-pro",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/fishaudio/s2-pro"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Fish Audio Research (non-commercial)",
+          "sort": "Fish Audio Research (non-commercial)",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/fishaudio/s2-pro"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.9 GB",
+          "sort": "6041.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.9 GB",
+          "sort": "6041.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.3 GB",
+          "sort": "8499.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0560",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "10.24x",
+          "sort": "10.2412",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "38.35s",
+          "sort": "38.3480",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Fish Audio S2 Pro at q8_0, served by audio.cpp. 5.9 GB of weights and 10.2x real time for PESQ 4.04 - quality at any price.",
+          "sort": "Fish Audio S2 Pro at q8_0, served by audio.cpp. 5.9 GB of weights and 10.2x real time for PESQ 4.04 - quality at any price.",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "dots-tts",
       "display": "Dots-TTS",
       "group": "",
@@ -1430,6 +1531,107 @@
         {
           "v": "Flow matching: non-autoregressive, but iterative.",
           "sort": "Flow matching: non-autoregressive, but i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "dots-tts-mf",
+      "display": "Dots-TTS MeanFlow",
+      "group": "",
+      "sample": "dots-tts-mf.mp3?v=60ec24cc",
+      "cells": [
+        {
+          "v": "Dots-TTS MeanFlow",
+          "sort": "dots-tts-mf",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE"
+        },
+        {
+          "v": "2B",
+          "sort": "2000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.8 GB",
+          "sort": "2867.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.8 GB",
+          "sort": "2867.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.7 GB",
+          "sort": "5836.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0650",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.61",
+          "sort": "3.61",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.33x",
+          "sort": "4.3252",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "17.35s",
+          "sort": "17.3504",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "dots.tts MeanFlow distillation at q8_0, served by audio.cpp rather than crispasr. The same 2B model the dots-tts row measures as SOAR; the distillation targets latency, and a like-for-like comparison is still being measured.",
+          "sort": "dots.tts MeanFlow distillation at q8_0, ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3551,107 +3753,6 @@
         {
           "v": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
           "sort": "Speech is fluent. Size and date come from the paper (arXiv:2604.00688) rather than a model card.",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "fastpitch",
-      "display": "FastPitch",
-      "group": "",
-      "sample": "fastpitch.mp3?v=58a1c73a",
-      "cells": [
-        {
-          "v": "FastPitch",
-          "sort": "fastpitch",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/NVIDIA-NeMo/Speech"
-        },
-        {
-          "v": "det-ff",
-          "sort": "det-ff",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "CC-BY-4.0",
-          "sort": "CC-BY-4.0",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/tts_en_fastpitch"
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2021-06",
-          "sort": "202106",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "120 MB",
-          "sort": "120.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "120 MB",
-          "sort": "120.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "376 MB",
-          "sort": "376.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "14%",
-          "sort": "0.1364",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.72",
-          "sort": "2.72",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.05x",
-          "sort": "0.0535",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.39s",
-          "sort": "0.3858",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Non-autoregressive, 120 MB. Output carries a spoken AI disclosure, removed before scoring.",
-          "sort": "Non-autoregressive, 120 MB. Output carri",
           "tone": "",
           "align": "",
           "restricted": false

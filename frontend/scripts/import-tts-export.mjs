@@ -79,7 +79,14 @@ function retone(header, cell) {
  *  the same weights as the rows that remain, run on a slower path: they tripled
  *  the size of the NeuTTS band while saying nothing about the model, only about
  *  the hardware it was pointed at. Their measurements stay in the raw export. */
-const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
+const DROP_ROWS = new Set([
+  "nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu",
+  // NVIDIA's own Magpie supersedes it: same vendor, an autoregressive model with a
+  // published quantisation ladder against a 2023 FastPitch checkpoint that only
+  // reached the table by speaking an AI disclosure the harness had to strip. Kept
+  // in the raw export, where the measurement still stands.
+  "fastpitch",
+]);
 
 /** Shorter headers where the export's are longer than they need to be.
  *  Only one word error rate is shown, so it does not need qualifying: base.en
@@ -150,6 +157,8 @@ const LICENCE_PROOF_URLS = {
   "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "orpheus-q8": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "indextts": "https://huggingface.co/IndexTeam/Index-TTS",
+  "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
+  "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
   // Six quantisations of one checkpoint, so one card evidences all of them. It
   // declares nvidia-open-model-license, which is what the Licence column prints.
   "magpie-f32": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
@@ -214,6 +223,8 @@ const MODEL_URLS = {
   "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
   "orpheus-q8": "https://github.com/canopyai/Orpheus-TTS",
   "indextts": "https://github.com/index-tts/index-tts",
+  "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
+  "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts",
   "magpie-f32": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
   "magpie-f16": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
   "magpie-q8_0": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
@@ -274,6 +285,27 @@ const CELL_OVERRIDES = {
   // Its repo has carried an Apache LICENSE all along - this was the mismatch the
   // licence cross-check flagged when the links were first added.
   "dots-tts": { Licence: { v: "Apache-2.0" } },
+  // The export's note claims "the largest weights in this table at 6.0 GB and
+  // second slowest at 10.2x". Both are wrong and the first disagrees with its own
+  // row: Tada 3B carries 6.4 GB against this row's 5.9, and Dots-TTS at 14.22x
+  // and Zonos at 11.07x are both slower, making this third. The rewrite keeps the
+  // shape and drops the two rankings, because a number a reader can check against
+  // the column beside it is worth more here than a superlative that goes stale the
+  // next time a row lands.
+  "fish-s2-pro": {
+    // The export prints Apache-2.0. The model card's own frontmatter says
+    // `license: other` with `license_name: fish-audio-research-license`, and the
+    // body: "Research and non-commercial use is permitted free of charge.
+    // Commercial use requires a separate license from Fish Audio." Apache-2.0
+    // permits commercial use unconditionally, so shipping it here would tell a
+    // reader the opposite of what the licence says - the one error in this column
+    // that could cost somebody something.
+    Licence: { v: "Fish Audio Research (non-commercial)" },
+    Notes: {
+      v: "Fish Audio S2 Pro at q8_0, served by audio.cpp. 5.9 GB of weights and "
+        + "10.2x real time for PESQ 4.04 - quality at any price.",
+    },
+  },
   // Both cards declare `license: llama3.2`, and Hume's Space says "the model is
   // licensed under the Llama 3.2 Community License Agreement".
   "tada-1b": { Licence: { v: "Llama 3.2 Community" } },
@@ -326,6 +358,8 @@ const DISPLAY = {
   "orpheus-q4": "Orpheus 3B Q4",
   "orpheus-q8": "Orpheus 3B Q8",
   "indextts": "IndexTTS",
+  "fish-s2-pro": "Fish Audio S2 Pro",
+  "dots-tts-mf": "Dots-TTS MeanFlow",
   "magpie-f32": "Magpie TTS F32",
   "magpie-f16": "Magpie TTS F16",
   "magpie-q8_0": "Magpie TTS Q8_0",
