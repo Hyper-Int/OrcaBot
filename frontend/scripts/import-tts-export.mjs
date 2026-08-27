@@ -521,19 +521,21 @@ const rtfCol = columns.indexOf("RTF");
 const rtfOf = (r) => Number(r.cells[rtfCol].sort);
 /** Where "keeps up with its own speech" is drawn.
  *
- *  2.05 rather than a round 2. Magpie ships six quantisations of one checkpoint
- *  and three of them - q4_k at 2.01x, q6_k at 2.02x - land in the two hundredths
- *  above a round two, along with Chatterbox Q4 at 2.03x. At 2 the table sorted by
- *  compute per phrase crossed the line three times, because RTF is compute per
- *  second of audio and those builds differ in how long they speak, so the rule
- *  marking the boundary had nowhere honest to go and was suppressed entirely.
+ *  Back to a round 2 after a spell at 2.05. That two-hundredth shift existed
+ *  because Magpie's quantisations landed at 2.01x and 2.02x, splitting a ladder
+ *  the table reports as indistinguishable. Re-measuring every autoregressive row
+ *  over at least three passes moved them to 1.53-1.81x, so nothing sits in the
+ *  gap any more and the round number is honest again: 1.99x on one side,
+ *  2.21x on the other, with 0.22 between them.
  *
- *  Moving the line two hundredths puts those three on the side their measurements
- *  already put them within run-to-run noise, leaves exactly one crossing under
- *  both boundary sorts, and brings the rule back to the sort readers land on.
- *  The engines it moves are the ones the table itself reports as indistinguishable
- *  from each other, so nothing is being reclassified that was ever separable. */
-const RTF_CUTOFF = 2.05;
+ *  Worth knowing that the cutoff no longer controls whether the boundary rule is
+ *  drawn under the default sort. RTF is compute per second of audio and the sort
+ *  is compute per phrase, and with audio durations this varied the two orderings
+ *  interleave at every cutoff between 1.8 and 2.5 - magpie-f32 and chatterbox
+ *  each sit on the wrong side of their neighbours. The rule is drawn when sorting
+ *  by RTF, where the groups are contiguous by construction, and left out
+ *  otherwise. */
+const RTF_CUTOFF = 2;
 
 const run = {
   benchmark: "open-weight-tts",

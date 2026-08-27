@@ -1,11 +1,11 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-24",
+  "label": "2026-08-27",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
-  "rtfCutoff": 2.05,
-  "caption": "Sorted by compute per phrase, fastest first. Every configuration measured is listed, including the ones far too slow to keep up with their own speech; the filter above hides anything above 2.05x real time.",
+  "rtfCutoff": 2,
+  "caption": "Sorted by compute per phrase, fastest first. Every configuration measured is listed, including the ones far too slow to keep up with their own speech; the filter above hides anything above 2x real time.",
   "columns": [
     "Sample · Configuration",
     "Class",
@@ -303,15 +303,15 @@
           "restricted": false
         },
         {
-          "v": "4.09x",
-          "sort": "4.0888",
+          "v": "4.36x",
+          "sort": "4.3600",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "16.46s",
-          "sort": "16.4642",
+          "v": "17.56s",
+          "sort": "17.5563",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -319,107 +319,6 @@
         {
           "v": "Bilibili IndexTTS: q8 GPT backbone plus a BigVGAN vocoder. Clones from the piper sample; with no reference it scores 0/12.",
           "sort": "Bilibili IndexTTS: q8 GPT backbone plus ",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "chatterbox-turbo",
-      "display": "Chatterbox Turbo",
-      "group": "",
-      "sample": "chatterbox-turbo.mp3?v=6ca98b6a",
-      "cells": [
-        {
-          "v": "Chatterbox Turbo",
-          "sort": "chatterbox-turbo",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/resemble-ai/chatterbox"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "MIT",
-          "sort": "MIT",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
-        },
-        {
-          "v": "0.54B",
-          "sort": "540.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2025-08",
-          "sort": "202508",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "980 MB",
-          "sort": "980.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "980 MB",
-          "sort": "980.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.7 GB",
-          "sort": "1740.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4%",
-          "sort": "0.0430",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.30",
-          "sort": "3.30",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.98x",
-          "sort": "0.9751",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.19s",
-          "sort": "3.1940",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Distilled chatterbox, and joint-best accuracy here at 4%. Base q8 measures 2.22x.",
-          "sort": "Distilled chatterbox, and joint-best acc",
           "tone": "",
           "align": "",
           "restricted": false
@@ -521,6 +420,208 @@
         {
           "v": "The most accurate KittenTTS here at 43 MB. Non-autoregressive, so no sampling and no runaways.",
           "sort": "The most accurate KittenTTS here at 43 M",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox-turbo",
+      "display": "Chatterbox Turbo",
+      "group": "",
+      "sample": "chatterbox-turbo.mp3?v=6ca98b6a",
+      "cells": [
+        {
+          "v": "Chatterbox Turbo",
+          "sort": "chatterbox-turbo",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-08",
+          "sort": "202508",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "980 MB",
+          "sort": "980.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "980 MB",
+          "sort": "980.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.7 GB",
+          "sort": "1740.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0519",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.30",
+          "sort": "3.30",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.93x",
+          "sort": "0.9334",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.04s",
+          "sort": "2.0385",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Distilled chatterbox. A single pass put it joint-best at 4%; three passes put it at 5%, behind supertonic, piper and indextts. More accurate and 4.3x faster than base chatterbox, which keeps the better PESQ. Base q8 measures 2.21x.",
+          "sort": "Distilled chatterbox. A single pass put ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "fish-s2-pro",
+      "display": "Fish Audio S2 Pro",
+      "group": "",
+      "sample": "fish-s2-pro.mp3?v=57f02245",
+      "cells": [
+        {
+          "v": "Fish Audio S2 Pro",
+          "sort": "fish-s2-pro",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/fishaudio/s2-pro"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Fish research (non-commercial)",
+          "sort": "Fish research (non-commercial)",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/fishaudio/s2-pro"
+        },
+        {
+          "v": "-",
+          "sort": "",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.9 GB",
+          "sort": "6041.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5.9 GB",
+          "sort": "6041.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.3 GB",
+          "sort": "8499.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "5%",
+          "sort": "0.0525",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "9.34x",
+          "sort": "9.3404",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "34.65s",
+          "sort": "34.6497",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Fish Audio S2 Pro at q8_0, served by audio.cpp. PESQ 4.04 and 5.6% WER, bought with 5.9 GB of weights and 9.3x real time. Research licence: commercial use needs a separate agreement with Fish Audio.",
+          "sort": "Fish Audio S2 Pro at q8_0, served by aud",
           "tone": "",
           "align": "",
           "restricted": false
@@ -707,15 +808,15 @@
           "restricted": false
         },
         {
-          "v": "0.87x",
-          "sort": "0.8652",
+          "v": "0.92x",
+          "sort": "0.9240",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.00s",
-          "sort": "3.0011",
+          "v": "3.20s",
+          "sort": "3.2049",
           "tone": "",
           "align": "",
           "restricted": false
@@ -831,107 +932,6 @@
       ]
     },
     {
-      "config": "fish-s2-pro",
-      "display": "Fish Audio S2 Pro",
-      "group": "",
-      "sample": "fish-s2-pro.mp3?v=57f02245",
-      "cells": [
-        {
-          "v": "Fish Audio S2 Pro",
-          "sort": "fish-s2-pro",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/fishaudio/s2-pro"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "Fish research (non-commercial)",
-          "sort": "Fish research (non-commercial)",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/fishaudio/s2-pro"
-        },
-        {
-          "v": "-",
-          "sort": "",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-08",
-          "sort": "202608",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5.9 GB",
-          "sort": "6041.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5.9 GB",
-          "sort": "6041.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "8.3 GB",
-          "sort": "8499.2",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6%",
-          "sort": "0.0560",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.04",
-          "sort": "4.04",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "10.24x",
-          "sort": "10.2412",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "38.35s",
-          "sort": "38.3480",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Fish Audio S2 Pro at q8_0, served by audio.cpp. PESQ 4.04 and 5.6% WER, bought with 5.9 GB of weights and 10.2x real time. Research licence: commercial use needs a separate agreement with Fish Audio.",
-          "sort": "Fish Audio S2 Pro at q8_0, served by aud",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
       "config": "dots-tts",
       "display": "Dots-TTS",
       "group": "",
@@ -997,7 +997,7 @@
         },
         {
           "v": "6%",
-          "sort": "0.0569",
+          "sort": "0.0574",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -1010,21 +1010,21 @@
           "restricted": false
         },
         {
-          "v": "14.22x",
-          "sort": "14.2218",
+          "v": "13.81x",
+          "sort": "13.8072",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "51.01s",
-          "sort": "51.0087",
+          "v": "49.52s",
+          "sort": "49.5219",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "2B continuous-latent autoregressive model, SOAR checkpoint at 4.4 GB f16: 14.2x real time for 6% WER. Their MeanFlow-distilled variant is the dots-tts-mf row; against a like-for-like control it is worth 1.16x, and most of the gap between these two rows is crispasr f16 against audio.cpp q8_0 rather than the distillation.",
+          "v": "2B continuous-latent autoregressive model, SOAR checkpoint at 4.4 GB f16: 13.8x real time for 6% WER. Their MeanFlow-distilled variant is the dots-tts-mf row. At n=3 the whole gap between these two rows is crispasr f16 against audio.cpp q8_0, worth 3.6x; the distillation itself is 1.16x slower than SOAR when both run on the same runtime at the same precision.",
           "sort": "2B continuous-latent autoregressive mode",
           "tone": "",
           "align": "",
@@ -1111,15 +1111,15 @@
           "restricted": false
         },
         {
-          "v": "0.73x",
-          "sort": "0.7278",
+          "v": "0.74x",
+          "sort": "0.7429",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "2.47s",
-          "sort": "2.4675",
+          "v": "2.52s",
+          "sort": "2.5188",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1127,6 +1127,208 @@
         {
           "v": "Alibaba's 0.6B at a 12 Hz codec - the direct architectural rival.",
           "sort": "Alibaba's 0.6B at a 12 Hz codec - the di",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "pocket-tts",
+      "display": "Pocket TTS",
+      "group": "",
+      "sample": "pocket-tts.mp3?v=5dea55d6",
+      "cells": [
+        {
+          "v": "Pocket TTS",
+          "sort": "pocket-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/kyutai-labs/pocket-tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "CC-BY-4.0",
+          "sort": "CC-BY-4.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/kyutai/pocket-tts"
+        },
+        {
+          "v": "100M",
+          "sort": "100.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-01",
+          "sort": "202601",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "209 MB",
+          "sort": "209.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "209 MB",
+          "sort": "209.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "457 MB",
+          "sort": "457.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0579",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.61",
+          "sort": "3.61",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.28x",
+          "sort": "0.2774",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.88s",
+          "sort": "0.8800",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Kyutai Pocket TTS, 100M parameters. Faster than real time in 457 MB of peak RSS. Clones from the piper sample; with no reference it scores 0/70 with 42 runaways.",
+          "sort": "Kyutai Pocket TTS, 100M parameters. Fast",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "nt-2e-q8-metal",
+      "display": "NeuTTS-2E Q8",
+      "group": "neu",
+      "sample": "nt-2e-q8-metal.mp3?v=9f6e6a25",
+      "cells": [
+        {
+          "v": "NeuTTS-2E Q8",
+          "sort": "nt-2e-q8-metal",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/neuphonic/neutts-2e"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NeuTTS, <$5M",
+          "sort": "NeuTTS, under $5M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE"
+        },
+        {
+          "v": "0.24B",
+          "sort": "240.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-07",
+          "sort": "202607",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "645 MB",
+          "sort": "645.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.0 GB",
+          "sort": "2048.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.9 GB",
+          "sort": "1945.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0591",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.62",
+          "sort": "3.62",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.48x",
+          "sort": "0.4769",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.31s",
+          "sort": "1.3079",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "0.48x, behind q4-metal's 0.42x once contended passes are left out of the timing. Still 3.5 points behind the same weights on CPU.",
+          "sort": "0.48x, behind q4-metal's 0.42x once cont",
           "tone": "",
           "align": "",
           "restricted": false
@@ -1235,208 +1437,6 @@
       ]
     },
     {
-      "config": "pocket-tts",
-      "display": "Pocket TTS",
-      "group": "",
-      "sample": "pocket-tts.mp3?v=5dea55d6",
-      "cells": [
-        {
-          "v": "Pocket TTS",
-          "sort": "pocket-tts",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/kyutai-labs/pocket-tts"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "CC-BY-4.0",
-          "sort": "CC-BY-4.0",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/kyutai/pocket-tts"
-        },
-        {
-          "v": "100M",
-          "sort": "100.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-01",
-          "sort": "202601",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "209 MB",
-          "sort": "209.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "209 MB",
-          "sort": "209.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "457 MB",
-          "sort": "457.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6%",
-          "sort": "0.0601",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.61",
-          "sort": "3.61",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.27x",
-          "sort": "0.2745",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.87s",
-          "sort": "0.8665",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Kyutai Pocket TTS, 100M parameters. Faster than real time in 457 MB of peak RSS. Clones from the piper sample; with no reference it scores 0/70 with 42 runaways.",
-          "sort": "Kyutai Pocket TTS, 100M parameters. Fast",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "chatterbox",
-      "display": "Chatterbox",
-      "group": "",
-      "sample": "chatterbox.mp3?v=5d698986",
-      "cells": [
-        {
-          "v": "Chatterbox",
-          "sort": "chatterbox",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/resemble-ai/chatterbox"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "MIT",
-          "sort": "MIT",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
-        },
-        {
-          "v": "0.54B",
-          "sort": "540.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2025-04",
-          "sort": "202504",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.0 GB",
-          "sort": "3072.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.2 GB",
-          "sort": "4300.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.5 GB",
-          "sort": "3584.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6%",
-          "sort": "0.0631",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.61",
-          "sort": "3.61",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.19x",
-          "sort": "4.1945",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "12.10s",
-          "sort": "12.0982",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "MIT, and PESQ 3.64 - but turbo beats it on every axis: 3.80 PESQ, 4% WER against 6%, and 4x faster. PerTh watermarking; own venv.",
-          "sort": "MIT, and PESQ 3.64 - but turbo beats it ",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
       "config": "f5-tts",
       "display": "F5-TTS",
       "group": "",
@@ -1538,6 +1538,309 @@
       ]
     },
     {
+      "config": "magpie-q6_k",
+      "display": "Magpie TTS Q6_K",
+      "group": "",
+      "sample": "magpie-q6_k.mp3?v=c45d5fc1",
+      "cells": [
+        {
+          "v": "Magpie TTS Q6_K",
+          "sort": "magpie-q6_k",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "557 MB",
+          "sort": "557.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "557 MB",
+          "sort": "557.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "655 MB",
+          "sort": "655.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0646",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.02",
+          "sort": "4.02",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.81x",
+          "sort": "1.8071",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.94s",
+          "sort": "2.9417",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-q5_k",
+      "display": "Magpie TTS Q5_K",
+      "group": "",
+      "sample": "magpie-q5_k.mp3?v=3048eb5c",
+      "cells": [
+        {
+          "v": "Magpie TTS Q5_K",
+          "sort": "magpie-q5_k",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "536 MB",
+          "sort": "536.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "536 MB",
+          "sort": "536.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "643 MB",
+          "sort": "643.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0646",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.05",
+          "sort": "4.05",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.68x",
+          "sort": "1.6784",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.80s",
+          "sort": "2.7984",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-f16",
+      "display": "Magpie TTS F16",
+      "group": "",
+      "sample": "magpie-f16.mp3?v=815bfba3",
+      "cells": [
+        {
+          "v": "Magpie TTS F16",
+          "sort": "magpie-f16",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "748 MB",
+          "sort": "748.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "748 MB",
+          "sort": "748.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "845 MB",
+          "sort": "845.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6%",
+          "sort": "0.0647",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.65x",
+          "sort": "1.6521",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.71s",
+          "sort": "2.7104",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Half precision: 845 MB of peak RSS against q4_k's 622, for no measurable accuracy gain.",
+          "sort": "Half precision: 845 MB of peak RSS again",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
       "config": "dots-tts-mf",
       "display": "Dots-TTS MeanFlow",
       "group": "",
@@ -1616,325 +1919,22 @@
           "restricted": false
         },
         {
-          "v": "4.33x",
-          "sort": "4.3252",
+          "v": "4.39x",
+          "sort": "4.3855",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "17.35s",
-          "sort": "17.3504",
+          "v": "17.59s",
+          "sort": "17.5923",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "dots.tts MeanFlow distillation at q8_0, served by audio.cpp rather than crispasr. The same 2B model the dots-tts row measures as SOAR. Against dots-soar-acpp, which holds runtime and precision fixed, the distillation is worth 1.16x - the rest of the gap to the crispasr row is the runtime and the quantisation.",
+          "v": "dots.tts MeanFlow distillation at q8_0, served by audio.cpp rather than crispasr. The same 2B model the dots-tts row measures as SOAR. Against dots-soar-acpp, which holds runtime and precision fixed, the distillation is 1.16x SLOWER at n=3. The entire gap to the crispasr row is the runtime and the quantisation, worth 3.6x between them; the distillation contributes none of it here.",
           "sort": "dots.tts MeanFlow distillation at q8_0, ",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "magpie-q6_k",
-      "display": "Magpie TTS Q6_K",
-      "group": "",
-      "sample": "magpie-q6_k.mp3?v=c45d5fc1",
-      "cells": [
-        {
-          "v": "Magpie TTS Q6_K",
-          "sort": "magpie-q6_k",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NVIDIA Open Model",
-          "sort": "NVIDIA Open Model",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "357M",
-          "sort": "357.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-08",
-          "sort": "202608",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "557 MB",
-          "sort": "557.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "557 MB",
-          "sort": "557.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "655 MB",
-          "sort": "655.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7%",
-          "sort": "0.0652",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.02",
-          "sort": "4.02",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.02x",
-          "sort": "2.0247",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6.61s",
-          "sort": "6.6104",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
-          "sort": "One of six quantisations of one model, i",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "magpie-q5_k",
-      "display": "Magpie TTS Q5_K",
-      "group": "",
-      "sample": "magpie-q5_k.mp3?v=3048eb5c",
-      "cells": [
-        {
-          "v": "Magpie TTS Q5_K",
-          "sort": "magpie-q5_k",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NVIDIA Open Model",
-          "sort": "NVIDIA Open Model",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "357M",
-          "sort": "357.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-08",
-          "sort": "202608",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "536 MB",
-          "sort": "536.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "536 MB",
-          "sort": "536.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "643 MB",
-          "sort": "643.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7%",
-          "sort": "0.0663",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.05",
-          "sort": "4.05",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.98x",
-          "sort": "1.9840",
-          "tone": "warn",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6.64s",
-          "sort": "6.6365",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
-          "sort": "One of six quantisations of one model, i",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "magpie-f16",
-      "display": "Magpie TTS F16",
-      "group": "",
-      "sample": "magpie-f16.mp3?v=815bfba3",
-      "cells": [
-        {
-          "v": "Magpie TTS F16",
-          "sort": "magpie-f16",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NVIDIA Open Model",
-          "sort": "NVIDIA Open Model",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "357M",
-          "sort": "357.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-08",
-          "sort": "202608",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "748 MB",
-          "sort": "748.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "748 MB",
-          "sort": "748.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "845 MB",
-          "sort": "845.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7%",
-          "sort": "0.0671",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.04",
-          "sort": "4.04",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.13x",
-          "sort": "2.1301",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "6.98s",
-          "sort": "6.9771",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Half precision: 845 MB of peak RSS against q4_k's 622, for no measurable accuracy gain.",
-          "sort": "Half precision: 845 MB of peak RSS again",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2020,123 +2020,22 @@
           "restricted": false
         },
         {
-          "v": "5.04x",
-          "sort": "5.0359",
+          "v": "3.79x",
+          "sort": "3.7880",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "18.59s",
-          "sort": "18.5896",
+          "v": "9.32s",
+          "sort": "9.3222",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "The SOAR checkpoint again, at q8_0 through audio.cpp instead of f16 through crispasr, as a control for the MeanFlow comparison. Same weights as the dots-tts row and 2.8x faster, so most of what looked like a distillation speedup was the runtime and the precision. Against this row the distillation is worth 1.16x, not 3.3x.",
+          "v": "The SOAR checkpoint again, at q8_0 through audio.cpp instead of f16 through crispasr, as a control for the MeanFlow comparison. Same weights as the dots-tts row and 3.6x faster at n=3, which is the entire gap the MeanFlow row appeared to open. Against this control the distillation is 1.16x slower, not 3.3x faster: the single-pass version of this comparison had the sign wrong.",
           "sort": "The SOAR checkpoint again, at q8_0 throu",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "magpie-f32",
-      "display": "Magpie TTS F32",
-      "group": "",
-      "sample": "magpie-f32.mp3?v=517b39bb",
-      "cells": [
-        {
-          "v": "Magpie TTS F32",
-          "sort": "magpie-f32",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NVIDIA Open Model",
-          "sort": "NVIDIA Open Model",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
-        },
-        {
-          "v": "357M",
-          "sort": "357.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-08",
-          "sort": "202608",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.2 GB",
-          "sort": "1228.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.2 GB",
-          "sort": "1228.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.2 GB",
-          "sort": "1228.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "7%",
-          "sort": "0.0680",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "4.02",
-          "sort": "4.02",
-          "tone": "good",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.82x",
-          "sort": "2.8189",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9.24s",
-          "sort": "9.2420",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Full precision: double q4_k's memory and the only variant meaningfully slower, for no measurable accuracy gain.",
-          "sort": "Full precision: double q4_k's memory and",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2245,14 +2144,14 @@
       ]
     },
     {
-      "config": "magpie-q8_0",
-      "display": "Magpie TTS Q8_0",
+      "config": "magpie-f32",
+      "display": "Magpie TTS F32",
       "group": "",
-      "sample": "magpie-q8_0.mp3?v=94efd914",
+      "sample": "magpie-f32.mp3?v=517b39bb",
       "cells": [
         {
-          "v": "Magpie TTS Q8_0",
-          "sort": "magpie-q8_0",
+          "v": "Magpie TTS F32",
+          "sort": "magpie-f32",
           "tone": "",
           "align": "left",
           "restricted": false,
@@ -2288,57 +2187,57 @@
           "restricted": false
         },
         {
-          "v": "595 MB",
-          "sort": "595.0",
+          "v": "1.2 GB",
+          "sort": "1228.8",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "595 MB",
-          "sort": "595.0",
+          "v": "1.2 GB",
+          "sort": "1228.8",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "694 MB",
-          "sort": "694.0",
+          "v": "1.2 GB",
+          "sort": "1228.8",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "7%",
-          "sort": "0.0715",
+          "sort": "0.0690",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "4.04",
-          "sort": "4.04",
+          "v": "4.02",
+          "sort": "4.02",
           "tone": "good",
           "align": "",
           "restricted": false
         },
         {
-          "v": "1.83x",
-          "sort": "1.8266",
-          "tone": "warn",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "5.89s",
-          "sort": "5.8897",
+          "v": "2.31x",
+          "sort": "2.3117",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
-          "sort": "One of six quantisations of one model, i",
+          "v": "3.79s",
+          "sort": "3.7907",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Full precision: double q4_k's memory and the only variant meaningfully slower, for no measurable accuracy gain.",
+          "sort": "Full precision: double q4_k's memory and",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2411,7 +2310,7 @@
         },
         {
           "v": "7%",
-          "sort": "0.0744",
+          "sort": "0.0693",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2424,22 +2323,325 @@
           "restricted": false
         },
         {
-          "v": "2.01x",
-          "sort": "2.0134",
-          "tone": "bad",
+          "v": "1.60x",
+          "sort": "1.6042",
+          "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "6.52s",
-          "sort": "6.5239",
-          "tone": "bad",
+          "v": "3.11s",
+          "sort": "3.1114",
+          "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "Smallest of six published quantisations at 516 MB. Autoregressive despite the size: the GGUF declares a causal decoder with a codebook refinement head, and syntheses vary run to run. Across three free-seed runs the six variants span 6.5-7.4% mean WER while a single variant swings up to 2.4%, so the ladder is not separable - precision buys memory, not accuracy.",
+          "v": "Smallest of six published quantisations at 516 MB. Autoregressive despite the size: the GGUF declares a causal decoder with a codebook refinement head, and syntheses vary run to run. Across four free-seed runs the six variants span 6.0-7.0% mean WER, and the ordering changes between runs, so the ladder is not separable - precision buys memory, not accuracy.",
           "sort": "Smallest of six published quantisations ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "magpie-q8_0",
+      "display": "Magpie TTS Q8_0",
+      "group": "",
+      "sample": "magpie-q8_0.mp3?v=94efd914",
+      "cells": [
+        {
+          "v": "Magpie TTS Q8_0",
+          "sort": "magpie-q8_0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "NVIDIA Open Model",
+          "sort": "NVIDIA Open Model",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m"
+        },
+        {
+          "v": "357M",
+          "sort": "357.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "595 MB",
+          "sort": "595.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "595 MB",
+          "sort": "595.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "694 MB",
+          "sort": "694.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0701",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.04",
+          "sort": "4.04",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.53x",
+          "sort": "1.5267",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.46s",
+          "sort": "2.4551",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "One of six quantisations of one model, indistinguishable from the rest on WER at n=3.",
+          "sort": "One of six quantisations of one model, i",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "chatterbox",
+      "display": "Chatterbox",
+      "group": "",
+      "sample": "chatterbox.mp3?v=5d698986",
+      "cells": [
+        {
+          "v": "Chatterbox",
+          "sort": "chatterbox",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "MIT",
+          "sort": "MIT",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/resemble-ai/chatterbox/blob/master/LICENSE"
+        },
+        {
+          "v": "0.54B",
+          "sort": "540.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-04",
+          "sort": "202504",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.0 GB",
+          "sort": "3072.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.2 GB",
+          "sort": "4300.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.5 GB",
+          "sort": "3584.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0708",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.61",
+          "sort": "3.61",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "4.03x",
+          "sort": "4.0294",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7.74s",
+          "sort": "7.7377",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "MIT, and the better PESQ of the pair at 3.61 against turbo's 3.30. Turbo is the more accurate and far faster one, 5% WER against 7% and 4.3x quicker, so the choice between them is quality against speed rather than a clean win. PerTh watermarking; own venv.",
+          "sort": "MIT, and the better PESQ of the pair at ",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "orpheus-q4",
+      "display": "Orpheus 3B Q4",
+      "group": "",
+      "sample": "orpheus-q4.mp3?v=4ef715a3",
+      "cells": [
+        {
+          "v": "Orpheus 3B Q4",
+          "sort": "orpheus-q4",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/canopyai/Orpheus-TTS"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "Apache-2.0",
+          "sort": "Apache-2.0",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft"
+        },
+        {
+          "v": "3B",
+          "sort": "3000.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2025-03",
+          "sort": "202503",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.4 GB",
+          "sort": "2457.6",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.7 GB",
+          "sort": "2764.8",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "7%",
+          "sort": "0.0721",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.77",
+          "sort": "3.77",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "8.47x",
+          "sort": "8.4718",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "41.01s",
+          "sort": "41.0127",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "Llama-3.2-3B finetune over SNAC, 2.4 GB at q4_k and 8.1x real time.",
+          "sort": "Llama-3.2-3B finetune over SNAC, 2.4 GB ",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2525,15 +2727,15 @@
           "restricted": false
         },
         {
-          "v": "8.62x",
-          "sort": "8.6208",
+          "v": "9.18x",
+          "sort": "9.1795",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "43.80s",
-          "sort": "43.8036",
+          "v": "46.64s",
+          "sort": "46.6422",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -2626,15 +2828,15 @@
           "restricted": false
         },
         {
-          "v": "2.60x",
-          "sort": "2.6019",
+          "v": "2.77x",
+          "sort": "2.7735",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "9.27s",
-          "sort": "9.2725",
+          "v": "9.88s",
+          "sort": "9.8842",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -2714,7 +2916,7 @@
         },
         {
           "v": "8%",
-          "sort": "0.0803",
+          "sort": "0.0801",
           "tone": "",
           "align": "",
           "restricted": false
@@ -2727,15 +2929,15 @@
           "restricted": false
         },
         {
-          "v": "4.72x",
-          "sort": "4.7168",
-          "tone": "bad",
+          "v": "1.69x",
+          "sort": "1.6885",
+          "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "20.28s",
-          "sort": "20.2795",
+          "v": "5.57s",
+          "sort": "5.5741",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -2743,208 +2945,6 @@
         {
           "v": "Coqui XTTS v2. Clones from a reference clip; scored against a piper sample as reference.",
           "sort": "Coqui XTTS v2. Clones from a reference c",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "orpheus-q4",
-      "display": "Orpheus 3B Q4",
-      "group": "",
-      "sample": "orpheus-q4.mp3?v=4ef715a3",
-      "cells": [
-        {
-          "v": "Orpheus 3B Q4",
-          "sort": "orpheus-q4",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://github.com/canopyai/Orpheus-TTS"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "Apache-2.0",
-          "sort": "Apache-2.0",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft"
-        },
-        {
-          "v": "3B",
-          "sort": "3000.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2025-03",
-          "sort": "202503",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.4 GB",
-          "sort": "2457.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.4 GB",
-          "sort": "2457.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.7 GB",
-          "sort": "2764.8",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "8%",
-          "sort": "0.0823",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.77",
-          "sort": "3.77",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "8.09x",
-          "sort": "8.0894",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "41.72s",
-          "sort": "41.7196",
-          "tone": "bad",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "Llama-3.2-3B finetune over SNAC, 2.4 GB at q4_k and 8.1x real time.",
-          "sort": "Llama-3.2-3B finetune over SNAC, 2.4 GB ",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        }
-      ]
-    },
-    {
-      "config": "nt-2e-q8-metal",
-      "display": "NeuTTS-2E Q8",
-      "group": "neu",
-      "sample": "nt-2e-q8-metal.mp3?v=9f6e6a25",
-      "cells": [
-        {
-          "v": "NeuTTS-2E Q8",
-          "sort": "nt-2e-q8-metal",
-          "tone": "",
-          "align": "left",
-          "restricted": false,
-          "href": "https://huggingface.co/neuphonic/neutts-2e"
-        },
-        {
-          "v": "ar-lm",
-          "sort": "ar-lm",
-          "tone": "",
-          "align": "left",
-          "restricted": false
-        },
-        {
-          "v": "NeuTTS, <$5M",
-          "sort": "NeuTTS, under $5M",
-          "tone": "",
-          "align": "left",
-          "restricted": true,
-          "href": "https://huggingface.co/neuphonic/neutts-2e/blob/main/LICENSE"
-        },
-        {
-          "v": "0.24B",
-          "sort": "240.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2026-07",
-          "sort": "202607",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "645 MB",
-          "sort": "645.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "2.0 GB",
-          "sort": "2048.0",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.9 GB",
-          "sort": "1945.6",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "9%",
-          "sort": "0.0891",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "3.62",
-          "sort": "3.62",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "0.46x",
-          "sort": "0.4567",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "1.89s",
-          "sort": "1.8868",
-          "tone": "",
-          "align": "",
-          "restricted": false
-        },
-        {
-          "v": "The fastest 2E configuration at 0.46x, but 3.5 points behind the same weights on CPU.",
-          "sort": "The fastest 2E configuration at 0.46x, b",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3016,8 +3016,8 @@
           "restricted": false
         },
         {
-          "v": "9%",
-          "sort": "0.0929",
+          "v": "10%",
+          "sort": "0.0959",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3030,15 +3030,15 @@
           "restricted": false
         },
         {
-          "v": "2.44x",
-          "sort": "2.4415",
+          "v": "2.41x",
+          "sort": "2.4117",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "9.64s",
-          "sort": "9.6402",
+          "v": "9.48s",
+          "sort": "9.4807",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -3131,15 +3131,15 @@
           "restricted": false
         },
         {
-          "v": "2.22x",
-          "sort": "2.2156",
+          "v": "2.21x",
+          "sort": "2.2139",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
           "v": "7.03s",
-          "sort": "7.0331",
+          "sort": "7.0275",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -3232,15 +3232,15 @@
           "restricted": false
         },
         {
-          "v": "0.72x",
-          "sort": "0.7193",
+          "v": "0.69x",
+          "sort": "0.6944",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "2.67s",
-          "sort": "2.6705",
+          "v": "2.58s",
+          "sort": "2.5778",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3320,7 +3320,7 @@
         },
         {
           "v": "11%",
-          "sort": "0.1092",
+          "sort": "0.1075",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3333,22 +3333,22 @@
           "restricted": false
         },
         {
-          "v": "0.48x",
-          "sort": "0.4842",
+          "v": "0.42x",
+          "sort": "0.4153",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "2.09s",
-          "sort": "2.0940",
+          "v": "1.24s",
+          "sort": "1.2382",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "0.48x, just behind q8-metal. Reachable only via an undocumented split-device call.",
-          "sort": "0.48x, just behind q8-metal. Reachable o",
+          "v": "0.42x, the fastest 2E configuration: all three clean passes come in below every q8-metal pass. Reachable only via an undocumented split-device call.",
+          "sort": "0.42x, the fastest 2E configuration: all",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3420,8 +3420,8 @@
           "restricted": false
         },
         {
-          "v": "12%",
-          "sort": "0.1174",
+          "v": "11%",
+          "sort": "0.1148",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3434,15 +3434,15 @@
           "restricted": false
         },
         {
-          "v": "1.17x",
-          "sort": "1.1734",
+          "v": "1.08x",
+          "sort": "1.0822",
           "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.99s",
-          "sort": "3.9852",
+          "v": "3.68s",
+          "sort": "3.6754",
           "tone": "",
           "align": "",
           "restricted": false
@@ -3535,15 +3535,15 @@
           "restricted": false
         },
         {
-          "v": "2.03x",
-          "sort": "2.0326",
-          "tone": "bad",
+          "v": "1.99x",
+          "sort": "1.9933",
+          "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "6.39s",
-          "sort": "6.3891",
+          "v": "6.27s",
+          "sort": "6.2657",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -3838,15 +3838,15 @@
           "restricted": false
         },
         {
-          "v": "1.51x",
-          "sort": "1.5114",
+          "v": "1.56x",
+          "sort": "1.5572",
           "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "5.02s",
-          "sort": "5.0156",
+          "v": "5.17s",
+          "sort": "5.1674",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -3939,15 +3939,15 @@
           "restricted": false
         },
         {
-          "v": "0.98x",
-          "sort": "0.9839",
+          "v": "0.97x",
+          "sort": "0.9667",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
-          "v": "4.01s",
-          "sort": "4.0101",
+          "v": "3.94s",
+          "sort": "3.9400",
           "tone": "",
           "align": "",
           "restricted": false
@@ -4128,7 +4128,7 @@
         },
         {
           "v": "16%",
-          "sort": "0.1593",
+          "sort": "0.1576",
           "tone": "",
           "align": "",
           "restricted": false
@@ -4141,15 +4141,15 @@
           "restricted": false
         },
         {
-          "v": "2.13x",
-          "sort": "2.1252",
+          "v": "2.21x",
+          "sort": "2.2138",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "7.53s",
-          "sort": "7.5334",
+          "v": "7.85s",
+          "sort": "7.8475",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -4229,7 +4229,7 @@
         },
         {
           "v": "17%",
-          "sort": "0.1657",
+          "sort": "0.1671",
           "tone": "",
           "align": "",
           "restricted": false
@@ -4242,15 +4242,15 @@
           "restricted": false
         },
         {
-          "v": "11.07x",
-          "sort": "11.0727",
+          "v": "10.87x",
+          "sort": "10.8693",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "34.78s",
-          "sort": "34.7792",
+          "v": "34.14s",
+          "sort": "34.1405",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -4343,15 +4343,15 @@
           "restricted": false
         },
         {
-          "v": "2.52x",
-          "sort": "2.5208",
+          "v": "2.45x",
+          "sort": "2.4536",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "11.97s",
-          "sort": "11.9702",
+          "v": "11.65s",
+          "sort": "11.6512",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -4431,7 +4431,7 @@
         },
         {
           "v": "19%",
-          "sort": "0.1894",
+          "sort": "0.1905",
           "tone": "",
           "align": "",
           "restricted": false
@@ -4444,15 +4444,15 @@
           "restricted": false
         },
         {
-          "v": "1.24x",
-          "sort": "1.2394",
+          "v": "1.18x",
+          "sort": "1.1793",
           "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "3.79s",
-          "sort": "3.7947",
+          "v": "3.61s",
+          "sort": "3.6105",
           "tone": "",
           "align": "",
           "restricted": false
@@ -4546,14 +4546,14 @@
         },
         {
           "v": "0.23x",
-          "sort": "0.2276",
+          "sort": "0.2272",
           "tone": "",
           "align": "",
           "restricted": false
         },
         {
           "v": "0.44s",
-          "sort": "0.4440",
+          "sort": "0.4433",
           "tone": "good",
           "align": "",
           "restricted": false
@@ -4733,8 +4733,8 @@
           "restricted": false
         },
         {
-          "v": "37%",
-          "sort": "0.3703",
+          "v": "38%",
+          "sort": "0.3791",
           "tone": "warn",
           "align": "",
           "restricted": false
@@ -4747,15 +4747,15 @@
           "restricted": false
         },
         {
-          "v": "1.25x",
-          "sort": "1.2478",
+          "v": "1.19x",
+          "sort": "1.1919",
           "tone": "warn",
           "align": "",
           "restricted": false
         },
         {
-          "v": "5.27s",
-          "sort": "5.2688",
+          "v": "5.03s",
+          "sort": "5.0328",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -4834,8 +4834,8 @@
           "restricted": false
         },
         {
-          "v": "55%",
-          "sort": "0.5539",
+          "v": "50%",
+          "sort": "0.4968",
           "tone": "bad",
           "align": "",
           "restricted": false
@@ -4848,15 +4848,15 @@
           "restricted": false
         },
         {
-          "v": "4.28x",
-          "sort": "4.2773",
+          "v": "4.34x",
+          "sort": "4.3414",
           "tone": "bad",
           "align": "",
           "restricted": false
         },
         {
-          "v": "17.86s",
-          "sort": "17.8594",
+          "v": "18.77s",
+          "sort": "18.7693",
           "tone": "bad",
           "align": "",
           "restricted": false

@@ -21,12 +21,12 @@ const RUN = '2026-08';
  * reader can complete and the server is then obliged to reject.
  */
 const CONFIGS = [
-  'supertonic', 'piper', 'indextts', 'chatterbox-turbo', 'kittentts-micro',
-  'kittentts-nano-int8', 'qwen3-tts-vd', 'kittentts-mini', 'fish-s2-pro',
-  'dots-tts', 'qwen3-tts', 'kittentts-nano', 'pocket-tts', 'chatterbox',
-  'f5-tts', 'dots-tts-mf', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16',
-  'dots-soar-acpp', 'magpie-f32', 'kokoro', 'magpie-q8_0', 'magpie-q4_k',
-  'orpheus-q8', 'voxcpm2-tts', 'xtts', 'orpheus-q4', 'nt-2e-q8-metal',
+  'supertonic', 'piper', 'indextts', 'kittentts-micro', 'chatterbox-turbo',
+  'fish-s2-pro', 'kittentts-nano-int8', 'qwen3-tts-vd', 'kittentts-mini',
+  'dots-tts', 'qwen3-tts', 'pocket-tts', 'nt-2e-q8-metal', 'kittentts-nano',
+  'f5-tts', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16', 'dots-tts-mf',
+  'dots-soar-acpp', 'kokoro', 'magpie-f32', 'magpie-q4_k', 'magpie-q8_0',
+  'chatterbox', 'orpheus-q4', 'orpheus-q8', 'voxcpm2-tts', 'xtts',
   'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
   'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
   'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm', 'tada-1b',

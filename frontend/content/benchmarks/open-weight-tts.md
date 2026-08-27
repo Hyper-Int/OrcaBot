@@ -72,23 +72,22 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the nineteen
+**Nothing is filtered out.** Every configuration compared is listed, including the seventeen
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
-above the table hides anything above 2.05x for readers who only care about what can be
-spoken live, and sorting by RTF or compute per phrase draws a line at the cutoff so the two
-groups are visible at once. The rule is drawn only where the two orderings agree on which
-side each engine falls; where they interleave it is left out rather than drawn at every
-crossing.
+above the table hides anything above 2x for readers who only care about what can be
+spoken live, and sorting by RTF draws a line at the cutoff so the two groups are visible at
+once. Sorting by compute per phrase does not draw it, because real-time factor is compute
+per second of *audio* and engines differ in how long they speak: Magpie's full-precision
+build and Chatterbox both sit on the wrong side of their neighbours, so the two orderings
+interleave and there is no single place to put a line.
 
-The line falls at 2.05x rather than a round 2x, and the two hundredths are the whole reason.
-Magpie ships six quantisations of one checkpoint, and three engines land inside that gap:
-Magpie q4_k at 2.01x, q6_k at 2.02x and Chatterbox Q4 at 2.03x. Drawn at 2x, those three
-split from measurements the table itself reports as indistinguishable, and they split in a
-different order depending on whether you sort by compute per phrase or per second of audio,
-because the Magpie builds differ in how long they speak. Drawn at 2.05x the boundary is a
-place again: Chatterbox Q4 at 2.03x is the slowest that keeps up, Tada 3B at 2.13x the
-fastest that does not, and nothing sits inside a tenth of the line.
+The line falls at 2x, and nothing sits awkwardly against it: Chatterbox Q4 at 1.99x is the
+slowest that keeps up, Tada 3B at 2.21x the fastest that does not. It briefly sat at 2.05x,
+because Magpie's quantisations landed at 2.01x and 2.02x and splitting a ladder this table
+reports as indistinguishable is not a distinction the data can carry. Measuring every
+autoregressive configuration over at least three passes moved them to between 1.53x and
+1.81x, so the round number is honest again.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.
@@ -101,12 +100,15 @@ scored on **trimmed** audio: scoring untrimmed rewards models that pad with sile
 to 0.78, because silence pulls the estimate toward the ceiling and only mediocre audio has
 room to rise.
 
-**Passes.** Autoregressive engines are averaged over two passes and feed-forward over one,
-except the six Magpie quantisations, which are averaged over three. Six builds of a single
-checkpoint differing only in precision need more samples than one run to say whether they
-differ at all -- and at three runs they still do not, spanning 6.5-7.4% mean word error
-while individual variants swing by up to 2.4% between runs. Differences under roughly two
-points are not resolvable at this sample size.
+**Passes.** Autoregressive engines are averaged over at least three passes, feed-forward
+engines over one. Sampling is what makes the difference: a deterministic forward pass gives
+the same audio every run, so a second one measures nothing, while an autoregressive model
+draws tokens and lands somewhere new each time. One run of those was not enough to separate
+six Magpie quantisations of a single checkpoint, and it was not enough to place them against
+the real-time line either; a few configurations that still moved between runs were given
+four passes or five. Chatterbox Turbo is the plainest illustration: one pass put it
+joint-best on word error at 4%, and three put it at 5%, behind three other engines.
+Differences under roughly two points are not resolvable at this sample size.
 
 ### Limitations
 
