@@ -537,6 +537,19 @@ const rtfOf = (r) => Number(r.cells[rtfCol].sort);
  *  otherwise. */
 const RTF_CUTOFF = 2;
 
+/** Where the same line falls when the table is sorted by compute per phrase.
+ *
+ *  The boundary rule is cut on whatever the reader is sorting by, so it needs a
+ *  limit in each measure. Cutting on real-time factor while sorting by per-phrase
+ *  compute is what left the two orderings interleaved and the rule undrawn: the
+ *  two disagree because RTF is compute per second of *audio* and engines differ
+ *  in how long they speak.
+ *
+ *  6.5s sits in a 0.76s gap, between Chatterbox Q4 at 6.27s and Q8 at 7.03s, and
+ *  classifies the table the same way 2x does but for a single row - Magpie's
+ *  full-precision build, quick per phrase at 3.79s and slow per second at 2.31x. */
+const SYNTH_CUTOFF = 6.5;
+
 const run = {
   benchmark: "open-weight-tts",
   run: runId,
@@ -546,6 +559,7 @@ const run = {
   // Kept as data rather than hardcoded in the component: it drives the
   // real-time filter, and where the line sits is an editorial choice.
   rtfCutoff: RTF_CUTOFF,
+  synthCutoff: SYNTH_CUTOFF,
   caption:
     "Sorted by compute per phrase, fastest first. Every configuration measured is listed, " +
     "including the ones far too slow to keep up with their own speech; the filter above hides " +

@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v10-slider-axis-colour
+// REVISION: tts-results-table-v11-boundary-per-sort
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -21,7 +21,7 @@ import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v10-slider-axis-colour";
+const MODULE_REVISION = "tts-results-table-v11-boundary-per-sort";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -40,6 +40,7 @@ const AUDIO_BASE = "/benchmarks/tts/";
 const RTF_COL = run.columns.indexOf("RTF");
 if (RTF_COL < 0) throw new Error(`[tts] no "RTF" column in run ${run.run}: have ${run.columns.join(", ")}`);
 const RTF_CUTOFF = run.rtfCutoff;
+const SYNTH_CUTOFF = run.synthCutoff;
 const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
 
 const RSS_COL = run.columns.indexOf("RSS");
@@ -116,14 +117,31 @@ const LICENCE_COL = COLUMNS.indexOf("Licence");
  *  of a column that is otherwise four characters wide. */
 const LICENCE_MAX = 92;
 
-/** RTF index in the *rendered* columns, which is one further along than in the
- *  run data because Human is spliced in ahead of it. Reading the un-spliced
- *  index here would test the wrong column entirely. */
-const RTF_COL_RENDERED = COLUMNS.indexOf("RTF");
 /** The two orderings where "can it keep up" is the axis, and so the only two
  *  where a line drawn at the cutoff means anything. Under any other sort the
  *  fast and slow engines interleave and the boundary is not a place. */
-const BOUNDARY_SORTS = new Set(["RTF", "x\u0304 synth"]);
+/** How the real-time boundary is cut, per sort column.
+ *
+ *  The line is cut on whatever the reader is sorting by, which is what makes the
+ *  two groups contiguous: sorting by a measure and splitting on that same measure
+ *  can only cross once. Cutting on RTF while sorting by compute per phrase was
+ *  what left three crossings and no rule at all, because RTF is compute per
+ *  second of *audio* and engines differ in how long they speak.
+ *
+ *  The two limits classify the table identically but for one row, so the reader
+ *  is not shown a different population depending on which header they clicked. */
+const BOUNDARY_BY_SORT: Record<string, { col: number; limit: number; over: string }> = {
+  RTF: {
+    col: COLUMNS.indexOf("RTF"),
+    limit: RTF_CUTOFF,
+    over: `slower than real time, over ${RTF_CUTOFF}\u00d7`,
+  },
+  "x\u0304 synth": {
+    col: COLUMNS.indexOf("x\u0304 synth"),
+    limit: SYNTH_CUTOFF,
+    over: `over ${SYNTH_CUTOFF}s of compute a phrase`,
+  },
+};
 
 /** Opening sort: compute per phrase, cheapest first. Word error was the old
  *  default, but it saturates once speech is intelligible and two engines have no
@@ -360,9 +378,9 @@ export function TtsResultsTable() {
    *  groups are contiguous and the line is a place; more than one means they
    *  interleave and there is no line to draw. */
   const boundaryIndex = React.useMemo(() => {
-    if (realtimeOnly || !sort || !BOUNDARY_SORTS.has(COLUMNS[sort.col])) return null;
-    const keepsUp = (r: (typeof rows)[number]) =>
-      Number(r.cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
+    const b = sort ? BOUNDARY_BY_SORT[COLUMNS[sort.col]] : undefined;
+    if (realtimeOnly || !b) return null;
+    const keepsUp = (r: (typeof rows)[number]) => Number(r.cells[b.col].sort) <= b.limit;
     let only: number | null = null;
     for (let i = 0; i + 1 < rows.length; i++) {
       if (keepsUp(rows[i]) === keepsUp(rows[i + 1])) continue;
@@ -376,15 +394,15 @@ export function TtsResultsTable() {
     if (boundaryIndex === null || i !== boundaryIndex) return null;
     const next = rows[i + 1];
     if (!next) return null;
-    const here = Number(rows[i].cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
+    const b = sort ? BOUNDARY_BY_SORT[COLUMNS[sort.col]] : undefined;
+    if (!b) return null;
+    const here = Number(rows[i].cells[b.col].sort) <= b.limit;
     // Which side is which depends on the sort direction, so say it rather than
     // leaving the reader to infer it from a bare line.
     // The subject stays put and the direction flips. Naming whichever group
     // happens to be underneath instead means the sentence changes meaning as
     // well as direction, and the reader has to re-read it after every sort.
-    return here
-      ? `below: slower than real time, over ${RTF_CUTOFF}\u00d7`
-      : `above: slower than real time, over ${RTF_CUTOFF}\u00d7`;
+    return `${here ? "below" : "above"}: ${b.over}`;
   };
 
   const th: React.CSSProperties = {

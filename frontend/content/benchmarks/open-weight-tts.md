@@ -76,14 +76,16 @@ face value.
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
 above the table hides anything above 2x for readers who only care about what can be
-spoken live, and sorting by RTF draws a line at the cutoff so the two groups are visible at
-once. Sorting by compute per phrase does not draw it, because real-time factor is compute
-per second of *audio* and engines differ in how long they speak: Magpie's full-precision
-build and Chatterbox both sit on the wrong side of their neighbours, so the two orderings
-interleave and there is no single place to put a line.
+spoken live, and sorting by either speed column draws a line at the cutoff so the two groups
+are visible at once. The line is cut on whichever column you sorted by, because the two do
+not agree: real-time factor is compute per second of *audio* and engines differ in how long
+they speak, so cutting one while sorting by the other leaves the groups interleaved and the
+line with nowhere honest to go.
 
-The line falls at 2x, and nothing sits awkwardly against it: Chatterbox Q4 at 1.99x is the
-slowest that keeps up, Tada 3B at 2.21x the fastest that does not. It briefly sat at 2.05x,
+The line falls at 2x real time, or 6.5 seconds of compute a phrase, and neither has anything
+sitting awkwardly against it: 1.99x against 2.21x on one, and 6.27s against 7.03s on the
+other. The two agree about every configuration but one, Magpie's full-precision build, which
+is quick per phrase at 3.79s and slow per second of audio at 2.31x. It briefly sat at 2.05x,
 because Magpie's quantisations landed at 2.01x and 2.02x and splitting a ladder this table
 reports as indistinguishable is not a distinction the data can carry. Measuring every
 autoregressive configuration over at least three passes moved them to between 1.53x and
