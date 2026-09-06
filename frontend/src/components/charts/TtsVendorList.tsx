@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v11-three-rows
+// REVISION: tts-vendor-list-v12-shared-vendors
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -13,59 +13,20 @@
 // seamless loop - so there is no hidden copy to keep out of the accessibility
 // tree, and no motion to suppress for readers who have asked for less of it.
 //
-// The logos are each organisation's own avatar, taken from their GitHub
-// organisation page. That is deliberate over pulling logo files off marketing
-// sites: it is one consistent source, it is the image the organisation itself
-// publishes to identify its account, and it stays a fair, factual reference to
-// whose model is being measured. It implies no endorsement; these are the
-// authors of the models tested, not partners.
+// Where the logos come from, and why, is documented in ttsVendors.
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v11-three-rows";
+import { ICON_BASE, VENDORS } from "./ttsVendors";
+
+const MODULE_REVISION = "tts-vendor-list-v12-shared-vendors";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
 
-interface Vendor { name: string; icon: string; url: string }
-
-/** Alphabetical, sorted at load rather than by hand so a new entry cannot be
- *  dropped in the wrong place. localeCompare so case does not split the list -
- *  "dots.tts" and "hexgrad" belong among the capitalised names, not after them. */
-const VENDORS: Vendor[] = [
-  { name: "Resemble AI", icon: "resemble-ai.png", url: "https://github.com/resemble-ai/chatterbox" },
-  { name: "Neuphonic", icon: "neuphonic.png", url: "https://huggingface.co/neuphonic/neutts-2e" },
-  { name: "Microsoft", icon: "microsoft.png", url: "https://github.com/microsoft/VibeVoice" },
-  { name: "Qwen", icon: "QwenLM.png", url: "https://github.com/QwenLM/Qwen3-TTS" },
-  { name: "Hume AI", icon: "HumeAI.png", url: "https://huggingface.co/HumeAI/tada-3b-ml" },
-  { name: "k2-fsa", icon: "k2-fsa.png", url: "https://github.com/k2-fsa/OmniVoice" },
-  { name: "Rhasspy", icon: "rhasspy.png", url: "https://github.com/rhasspy/piper" },
-  { name: "hexgrad", icon: "hexgrad.png", url: "https://huggingface.co/hexgrad/Kokoro-82M" },
-  { name: "Suno", icon: "suno-ai.jpg", url: "https://github.com/suno-ai/bark" },
-  { name: "Meta", icon: "facebookresearch.png", url: "https://huggingface.co/facebook/mms-tts" },
-  { name: "Banaxi-Tech", icon: "Banaxi-Tech.png", url: "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2" },
-  { name: "Coqui", icon: "coqui-ai.png", url: "https://huggingface.co/coqui/XTTS-v2" },
-  { name: "MyShell", icon: "myshell-ai.png", url: "https://github.com/myshell-ai/MeloTTS" },
-  { name: "KittenML", icon: "KittenML.png", url: "https://github.com/KittenML/KittenTTS" },
-  { name: "Sesame", icon: "SesameAILabs.png", url: "https://github.com/SesameAILabs/csm" },
-  { name: "Zyphra", icon: "Zyphra.png", url: "https://github.com/Zyphra/Zonos" },
-  { name: "NVIDIA", icon: "NVIDIA.png", url: "https://github.com/NVIDIA-NeMo/Speech" },
-  { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/studio-dots-ai/dots.tts" },
-  { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
-  { name: "Supertone", icon: "supertone-inc.png", url: "https://github.com/supertone-inc/supertonic" },
-  { name: "Canopy Labs", icon: "canopyai.png", url: "https://github.com/canopyai/Orpheus-TTS" },
-  { name: "Kyutai", icon: "kyutai-labs.png", url: "https://github.com/kyutai-labs/pocket-tts" },
-  { name: "OpenBMB", icon: "OpenBMB.png", url: "https://github.com/OpenBMB/VoxCPM" },
-  { name: "IndexTeam", icon: "index-tts.png", url: "https://github.com/index-tts/index-tts" },
-  { name: "Fish Audio", icon: "fishaudio.png", url: "https://github.com/fishaudio/fish-speech" },
-  { name: "nineninesix", icon: "nineninesix-ai.png", url: "https://github.com/nineninesix-ai/kani-tts" },
-  // StyleTTS2 is one author rather than an organisation, and was missing from
-  // this list long before the three above it - the chips were never checked
-  // against the table's own rows until now.
-  { name: "yl4579", icon: "yl4579.png", url: "https://github.com/yl4579/StyleTTS2" },
-].sort((a, b) => a.name.localeCompare(b.name, "en"));
-
-const ICON_BASE = "/icons/tts/";
+// The list and the logos now live in ttsVendors, shared with the results
+// table's logo column so one vendor cannot be added to the chips and missed in
+// the rows.
 
 // Selectors are deliberately over-specific. This renders inside .legal-content,
 // whose "a" rule paints every link accent blue and underlines it, and whose

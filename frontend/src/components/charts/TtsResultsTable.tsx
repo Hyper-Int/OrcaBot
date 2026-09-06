@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v11-boundary-per-sort
+// REVISION: tts-results-table-v12-vendor-logos
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -15,13 +15,15 @@
 // server-side with Bradley-Terry. It is live, so it changes under the reader.
 
 import * as React from "react";
+
+import { ICON_BASE, vendorForUrl } from "./ttsVendors";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
 import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
 import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v11-boundary-per-sort";
+const MODULE_REVISION = "tts-results-table-v12-vendor-logos";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -62,10 +64,39 @@ const RSS_STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192,
 const fmtMB = (mb: number) =>
   mb === Infinity ? "any" : mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`;
 
-/** The Human column is spliced in here, right after the engine name, so the
- *  live number is visible without scrolling the table sideways. */
-const HUMAN_COL = 1;
-const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
+/** The logo column's key. Empty on purpose - it is the column's visible title,
+ *  and there is none - but it still has to be unique among COLUMNS, because the
+ *  headers are keyed by it and every lookup in this file is COLUMNS.indexOf. */
+const LOGO_HEAD = "​";
+
+/** Headers that are not plain text. The mean of a time is written the way the
+ *  rest of the page writes it, with the variable italic. */
+const HEADER_LABEL: Record<string, React.ReactNode> = {
+  "x̄ t": (
+    <>
+      x&#772; <i>t</i>
+    </>
+  ),
+};
+
+/** Two columns are spliced in client-side, both right after the engine name.
+ *
+ *  The logo says whose model a row is without spending a column on the name -
+ *  that information was previously only in the chip row above the table, which
+ *  does not tell you which chip goes with which row. It carries no data, so it
+ *  has no title and does not sort; the name is on the image for anyone who
+ *  cannot see it.
+ *
+ *  Human sits next to it so the live number is visible without scrolling the
+ *  table sideways. */
+/** Headers that do not sort: Notes is an icon, and the logo carries no value
+ *  to order by. Both keep a plain <th> with no button, so there is nothing to
+ *  tab onto that does nothing when activated. */
+const inertHeader = (i: number) => i === NOTES_COL || i === LOGO_COL;
+
+const LOGO_COL = 1;
+const HUMAN_COL = 2;
+const COLUMNS: string[] = [run.columns[0], LOGO_HEAD, "Human", ...run.columns.slice(1)];
 
 /** Notes became an icon: as text it was the widest column in the table and the
  *  only one that wrapped, which set the height of every row for a sentence most
@@ -117,6 +148,13 @@ const LICENCE_COL = COLUMNS.indexOf("Licence");
  *  of a column that is otherwise four characters wide. */
 const LICENCE_MAX = 92;
 
+/** Visually hidden but read aloud - the logo column has no visible title and a
+ *  bare <th> would leave its cells unlabelled in a screen reader's table mode. */
+const SR_ONLY: React.CSSProperties = {
+  position: "absolute", width: 1, height: 1, padding: 0, margin: -1,
+  overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+};
+
 /** The two orderings where "can it keep up" is the axis, and so the only two
  *  where a line drawn at the cutoff means anything. Under any other sort the
  *  fast and slow engines interleave and the boundary is not a place. */
@@ -136,8 +174,8 @@ const BOUNDARY_BY_SORT: Record<string, { col: number; limit: number; over: strin
     limit: RTF_CUTOFF,
     over: `slower than real time, over ${RTF_CUTOFF}\u00d7`,
   },
-  "x\u0304 synth": {
-    col: COLUMNS.indexOf("x\u0304 synth"),
+  "x\u0304 t": {
+    col: COLUMNS.indexOf("x\u0304 t"),
     limit: SYNTH_CUTOFF,
     over: `over ${SYNTH_CUTOFF}s of compute a phrase`,
   },
@@ -147,7 +185,7 @@ const BOUNDARY_BY_SORT: Record<string, { col: number; limit: number; over: strin
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
  *  Cost per phrase is the axis every reader is actually shopping on. */
-const DEFAULT_SORT = { col: COLUMNS.indexOf("x̄ synth"), dir: "asc" as const };
+const DEFAULT_SORT = { col: COLUMNS.indexOf("x̄ t"), dir: "asc" as const };
 
 /** The table's natural width, with Notes an icon, Avg audio gone and the cell
  *  padding trimmed. Past this the columns just stretch, so the breakout stops
@@ -263,7 +301,15 @@ export function TtsResultsTable() {
           // twenty either way is a precision the ballots cannot support, and a
           // decimal reads as one. Sorting still uses the full value.
           : { v: String(Math.round(rating)), sort: String(rating), tone: "", align: "" };
-      return { ...r, cells: [r.cells[0], human, ...r.cells.slice(1)] };
+      // The logo is derived from the row's own model link, so it cannot point
+      // at a different vendor than the name does. sort is the vendor name,
+      // which is unused today - the column does not sort - but keeps the cell
+      // the same shape as every other one.
+      const vendor = vendorForUrl(r.cells[0].href);
+      const logo: Cell = {
+        v: vendor?.icon ?? "", sort: vendor?.name ?? "", tone: "", align: "left",
+      };
+      return { ...r, cells: [r.cells[0], logo, human, ...r.cells.slice(1)] };
     });
     if (!sort) return withHuman;
     return [...withHuman].sort((a, b) => {
@@ -579,24 +625,26 @@ export function TtsResultsTable() {
                     <th key={c} style={th} aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
                       <button
                         type="button"
-                        onClick={() => (i === NOTES_COL ? undefined : onHeader(i))}
-                        disabled={i === NOTES_COL}
+                        onClick={() => (inertHeader(i) ? undefined : onHeader(i))}
+                        disabled={inertHeader(i)}
                         title={
-                          i === NOTES_COL
-                            ? "Hover or tap a row's note icon"
-                            : i === HUMAN_COL
-                              ? humanHelp
-                              : "Sort by this column"
+                          i === LOGO_COL
+                            ? "Who published the model"
+                            : i === NOTES_COL
+                              ? "Hover or tap a row's note icon"
+                              : i === HUMAN_COL
+                                ? humanHelp
+                                : "Sort by this column"
                         }
                         style={{
                           font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
                           border: "none", padding: "0.5rem 0.45rem", width: "100%", textAlign: i === 0 ? "left" : "right",
-                          cursor: i === NOTES_COL ? "default" : "pointer",
+                          cursor: inertHeader(i) ? "default" : "pointer",
                           fontWeight: 600, whiteSpace: "nowrap",
                         }}
                       >
-                        {c}
-                        {i !== NOTES_COL && (
+                        {i === LOGO_COL ? <span style={SR_ONLY}>Vendor</span> : HEADER_LABEL[c] ?? c}
+                        {!inertHeader(i) && (
                           <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
                             {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
                           </span>
@@ -619,7 +667,9 @@ export function TtsResultsTable() {
                         style={{
                           padding: "0.35rem 0.45rem",
                           textAlign:
-                            ci === NOTES_COL ? "center" : ci === 0 || c.align === "left" ? "left" : "right",
+                            ci === NOTES_COL || ci === LOGO_COL
+                              ? "center"
+                              : ci === 0 || c.align === "left" ? "left" : "right",
                           color:
                             ci === HUMAN_COL
                               ? c.sort ? INK.primary : INK.muted
@@ -628,7 +678,21 @@ export function TtsResultsTable() {
                           fontWeight: ci === HUMAN_COL && c.sort ? 600 : undefined,
                         }}
                       >
-                        {ci === NOTES_COL ? (
+                        {ci === LOGO_COL ? (
+                          c.v ? (
+                            <img
+                              src={ICON_BASE + c.v}
+                              alt={c.sort}
+                              title={c.sort}
+                              width={16}
+                              height={16}
+                              style={{
+                                width: 16, height: 16, margin: 0, display: "block",
+                                objectFit: "contain", borderRadius: 3,
+                              }}
+                            />
+                          ) : null
+                        ) : ci === NOTES_COL ? (
                           c.v.trim() ? (
                             <button
                               type="button"

@@ -45,7 +45,7 @@ face value.
 
 - **RTF** is compute seconds per second of audio, the conventional measure. It **flatters
   any engine that emits excess silence**, because padding inflates the denominator. Prefer
-  **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
+  **x̄ _t_**, the mean compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
   `medium.en` was run too, but it did not finish for thirty-four of the forty-nine
@@ -88,9 +88,9 @@ against Chatterbox Q8 at 7.03s — and 0.17s is well inside what three passes ca
 read those two as sharing a position rather than falling either side of a line. Each number
 is picked so the two measures classify the table the same way: they now agree about every
 configuration but one, Magpie's full-precision build, which is quick per phrase at 3.79s and
-slow per second of audio at 2.31x. It briefly sat at 2.05x,
-because Magpie's quantisations landed at 2.01x and 2.02x and splitting a ladder this table
-reports as indistinguishable is not a distinction the data can carry. Measuring every
+slow per second of audio at 2.31x. It briefly sat at 2.05x, because Magpie's quantisations
+landed at 2.01x and 2.02x and splitting a ladder this table reports as indistinguishable is
+not a distinction the data can carry. Measuring every
 autoregressive configuration over at least three passes moved them to between 1.53x and
 1.81x, so the round number is honest again.
 

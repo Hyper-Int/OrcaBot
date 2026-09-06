@@ -92,7 +92,7 @@ const points = run.rows
     config: r.config,
     name: r.display,
     cls: r.cells[col("Class")].sort,
-    synth: Number(r.cells[col("x̄ synth")].sort),
+    synth: Number(r.cells[col("x̄ t")].sort),
     disk: Number(r.cells[col("Disk")].sort),
     rating: ratings.get(r.config),
   }))

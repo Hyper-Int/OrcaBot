@@ -98,9 +98,12 @@ const RENAME_COLUMNS = {
   // "Peak" is the only kind of RSS reported here, so it says nothing the column
   // does not already imply.
   "Peak RSS": "RSS",
-  // x-bar: it is a mean, and "Avg" spent five characters saying so in a column
-  // whose values are four wide.
-  "Avg synth": "x\u0304 synth",
+  // x-bar t: a mean of a time. "Avg synth" spent ten characters on a column whose
+  // values are four wide, and "synth" named the operation rather than the
+  // quantity - what is being reported is seconds, and the header now says so in
+  // the notation the rest of the page already uses for a mean. The table renders
+  // the t italic, as a variable.
+  "Avg synth": "x\u0304 t",
 };
 
 /** Where each project states its own licence: its LICENSE file, or the model

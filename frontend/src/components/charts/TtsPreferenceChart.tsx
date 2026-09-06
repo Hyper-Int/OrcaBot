@@ -23,7 +23,7 @@
 // measured, and asserting the finding before the data is in would be inventing
 // it. Sharpen the title once the shape is known.
 //
-// x is Avg synth (compute per phrase), NOT the conventional RTF. RTF is compute
+// x is x̄ t (mean compute per phrase), NOT the conventional RTF. RTF is compute
 // per second of *audio*, so it flatters any engine that pads with silence.
 // Every engine here speaks the same 84 phrases, so per-phrase compute compares
 // directly and cannot be gamed.
@@ -85,7 +85,7 @@ const ENGINES: Engine[] = (
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: Number(r.cells[col("x̄ synth")].sort),
+    synth: Number(r.cells[col("x̄ t")].sort),
     disk: Number(r.cells[col("Disk")].sort),
     rtf: Number(r.cells[col("RTF")].sort),
   };
