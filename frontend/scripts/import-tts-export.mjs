@@ -552,10 +552,19 @@ const RTF_CUTOFF = 2;
  *  two disagree because RTF is compute per second of *audio* and engines differ
  *  in how long they speak.
  *
- *  6.5s sits in a 0.76s gap, between Chatterbox Q4 at 6.27s and Q8 at 7.03s, and
- *  classifies the table the same way 2x does but for a single row - Magpie's
- *  full-precision build, quick per phrase at 3.79s and slow per second at 2.31x. */
-const SYNTH_CUTOFF = 6.5;
+ *  7s classifies the table the same way 2x does but for a single row - Magpie's
+ *  full-precision build, quick per phrase at 3.79s and slow per second at 2.31x.
+ *  That agreement is what the number is chosen for, and it is why 7 is preferred
+ *  to 6.5: at 6.5 Kani also disagreed, fast per second of audio at 1.50x and slow
+ *  per phrase at 6.86s, so the two measures split over two rows instead of one.
+ *
+ *  The cost is a tight boundary. 7s sits in a 0.17s gap, between Kani at 6.86s
+ *  and Chatterbox Q8 at 7.03s, where 6.5s had 0.59s of clear air. That pair is
+ *  closer than three passes resolve, so the line runs between two rows this
+ *  benchmark cannot actually order - stated plainly in the methodology rather
+ *  than presented as a clean split. 7.5 is not a way out: it pulls Q8 inside at
+ *  2.21x and buys a fresh disagreement for the one it removes. */
+const SYNTH_CUTOFF = 7;
 
 const run = {
   benchmark: "open-weight-tts",

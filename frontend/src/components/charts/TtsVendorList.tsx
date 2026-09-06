@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v10-kani
+// REVISION: tts-vendor-list-v11-three-rows
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v10-kani";
+const MODULE_REVISION = "tts-vendor-list-v11-three-rows";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -84,12 +84,14 @@ const CSS = `
      to hold twenty-one chips at 11 + 10. Twenty-five will not fit two rows at any
      readable size - the only sizing that managed it was 0.70rem with 5px padding,
      which shrinks every chip to tidy one row's wrapping.
-     So the constraint is dropped and the space used instead: at this size the
-     twenty-five wrap 8 + 9 + 8 with 167px spare on the last row, where the
-     trimmed size left 11 + 11 + 3 and 840px of it empty. Going further tips to
-     four rows at 0.88rem. Measured in-page rather than guessed; note the width
-     lives in the labels, so shrinking the logos buys no row at all. */
-  padding: 9px 14px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
+     So the constraint is dropped and the space used instead: twenty-seven wrap
+     9 + 9 + 9 with 82px spare on the last row. The horizontal padding is 13px
+     rather than 14 for exactly that reason - at 14 the set spilled 8 + 9 + 9 + 1,
+     stranding one chip alone on a fourth row, and one pixel either side of each
+     chip is the whole difference. The label carries the width, so the font is
+     untouched at 0.85rem and shrinking the logos would buy no row at all.
+     Measured in-page rather than guessed; re-measure when a vendor is added. */
+  padding: 9px 13px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
   font-size: 0.85rem; font-weight: 500; line-height: 1;
   color: var(--foreground, #e8edf5);
   text-decoration: none; white-space: nowrap; background: var(--background-elevated, #0d1526);

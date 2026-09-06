@@ -82,14 +82,13 @@ not agree: real-time factor is compute per second of *audio* and engines differ 
 they speak, so cutting one while sorting by the other leaves the groups interleaved and the
 line with nowhere honest to go.
 
-The line falls at 2x real time, or 6.5 seconds of compute a phrase, and neither has anything
-sitting awkwardly against it: 1.99x against 2.21x on one, and 6.27s against 6.86s on the
-other. The two agree about every configuration but two, and those two disagree in opposite
-directions: Magpie's full-precision build is quick per phrase at 3.79s and slow per second
-of audio at 2.31x, while Kani is the reverse, fast per second of audio at 1.50x and slow per
-phrase at 6.86s. That is the argument for cutting on the column you sorted by in one line —
-there is no single ordering that puts both of them on the right side of a single cut. Magpie
-briefly sat at 2.05x,
+The line falls at 2x real time, or 7 seconds of compute a phrase. Nothing sits awkwardly
+against the real-time line: 1.99x against 2.21x. The compute line is tighter — Kani at 6.86s
+against Chatterbox Q8 at 7.03s — and 0.17s is well inside what three passes can resolve, so
+read those two as sharing a position rather than falling either side of a line. Each number
+is picked so the two measures classify the table the same way: they now agree about every
+configuration but one, Magpie's full-precision build, which is quick per phrase at 3.79s and
+slow per second of audio at 2.31x. It briefly sat at 2.05x,
 because Magpie's quantisations landed at 2.01x and 2.02x and splitting a ladder this table
 reports as indistinguishable is not a distinction the data can carry. Measuring every
 autoregressive configuration over at least three passes moved them to between 1.53x and

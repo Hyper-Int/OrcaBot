@@ -5,7 +5,7 @@
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
-  "synthCutoff": 6.5,
+  "synthCutoff": 7,
   "caption": "Sorted by compute per phrase, fastest first. Every configuration measured is listed, including the ones far too slow to keep up with their own speech; the filter above hides anything above 2x real time.",
   "columns": [
     "Sample · Configuration",
