@@ -1,7 +1,7 @@
 {
   "benchmark": "open-weight-tts",
   "run": "2026-08",
-  "label": "2026-08-27",
+  "label": "2026-09-03",
   "machine": "Apple M2, macOS",
   "corpus": "84 phrases",
   "rtfCutoff": 2,
@@ -3047,6 +3047,107 @@
         {
           "v": "A dead heat with CPU: the path PR #123 targeted has nothing to win.",
           "sort": "A dead heat with CPU: the path PR #123 t",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        }
+      ]
+    },
+    {
+      "config": "kani-tts",
+      "display": "Kani TTS",
+      "group": "",
+      "sample": "kani-tts.mp3?v=1342e793",
+      "cells": [
+        {
+          "v": "Kani TTS",
+          "sort": "kani-tts",
+          "tone": "",
+          "align": "left",
+          "restricted": false,
+          "href": "https://github.com/nineninesix-ai/kani-tts"
+        },
+        {
+          "v": "ar-lm",
+          "sort": "ar-lm",
+          "tone": "",
+          "align": "left",
+          "restricted": false
+        },
+        {
+          "v": "LFM1.0, <$10M",
+          "sort": "LFM1.0, under $10M",
+          "tone": "",
+          "align": "left",
+          "restricted": true,
+          "href": "https://huggingface.co/nineninesix/kani-tts-370m"
+        },
+        {
+          "v": "370M",
+          "sort": "370.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2026-08",
+          "sort": "202608",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "745 MB",
+          "sort": "745.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "745 MB",
+          "sort": "745.0",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "2.8 GB",
+          "sort": "2867.2",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "10%",
+          "sort": "0.1002",
+          "tone": "",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "3.86",
+          "sort": "3.86",
+          "tone": "good",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "1.50x",
+          "sort": "1.4965",
+          "tone": "warn",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "6.86s",
+          "sort": "6.8576",
+          "tone": "bad",
+          "align": "",
+          "restricted": false
+        },
+        {
+          "v": "LFM2 backbone over NVIDIA's NeMo nano codec, 15 baked speakers. PESQ 3.86 against 10% WER - it sounds better than it transcribes, though zonos and melotts split wider still. Across three passes its mean WER moved 11.4%, 9.9%, 8.8%, so a single run would have placed it four rows lower. Runs on CPU because the published package never received the MPS fix its own examples carry; MPS measures about 8% slower anyway at this size, and fails about one generation in six.",
+          "sort": "LFM2 backbone over NVIDIA's NeMo nano co",
           "tone": "",
           "align": "",
           "restricted": false

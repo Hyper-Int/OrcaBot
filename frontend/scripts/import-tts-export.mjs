@@ -157,6 +157,7 @@ const LICENCE_PROOF_URLS = {
   "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "orpheus-q8": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
   "indextts": "https://huggingface.co/IndexTeam/Index-TTS",
+  "kani-tts": "https://huggingface.co/nineninesix/kani-tts-370m",
   "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
   "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
   "dots-soar-acpp": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
@@ -224,6 +225,7 @@ const MODEL_URLS = {
   "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
   "orpheus-q8": "https://github.com/canopyai/Orpheus-TTS",
   "indextts": "https://github.com/index-tts/index-tts",
+  "kani-tts": "https://github.com/nineninesix-ai/kani-tts",
   "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
   "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts",
   "dots-soar-acpp": "https://github.com/studio-dots-ai/dots.tts",
@@ -298,10 +300,14 @@ const CELL_OVERRIDES = {
 const REWRITE = {
   // "stoch-ff" was the widest value in a column of six-character codes.
   Class: (v) => (v === "stoch-ff" ? "st-ff" : v),
-  // Replacement is a function, not a string: "$5m" as a string literal is a
-  // capture-group reference to any future group 5 in that pattern, and would
-  // silently start substituting instead of printing.
-  Licence: (v) => v.replace(/under \$5M/i, () => "<$5M"),
+  // Any "under $NM", not just the NeuTTS $5M this started as: kani-tts arrived
+  // under LFM1.0 with a $10M ceiling and would otherwise have rendered "under
+  // $10M" beside NeuTTS's "<$5M", two spellings of one idea in one column.
+  //
+  // Replacement is a function, not a string: "<$" followed by a digit reads as a
+  // capture-group reference in a string literal, so "$5M" would silently
+  // substitute group 5 instead of printing a dollar sign.
+  Licence: (v) => v.replace(/under \$(\d+)M/gi, (_, m) => `<$${m}M`),
 };
 
 /** Each vendor's own capitalisation. The export uses lowercase run ids; showing
@@ -339,6 +345,7 @@ const DISPLAY = {
   "orpheus-q4": "Orpheus 3B Q4",
   "orpheus-q8": "Orpheus 3B Q8",
   "indextts": "IndexTTS",
+  "kani-tts": "Kani TTS",
   "fish-s2-pro": "Fish Audio S2 Pro",
   "dots-tts-mf": "Dots-TTS MeanFlow",
   "dots-soar-acpp": "Dots-TTS SOAR q8",

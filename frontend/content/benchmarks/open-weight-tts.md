@@ -48,7 +48,7 @@ face value.
   **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for thirty-three of the forty-eight
+  `medium.en` was run too, but it did not finish for thirty-four of the forty-nine
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
   more than bad ones, so the true spread between engines is **wider** than this column
@@ -83,9 +83,13 @@ they speak, so cutting one while sorting by the other leaves the groups interlea
 line with nowhere honest to go.
 
 The line falls at 2x real time, or 6.5 seconds of compute a phrase, and neither has anything
-sitting awkwardly against it: 1.99x against 2.21x on one, and 6.27s against 7.03s on the
-other. The two agree about every configuration but one, Magpie's full-precision build, which
-is quick per phrase at 3.79s and slow per second of audio at 2.31x. It briefly sat at 2.05x,
+sitting awkwardly against it: 1.99x against 2.21x on one, and 6.27s against 6.86s on the
+other. The two agree about every configuration but two, and those two disagree in opposite
+directions: Magpie's full-precision build is quick per phrase at 3.79s and slow per second
+of audio at 2.31x, while Kani is the reverse, fast per second of audio at 1.50x and slow per
+phrase at 6.86s. That is the argument for cutting on the column you sorted by in one line —
+there is no single ordering that puts both of them on the right side of a single cut. Magpie
+briefly sat at 2.05x,
 because Magpie's quantisations landed at 2.01x and 2.02x and splitting a ladder this table
 reports as indistinguishable is not a distinction the data can carry. Measuring every
 autoregressive configuration over at least three passes moved them to between 1.53x and

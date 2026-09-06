@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v9-fish-audio
+// REVISION: tts-vendor-list-v10-kani
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -22,7 +22,7 @@
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v9-fish-audio";
+const MODULE_REVISION = "tts-vendor-list-v10-kani";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -58,6 +58,7 @@ const VENDORS: Vendor[] = [
   { name: "OpenBMB", icon: "OpenBMB.png", url: "https://github.com/OpenBMB/VoxCPM" },
   { name: "IndexTeam", icon: "index-tts.png", url: "https://github.com/index-tts/index-tts" },
   { name: "Fish Audio", icon: "fishaudio.png", url: "https://github.com/fishaudio/fish-speech" },
+  { name: "nineninesix", icon: "nineninesix-ai.png", url: "https://github.com/nineninesix-ai/kani-tts" },
   // StyleTTS2 is one author rather than an organisation, and was missing from
   // this list long before the three above it - the chips were never checked
   // against the table's own rows until now.

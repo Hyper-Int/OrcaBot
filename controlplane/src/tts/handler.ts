@@ -27,10 +27,10 @@ const CONFIGS = [
   'f5-tts', 'magpie-q6_k', 'magpie-q5_k', 'magpie-f16', 'dots-tts-mf',
   'dots-soar-acpp', 'kokoro', 'magpie-f32', 'magpie-q4_k', 'magpie-q8_0',
   'chatterbox', 'orpheus-q4', 'orpheus-q8', 'voxcpm2-tts', 'xtts',
-  'nt-2e-fp32-mps', 'chatterbox-q8', 'vibevoice', 'nt-2e-q4-metal',
-  'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts', 'omnivoice',
-  'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm', 'tada-1b',
-  'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
+  'nt-2e-fp32-mps', 'kani-tts', 'chatterbox-q8', 'vibevoice',
+  'nt-2e-q4-metal', 'cosyvoice3-rl', 'chatterbox-q4', 'styletts2', 'melotts',
+  'omnivoice', 'cosyvoice3', 'bananamind-tts', 'tada-3b', 'zonos', 'csm',
+  'tada-1b', 'speecht5', 'mms-tts', 'vibevoice-1.5b', 'bark',
 ] as const;
 
 /**
