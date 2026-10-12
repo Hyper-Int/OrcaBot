@@ -108,6 +108,8 @@ Security invariants (non-negotiable):
 - Broker URLs include session ID: `/broker/{sessionID}/{provider}/...`
 - Approved domains keyed by `sessionID:secretName` — never just secret name
 - Empty `INTERNAL_API_TOKEN` = all PTY tokens rejected (fail-closed)
+- PTY + dashboard tokens are signed with `PTY_TOKEN_SECRET`, a control-plane-only secret — never `INTERNAL_API_TOKEN`, which every sandbox VM holds (root can read it from `/proc`). Without `PTY_TOKEN_SECRET` set the control plane falls back to `INTERNAL_API_TOKEN` and logs a SECURITY WARNING
+- Pool UIDs (2000-2099) are egress default-deny at the kernel: only loopback (incl. the 80/443 REDIRECT), established replies, DNS to resolv.conf nameservers, and `EGRESS_EXTRA_TCP_PORTS` (opt-in, e.g. `22`) are allowed
 - Localhost MCP/event endpoints require valid `X-MCP-Secret` (no fail-open)
 - Egress proxy fail-closed: 60s timeout = deny; proxy crash = connections fail
 - Localhost always bypasses egress proxy (NO_PROXY + server-side check)

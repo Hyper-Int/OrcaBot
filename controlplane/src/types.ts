@@ -29,6 +29,8 @@ export interface Env {
   /** Rate limiter for authenticated requests (200/min) */
   RATE_LIMITER_AUTH: RateLimiter;
   INTERNAL_API_TOKEN: string;
+  /** Control-plane-only HMAC key for PTY + dashboard tokens. Never sent to sandboxes. */
+  PTY_TOKEN_SECRET?: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
   /** Desktop per-boot token: when set, dev-auth is only honored for requests

@@ -38,7 +38,7 @@ import type {
   OutlookPolicy,
   OutlookCalendarPolicy,
 } from '../types';
-import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
+import { verifyPtyToken, tokenSigningSecret, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
 import { getAccessToken } from './token-refresh';
 import { filterResponse, type FilterResult } from './response-filter';
@@ -583,7 +583,7 @@ export async function handleGatewayExecute(
   }
 
   const ptyToken = authHeader.slice(7);
-  const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+  const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
 
   if (!claims) {
     return Response.json(
@@ -1219,7 +1219,7 @@ export async function handleListTerminalIntegrations(
   }
 
   const ptyToken = authHeader.slice(7);
-  const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+  const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
 
   if (!claims) {
     console.log(`[gateway] ListTerminalIntegrations: invalid/expired PTY token`);

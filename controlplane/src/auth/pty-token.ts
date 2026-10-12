@@ -20,6 +20,29 @@
  * - signature: HMAC-SHA256(header.payload, secret)
  */
 
+// REVISION: pty-token-v2-dedicated-signing-secret
+console.log(`[pty-token] REVISION: pty-token-v2-dedicated-signing-secret loaded at ${new Date().toISOString()}`);
+
+let warnedSigningFallback = false;
+
+/**
+ * Secret used to sign + verify PTY and dashboard tokens.
+ *
+ * SECURITY: this must be a control-plane-only secret. INTERNAL_API_TOKEN is
+ * shipped into every sandbox VM (where root can read it from /proc), so using it
+ * as the HMAC key lets any tenant mint tokens for any other tenant's terminals.
+ * Falls back to INTERNAL_API_TOKEN only so a deploy without PTY_TOKEN_SECRET set
+ * keeps working — set the secret to actually close the hole.
+ */
+export function tokenSigningSecret(env: { PTY_TOKEN_SECRET?: string; INTERNAL_API_TOKEN: string }): string {
+  if (env.PTY_TOKEN_SECRET) return env.PTY_TOKEN_SECRET;
+  if (!warnedSigningFallback) {
+    warnedSigningFallback = true;
+    console.error('[pty-token] SECURITY WARNING: PTY_TOKEN_SECRET is not set — signing PTY/dashboard tokens with INTERNAL_API_TOKEN, which sandbox VMs can read. Set PTY_TOKEN_SECRET.');
+  }
+  return env.INTERNAL_API_TOKEN;
+}
+
 export interface PtyTokenClaims {
   terminal_id: string;        // PTY ID - the primary binding for integration policies
   sandbox_id: string;         // Sandbox session ID
@@ -103,7 +126,7 @@ export async function createPtyToken(
   // An empty HMAC key still produces valid signatures, so anyone could forge
   // tokens if the signing secret is missing from the environment.
   if (!secret) {
-    throw new Error('E79850: Cannot create PTY token: signing secret (INTERNAL_API_TOKEN) is empty');
+    throw new Error('E79850: Cannot create PTY token: signing secret (PTY_TOKEN_SECRET / INTERNAL_API_TOKEN) is empty');
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -142,7 +165,7 @@ export async function verifyPtyToken(
   // SECURITY: Reject empty secrets. HMAC with empty key still produces valid
   // signatures, so an attacker could forge tokens if the secret is missing.
   if (!secret) {
-    console.error('[pty-token] CRITICAL: verifyPtyToken called with empty secret — rejecting all tokens. Check INTERNAL_API_TOKEN env var.');
+    console.error('[pty-token] CRITICAL: verifyPtyToken called with empty secret — rejecting all tokens. Check PTY_TOKEN_SECRET / INTERNAL_API_TOKEN env vars.');
     return null;
   }
 

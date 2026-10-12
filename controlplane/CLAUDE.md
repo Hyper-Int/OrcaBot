@@ -97,7 +97,7 @@ Fly.io (execution plane – separate repo)
 - Domain approval workflow for custom secrets
 - **Integration policy enforcement** (gateway execute, rate limits, audit)
 - **OAuth token lifecycle** (connect, refresh, encrypt at rest)
-- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth — **fail-closed**: empty `INTERNAL_API_TOKEN` rejects all tokens)
+- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth, signed with the control-plane-only `PTY_TOKEN_SECRET` via `tokenSigningSecret(env)` — never with `INTERNAL_API_TOKEN`, which sandboxes hold — **fail-closed**: an empty secret rejects all tokens)
 - **Personal access token (PAT) issuance** (CLI / scripted auth — only the SHA-256 hash is stored; **method-gated** so a PAT cannot mint/list/revoke other PATs)
 - **File proxy** (read/write/import a session workspace, proxied to the sandbox; write + import are owner-only)
 - **Response filtering** (policy-based filtering before LLM sees data)

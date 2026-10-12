@@ -286,6 +286,8 @@ Glob matching: `*.example.com` matches subdomains but NOT `example.com` itself.
 ### Feature Flag
 - `EGRESS_PROXY_ENABLED=true` env var: single gate — enables globally for all sessions
 - Without this, proxy runs but PTYs don't route through it (iptables rules not installed, UID pool not activated)
+- With it (and CAP_NET_ADMIN), pool UIDs are **default-deny** via the `ORCABOT_POOL_EGRESS` chain (`cmd/server/egress_linux.go`): loopback (incl. REDIRECTed 80/443), established replies, and DNS to resolv.conf nameservers pass; all other ports are rejected. `EGRESS_EXTRA_TCP_PORTS=22,...` opts specific raw TCP ports back in (each is an uninspected channel). If the chain can't be installed the pool doesn't activate
+- Integration test (mutates netns; run in a disposable container): `ORCABOT_IPTABLES_IT=1 go test -run TestPoolEgress ./cmd/server/` with `--cap-add NET_ADMIN` + iptables installed
 - Per-session opt-in (`egress_enabled`) has been removed; the env var is the only control
 
 ### Localhost Bypass

@@ -16,7 +16,7 @@ import type { Session, DashboardItem } from '../types';
 import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
-import { createPtyToken } from '../auth/pty-token';
+import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
 import { FlyMachinesClient, FlyMachineNotFoundError, FlyApiError } from '../sandbox/fly-machines';
@@ -519,7 +519,7 @@ async function ensureDashbоardSandbоxCreate(
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
-  const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
 
   if (flyProvisioningEnabled) {
     return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now, preferredRegion);
@@ -608,7 +608,7 @@ export async function preProvisionDashboardSandbox(
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
   const now = new Date().toISOString();
-  const mcpToken = await createDashboardToken(dashboardId, env.INTERNAL_API_TOKEN);
+  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
 
   const result = await claimWarmMachine(
     env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion,
@@ -1551,7 +1551,7 @@ async function createSessionImpl(
       sandboxSessionId,
       dashboardId,
       userId,
-      env.INTERNAL_API_TOKEN
+      tokenSigningSecret(env)
     );
 
     let pty: { id: string };
@@ -1616,7 +1616,7 @@ async function createSessionImpl(
         sandboxSessionId,
         dashboardId,
         userId,
-        env.INTERNAL_API_TOKEN
+        tokenSigningSecret(env)
       );
 
       // Retry PTY creation on fresh session — omit workingDir (fresh sandbox has empty workspace)

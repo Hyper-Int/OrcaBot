@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-delivery-v27-fix-retry-keepbuffered-condition
-const MODULE_REVISION = 'messaging-delivery-v27-fix-retry-keepbuffered-condition';
+// REVISION: messaging-delivery-v28-edge-dashboard-scope
+const MODULE_REVISION = 'messaging-delivery-v28-edge-dashboard-scope';
 console.log(`[messaging-delivery] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -25,7 +25,7 @@ import type { Env, MessagingPolicy } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 import { ensureDashbоardSandbоx } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
-import { createPtyToken } from '../auth/pty-token';
+import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { channelMatchesFilter } from './webhook-handler';
 import { formatItem } from '../dashboards/handler';
 
@@ -85,21 +85,21 @@ export async function deliverOrWakeAndDrain(
       ? env.DB.prepare(`
           SELECT DISTINCT de.target_item_id
           FROM dashboard_edges de
-          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-          WHERE de.source_item_id = ?
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
+          WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
         `).bind(messagingItemId).all<{ target_item_id: string }>()
       : env.DB.prepare(`
           SELECT DISTINCT de.target_item_id
           FROM dashboard_edges de
-          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
           JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-          WHERE de.source_item_id = ?
+          WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
         `).bind(provider, messagingItemId).all<{ target_item_id: string }>(),
     env.DB.prepare(`
       SELECT DISTINCT de.target_item_id, di.type
       FROM dashboard_edges de
-      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
-      WHERE de.source_item_id = ?
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type IN ('note', 'prompt')
+      WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
     `).bind(messagingItemId).all<{ target_item_id: string; type: string }>(),
   ]);
 
@@ -249,9 +249,9 @@ async function resolveTerminalPty(
   const activeSession = await env.DB.prepare(`
     SELECT id, pty_id, sandbox_session_id, sandbox_machine_id
     FROM sessions
-    WHERE item_id = ? AND status = 'active'
+    WHERE item_id = ? AND dashboard_id = ? AND status = 'active'
     ORDER BY created_at DESC LIMIT 1
-  `).bind(terminalItemId).first();
+  `).bind(terminalItemId, dashboardId).first();
 
   if (activeSession?.pty_id) {
     return {
@@ -269,7 +269,7 @@ async function resolveTerminalPty(
     sandboxSessionId,
     dashboardId,
     effectiveUserId,
-    env.INTERNAL_API_TOKEN,
+    tokenSigningSecret(env),
   );
 
   await sandbox.createPty(
@@ -365,10 +365,10 @@ async function checkPerTerminalPolicy(
   const terminalPolicies = await env.DB.prepare(`
     SELECT de.target_item_id AS terminal_item_id, ip.policy
     FROM dashboard_edges de
-    JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+    JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
     JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
     JOIN integration_policies ip ON ip.id = ti.active_policy_id
-    WHERE de.source_item_id = ?
+    WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
   `).bind(msg.provider, messagingItemId).all<{ terminal_item_id: string; policy: string }>();
 
   if (!terminalPolicies.results?.length) return 'no_policy';
@@ -624,13 +624,13 @@ async function deliverToItem(
     const newContent = currentContent + separator + formattedText;
 
     await env.DB.prepare(
-      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ?'
-    ).bind(newContent, now, target.itemId).run();
+      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ? AND dashboard_id = ?'
+    ).bind(newContent, now, target.itemId, dashboardId).run();
   } else {
     // Prompt: replace content with message text (raw, no formatting wrapper)
     await env.DB.prepare(
-      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ?'
-    ).bind(msg.message_text || '', now, target.itemId).run();
+      'UPDATE dashboard_items SET content = ?, updated_at = ? WHERE id = ? AND dashboard_id = ?'
+    ).bind(msg.message_text || '', now, target.itemId, dashboardId).run();
   }
 
   // Notify Durable Object for real-time WebSocket broadcast
@@ -912,21 +912,21 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
           ? env.DB.prepare(`
               SELECT DISTINCT de.target_item_id
               FROM dashboard_edges de
-              JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
-              WHERE de.source_item_id = ?
+              JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
+              WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
             `).bind(row.messaging_item_id).all<{ target_item_id: string }>()
           : env.DB.prepare(`
               SELECT DISTINCT de.target_item_id
               FROM dashboard_edges de
-              JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+              JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
               JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL AND ti.active_policy_id IS NOT NULL
-              WHERE de.source_item_id = ?
+              WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
             `).bind(row.provider, row.messaging_item_id).all<{ target_item_id: string }>(),
         env.DB.prepare(`
           SELECT DISTINCT de.target_item_id, di.type
           FROM dashboard_edges de
-          JOIN dashboard_items di ON di.id = de.target_item_id AND di.type IN ('note', 'prompt')
-          WHERE de.source_item_id = ?
+          JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type IN ('note', 'prompt')
+          WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
         `).bind(row.messaging_item_id).all<{ target_item_id: string; type: string }>(),
       ]);
 

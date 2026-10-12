@@ -40,6 +40,8 @@ const config :Workerd.Config = (
         (name = "SANDBOX_URL", fromEnvironment = "SANDBOX_URL"),
         (name = "SANDBOX_INTERNAL_TOKEN", fromEnvironment = "SANDBOX_INTERNAL_TOKEN"),
         (name = "INTERNAL_API_TOKEN", fromEnvironment = "INTERNAL_API_TOKEN"),
+        # Host-only HMAC key for PTY/dashboard tokens (never given to the VM).
+        (name = "PTY_TOKEN_SECRET", fromEnvironment = "PTY_TOKEN_SECRET"),
         (name = "D1_HTTP_URL", fromEnvironment = "D1_HTTP_URL"),
         (name = "D1_SHIM", service = "d1-shim"),
         (name = "D1_SHIM_DEBUG", fromEnvironment = "D1_SHIM_DEBUG"),

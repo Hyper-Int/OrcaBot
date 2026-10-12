@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v40-import-gzip-bomb-cap
+// REVISION: main-v41-pool-egress-default-deny
 
 package main
 
@@ -40,7 +40,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v40-import-gzip-bomb-cap"
+const mainRevision = "main-v41-pool-egress-default-deny"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -327,6 +327,9 @@ func main() {
 					// no PTY-creation requests can arrive until ListenAndServe is called.
 					if err := setupPoolMCPIptables(mcpLocalPort); err != nil {
 						log.Printf("[pool-iptables] ERROR: Failed to block pool UIDs from MCPLocal port — kernel enforcement unavailable: %v", err)
+					} else if err := setupPoolEgressDenyIptables(); err != nil {
+						// Without default-deny, pool UIDs could bypass the proxy on non-80/443 ports.
+						log.Printf("[egress-kernel] ERROR: pool egress default-deny failed — kernel enforcement unavailable: %v", err)
 					} else {
 						privSock := NewPrivilegedSocket(server)
 						if err := privSock.Start(); err != nil {

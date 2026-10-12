@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v56-teams-require-team-id
-const MODULE_REVISION = 'messaging-webhook-v56-teams-require-team-id';
+// REVISION: messaging-webhook-v57-edge-dashboard-scope
+const MODULE_REVISION = 'messaging-webhook-v57-edge-dashboard-scope';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1344,10 +1344,10 @@ async function processSubscriptionMessage(
     const msgPolicies = await env.DB.prepare(`
       SELECT ip.policy
       FROM dashboard_edges de
-      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
       JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
       JOIN integration_policies ip ON ip.id = ti.active_policy_id
-      WHERE de.source_item_id = ?
+      WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
     `).bind(provider, subscription.item_id).all<{ policy: string }>();
 
     const parsedMsgPolicies = (msgPolicies.results || []).map(row => {
@@ -1374,10 +1374,10 @@ async function processSubscriptionMessage(
     const terminalPolicies = await env.DB.prepare(`
       SELECT ip.policy
       FROM dashboard_edges de
-      JOIN dashboard_items di ON di.id = de.target_item_id AND di.type = 'terminal'
+      JOIN dashboard_items di ON di.id = de.target_item_id AND di.dashboard_id = de.dashboard_id AND di.type = 'terminal'
       JOIN terminal_integrations ti ON ti.item_id = de.target_item_id AND ti.provider = ? AND ti.deleted_at IS NULL
       JOIN integration_policies ip ON ip.id = ti.active_policy_id
-      WHERE de.source_item_id = ?
+      WHERE de.source_item_id = ? AND de.dashboard_id = (SELECT si.dashboard_id FROM dashboard_items si WHERE si.id = de.source_item_id)
     `).bind(provider, subscription.item_id).all<{ policy: string }>();
 
     const policies = (terminalPolicies.results || []).map(row => {

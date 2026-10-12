@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: auth-middleware-v2-pat-method-gate
+// REVISION: auth-middleware-v3-dedicated-token-secret
 
 /**
  * Auth Middleware
@@ -297,6 +297,7 @@ function tokenFingerprint(token: string | null): string {
 }
 
 import { verifyDashboardToken, type DashboardTokenClaims } from './dashboard-token';
+import { tokenSigningSecret } from './pty-token';
 
 export interface McpAuthResult {
   isValid: boolean;
@@ -348,7 +349,7 @@ export async function validateMcpAuth(
         ),
       };
     }
-    const claims = await verifyDashboardToken(dashboardToken, env.INTERNAL_API_TOKEN);
+    const claims = await verifyDashboardToken(dashboardToken, tokenSigningSecret(env));
     if (claims) {
       return {
         isValid: true,

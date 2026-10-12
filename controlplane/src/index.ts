@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v18-idor-input-validation
-console.log(`[controlplane] REVISION: controlplane-v18-idor-input-validation loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v19-security-review-fixes
+console.log(`[controlplane] REVISION: controlplane-v19-security-review-fixes loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -92,6 +92,36 @@ function isOriginAllоwed(origin: string | null, allowedOrigins: Set<string> | n
     return false;
   }
   return allowedOrigins.has(origin);
+}
+
+const CSRF_CHECKED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const CSRF_COOKIE_AUTH_METHODS = new Set(['session', 'cf-access']);
+
+/**
+ * Reject cross-site state-changing requests authenticated by an ambient cookie.
+ * Bearer/PAT/dev-header auth can't be attached cross-site, so they're exempt.
+ * Requests with no Origin are allowed unless Sec-Fetch-Site marks them cross-site
+ * (non-browser clients send neither header and aren't a CSRF vector).
+ */
+export function checkCsrf(
+  request: Request,
+  authMethod: string | undefined,
+  allowedOrigins: Set<string> | null
+): Response | null {
+  if (!CSRF_CHECKED_METHODS.has(request.method)) return null;
+  if (!authMethod || !CSRF_COOKIE_AUTH_METHODS.has(authMethod)) return null;
+  if (allowedOrigins === null) return null; // Dev mode: all origins allowed
+
+  const origin = request.headers.get('Origin');
+  if (origin !== null) {
+    if (allowedOrigins.has(origin)) return null;
+  } else {
+    const fetchSite = request.headers.get('Sec-Fetch-Site');
+    if (fetchSite !== 'cross-site') return null;
+  }
+
+  console.warn(`[csrf] Rejected ${request.method} ${new URL(request.url).pathname} origin=${origin ?? '(none)'}`);
+  return Response.json({ error: 'E79392: Cross-site request rejected' }, { status: 403 });
 }
 
 const EMBED_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
@@ -928,6 +958,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // Authenticate
   const auth = await authenticate(request, env);
+
+  // CSRF guard: cookie-authenticated state changes must come from an allowed origin.
+  // The session cookie is SameSite=None (cross-origin frontend), and request.json()
+  // parses text/plain, so a cross-site <form> POST would otherwise ride the cookie.
+  const csrfError = checkCsrf(request, auth.method, parseAllоwedOrigins(env));
+  if (csrfError) return csrfError;
 
   // Unauthenticated IP rate limit (after auth to avoid double-limiting)
   if (!auth.user) {
@@ -3309,61 +3345,6 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   }
 
   // ============================================
-  // Internal Integration Gateway routes (Sandbox → Control Plane)
-  // ============================================
-
-  // POST /internal/gateway/:provider/validate - Validate gateway request and get policy (DEPRECATED - use token-based validation)
-  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
-    if (authError) return authError;
-    const data = await request.json() as {
-      terminalId: string;
-      dashboardId: string;
-      userId: string;
-    };
-    return integrationPolicies.validateGatewayRequest(
-      env,
-      data.terminalId,
-      segments[2] as Parameters<typeof integrationPolicies.validateGatewayRequest>[2],
-      data.dashboardId,
-      data.userId
-    );
-  }
-
-  // POST /internal/gateway/:provider/validate-token - Validate using PTY token (SECURE)
-  // Security: terminal_id extracted from cryptographically verified token, not from body
-  // Body: { action?: string, args?: Record<string, unknown> }
-  // NOTE: context is derived server-side from args (same as execute endpoint) to prevent spoofing
-  if (segments[0] === 'internal' && segments[1] === 'gateway' && segments.length === 4 && segments[3] === 'validate-token' && method === 'POST') {
-    const ptyToken = request.headers.get('X-PTY-Token');
-    if (!ptyToken) {
-      return Response.json({ error: 'E79410: AUTH_DENIED', reason: 'Missing X-PTY-Token header' }, { status: 401 });
-    }
-    let action: string | undefined;
-    let args: Record<string, unknown> | undefined;
-    try {
-      const body = await request.json() as {
-        action?: string;
-        args?: Record<string, unknown>;
-      };
-      action = body.action;
-      args = body.args;
-    } catch {
-      // No body or invalid JSON - action and args remain undefined
-    }
-    // Derive context server-side from args (never trust body.context)
-    const { deriveEnforcementContext } = await import('./integration-policies/gateway');
-    const context = args && action ? deriveEnforcementContext(action, args) : undefined;
-    return integrationPolicies.validateGatewayWithToken(
-      env,
-      ptyToken,
-      segments[2] as Parameters<typeof integrationPolicies.validateGatewayWithToken>[2],
-      action,
-      context
-    );
-  }
-
-  // ============================================
   // Internal Agent State Gateway (Tasks & Memory)
   // NOTE: These MUST come before the generic /internal/gateway/:provider/execute route
   // ============================================
@@ -3374,7 +3355,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // - PTY token: provides terminal_id (for session-scoped) and dashboard_id
   // - Dashboard token: provides only dashboard_id (dashboard-wide access only)
   if (segments[0] === 'internal' && segments[1] === 'gateway' && segments[2] === 'tasks' && segments[3] === 'execute' && segments.length === 4 && method === 'POST') {
-    const { verifyPtyToken } = await import('./auth/pty-token');
+    const { verifyPtyToken, tokenSigningSecret } = await import('./auth/pty-token');
 
     let dashboardId: string | null = null;
     let terminalId: string | null = null;
@@ -3383,7 +3364,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authHeader = request.headers.get('Authorization');
     const ptyToken = authHeader?.replace('Bearer ', '');
     if (ptyToken) {
-      const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+      const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
       if (claims) {
         dashboardId = claims.dashboard_id;
         terminalId = claims.terminal_id;
@@ -3423,7 +3404,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   // - PTY token: provides terminal_id (for session-scoped) and dashboard_id
   // - Dashboard token: provides only dashboard_id (dashboard-wide access only)
   if (segments[0] === 'internal' && segments[1] === 'gateway' && segments[2] === 'memory' && segments[3] === 'execute' && segments.length === 4 && method === 'POST') {
-    const { verifyPtyToken } = await import('./auth/pty-token');
+    const { verifyPtyToken, tokenSigningSecret } = await import('./auth/pty-token');
 
     let dashboardId: string | null = null;
     let terminalId: string | null = null;
@@ -3432,7 +3413,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authHeader = request.headers.get('Authorization');
     const ptyToken = authHeader?.replace('Bearer ', '');
     if (ptyToken) {
-      const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+      const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
       if (claims) {
         dashboardId = claims.dashboard_id;
         terminalId = claims.terminal_id;

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v13-vm-cache-dir
-const MODULE_REVISION: &str = "main-v13-vm-cache-dir";
+// REVISION: main-v14-pty-token-secret
+const MODULE_REVISION: &str = "main-v14-pty-token-secret";
 
 mod commands;
 mod vm;
@@ -249,6 +249,26 @@ static SURFACE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub fn surface_token() -> &'static str {
   SURFACE_TOKEN.get_or_init(|| {
+    let mut buf = [0u8; 32];
+    #[cfg(unix)]
+    {
+      use std::io::Read;
+      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+      }
+    }
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+  })
+}
+
+/// Per-boot HMAC key for PTY + dashboard tokens (`PTY_TOKEN_SECRET`). Only the
+/// host control-plane worker gets it — unlike INTERNAL_API_TOKEN, which is baked
+/// into the sandbox VM image — so a VM process can't mint tokens for other
+/// terminals. Rotating per boot just invalidates tokens of PTYs from the last run.
+static PTY_TOKEN_SECRET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn pty_token_secret() -> &'static str {
+  PTY_TOKEN_SECRET.get_or_init(|| {
     let mut buf = [0u8; 32];
     #[cfg(unix)]
     {
@@ -690,6 +710,7 @@ impl DesktopServices {
       // Gates dev-auth to the host frontend (which sends X-Orcabot-Surface with
       // this value); the sandbox VM never gets it, so it can't spoof user auth.
       ("SURFACE_TOKEN", surface_token().to_string()),
+      ("PTY_TOKEN_SECRET", pty_token_secret().to_string()),
       ("SECRETS_ENCRYPTION_KEY", secrets_key),
       ("OAUTH_REDIRECT_BASE", std::env::var("OAUTH_REDIRECT_BASE")
         .unwrap_or_else(|_| format!("http://localhost:{}", controlplane_port))),
