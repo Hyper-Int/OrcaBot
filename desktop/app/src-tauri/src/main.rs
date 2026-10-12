@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v14-pty-token-secret
-const MODULE_REVISION: &str = "main-v14-pty-token-secret";
+// REVISION: main-v15-no-baked-vm-tokens
+const MODULE_REVISION: &str = "main-v15-no-baked-vm-tokens";
 
 mod commands;
 mod vm;
@@ -279,6 +279,72 @@ fn pty_token_secret() -> &'static str {
     }
     buf.iter().map(|b| format!("{:02x}", b)).collect()
   })
+}
+
+/// Per-boot INTERNAL_API_TOKEN for host-side callers of the control plane's
+/// /internal routes. The VM never gets it: it authenticates with its
+/// dashboard-scoped tokens instead. Honors an explicit INTERNAL_API_TOKEN env.
+static INTERNAL_API_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn internal_api_token() -> &'static str {
+  INTERNAL_API_TOKEN.get_or_init(|| {
+    if let Ok(value) = std::env::var("INTERNAL_API_TOKEN") {
+      if !value.is_empty() {
+        return value;
+      }
+    }
+    // Same generation as pty_token_secret, which isn't reused so the two stay independent.
+    let mut buf = [0u8; 32];
+    #[cfg(unix)]
+    {
+      use std::io::Read;
+      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        let _ = f.read_exact(&mut buf);
+      }
+    }
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+  })
+}
+
+/// Per-boot Ed25519 key for control plane → sandbox auth (see
+/// controlplane/src/sandbox/request-signing.ts). The control-plane worker gets
+/// the private key (`SANDBOX_AUTH_SIGNING_KEY`, base64 PKCS#8); the VM gets only
+/// the public key (`orcabot.sandbox_auth_public_key=` on the kernel command
+/// line, base64url), which agents may read but can't sign with. Nothing the VM
+/// holds authenticates a request to it, and there is no shared static token.
+pub struct SandboxAuthKeys {
+  pub signing_key_pkcs8_b64: String,
+  pub public_key_b64url: String,
+}
+
+static SANDBOX_AUTH_KEYS: std::sync::OnceLock<Option<SandboxAuthKeys>> = std::sync::OnceLock::new();
+
+/// None if no randomness was available. The sandbox then has neither a public
+/// key nor a static token and rejects every request (fail closed), rather than
+/// running with a predictable key.
+pub fn sandbox_auth_keys() -> Option<&'static SandboxAuthKeys> {
+  SANDBOX_AUTH_KEYS
+    .get_or_init(|| {
+      use base64::Engine;
+      let mut seed = [0u8; 32];
+      {
+        use std::io::Read;
+        let mut f = std::fs::File::open("/dev/urandom").ok()?;
+        f.read_exact(&mut seed).ok()?;
+      }
+      let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+      // PKCS#8 v1 wrapping of an Ed25519 seed (RFC 8410): fixed 16-byte prefix + seed.
+      let mut pkcs8 = vec![
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+      ];
+      pkcs8.extend_from_slice(&seed);
+      Some(SandboxAuthKeys {
+        signing_key_pkcs8_b64: base64::engine::general_purpose::STANDARD.encode(&pkcs8),
+        public_key_b64url: base64::engine::general_purpose::URL_SAFE_NO_PAD
+          .encode(signing.verifying_key().as_bytes()),
+      })
+    })
+    .as_ref()
 }
 
 /// Persist the surface token to a host-only file (0600) so trusted host clients
@@ -679,10 +745,6 @@ impl DesktopServices {
       std::env::var("CONTROLPLANE_PORT").unwrap_or_else(|_| "8787".to_string());
     let sandbox_url =
       std::env::var("SANDBOX_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let sandbox_internal_token =
-      std::env::var("SANDBOX_INTERNAL_TOKEN").unwrap_or_else(|_| "dev-sandbox-token".to_string());
-    let internal_api_token =
-      std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());
     let dev_auth_enabled =
       std::env::var("DEV_AUTH_ENABLED").unwrap_or_else(|_| "true".to_string());
 
@@ -704,8 +766,7 @@ impl DesktopServices {
     let mut workerd_env = vec![
       ("D1_HTTP_URL", "http://d1-shim".to_string()),
       ("SANDBOX_URL", sandbox_url),
-      ("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token),
-      ("INTERNAL_API_TOKEN", internal_api_token.clone()),
+      ("INTERNAL_API_TOKEN", internal_api_token().to_string()),
       ("DEV_AUTH_ENABLED", dev_auth_enabled),
       // Gates dev-auth to the host frontend (which sends X-Orcabot-Surface with
       // this value); the sandbox VM never gets it, so it can't spoof user auth.
@@ -732,6 +793,17 @@ impl DesktopServices {
     }
     if let Some(value) = d1_shim_debug {
       workerd_env.push(("D1_SHIM_DEBUG", value));
+    }
+    match sandbox_auth_keys() {
+      Some(keys) => workerd_env.push(("SANDBOX_AUTH_SIGNING_KEY", keys.signing_key_pkcs8_b64.clone())),
+      None => eprintln!("[sandbox-auth] ERROR: no randomness for the signing key — the sandbox will reject all requests"),
+    }
+    // Legacy static control plane → sandbox token: only when explicitly provided
+    // (e.g. a hand-run sandbox). Never baked; the VM doesn't get one.
+    if let Ok(value) = std::env::var("SANDBOX_INTERNAL_TOKEN") {
+      if !value.is_empty() {
+        workerd_env.push(("SANDBOX_INTERNAL_TOKEN", value));
+      }
     }
 
     // Optional pass-through for OAuth client IDs/secrets, Resend, etc. Users
@@ -791,7 +863,7 @@ impl DesktopServices {
     // Apply the D1 schema on every launch (idempotent CREATE TABLE IF NOT EXISTS).
     // Without this, schema changes shipped in an app update never reach an existing
     // user's DB — the worker only runs init on a brand-new DB's first /health.
-    apply_schema(&controlplane_port, &internal_api_token);
+    apply_schema(&controlplane_port, internal_api_token());
 
     // Write PID file so next launch can clean up orphans if we crash
     if let Ok(children) = self.children.lock() {
@@ -879,9 +951,6 @@ impl DesktopServices {
       .and_then(|s| s.parse().ok())
       .unwrap_or(8080);
 
-    let sandbox_internal_token =
-      std::env::var("SANDBOX_INTERNAL_TOKEN").unwrap_or_else(|_| "dev-sandbox-token".to_string());
-
     let allowed_origins =
       std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| "http://localhost:8788".to_string());
 
@@ -896,9 +965,6 @@ impl DesktopServices {
         // CONTROLPLANE_URL explicitly when the controlplane lives elsewhere.
         vm::host_loopback_url(&port)
       });
-    let internal_api_token =
-      std::env::var("INTERNAL_API_TOKEN").unwrap_or_else(|_| "dev-internal-token".to_string());
-
     // Host-side control-plane port for the guest→host reverse bridge. Matches the
     // port the control-plane workerd actually bound to (possibly dynamic). The
     // guest side of the bridge stays baked at 8787.
@@ -915,11 +981,15 @@ impl DesktopServices {
       // Guest binds 8080 (image default); the host→guest forward maps the dynamic
       // host port to that. PORT here is the guest bind, not the host listen.
       .with_env("PORT", vm::SANDBOX_GUEST_PORT.to_string())
-      .with_env("SANDBOX_INTERNAL_TOKEN", sandbox_internal_token)
       .with_env("ALLOWED_ORIGINS", allowed_origins)
       .with_env("WORKSPACE_BASE", "/workspace")
-      .with_env("CONTROLPLANE_URL", controlplane_url)
-      .with_env("INTERNAL_API_TOKEN", internal_api_token);
+      .with_env("CONTROLPLANE_URL", controlplane_url);
+    // No SANDBOX_INTERNAL_TOKEN / INTERNAL_API_TOKEN: inbound requests are signed
+    // per boot (public key on the kernel command line below), and outbound calls
+    // use the dashboard-scoped tokens the control plane hands each session.
+    if let Some(keys) = sandbox_auth_keys() {
+      config = config.with_env("SANDBOX_AUTH_PUBLIC_KEY", keys.public_key_b64url.clone());
+    }
 
     // Opt-in: enable the network egress proxy inside the VM. Off by default
     // because it requires iptables setup at boot; users who want it set the
@@ -951,6 +1021,13 @@ impl DesktopServices {
       "console=hvc0 earlycon=virtio_console keep_bootcon root=/dev/vda rw net.ifnames=0 biosdevname=0 loglevel=7 ignore_loglevel rdinit=/init"
     } else {
       "console=ttyS0 root=/dev/vda rw net.ifnames=0 biosdevname=0 quiet"
+    };
+    // The kernel command line is the one host → guest channel on every backend.
+    // Agents can read /proc/cmdline, which is fine for a public key and is why
+    // no secret travels this way.
+    let cmdline = match sandbox_auth_keys() {
+      Some(keys) => format!("{} orcabot.sandbox_auth_public_key={}", cmdline, keys.public_key_b64url),
+      None => cmdline.to_string(),
     };
     config = config.with_cmdline(cmdline);
 

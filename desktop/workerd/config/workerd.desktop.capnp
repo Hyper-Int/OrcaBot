@@ -38,7 +38,12 @@ const config :Workerd.Config = (
       bindings = [
         # Core
         (name = "SANDBOX_URL", fromEnvironment = "SANDBOX_URL"),
+        # Per-boot Ed25519 key that signs every request to the sandbox VM; the VM
+        # gets only the public key. SANDBOX_INTERNAL_TOKEN is the legacy static
+        # token, set only when the host env explicitly provides one.
+        (name = "SANDBOX_AUTH_SIGNING_KEY", fromEnvironment = "SANDBOX_AUTH_SIGNING_KEY"),
         (name = "SANDBOX_INTERNAL_TOKEN", fromEnvironment = "SANDBOX_INTERNAL_TOKEN"),
+        # Per-boot, host-only; the VM uses dashboard-scoped tokens instead.
         (name = "INTERNAL_API_TOKEN", fromEnvironment = "INTERNAL_API_TOKEN"),
         # Host-only HMAC key for PTY/dashboard tokens (never given to the VM).
         (name = "PTY_TOKEN_SECRET", fromEnvironment = "PTY_TOKEN_SECRET"),

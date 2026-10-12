@@ -35,6 +35,10 @@ flate2 = "1"
 tar = "0.4"
 # Verify the on-demand VM image download against a hash baked into the binary.
 sha2 = "0.10"
+# Per-boot Ed25519 key that signs control plane → sandbox VM requests; the VM
+# gets only the public key (see sandbox_auth_keys in main.rs).
+ed25519-dalek = "2"
+base64 = "0.22"
 filetime = "0.2"
 ctrlc = "3"
 # SIGUSR1/SIGUSR2 surface toggle (show/hide the GUI window without restarting).

@@ -467,13 +467,22 @@ fi
 export PORT=${PORT:-8080}
 export WORKSPACE_BASE=/workspace
 export ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-export SANDBOX_INTERNAL_TOKEN=${SANDBOX_INTERNAL_TOKEN:-dev-sandbox-token}
-# Control-plane callback config. CONTROLPLANE_URL points at the reverse vsock bridge
-# above; INTERNAL_API_TOKEN must match what the host workerd expects (main.rs default
-# is dev-internal-token). These reach only the server process — PTY env filters them,
-# so agents never see INTERNAL_API_TOKEN.
+# REVISION: rclocal-v2-signed-auth-no-baked-tokens
+# Inbound auth: the host signs every request with a per-boot Ed25519 key and passes
+# only the PUBLIC key on the kernel command line (agents can read /proc/cmdline;
+# fine for a public key). No static token is baked into the image — without
+# the key the server rejects every request (fail closed).
+for arg in $(cat /proc/cmdline); do
+  case "$arg" in
+    orcabot.sandbox_auth_public_key=*) export SANDBOX_AUTH_PUBLIC_KEY="${arg#*=}" ;;
+  esac
+done
+[ -n "${SANDBOX_AUTH_PUBLIC_KEY:-}" ] || echo "WARNING: no orcabot.sandbox_auth_public_key on the kernel command line; sandbox will reject all requests" > /dev/console
+echo "[rc.local] REVISION: rclocal-v2-signed-auth-no-baked-tokens" > /dev/console
+# Control-plane callbacks go through the reverse vsock bridge above and authenticate
+# with the dashboard-scoped tokens the control plane hands each session — the VM
+# holds no INTERNAL_API_TOKEN.
 export CONTROLPLANE_URL=${CONTROLPLANE_URL:-http://127.0.0.1:8787}
-export INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
 # Enable the debug-exec endpoint (POST /debug/exec) for the desktop VM only. Fly
 # starts orcabot-server via its own path, never this rc.local, so it stays off there.
 export ORCABOT_DEBUG_EXEC=1

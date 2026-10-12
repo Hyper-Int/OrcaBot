@@ -237,9 +237,19 @@ matches** (`devAuthSurfaceTrusted` in `controlplane/src/auth/middleware.ts`). Th
 VM never gets the token (filtered from PTY env) and can't reach the frontend on
 `:8788` to scrape it (only `:8080` and `:8787` are bridged), so a VM process is
 confined to the token-authed paths it's supposed to use: the integration gateway
-(PTY token) and `/internal/*` (`INTERNAL_API_TOKEN`). When `SURFACE_TOKEN` is unset
+(PTY token) and `/internal/*` (its dashboard-scoped tokens). When `SURFACE_TOKEN` is unset
 (cloud, local `wrangler dev`, older builds) enforcement is off and behavior is
 unchanged.
+
+**No baked VM tokens.** The image holds no shared secret. Each boot `main.rs`
+generates a fresh Ed25519 key (`sandbox_auth_keys()`): the control-plane worker
+gets the private key (`SANDBOX_AUTH_SIGNING_KEY`) and signs every request to the
+VM; the guest gets only the public key on the kernel command line
+(`orcabot.sandbox_auth_public_key=`, read by `rc.local`). `INTERNAL_API_TOKEN` is
+also per-boot and host-only — the VM calls `/internal/*` with dashboard-scoped
+tokens. Setting `SANDBOX_INTERNAL_TOKEN`/`INTERNAL_API_TOKEN` in the host env still
+works (e.g. `scripts/dev.sh` against a hand-run sandbox). Changing `rc.local` means
+a new VM image version (see `RELEASE.md`); a new app on an old image fails closed.
 
 **Desktop-only**: production runs `DEV_AUTH_ENABLED=false` (real Cloudflare
 Access), where header spoofing doesn't work in the first place.

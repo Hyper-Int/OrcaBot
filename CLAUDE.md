@@ -85,7 +85,7 @@ npx wrangler dev
 ### Auth Flow
 - Frontend never talks directly to sandbox; all traffic goes through the control plane
 - Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`
-- Control plane → sandbox requests are **signed per machine** (Ed25519, `SANDBOX_AUTH_SIGNING_KEY` in the control plane; VMs get only `SANDBOX_AUTH_PUBLIC_KEY`). The legacy static `SANDBOX_INTERNAL_TOKEN` is accepted only while configured (desktop still uses it) — do not reuse Cloudflare API keys
+- Control plane → sandbox requests are **signed per machine** (Ed25519, `SANDBOX_AUTH_SIGNING_KEY` in the control plane; VMs get only `SANDBOX_AUTH_PUBLIC_KEY`). The legacy static `SANDBOX_INTERNAL_TOKEN` is accepted only while configured — do not reuse Cloudflare API keys. Desktop generates the key pair per boot and passes the public key on the VM's kernel command line; its VM holds no static token and no `INTERNAL_API_TOKEN`
 - **Personal access tokens (PATs)** authenticate the `orcabot` CLI / scripts against a remote control plane: prefix `orca_pat_`, sent as `Authorization: Bearer`, only the SHA-256 hash is stored (`api_tokens` table). Middleware is prefix-gated (no collision with PTY JWT bearers) and **method-gated** — a PAT cannot mint/list/revoke other PATs (`rejectPatAuth`). See `controlplane/CLAUDE.md`.
 
 ### Secrets Protection (Security-Critical)
