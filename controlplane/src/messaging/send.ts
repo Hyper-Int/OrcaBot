@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-send-v6-teams-require-channel-context
-const MODULE_REVISION = 'messaging-send-v6-teams-require-channel-context';
+// REVISION: messaging-send-v7-editor-required
+const MODULE_REVISION = 'messaging-send-v7-editor-required';
 console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -85,6 +85,11 @@ export async function handleMessagingSend(
   ).bind(dashboardId, userId).first<{ role: string }>();
   if (!membership) {
     return Response.json({ error: 'Not a member of this dashboard' }, { status: 403 });
+  }
+  // Sending posts with the subscription creator's account (their Slack/WhatsApp
+  // etc.), so viewers can't — same bar as editing the messaging block.
+  if (membership.role !== 'owner' && membership.role !== 'editor') {
+    return Response.json({ error: 'E79617: Viewers cannot send messages' }, { status: 403 });
   }
 
   // Find active subscriptions for this messaging block item

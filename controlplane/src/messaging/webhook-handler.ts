@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v57-edge-dashboard-scope
-const MODULE_REVISION = 'messaging-webhook-v57-edge-dashboard-scope';
+// REVISION: messaging-webhook-v58-verify-subscription-workspace
+const MODULE_REVISION = 'messaging-webhook-v58-verify-subscription-workspace';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1544,6 +1544,49 @@ async function matchIntegrationByMetadata(
 /**
  * Synchronous helper: find integration whose metadata[key] matches the given value.
  */
+/** True if `channelId` is a channel in the workspace this Slack token belongs to. */
+async function slackChannelInWorkspace(token: string, channelId: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!resp.ok) return false;
+    const result = await resp.json() as { ok: boolean; channel?: { id?: string } };
+    return result.ok && result.channel?.id === channelId;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The caller's Discord integration whose recorded guild owns `channelId`.
+ * Every integration stores the platform's shared bot token, so the bot seeing
+ * the channel proves nothing — the guild match is the check. An integration
+ * with no recorded guild (legacy) can't subscribe until reconnected.
+ */
+async function discordIntegrationForChannel(
+  intRows: Array<{ id: string; access_token: string; metadata: string | null }>,
+  channelId: string,
+): Promise<string | null> {
+  for (const row of intRows) {
+    if (!row.access_token) continue;
+    try {
+      const resp = await fetch(`https://discord.com/api/v10/channels/${encodeURIComponent(channelId)}`, {
+        headers: { Authorization: `Bot ${row.access_token}` },
+      });
+      if (!resp.ok) continue;
+      const ch = await resp.json() as { id?: string; guild_id?: string };
+      if (ch.id !== channelId) continue;
+      let guildId: string | undefined;
+      try {
+        guildId = row.metadata ? (JSON.parse(row.metadata) as { guild_id?: string }).guild_id : undefined;
+      } catch { /* no recorded guild */ }
+      if (guildId && ch.guild_id === guildId) return row.id;
+    } catch { /* try next integration */ }
+  }
+  return null;
+}
+
 function matchIntegrationByMetadataSync(
   rows: Array<{ id: string; metadata: string | null }>,
   metaKey: string,
@@ -1699,9 +1742,17 @@ export async function createSubscription(
     }
 
     if (resolvedTeamId) {
-      // team_id already provided — match integration by team_id
+      // team_id already provided — it must be one of the caller's own workspaces.
+      // Inbound Slack events route by team_id + channel_id, so accepting any
+      // team_id would let a user subscribe to another tenant's channel.
       const match = intTeamMap.find((r) => r.teamId === resolvedTeamId);
-      resolvedIntegrationId = match?.id || intTeamMap[0].id;
+      if (!match) {
+        throw new SubscriptionError(
+          'SLACK_WORKSPACE_MISMATCH',
+          'That Slack workspace is not connected to your account.',
+        );
+      }
+      resolvedIntegrationId = match.id;
     } else if (intRows.length === 1) {
       // Single integration — no ambiguity
       resolvedIntegrationId = intTeamMap[0].id;
@@ -1711,7 +1762,7 @@ export async function createSubscription(
       for (const row of intTeamMap) {
         if (!row.token) continue;
         try {
-          const resp = await fetch(`https://slack.com/api/conversations.info?channel=${data.channelId}`, {
+          const resp = await fetch(`https://slack.com/api/conversations.info?channel=${encodeURIComponent(data.channelId)}`, {
             headers: { Authorization: `Bearer ${row.token}` },
           });
           if (resp.ok) {
@@ -1724,10 +1775,11 @@ export async function createSubscription(
           }
         } catch { /* try next */ }
       }
-      // Fallback if no workspace claimed the channel
       if (!resolvedIntegrationId) {
-        resolvedIntegrationId = intTeamMap[0].id;
-        resolvedTeamId = intTeamMap[0].teamId;
+        throw new SubscriptionError(
+          'SLACK_CHANNEL_NOT_FOUND',
+          'That channel was not found in any of your connected Slack workspaces.',
+        );
       }
     } else {
       // No channel, no team — pick first
@@ -1741,6 +1793,18 @@ export async function createSubscription(
         'Slack team could not be identified. Please disconnect and reconnect Slack to continue.',
       );
     }
+
+    // The channel must exist in the chosen workspace (checked with that
+    // workspace's token), whichever way the workspace was picked.
+    if (data.channelId) {
+      const chosen = intTeamMap.find((r) => r.id === resolvedIntegrationId);
+      if (!chosen?.token || !(await slackChannelInWorkspace(chosen.token, data.channelId))) {
+        throw new SubscriptionError(
+          'SLACK_CHANNEL_NOT_FOUND',
+          'That channel was not found in your Slack workspace.',
+        );
+      }
+    }
   }
 
   // Resolve integration ID for Discord.
@@ -1753,7 +1817,17 @@ export async function createSubscription(
     ).bind(userId).all<{ id: string; access_token: string; metadata: string | null }>();
 
     const intRows = discordInts.results || [];
-    if (intRows.length === 1) {
+    if (data.channelId) {
+      // Inbound Discord messages route by channel_id alone, so the channel must
+      // be visible to one of the caller's own bots and in that bot's guild.
+      resolvedIntegrationId = await discordIntegrationForChannel(intRows, data.channelId);
+      if (!resolvedIntegrationId) {
+        throw new SubscriptionError(
+          'DISCORD_CHANNEL_NOT_FOUND',
+          'That channel was not found in any of your connected Discord servers. If you connected Discord a while ago, reconnect it.',
+        );
+      }
+    } else if (intRows.length === 1) {
       resolvedIntegrationId = intRows[0].id;
     } else if (intRows.length > 1 && data.channelId) {
       // Multiple integrations — discover which guild owns this channel

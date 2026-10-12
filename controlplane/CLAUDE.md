@@ -267,6 +267,9 @@ Sandbox MCP Server
 - `src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar, Twitter API wrappers
 - `src/auth/pty-token.ts` — HMAC-SHA256 JWT token creation/verification
 
+### OAuth connect/callback
+- `state` is bound to the browser that started the flow: connect sets an HttpOnly `orcabot_oauth_<state>` cookie (`SameSite=Lax`, `Path=/integrations`) whose SHA-256 is stored with the state; the callback requires it, or a session for the user that started the flow (`getState` in `src/integrations/handler.ts`). New connect handlers must return `oauthRedirect(...)`, and the callback host must be the connect host (`OAUTH_REDIRECT_BASE`)
+
 ### Database Tables
 - `user_integrations` — OAuth tokens (encrypted), provider, account email
 - `terminal_integrations` — Which integrations are attached to which terminals
@@ -279,6 +282,8 @@ Sandbox MCP Server
 4. **Fail-closed** — Missing policy, expired token, unknown action → deny
 5. **Audit before response** — Every request logged via `logAuditEntry()` before returning
 6. **Context derived server-side** — Recipient, domain, etc. extracted from args in control plane
+7. **Check what is sent** — `validateGatewayArgs` (`src/integration-policies/arg-safety.ts`) runs before `enforcePolicy`: IDs that clients put in URL paths must be single safe segments (no `/`, `..`, `?`, `#`, `%`), email headers can't contain CR/LF, and each recipient entry is exactly one address. Messaging targets are derived only from the field each client sends to (`MESSAGING_TARGET_FIELD`); channel names are resolved server-side, never taken from args. Routing values (WhatsApp `phone_number_id`, Matrix `homeserver`) come from the stored integration
+8. **Policy belongs to the account holder** — only the member who attached an integration can change its policy; they or the dashboard owner can detach it
 
 ### Providers
 - **Gmail**: search, get, send, archive, trash, mark_read/unread, add/remove_label

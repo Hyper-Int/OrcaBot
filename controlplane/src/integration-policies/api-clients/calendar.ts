@@ -1,8 +1,19 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: calendar-client-v1
-console.log(`[calendar-client] REVISION: calendar-client-v1 loaded at ${new Date().toISOString()}`);
+// REVISION: calendar-client-v2-consistent-calendar-arg
+console.log(`[calendar-client] REVISION: calendar-client-v2-consistent-calendar-arg loaded at ${new Date().toISOString()}`);
+
+// The policy check reads `calendarId ?? calendar_id` (deriveEnforcementContext);
+// reading only `calendarId` here let `{calendar_id: <allowed>}` act on primary.
+function calendarIdArg(args: Record<string, unknown>): string {
+  const value = args.calendarId ?? args.calendar_id;
+  return typeof value === 'string' && value ? value : 'primary';
+}
+
+function sendUpdatesArg(args: Record<string, unknown>): string {
+  return args.sendUpdates === 'all' || args.sendUpdates === 'externalOnly' ? args.sendUpdates : 'none';
+}
 
 /**
  * Google Calendar API Client
@@ -109,7 +120,7 @@ async function listEvents(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<CalendarEventList> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const timeMin = args.timeMin as string || new Date().toISOString();
   const timeMax = args.timeMax as string || undefined;
   const maxResults = Math.min(args.maxResults as number || 100, 2500);
@@ -141,14 +152,14 @@ async function getEvent(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<CalendarEvent> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const eventId = args.eventId as string;
   if (!eventId) {
     throw new Error('eventId is required');
   }
 
   const response = await calendarFetch(
-    `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
     accessToken
   );
 
@@ -159,7 +170,7 @@ async function createEvent(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<CalendarEvent> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const summary = args.summary as string;
   if (!summary) {
     throw new Error('summary is required');
@@ -180,7 +191,7 @@ async function createEvent(
     attendees: args.attendees as CalendarEvent['attendees'] || undefined,
   };
 
-  const sendUpdates = args.sendUpdates as string || 'none';
+  const sendUpdates = sendUpdatesArg(args);
 
   const response = await calendarFetch(
     `/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=${sendUpdates}`,
@@ -198,7 +209,7 @@ async function updateEvent(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<CalendarEvent> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const eventId = args.eventId as string;
   if (!eventId) {
     throw new Error('eventId is required');
@@ -218,10 +229,10 @@ async function updateEvent(
     attendees: args.attendees as CalendarEvent['attendees'] || existing.attendees,
   };
 
-  const sendUpdates = args.sendUpdates as string || 'none';
+  const sendUpdates = sendUpdatesArg(args);
 
   const response = await calendarFetch(
-    `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}?sendUpdates=${sendUpdates}`,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=${sendUpdates}`,
     accessToken,
     {
       method: 'PUT',
@@ -236,16 +247,16 @@ async function deleteEvent(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<{ success: boolean }> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const eventId = args.eventId as string;
   if (!eventId) {
     throw new Error('eventId is required');
   }
 
-  const sendUpdates = args.sendUpdates as string || 'none';
+  const sendUpdates = sendUpdatesArg(args);
 
   await calendarFetch(
-    `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}?sendUpdates=${sendUpdates}`,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=${sendUpdates}`,
     accessToken,
     {
       method: 'DELETE',
@@ -259,7 +270,7 @@ async function searchEvents(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<CalendarEventList> {
-  const calendarId = args.calendarId as string || 'primary';
+  const calendarId = calendarIdArg(args);
   const query = args.query as string;
   const timeMin = args.timeMin as string || new Date().toISOString();
   const timeMax = args.timeMax as string || undefined;

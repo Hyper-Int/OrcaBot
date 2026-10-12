@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v21-signed-sandbox-requests
-console.log(`[controlplane] REVISION: controlplane-v21-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v22-browser-editor-only
+console.log(`[controlplane] REVISION: controlplane-v22-browser-editor-only loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -105,6 +105,21 @@ const CSRF_COOKIE_AUTH_METHODS = new Set(['session', 'cf-access']);
  * Requests with no Origin are allowed unless Sec-Fetch-Site marks them cross-site
  * (non-browser clients send neither header and aren't a CSRF vector).
  */
+/**
+ * Starting, stopping or steering the dashboard browser drives a shared VM
+ * browser, so it takes the same role as editing the dashboard (owner/editor).
+ */
+async function requireBrowserControl(env: Env, dashboardId: string, userId: string): Promise<Response | null> {
+  const access = await env.DB.prepare(
+    `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
+  ).bind(dashboardId, userId).first<{ role: string }>();
+  if (!access) return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+  if (access.role !== 'owner' && access.role !== 'editor') {
+    return Response.json({ error: 'E79618: Viewers cannot control the browser' }, { status: 403 });
+  }
+  return null;
+}
+
 export function checkCsrf(
   request: Request,
   authMethod: string | undefined,
@@ -2587,6 +2602,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'start' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    const roleError = await requireBrowserControl(env, segments[1], auth.user!.id);
+    if (roleError) return roleError;
     return sessions.startDashbоardBrowser(env, segments[1], auth.user!.id, preferredRegion);
   }
 
@@ -2594,6 +2611,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'stop' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    const roleError = await requireBrowserControl(env, segments[1], auth.user!.id);
+    if (roleError) return roleError;
     return sessions.stоpDashbоardBrowser(env, segments[1], auth.user!.id, preferredRegion);
   }
 
@@ -2608,6 +2627,8 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
   if (segments[0] === 'dashboards' && segments.length === 4 && segments[2] === 'browser' && segments[3] === 'open' && method === 'POST') {
     const authError = requireAuth(auth);
     if (authError) return authError;
+    const roleError = await requireBrowserControl(env, segments[1], auth.user!.id);
+    if (roleError) return roleError;
     const data = await request.json() as { url?: string };
     const url = typeof data.url === 'string' ? data.url : '';
     return sessions.openDashbоardBrowser(env, segments[1], auth.user!.id, url, preferredRegion);
@@ -2660,10 +2681,17 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
     if (!allowDevBypass) {
       const access = await env.DB.prepare(`
-        SELECT 1 FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
-      `).bind(segments[1], auth.user!.id).first();
+        SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?
+      `).bind(segments[1], auth.user!.id).first<{ role: string }>();
       if (!access) {
         return Response.json({ error: 'E79301: Not found or no access' }, { status: 404 });
+      }
+      // The VNC websocket is full mouse/keyboard control (x11vnc has no per-client
+      // view-only mode here), so viewers get the UI assets but not the connection.
+      const wantsControl = segments.slice(3).join('/').startsWith('websockify') ||
+        request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
+      if (wantsControl && access.role !== 'owner' && access.role !== 'editor') {
+        return Response.json({ error: 'E79618: Viewers cannot control the browser' }, { status: 403 });
       }
     }
 
@@ -3620,9 +3648,13 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     // Verify dashboard membership
     const membership = await env.DB.prepare(
       'SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?'
-    ).bind(data.dashboardId, auth.user!.id).first();
+    ).bind(data.dashboardId, auth.user!.id).first<{ role: string }>();
     if (!membership) {
       return Response.json({ error: 'E79420: Not found' }, { status: 404 });
+    }
+    // Subscribing wires a channel into the dashboard (same bar as editing the block).
+    if (membership.role !== 'owner' && membership.role !== 'editor') {
+      return Response.json({ error: 'E79619: Viewers cannot add channel subscriptions' }, { status: 403 });
     }
     // Verify itemId belongs to the dashboard AND is a messaging block matching the provider.
     // Without this, subscriptions could be created for any item (terminals, notes, etc.),

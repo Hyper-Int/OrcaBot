@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v31-batch-dashboard-scoped-auth
-const MODULE_REVISION = 'gateway-v31-batch-dashboard-scoped-auth';
+// REVISION: gateway-v32-arg-validation-canonical-targets
+const MODULE_REVISION = 'gateway-v32-arg-validation-canonical-targets';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -40,6 +40,7 @@ import type {
 } from '../types';
 import { verifyPtyToken, tokenSigningSecret, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
+import { validateGatewayArgs, MESSAGING_TARGET_FIELD } from './arg-safety';
 import { getAccessToken } from './token-refresh';
 import { filterResponse, type FilterResult } from './response-filter';
 import { executeGmailAction } from './api-clients/gmail';
@@ -185,29 +186,21 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
   //   Matrix: "room_id"
   //   Google Chat: "space" or "space_name"
   //   WhatsApp: "to" (recipient phone number)
-  if (typeof args.channel === 'string') {
-    ctx.channelId = args.channel;
-  } else if (typeof args.chat_id === 'string') {
-    ctx.channelId = args.chat_id;
-  } else if (typeof args.channel_id === 'string') {
-    ctx.channelId = args.channel_id;
-  } else if (typeof args.room_id === 'string') {
-    ctx.channelId = args.room_id;
-  } else if (typeof args.space === 'string') {
-    ctx.channelId = args.space;
-  } else if (typeof args.space_name === 'string') {
-    ctx.channelId = args.space_name;
-  } else if (typeof args.to === 'string') {
-    ctx.channelId = args.to;
+  // Only the field the provider's client actually sends to: checking another
+  // field (e.g. `channel` while Telegram sends to `chat_id`) is a bypass.
+  const targetField = MESSAGING_TARGET_FIELD[action.split('.')[0]];
+  if (targetField && typeof args[targetField] === 'string') {
+    ctx.channelId = args[targetField] as string;
   }
-  // Channel name from args (if provided); otherwise enforcement uses ID only
-  if (typeof args.channel_name === 'string') {
-    ctx.channelName = args.channel_name;
-  }
+  // The channel name is never taken from args: an LLM-supplied name would pass
+  // a name allowlist for any channel ID. The gateway resolves it from the ID.
 
-  // Extract messaging text for maxMessageLength enforcement
-  if (typeof args.text === 'string') {
-    ctx.messageText = args.text;
+  // Everything the clients send as message content (Discord falls back to
+  // `content`, Slack also sends `blocks`), for maxMessageLength enforcement.
+  const messageParts = [args.text, args.content].filter((v): v is string => typeof v === 'string');
+  if (args.blocks !== undefined) messageParts.push(JSON.stringify(args.blocks));
+  if (messageParts.length > 0) {
+    ctx.messageText = messageParts.join('\n');
   }
 
   // Extract thread ID for requireThreadReply enforcement.
@@ -689,6 +682,28 @@ export async function handleGatewayExecute(
     );
   }
 
+  // 6b. Reject args that would mean one thing to enforcePolicy and another to the
+  // provider (path traversal in IDs, header injection, multi-address recipients).
+  const argError = validateGatewayArgs(provider, body.args);
+  if (argError) {
+    await logAuditEntry(env, {
+      terminalIntegrationId: ti.id,
+      terminalId,
+      dashboardId,
+      userId,
+      provider,
+      action: body.action,
+      policyId,
+      policyVersion,
+      decision: 'denied',
+      denialReason: argError,
+    });
+    return Response.json(
+      { allowed: false, decision: 'denied' as const, reason: argError, policyId, policyVersion },
+      { status: 403 }
+    );
+  }
+
   // 7. Derive enforcement context server-side from args (NEVER trust body.context)
   const derivedContext = deriveEnforcementContext(body.action, body.args);
 
@@ -705,6 +720,12 @@ export async function handleGatewayExecute(
             `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(replyMsgId)}?$select=from`,
             { headers: { Authorization: `Bearer ${token}` } },
           );
+          // The reply goes to the original sender, whatever `to` the LLM passed.
+          // Fail closed: with no sender to check, enforce against no recipient.
+          derivedContext.recipient = undefined;
+          derivedContext.recipients = undefined;
+          derivedContext.recipientDomain = undefined;
+          derivedContext.recipientDomains = undefined;
           if (msgResp.ok) {
             const msg = await msgResp.json() as { from?: { emailAddress?: { address?: string } } };
             const senderAddr = msg.from?.emailAddress?.address;
@@ -939,9 +960,8 @@ export async function handleGatewayExecute(
     // WhatsApp can use platform-level credentials when no per-user integration exists
     if (provider === 'whatsapp' && env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
       prefetchedAccessToken = env.WHATSAPP_ACCESS_TOKEN;
-      if (!body.args.phone_number_id) {
-        body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
-      }
+      // Always the platform number: the platform token can send from others.
+      body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
       // Auto-fill recipient from hybrid subscription's linked phone when agent doesn't specify one
       if (!body.args.to) {
         const hybridSub = await env.DB.prepare(`
@@ -1015,8 +1035,12 @@ export async function handleGatewayExecute(
         }, { status: 403 });
       }
 
+      // Fail closed unless this is the file's own metadata: the single-file filter
+      // only applies to objects with an `id`, so anything else would pass unchecked.
+      const isFileMetadata = !!metadata && typeof metadata === 'object' &&
+        (metadata as { id?: unknown }).id === fileId;
       const metadataFilter = filterResponse('google_drive', 'drive.get', metadata, policy);
-      if (metadataFilter.filtered && metadataFilter.data === null) {
+      if (!isFileMetadata || (metadataFilter.filtered && metadataFilter.data === null)) {
         await logAuditEntry(env, {
           terminalIntegrationId: ti.id,
           terminalId,
@@ -1057,16 +1081,20 @@ export async function handleGatewayExecute(
     }
   }
 
-  // 9d. WhatsApp Cloud API: inject phone_number_id from stored metadata so LLM doesn't need to know it
-  if (provider === 'whatsapp' && ti.user_integration_id && !body.args.phone_number_id) {
-    const waMeta = await env.DB.prepare(`
+  // 9d. WhatsApp Cloud API / Matrix: routing comes from the stored integration,
+  // never from the LLM. An LLM-supplied phone_number_id could send from another
+  // number on the account; an LLM-supplied homeserver would receive the token.
+  if ((provider === 'whatsapp' || provider === 'matrix') && ti.user_integration_id) {
+    const field = provider === 'whatsapp' ? 'phone_number_id' : 'homeserver';
+    delete body.args[field];
+    const storedMeta = await env.DB.prepare(`
       SELECT metadata FROM user_integrations WHERE id = ?
     `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
-    if (waMeta?.metadata) {
+    if (storedMeta?.metadata) {
       try {
-        const meta = JSON.parse(waMeta.metadata) as { phone_number_id?: string };
-        if (meta.phone_number_id) {
-          body.args.phone_number_id = meta.phone_number_id;
+        const meta = JSON.parse(storedMeta.metadata) as Record<string, unknown>;
+        if (typeof meta[field] === 'string' && meta[field]) {
+          body.args[field] = meta[field];
         }
       } catch { /* ignore parse errors */ }
     }

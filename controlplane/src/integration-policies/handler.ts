@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v17-remove-validate-token-leak
-console.log(`[integration-handler] REVISION: handler-v17-remove-validate-token-leak loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v18-policy-owner-only
+console.log(`[integration-handler] REVISION: handler-v18-policy-owner-only loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -1403,7 +1403,10 @@ export async function enforcePolicy(
       'canSend', 'canReadHistory', 'canReact', 'canEditMessages', 'canDeleteMessages',
     ]);
 
-    if (msgPolicy.channelFilter && CHANNEL_TARGETED_CAPABILITIES.has(capability)) {
+    // Read actions that target one specific chat despite a non-targeted capability.
+    const CHANNEL_TARGETED_ACTIONS = new Set(['telegram.get_chat_info']);
+
+    if (msgPolicy.channelFilter && (CHANNEL_TARGETED_CAPABILITIES.has(capability) || CHANNEL_TARGETED_ACTIONS.has(action))) {
       // mode: 'all' = no channel restriction — skip filter entirely
       if (msgPolicy.channelFilter.mode === 'allowlist') {
         const { channelIds, channelNames } = msgPolicy.channelFilter;
@@ -1997,17 +2000,27 @@ export async function updateIntegrationPolicy(
 
   // Find existing terminal integration
   const existing = await env.DB.prepare(`
-    SELECT id, active_policy_id
+    SELECT id, active_policy_id, user_id
     FROM terminal_integrations
     WHERE terminal_id = ? AND dashboard_id = ? AND provider = ? AND deleted_at IS NULL
   `)
     .bind(terminalId, dashboardId, provider)
-    .first<{ id: string; active_policy_id: string | null }>();
+    .first<{ id: string; active_policy_id: string | null; user_id: string }>();
 
   if (!existing) {
     return Response.json(
       { error: `${provider} is not attached to this terminal` },
       { status: 404 }
+    );
+  }
+
+  // The policy guards the account of whoever attached the integration (the
+  // gateway uses their OAuth token), so only they may change it — not another
+  // editor, and not the dashboard owner.
+  if (existing.user_id !== userId) {
+    return Response.json(
+      { error: 'E79615: Only the member who attached this integration can change its policy' },
+      { status: 403 }
     );
   }
 
@@ -2099,16 +2112,24 @@ export async function detachIntegration(
 
   // Find existing terminal integration
   const existing = await env.DB.prepare(`
-    SELECT id FROM terminal_integrations
+    SELECT id, user_id FROM terminal_integrations
     WHERE terminal_id = ? AND dashboard_id = ? AND provider = ? AND deleted_at IS NULL
   `)
     .bind(terminalId, dashboardId, provider)
-    .first<{ id: string }>();
+    .first<{ id: string; user_id: string }>();
 
   if (!existing) {
     return Response.json(
       { error: `${provider} is not attached to this terminal` },
       { status: 404 }
+    );
+  }
+
+  // Detaching only removes access, so the dashboard owner may also do it.
+  if (existing.user_id !== userId && access.role !== 'owner') {
+    return Response.json(
+      { error: 'E79616: Only the member who attached this integration, or the dashboard owner, can detach it' },
+      { status: 403 }
     );
   }
 
