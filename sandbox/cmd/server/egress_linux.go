@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v5-pool-default-deny
+// REVISION: egress-kernel-v6-browser-isolation
 
 //go:build linux
 
@@ -16,10 +16,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-const egressKernelRevision = "egress-kernel-v5-pool-default-deny"
+const egressKernelRevision = "egress-kernel-v6-browser-isolation"
 
 func init() {
 	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, "init")
@@ -139,6 +140,29 @@ func setupPoolMCPIptables(mcpPort string) error {
 	return nil
 }
 
+// setupPoolBrowserPortBlock blocks pool UIDs from the dashboard browser's
+// loopback ports (x11vnc, websockify, Chromium DevTools). Unauthenticated CDP or
+// VNC would hand an agent the browser — and its egress — outside every check;
+// the server is the only legitimate client (it runs as root, outside the range).
+func setupPoolBrowserPortBlock() error {
+	ruleArgs := []string{
+		"-p", "tcp",
+		"-d", "127.0.0.0/8",
+		"--dport", fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd),
+		"-m", "owner", "--uid-owner", "2000-2099",
+		"-j", "REJECT", "--reject-with", "tcp-reset",
+	}
+	if exec.Command("iptables", append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
+		return nil
+	}
+	out, err := exec.Command("iptables", append([]string{"-A", "OUTPUT"}, ruleArgs...)...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables pool browser-port block: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	log.Printf("[pool-iptables] Blocked pool UIDs 2000-2099 from browser ports %d-%d", browser.PortRangeStart, browser.PortRangeEnd)
+	return nil
+}
+
 // poolEgressChain holds the default-deny rules for pool UIDs.
 const poolEgressChain = "ORCABOT_POOL_EGRESS"
 
@@ -213,11 +237,19 @@ func installPoolEgressChain(cmd string, rules [][]string) error {
 		}
 	}
 
-	jump := []string{"-m", "owner", "--uid-owner", "2000-2099", "-j", poolEgressChain}
-	if exec.Command(cmd, append([]string{"-C", "OUTPUT"}, jump...)...).Run() == nil {
-		return nil
+	// Pool UIDs, and the dashboard browser's user: Chromium is pointed at the
+	// egress proxy, and this keeps anything it loads (or an extension changing
+	// its proxy) from leaving any other way.
+	for _, owner := range []string{"2000-2099", browser.BrowserUser} {
+		jump := []string{"-m", "owner", "--uid-owner", owner, "-j", poolEgressChain}
+		if exec.Command(cmd, append([]string{"-C", "OUTPUT"}, jump...)...).Run() == nil {
+			continue
+		}
+		if err := run(append([]string{"-A", "OUTPUT"}, jump...)...); err != nil {
+			return err
+		}
 	}
-	return run(append([]string{"-A", "OUTPUT"}, jump...)...)
+	return nil
 }
 
 // resolvConfNameservers returns the IPv4 and IPv6 nameservers from resolv.conf.

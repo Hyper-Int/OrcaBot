@@ -416,7 +416,14 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 - **Readiness re-probe**: `Ready` is re-evaluated on every `Status()` poll (cold chromium boot can exceed the short startup budget), so the browser flips to ready as soon as DevTools answers instead of latching `false` until an `OpenURL`.
 - **Pre-warm**: chromium is started in the background at sandbox session creation (`Manager.Create`) so the browser is ready (~instant) when first opened, instead of paying the ~25s cold boot on demand. One sandbox session per VM ⇒ one pre-warmed browser per VM (~250–350 MB idle on the 4 GB VMs). **On by default; set `BROWSER_PREWARM=false` to disable.** Future: idle auto-stop to reclaim RAM when unused.
 
-**Key file:** `internal/browser/browser.go`, pre-warm hook in `internal/sessions/manager.go`
+**Isolation (security-critical):**
+- All four processes run as the unprivileged `orcabot-browser` user (uid 1990, not in group `sandbox`; `internal/browser/isolation.go`), never root. Chromium still needs `--no-sandbox` in the VM, so a root Chromium with an open DevTools port was a root escalation for any agent.
+- x11vnc (`-localhost`), websockify (`127.0.0.1:`) and DevTools listen on loopback only, on ports from 6100-6299, which iptables blocks for pool UIDs (`setupPoolBrowserPortBlock`). The server (root) is the only client; the frontend reaches VNC through its authenticated proxy.
+- Xvfb runs with `-auth` (per-display MIT cookie in the browser user's 0700 home), so agents can't inject keystrokes into the display.
+- The profile (`/workspace/.browser`) is a browser-owned 0700 dir. `/workspace` is group-writable by every pool UID, so root only touches it through an `O_NOFOLLOW` directory fd (a swapped-in symlink is moved aside, never followed).
+- With egress control on, the browser user is also held to the pool's default-deny egress chain, so nothing Chromium loads can bypass the egress proxy.
+
+**Key file:** `internal/browser/browser.go`, `internal/browser/isolation.go`, pre-warm hook in `internal/sessions/manager.go`
 
 ---
 

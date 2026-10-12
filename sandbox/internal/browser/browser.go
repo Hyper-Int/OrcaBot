@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v12-process-group-kill
+// REVISION: browser-v13-unprivileged-user
 package browser
 
 import (
@@ -70,8 +70,8 @@ type Controller struct {
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v12-process-group-kill
-const browserRevision = "browser-v12-process-group-kill"
+// REVISION: browser-v13-unprivileged-user
+const browserRevision = "browser-v13-unprivileged-user"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -117,47 +117,57 @@ func (c *Controller) Start() (Status, error) {
 		return Status{}, err
 	}
 
+	// Everything below runs as the unprivileged browser user (isolation.go).
+	identity, err := lookupBrowserIdentity()
+	if err != nil {
+		return Status{}, err
+	}
+
 	display := int(atomic.AddUint32(&displayCounter, 1))
-	wsPort, err := freePort()
+	wsPort, err := freePortInRange()
 	if err != nil {
 		return Status{}, err
 	}
-	vncPort, err := freePort()
+	vncPort, err := freePortInRange(wsPort)
 	if err != nil {
 		return Status{}, err
 	}
-	debugPort, err := freePort()
+	debugPort, err := freePortInRange(wsPort, vncPort)
 	if err != nil {
 		return Status{}, err
 	}
 
+	// Make the profile a browser-owned 0700 dir and clear stale locks / crash
+	// state (no concurrent writer: Chromium isn't launched yet and Start holds c.mu).
 	userDataDir := filepath.Join(c.workspace, ".browser")
-	if err := os.MkdirAll(userDataDir, 0o755); err != nil {
+	if err := prepareProfileDir(userDataDir, identity); err != nil {
 		return Status{}, err
 	}
 
-	// Clean stale Chromium profile lock files left by previous container runs.
-	// These persist on the Docker volume and cause "profile in use" errors.
-	for _, lockFile := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
-		_ = os.Remove(filepath.Join(userDataDir, lockFile))
+	if err := os.MkdirAll("/tmp/.X11-unix", 0o777); err == nil {
+		_ = os.Chmod("/tmp/.X11-unix", 0o777|os.ModeSticky)
 	}
-
-	// Clean crash state so Chromium won't show "Restore pages?" bubble.
-	// Set exit_type to Normal and exited_cleanly to true in Preferences.
-	// Safe to call here: Chromium is not yet launched (Start holds c.mu and
-	// launches chromiumCmd below), so there is no concurrent writer.
-	cleanCrashState(userDataDir)
+	xauth := xauthorityPath(identity, display)
+	if err := writeXauthority(xauth, display, identity); err != nil {
+		return Status{}, fmt.Errorf("browser X auth: %w", err)
+	}
 
 	displayVar := fmt.Sprintf(":%d", display)
-	env := append(os.Environ(), "DISPLAY="+displayVar)
+	env := identity.env(displayVar, xauth)
 
-	xvfbCmd := exec.Command("Xvfb", displayVar, "-screen", "0", "1280x720x24", "-nolisten", "tcp")
+	// -auth: only holders of the cookie can open the display (no keystroke
+	// injection into the browser from agents).
+	xvfbCmd := exec.Command("Xvfb", displayVar, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-auth", xauth)
 	xvfbCmd.Env = env
 
 	vncCmd := exec.Command(
 		"x11vnc",
 		"-display", displayVar,
+		"-auth", xauth,
 		"-rfbport", strconv.Itoa(vncPort),
+		// Loopback only: websockify (below) is the one client, reached through
+		// the server's authenticated proxy. Pool UIDs are blocked from the port range.
+		"-localhost",
 		"-forever",
 		"-shared",
 		"-nopw",
@@ -176,7 +186,8 @@ func (c *Controller) Start() (Status, error) {
 
 	webArgs := []string{
 		"--heartbeat", "30",
-		strconv.Itoa(wsPort),
+		// Loopback only; the server proxies authenticated clients to it.
+		fmt.Sprintf("127.0.0.1:%d", wsPort),
 		// 127.0.0.1, not "localhost": the VM's /etc/hosts may lack a localhost
 		// entry, in which case websockify's name resolution of "localhost:<port>"
 		// fails and it closes every VNC client with 1011 "Failed to connect to
@@ -193,8 +204,9 @@ func (c *Controller) Start() (Status, error) {
 		"--no-sandbox",
 		// Suppress chromium's yellow "You are using an unsupported command-line
 		// flag: --no-sandbox" infobar (--disable-infobars does NOT hide this one in
-		// current chromium). --no-sandbox is required here (chromium runs as root in
-		// the VM), so the warning is noise that just clutters the browser-block view.
+		// current chromium). --no-sandbox is still required in the VM (no user
+		// namespaces for chromium's sandbox), so Chromium runs as the unprivileged
+		// browser user instead of root; the warning is just noise in the block.
 		"--test-type",
 		"--disable-dev-shm-usage",
 		"--no-first-run",
@@ -214,9 +226,9 @@ func (c *Controller) Start() (Status, error) {
 		"--user-data-dir=" + userDataDir,
 		"--window-size=1280,720",
 	}
-	// Route all Chromium traffic through the egress proxy when enabled.
-	// Chromium runs as root and is outside the iptables UID range, so without
-	// this every redirect, XHR, and subresource load bypasses kernel egress controls.
+	// Route all Chromium traffic through the egress proxy when enabled. The
+	// browser user is also held to the pool's default-deny egress chain
+	// (cmd/server/egress_linux.go), so nothing it loads can go around the proxy.
 	// Loopback is bypassed so the CDP debug connection on 127.0.0.1 is unaffected.
 	// REVISION: browser-v10-no-sandbox-warning
 	if c.egressProxyPort > 0 {
@@ -244,7 +256,7 @@ func (c *Controller) Start() (Status, error) {
 		// Lead a process group so teardown can signal the whole tree, not just
 		// this pid — Chromium's children would otherwise survive and be
 		// reparented to PID 1.
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.SysProcAttr = identity.sysProcAttr()
 		if err := cmd.Start(); err != nil {
 			log.Printf("browser failed to start %s: %v", cmd.Path, err)
 			killAll()
@@ -618,15 +630,6 @@ func trimForLog(value string) string {
 	return trimmed
 }
 
-func freePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
-}
 
 func waitForPort(port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
@@ -682,52 +685,3 @@ func ensureBinary(name string) error {
 	return nil
 }
 
-// cleanCrashState resets Chromium's crash/restore state in the profile so it
-// won't show a "Restore pages?" bubble on next launch. Chromium stores this in
-// Default/Preferences as exit_type and exited_cleanly.
-func cleanCrashState(userDataDir string) {
-	prefsPath := filepath.Join(userDataDir, "Default", "Preferences")
-
-	info, statErr := os.Stat(prefsPath)
-	data, err := os.ReadFile(prefsPath)
-	if err != nil {
-		return // No preferences file yet — fresh profile
-	}
-
-	var prefs map[string]interface{}
-	if err := json.Unmarshal(data, &prefs); err != nil {
-		log.Printf("[browser] cleanCrashState: failed to parse %s: %v", prefsPath, err)
-		return
-	}
-
-	// Set profile.exit_type = "Normal" and profile.exited_cleanly = true
-	profile, ok := prefs["profile"].(map[string]interface{})
-	if !ok {
-		profile = make(map[string]interface{})
-		prefs["profile"] = profile
-	}
-	profile["exit_type"] = "Normal"
-	profile["exited_cleanly"] = true
-
-	updated, err := json.Marshal(prefs)
-	if err != nil {
-		log.Printf("[browser] cleanCrashState: failed to marshal prefs: %v", err)
-		return
-	}
-
-	// Preserve existing file permissions
-	perm := os.FileMode(0o644)
-	if statErr == nil {
-		perm = info.Mode().Perm()
-	}
-
-	// Atomic write: temp file + rename to avoid corruption on crash
-	tmpPath := prefsPath + ".tmp"
-	if err := os.WriteFile(tmpPath, updated, perm); err != nil {
-		log.Printf("[browser] cleanCrashState: failed to write %s: %v", tmpPath, err)
-		return
-	}
-	if err := os.Rename(tmpPath, prefsPath); err != nil {
-		log.Printf("[browser] cleanCrashState: failed to rename %s → %s: %v", tmpPath, prefsPath, err)
-	}
-}

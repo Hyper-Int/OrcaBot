@@ -214,6 +214,17 @@ RUN for i in $(seq 0 99); do \
                 $(printf 'pty-%03d' $i); \
     done
 
+# Dedicated unprivileged user for the dashboard browser stack (Xvfb, x11vnc,
+# websockify, Chromium) — see internal/browser. Outside the pool UID range and
+# NOT in the sandbox group, so agents can't write its profile or home, and
+# iptables can block pool UIDs from its ports (6100-6299). Never run it as root:
+# root Chromium + an open DevTools port was a root escalation for any agent.
+RUN groupadd --system --gid 1990 orcabot-browser \
+    && useradd --system --uid 1990 --gid 1990 --create-home \
+               --home-dir /home/orcabot-browser --shell /usr/sbin/nologin orcabot-browser \
+    && chmod 700 /home/orcabot-browser \
+    && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
 # Set umask 0002 for all PTY shell sessions.
 # Without this, files created by pty-000 land at 0644/0755 (umask 0022) so
 # pty-001 can read them but not modify them — breaking the shared-workspace model.

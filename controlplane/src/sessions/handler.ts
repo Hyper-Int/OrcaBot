@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v22-signed-sandbox-requests
-const sessionsRevision = "sessions-v22-signed-sandbox-requests";
+// REVISION: sessions-v23-owner-secrets-only
+const sessionsRevision = "sessions-v23-owner-secrets-only";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1496,9 +1496,13 @@ async function createSessionImpl(
       sandboxSessionId: string,
       sandboxMachineId: string
     ): Promise<string[]> => {
-      const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
-      const secrets = await getSecretsWithProtection(env, userId, dashboardId);
-      const approvedDomains = await getApprovedDomainsForDashboard(env, userId, dashboardId);
+      const { getSecretsWithProtection, getApprovedDomainsForDashboard, dashboardSecretsOwner } = await import('../secrets/handler');
+      // The VM is shared by every member's terminals: it gets the dashboard
+      // owner's secrets, never those of whoever created this terminal.
+      const secretsOwnerId = await dashboardSecretsOwner(env, dashboardId);
+      if (!secretsOwnerId) return [];
+      const secrets = await getSecretsWithProtection(env, secretsOwnerId, dashboardId);
+      const approvedDomains = await getApprovedDomainsForDashboard(env, secretsOwnerId, dashboardId);
       const secretNames = Object.keys(secrets);
 
       if (secretNames.length > 0 || approvedDomains.length > 0) {
@@ -2569,7 +2573,7 @@ export async function applySecretsToSession(
   userId: string
 ): Promise<Response> {
   // Import dynamically to avoid circular dependency
-  const { getSecretsWithProtection, getApprovedDomainsForDashboard } = await import('../secrets/handler');
+  const { getSecretsWithProtection, getApprovedDomainsForDashboard, dashboardSecretsOwner } = await import('../secrets/handler');
 
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -2586,16 +2590,21 @@ export async function applySecretsToSession(
   }
 
   try {
+    // The dashboard's VM only ever gets its owner's secrets (see dashboardSecretsOwner).
+    const secretsOwnerId = await dashboardSecretsOwner(env, session.dashboard_id as string);
+    if (!secretsOwnerId) {
+      return Response.json({ error: 'E79620: Dashboard owner not found' }, { status: 404 });
+    }
     const secrets = await getSecretsWithProtection(
       env,
-      userId,
+      secretsOwnerId,
       session.dashboard_id as string
     );
 
     // Get approved domains for custom secrets
     const approvedDomains = await getApprovedDomainsForDashboard(
       env,
-      userId,
+      secretsOwnerId,
       session.dashboard_id as string
     );
 

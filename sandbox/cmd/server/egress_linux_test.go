@@ -12,13 +12,16 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
@@ -83,6 +86,9 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	if err := setupPoolMCPIptables("65000"); err != nil {
 		t.Fatalf("setupPoolMCPIptables: %v", err)
 	}
+	if err := setupPoolBrowserPortBlock(); err != nil {
+		t.Fatalf("setupPoolBrowserPortBlock: %v", err)
+	}
 	if err := setupPoolEgressDenyIptables(); err != nil {
 		t.Fatalf("setupPoolEgressDenyIptables: %v", err)
 	}
@@ -90,9 +96,33 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	if err := setupPoolEgressDenyIptables(); err != nil {
 		t.Fatalf("second setupPoolEgressDenyIptables: %v", err)
 	}
+	// One jump for pool UIDs and one for the browser user (needs that user to
+	// exist: useradd --uid 1990 orcabot-browser in the test container).
 	out, _ := exec.Command("iptables", "-S", "OUTPUT").CombinedOutput()
-	if n := strings.Count(string(out), "-j "+poolEgressChain); n != 1 {
-		t.Fatalf("expected exactly 1 jump to %s, got %d:\n%s", poolEgressChain, n, out)
+	if n := strings.Count(string(out), "-j "+poolEgressChain); n != 2 {
+		t.Fatalf("expected exactly 2 jumps to %s, got %d:\n%s", poolEgressChain, n, out)
+	}
+
+	// A browser-range port (CDP/VNC/websockify) is off limits to pool UIDs.
+	browserPort, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", browser.PortRangeStart+7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browserPort.Close()
+	go acceptAndClose(browserPort)
+	if err := dialAsUID(2000, browserPort.Addr().String()); err == nil {
+		t.Fatal("pool UID reached a browser port (CDP/VNC)")
+	}
+	if err := dialAsUID(0, browserPort.Addr().String()); err != nil {
+		t.Fatalf("server (root) must still reach browser ports: %v", err)
+	}
+	// The browser user is held to the same default-deny egress.
+	browserUID := lookupUID(t, browser.BrowserUser)
+	if err := dialAsUID(browserUID, "1.1.1.1:443"); err == nil {
+		t.Fatal("browser user reached the internet directly (should only use the egress proxy)")
+	}
+	if err := dialAsUID(browserUID, local.Addr().String()); err != nil {
+		t.Fatalf("browser user must reach loopback (egress proxy): %v", err)
 	}
 
 	cases := []struct {
@@ -164,4 +194,14 @@ func dialAsUID(uid uint32, addr string) error {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("timeout")
 	}
+}
+
+func lookupUID(t *testing.T, name string) uint32 {
+	t.Helper()
+	u, err := user.Lookup(name)
+	if err != nil {
+		t.Fatalf("lookup %s (create it in the test container): %v", name, err)
+	}
+	uid, _ := strconv.Atoi(u.Uid)
+	return uint32(uid)
 }

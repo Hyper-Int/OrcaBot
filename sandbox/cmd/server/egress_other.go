@@ -14,5 +14,8 @@ func setupEgressIptables() error { return nil }
 // setupPoolMCPIptables is a no-op on non-Linux platforms.
 func setupPoolMCPIptables(_ string) error { return nil }
 
+// setupPoolBrowserPortBlock is a no-op on non-Linux platforms.
+func setupPoolBrowserPortBlock() error { return nil }
+
 // setupPoolEgressDenyIptables is a no-op on non-Linux platforms.
 func setupPoolEgressDenyIptables() error { return nil }

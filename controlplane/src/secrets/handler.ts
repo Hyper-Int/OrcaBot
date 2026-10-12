@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secrets-v2-signed-sandbox-requests
+// REVISION: secrets-v3-owner-secrets-only
 
 import type { Env, UserSecret, SecretType } from '../types';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
-const MODULE_REVISION = 'secrets-v2-signed-sandbox-requests';
+const MODULE_REVISION = 'secrets-v3-owner-secrets-only';
 console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -24,6 +24,19 @@ console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISO
  * @param userId - User who owns the secrets
  * @param dashboardId - Dashboard ID or '_global' for global secrets
  */
+/**
+ * Whose secrets a dashboard's VM gets: its owner's, and only theirs. There is one
+ * VM per dashboard but secrets are per user, so pushing whoever acted last put
+ * their keys behind every terminal's broker URL (and their plaintext secrets in
+ * the shared /workspace/.env) for every other member's agents to use.
+ */
+export async function dashboardSecretsOwner(env: Env, dashboardId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT owner_id FROM dashboards WHERE id = ?`)
+    .bind(dashboardId)
+    .first<{ owner_id: string }>();
+  return row?.owner_id ?? null;
+}
+
 export async function autoApplySecretsToSessions(
   env: Env,
   userId: string,
@@ -73,6 +86,12 @@ export async function autoApplySecretsToSessions(
         continue;
       }
       processedDashboards.add(sessionDashboardId);
+
+      // Only the owner's secrets go into a dashboard's VM: a member changing
+      // their own secrets must not push them into someone else's dashboard.
+      if ((await dashboardSecretsOwner(env, sessionDashboardId)) !== userId) {
+        continue;
+      }
 
       try {
         // Get fresh secrets for this dashboard
