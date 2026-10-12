@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: drive-mirror-v2-dashboard-token
+
 package drive
 
 import (
@@ -12,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 )
 
 type ManifestEntry struct {
@@ -38,22 +42,19 @@ type Manifest struct {
 
 type Mirror struct {
 	baseURL string
-	token   string
 	client  *http.Client
 }
 
 func NewMirrorFromEnv() *Mirror {
 	baseURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
-	token := os.Getenv("INTERNAL_API_TOKEN")
 	return &Mirror{
 		baseURL: baseURL,
-		token:   token,
 		client:  &http.Client{},
 	}
 }
 
 func (m *Mirror) Enabled() bool {
-	return m.baseURL != "" && m.token != ""
+	return m.baseURL != ""
 }
 
 func (m *Mirror) FetchManifest(ctx context.Context, dashboardID string) (*Manifest, error) {
@@ -64,7 +65,9 @@ func (m *Mirror) FetchManifest(ctx context.Context, dashboardID string) (*Manife
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Internal-Token", m.token)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return nil, err
+	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -90,7 +93,9 @@ func (m *Mirror) FetchFile(ctx context.Context, dashboardID, fileID string) (io.
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("X-Internal-Token", m.token)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return nil, nil, err
+	}
 
 	resp, err := m.client.Do(req)
 	if err != nil {
@@ -116,7 +121,10 @@ func (m *Mirror) ReportProgress(ctx context.Context, payload map[string]interfac
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Internal-Token", m.token)
+	dashboardID, _ := payload["dashboardId"].(string)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := m.client.Do(req)

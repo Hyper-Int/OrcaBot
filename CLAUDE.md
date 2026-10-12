@@ -109,6 +109,7 @@ Security invariants (non-negotiable):
 - Approved domains keyed by `sessionID:secretName` — never just secret name
 - Empty `INTERNAL_API_TOKEN` = all PTY tokens rejected (fail-closed)
 - PTY + dashboard tokens are signed with `PTY_TOKEN_SECRET`, a control-plane-only secret — never `INTERNAL_API_TOKEN`, which every sandbox VM holds (root can read it from `/proc`). Without `PTY_TOKEN_SECRET` set the control plane falls back to `INTERNAL_API_TOKEN` and logs a SECURITY WARNING
+- Sandbox → control plane `/internal/*` calls authenticate with the VM's **dashboard-scoped token** (`X-Dashboard-Token`, `sandbox/internal/cpauth`), and every VM-reachable route checks the resource belongs to that dashboard (`controlplane/src/auth/sandbox-auth.ts`). `X-Internal-Token` is full trust for control-plane-side callers only; with `WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX=true` new VMs never receive `INTERNAL_API_TOKEN`. New VM-called routes must use `authorizeSandboxForDashboard`, never `requireInternalAuth`
 - Pool UIDs (2000-2099) are egress default-deny at the kernel: only loopback (incl. the 80/443 REDIRECT), established replies, DNS to resolv.conf nameservers, and `EGRESS_EXTRA_TCP_PORTS` (opt-in, e.g. `22`) are allowed
 - Localhost MCP/event endpoints require valid `X-MCP-Secret` (no fail-open)
 - Egress proxy fail-closed: 60s timeout = deny; proxy crash = connections fail

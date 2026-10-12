@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v20-no-per-session-egress
-const sessionsRevision = "sessions-v20-no-per-session-egress";
+// REVISION: sessions-v21-sandbox-scoped-auth
+const sessionsRevision = "sessions-v21-sandbox-scoped-auth";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -16,6 +16,7 @@ import type { Session, DashboardItem } from '../types';
 import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
+import { sandboxInternalTokenEnv } from '../auth/sandbox-auth';
 import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
@@ -804,7 +805,7 @@ async function coldProvisionMachine(
       env: {
         SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
-        INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN,
+        ...sandboxInternalTokenEnv(env),
         DASHBOARD_ID: dashboardId,
         ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
         ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),

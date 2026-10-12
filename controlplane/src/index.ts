@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v19-security-review-fixes
-console.log(`[controlplane] REVISION: controlplane-v19-security-review-fixes loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v20-sandbox-scoped-auth
+console.log(`[controlplane] REVISION: controlplane-v20-sandbox-scoped-auth loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -12,6 +12,7 @@ console.log(`[controlplane] REVISION: controlplane-v19-security-review-fixes loa
 
 import type { Env, DashboardItem, RecipeStep, Session } from './types';
 import { authenticate, requireAuth, rejectPatAuth, requireInternalAuth, validateMcpAuth, devAuthSurfaceTrusted, type AuthContext } from './auth/middleware';
+import { authenticateSandbox, authorizeSandboxForDashboard, requireSandboxDashboard, dashboardIdForSandboxSession, dashboardIdForScheduleExecution, refreshSandboxDashboardToken, sandboxInternalTokenEnv } from './auth/sandbox-auth';
 import { checkRateLimitIp, checkRateLimitUser } from './ratelimit/middleware';
 import { initializeDatabase } from './db/schema';
 import { ensureDb, type EnvWithDb } from './db/remote';
@@ -749,7 +750,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         env: {
           SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
-          INTERNAL_API_TOKEN: env.INTERNAL_API_TOKEN || '',
+          ...sandboxInternalTokenEnv(env),
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',
           ...(env.EGRESS_PROXY_ENABLED ? { EGRESS_PROXY_ENABLED: env.EGRESS_PROXY_ENABLED } : {}),
         },
@@ -3260,56 +3261,62 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // GET /internal/drive/manifest
   if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'manifest' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, url.searchParams.get('dashboard_id'));
     if (authError) return authError;
     return integrations.getDriveManifestInternal(request, env);
   }
 
   // GET /internal/drive/file
   if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'file' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, url.searchParams.get('dashboard_id'));
     if (authError) return authError;
     return integrations.getDriveFileInternal(request, env);
   }
 
   // POST /internal/drive/sync/progress
   if (segments[0] === 'internal' && segments[1] === 'drive' && segments[2] === 'sync' && segments[3] === 'progress' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
+    const progressBody = await request.clone().json().catch(() => ({})) as { dashboardId?: unknown };
+    const authError = await authorizeSandboxForDashboard(request, env, typeof progressBody.dashboardId === 'string' ? progressBody.dashboardId : null);
     if (authError) return authError;
     return integrations.updateDriveSyncPrоgressInternal(request, env);
   }
 
   // GET /internal/mirror/manifest
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'manifest' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, url.searchParams.get('dashboard_id'));
     if (authError) return authError;
     return integrations.getMirrоrManifestInternal(request, env);
   }
 
   // GET /internal/mirror/file
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'file' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, url.searchParams.get('dashboard_id'));
     if (authError) return authError;
     return integrations.getMirrоrFileInternal(request, env);
   }
 
   // POST /internal/mirror/sync/progress
   if (segments[0] === 'internal' && segments[1] === 'mirror' && segments[2] === 'sync' && segments[3] === 'progress' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
+    const progressBody = await request.clone().json().catch(() => ({})) as { dashboardId?: unknown };
+    const authError = await authorizeSandboxForDashboard(request, env, typeof progressBody.dashboardId === 'string' ? progressBody.dashboardId : null);
     if (authError) return authError;
     return integrations.updateMirrоrSyncPrоgressInternal(request, env);
   }
 
   // POST /internal/browser/open - Notify browser open from sandbox session
   if (segments[0] === 'internal' && segments[1] === 'browser' && segments[2] === 'open' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
-    if (authError) return authError;
+    const sbAuth = await authenticateSandbox(request, env);
+    if (sbAuth instanceof Response) return sbAuth;
     const data = await request.json() as {
       sandbox_session_id?: string;
       url?: string;
       pty_id?: string;
     };
     const sandboxSessionId = typeof data.sandbox_session_id === 'string' ? data.sandbox_session_id : '';
+    if (sbAuth.kind !== 'full') {
+      const scopeError = requireSandboxDashboard(sbAuth, await dashboardIdForSandboxSession(env, sandboxSessionId), request);
+      if (scopeError) return scopeError;
+    }
     const url = typeof data.url === 'string' ? data.url : '';
     const ptyId = typeof data.pty_id === 'string' ? data.pty_id : undefined;
     return sessions.openBrowserFromSandbоxSessionInternal(env, sandboxSessionId, url, ptyId);
@@ -3317,7 +3324,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // POST /internal/sessions/:sessionId/approval-request - Create pending approval (called by sandbox broker)
   if (segments[0] === 'internal' && segments[1] === 'sessions' && segments.length === 4 && segments[3] === 'approval-request' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, await dashboardIdForSandboxSession(env, segments[2]));
     if (authError) return authError;
     const data = await request.json() as { secretName: string; domain: string };
     return sessions.createApprovalRequestInternal(env, segments[2], data);
@@ -3325,21 +3332,21 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // GET /internal/sessions/:sessionId/approved-domains - Get approved domain configs (called by sandbox)
   if (segments[0] === 'internal' && segments[1] === 'sessions' && segments.length === 4 && segments[3] === 'approved-domains' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, await dashboardIdForSandboxSession(env, segments[2]));
     if (authError) return authError;
     return sessions.getApprovedDomainsInternal(env, segments[2]);
   }
 
   // GET /internal/dashboards/:id/egress/allowlist - Sandbox loads persisted egress allowlist on startup
   if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'egress' && segments[4] === 'allowlist' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
     if (authError) return authError;
     return egress.handleInternalGetAllowlist(request, env, segments[2]);
   }
 
   // POST /internal/dashboards/:id/egress/audit - Sandbox logs runtime egress decisions
   if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 5 && segments[3] === 'egress' && segments[4] === 'audit' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
     if (authError) return authError;
     return egress.handleInternalLogAudit(request, env, segments[2]);
   }
@@ -3474,7 +3481,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // GET /internal/dashboards/:dashboardId/terminal-integrations - Batch list all terminal integrations
   // REVISION: batch-integrations-v1-route
-  // Security: X-Internal-Token header (sandbox internal auth)
+  // Security: X-Internal-Token (full trust) or X-Dashboard-Token scoped to :dashboardId
   if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 4 && segments[3] === 'terminal-integrations' && method === 'GET') {
     const { handleBatchListTerminalIntegrations } = await import('./integration-policies/gateway');
     return handleBatchListTerminalIntegrations(
@@ -3490,6 +3497,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     if (authError) return authError;
     const data = await request.json() as Parameters<typeof integrationPolicies.logAuditEntry>[1];
     return integrationPolicies.logAuditEntry(env, data);
+  }
+
+  // POST /internal/sandbox/dashboard-token/refresh - Sandbox swaps a still-valid dashboard token for a fresh one
+  if (segments[0] === 'internal' && segments[1] === 'sandbox' && segments[2] === 'dashboard-token' && segments[3] === 'refresh' && segments.length === 4 && method === 'POST') {
+    return refreshSandboxDashboardToken(request, env);
   }
 
   // POST /internal/bridge/inbound - Receive message from bridge relay service
@@ -3778,8 +3790,12 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // POST /internal/schedule-executions/:id/pty-completed - Sandbox callback when PTY finishes
   if (segments[0] === 'internal' && segments[1] === 'schedule-executions' && segments.length === 4 && segments[3] === 'pty-completed' && method === 'POST') {
-    const authError = requireInternalAuth(request, env);
-    if (authError) return authError;
+    const sbAuth = await authenticateSandbox(request, env);
+    if (sbAuth instanceof Response) return sbAuth;
+    if (sbAuth.kind !== 'full') {
+      const scopeError = requireSandboxDashboard(sbAuth, await dashboardIdForScheduleExecution(env, segments[2]), request);
+      if (scopeError) return scopeError;
+    }
     const data = await request.json() as {
       ptyId: string;
       status: 'completed' | 'failed' | 'timed_out';
@@ -3868,7 +3884,7 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
   // GET /internal/dashboards/:id/mcp-tools - Get user's MCP tools for a dashboard (used by sandbox)
   if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 4 && segments[3] === 'mcp-tools' && method === 'GET') {
-    const authError = requireInternalAuth(request, env);
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
     if (authError) return authError;
     return mcpTools.getMcpToolsForDashboard(env, segments[2]);
   }

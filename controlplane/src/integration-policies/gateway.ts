@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v30-forward-as-send-category
-const MODULE_REVISION = 'gateway-v30-forward-as-send-category';
+// REVISION: gateway-v31-batch-dashboard-scoped-auth
+const MODULE_REVISION = 'gateway-v31-batch-dashboard-scoped-auth';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1264,7 +1264,7 @@ export async function handleListTerminalIntegrations(
  *
  * GET /internal/dashboards/:dashboardId/terminal-integrations
  *
- * Auth: X-Internal-Token (sandbox internal auth)
+ * Auth: X-Internal-Token (full trust) or X-Dashboard-Token scoped to :dashboardId
  *
  * Response:
  *   {
@@ -1280,14 +1280,10 @@ export async function handleBatchListTerminalIntegrations(
   env: Env,
   dashboardId: string
 ): Promise<Response> {
-  // Auth: require internal token
-  const internalToken = request.headers.get('X-Internal-Token');
-  if (!internalToken || internalToken !== env.INTERNAL_API_TOKEN) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or missing internal token' },
-      { status: 401 }
-    );
-  }
+  // Auth: internal token (full trust) or a dashboard token scoped to this dashboard
+  const { authorizeSandboxForDashboard } = await import('../auth/sandbox-auth');
+  const authError = await authorizeSandboxForDashboard(request, env, dashboardId);
+  if (authError) return authError;
 
   // Single query for all terminals in this dashboard
   const integrations = await env.DB.prepare(`

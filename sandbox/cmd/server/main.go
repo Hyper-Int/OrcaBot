@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v41-pool-egress-default-deny
+// REVISION: main-v42-dashboard-token-auth
 
 package main
 
@@ -31,6 +31,7 @@ import (
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
@@ -40,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v41-pool-egress-default-deny"
+const mainRevision = "main-v42-dashboard-token-auth"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -742,6 +743,8 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 			req.MCPToken = ""
 		}
 	}
+	// Dashboard-scoped credential for this VM's /internal/* calls (must precede the allowlist fetch).
+	cpauth.SetDashboardToken(req.DashboardID, req.MCPToken)
 	if err := s.ensureEgressAllowlistLoaded(req.DashboardID); err != nil {
 		log.Printf("[egress-proxy] Allowlist hydration skipped for dashboard %q: %v", req.DashboardID, err)
 	}
@@ -779,9 +782,8 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	s.egressAllowlistMu.Unlock()
 
 	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
-	internalToken := strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
-	if controlplaneURL == "" || internalToken == "" {
-		return errors.New("missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+	if controlplaneURL == "" {
+		return errors.New("missing CONTROLPLANE_URL")
 	}
 
 	url := controlplaneURL + "/internal/dashboards/" + dashboardID + "/egress/allowlist"
@@ -789,7 +791,9 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return err
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -799,7 +803,7 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body) + " token=" + tokenFingerprint(internalToken))
+		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body) + " auth=" + credentialKind(req))
 	}
 
 	var payload struct {
@@ -837,16 +841,16 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	return nil
 }
 
-func tokenFingerprint(token string) string {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return "(none)"
+// credentialKind names which control plane credential a request carries, for logs.
+func credentialKind(req *http.Request) string {
+	switch {
+	case req.Header.Get("X-Dashboard-Token") != "":
+		return "dashboard-token"
+	case req.Header.Get("X-Internal-Token") != "":
+		return "internal-token"
+	default:
+		return "none"
 	}
-	n := len(token)
-	if n <= 8 {
-		return fmt.Sprintf("%s(len=%d)", token, n)
-	}
-	return fmt.Sprintf("%s...%s(len=%d)", token[:4], token[n-4:], n)
 }
 
 func (s *Server) handleDeleteSessiоn(w http.ResponseWriter, r *http.Request) {
@@ -958,7 +962,7 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 			// Use captured execID, not a live lookup, to avoid the reuse problem
 			if eid := session.GetExecutionID(ptyID); eid == execID {
 				session.SetExecutionID(ptyID, "") // Clear to prevent duplicate from agent-stopped
-				go s.notifyExecutionPtyCompleted(execID, ptyID, "process_exit", "")
+				go s.notifyExecutionPtyCompleted(session.DashboardID, execID, ptyID, "process_exit", "")
 			}
 		})
 	}
@@ -1537,12 +1541,11 @@ func (s *Server) handleToolsChanged(w http.ResponseWriter, r *http.Request) {
 // notifyExecutionPtyCompleted calls the control plane to report that a schedule-triggered PTY has completed.
 // Called asynchronously (goroutine) when agent_stopped fires for a PTY with execution context.
 // REVISION: server-side-cron-v1-agent-stopped-callback
-func (s *Server) notifyExecutionPtyCompleted(executionId, ptyId, reason, lastMessage string) {
+func (s *Server) notifyExecutionPtyCompleted(dashboardID, executionId, ptyId, reason, lastMessage string) {
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
-	internalToken := os.Getenv("INTERNAL_API_TOKEN")
 
-	if controlplaneURL == "" || internalToken == "" {
-		log.Printf("[execution-callback] Cannot notify control plane: missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+	if controlplaneURL == "" {
+		log.Printf("[execution-callback] Cannot notify control plane: missing CONTROLPLANE_URL")
 		return
 	}
 
@@ -1575,7 +1578,10 @@ func (s *Server) notifyExecutionPtyCompleted(executionId, ptyId, reason, lastMes
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		log.Printf("[execution-callback] Cannot notify control plane for execution %s: %v", executionId, err)
+		return
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -1725,7 +1731,7 @@ func (s *Server) handleAgentStoppedForPTY(w http.ResponseWriter, session *sessio
 
 	if execId := session.GetExecutionID(ptyID); execId != "" {
 		session.SetExecutionID(ptyID, "")
-		go s.notifyExecutionPtyCompleted(execId, ptyID, req.Reason, req.LastMessage)
+		go s.notifyExecutionPtyCompleted(session.DashboardID, execId, ptyID, req.Reason, req.LastMessage)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -1830,8 +1836,7 @@ func (s *Server) forwardEgressAudit(event egress.AuditEvent) {
 	}
 
 	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
-	internalToken := strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
-	if controlplaneURL == "" || internalToken == "" {
+	if controlplaneURL == "" {
 		return
 	}
 
@@ -1852,7 +1857,9 @@ func (s *Server) forwardEgressAudit(event egress.AuditEvent) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

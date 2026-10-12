@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: dashboard-token-v2-refresh-grace
+const MODULE_REVISION = 'dashboard-token-v2-refresh-grace';
+console.log(`[dashboard-token] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 /**
  * Dashboard-scoped tokens for MCP proxy
  *
@@ -80,7 +84,7 @@ async function hmacVerify(data: string, signature: string, secret: string): Prom
 /**
  * Create a dashboard-scoped token for MCP proxy
  * @param dashboardId - Required dashboard to scope the token to
- * @param secret - Signing secret (INTERNAL_API_TOKEN)
+ * @param secret - Signing secret (tokenSigningSecret(env) — PTY_TOKEN_SECRET)
  * @param sessionId - Optional session ID for auditing (not enforced)
  */
 export async function createDashboardToken(
@@ -110,10 +114,15 @@ export async function createDashboardToken(
 /**
  * Verify and decode a dashboard-scoped token
  * Returns the claims if valid, null if invalid
+ *
+ * expiredGraceSeconds: accept a correctly signed token up to this long past its
+ * expiry. Only the token refresh endpoint uses it (a suspended VM can wake after
+ * its token expired); every other caller gets strict expiry.
  */
 export async function verifyDashboardToken(
   token: string,
-  secret: string
+  secret: string,
+  expiredGraceSeconds = 0
 ): Promise<DashboardTokenClaims | null> {
   const parts = token.split('.');
   if (parts.length !== 3) {
@@ -155,7 +164,7 @@ export async function verifyDashboardToken(
 
     // Check expiry
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) {
+    if (payload.exp + expiredGraceSeconds < now) {
       return null;
     }
 

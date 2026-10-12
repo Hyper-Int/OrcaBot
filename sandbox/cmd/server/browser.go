@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v7-autoopen-notify-diag
+// REVISION: browser-v8-autoopen-dashboard-token
 package main
 
 import (
@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
@@ -189,7 +190,7 @@ func (s *Server) handleBrowserOpenForPTY(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	go s.notifyControlPlaneBrowserOpen(session.ID, urlStr, ptyID)
+	go s.notifyControlPlaneBrowserOpen(session.DashboardID, session.ID, urlStr, ptyID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -197,13 +198,12 @@ func (s *Server) handleBrowserOpenForPTY(w http.ResponseWriter, r *http.Request,
 // notifyControlPlaneBrowserOpen notifies the control plane to create/show the browser
 // component in the frontend. This runs async and is best-effort since the xdg-open
 // script inside the PTY cannot access INTERNAL_API_TOKEN (filtered for security).
-func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url string, ptyID string) {
-	// REVISION: browser-autoopen-diag-v1
+func (s *Server) notifyControlPlaneBrowserOpen(dashboardID string, sandboxSessionID string, url string, ptyID string) {
+	// REVISION: browser-autoopen-v2-dashboard-token
 	controlplaneURL := strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/")
-	internalToken := os.Getenv("INTERNAL_API_TOKEN")
-	log.Printf("[browser] notify start: sandboxSessionID=%s ptyID=%s cpURL=%q tokenset=%t", sandboxSessionID, ptyID, controlplaneURL, internalToken != "")
-	if controlplaneURL == "" || internalToken == "" {
-		log.Printf("[browser] skipping control plane notification: missing CONTROLPLANE_URL or INTERNAL_API_TOKEN")
+	log.Printf("[browser] notify start: sandboxSessionID=%s ptyID=%s cpURL=%q credential=%t", sandboxSessionID, ptyID, controlplaneURL, cpauth.Available(dashboardID))
+	if controlplaneURL == "" {
+		log.Printf("[browser] skipping control plane notification: missing CONTROLPLANE_URL")
 		return
 	}
 
@@ -225,7 +225,10 @@ func (s *Server) notifyControlPlaneBrowserOpen(sandboxSessionID string, url stri
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		log.Printf("[browser] skipping control plane notification: %v", err)
+		return
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

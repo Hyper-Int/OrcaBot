@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: manager-v3-forget-session-dashboard
+
 package sessions
 
 import (
@@ -217,6 +219,7 @@ func (m *Manager) Delete(id string) error {
 	}
 	delete(m.sessions, id)
 	m.mu.Unlock()
+	sessionDashboards.Delete(id)
 
 	// REVISION: manager-v2-evict-logged-routes
 	// Release this session's per-session state on the shared broker so it doesn't

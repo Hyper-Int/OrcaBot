@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-client-v5-batch-integrations
+// REVISION: gateway-client-v6-batch-dashboard-token
 package mcp
 
 import (
@@ -12,10 +12,12 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 )
 
 func init() {
-	log.Printf("[gateway-client] REVISION: gateway-client-v5-batch-integrations loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[gateway-client] REVISION: gateway-client-v6-batch-dashboard-token loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // AuthType indicates how to authenticate with the control plane
@@ -124,20 +126,17 @@ type BatchIntegrationsResponse struct {
 }
 
 // BatchListIntegrations returns integrations for ALL terminals in a dashboard in a single call.
-// Uses X-Internal-Token auth (not per-PTY token) since it's a dashboard-wide query.
+// Uses the dashboard-scoped token (not a per-PTY token) since it's a dashboard-wide query.
 func (c *GatewayClient) BatchListIntegrations(dashboardID string) (*BatchIntegrationsResponse, error) {
-	internalToken := os.Getenv("INTERNAL_API_TOKEN")
-	if internalToken == "" {
-		return nil, fmt.Errorf("INTERNAL_API_TOKEN not set")
-	}
-
 	url := fmt.Sprintf("%s/internal/dashboards/%s/terminal-integrations", c.controlPlaneURL, dashboardID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

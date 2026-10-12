@@ -283,6 +283,9 @@ Defined in `internal/egress/defaults.json` (embedded into `allowlist.go` via `//
 
 Glob matching: `*.example.com` matches subdomains but NOT `example.com` itself.
 
+### Control Plane Credentials
+- Calls to the control plane's `/internal/*` go through `internal/cpauth`: `cpauth.Apply(req, dashboardID)` attaches the dashboard-scoped token (`X-Dashboard-Token`) the control plane sent with the session, refreshing it before its 7-day expiry. Never read `INTERNAL_API_TOKEN` directly — it is only a legacy fallback and is absent once the control plane sets `WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX=true`.
+
 ### Feature Flag
 - `EGRESS_PROXY_ENABLED=true` env var: single gate — enables globally for all sessions
 - Without this, proxy runs but PTYs don't route through it (iptables rules not installed, UID pool not activated)

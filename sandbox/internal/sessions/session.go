@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v23-browser-close-race
+// REVISION: session-v24-dashboard-token-auth
 
 // Package sessions manages session lifecycle.
 //
@@ -32,6 +32,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/agenthooks"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drivesync"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/fs"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
@@ -40,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v23-browser-close-race"
+const sessionRevision = "session-v24-dashboard-token-auth"
 
 // Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
 // This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
@@ -183,6 +184,9 @@ type Session struct {
 // through that port so redirects/subresources are subject to egress approval.
 // REVISION: browser-v7-proxy-server
 func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int, egressProxyPort int) *Session {
+	cpauth.SetDashboardToken(dashboardID, mcpToken)
+	sessionDashboards.Store(id, dashboardID)
+
 	s := &Session{
 		ID:                id,
 		DashboardID:       dashboardID,
@@ -230,13 +234,31 @@ func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot s
 	return s
 }
 
+// sessionDashboards maps session ID → dashboard ID. The broker is shared by all
+// sessions and its approval callback only carries the session ID, so this is how
+// the callback finds the dashboard whose credential to use.
+var sessionDashboards sync.Map
+
+// DashboardToken returns the freshest dashboard-scoped control plane token for
+// this session's dashboard (refreshed by cpauth), falling back to the token the
+// session was created with.
+func (s *Session) DashboardToken() string {
+	if token := cpauth.DashboardToken(s.DashboardID); token != "" {
+		return token
+	}
+	return s.MCPToken
+}
+
 // notifyApprovalNeeded sends a pending approval request to the control plane.
 func notifyApprovalNeeded(sessionID, secretName, domain string) {
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
-	internalToken := os.Getenv("INTERNAL_API_TOKEN")
-	if controlplaneURL == "" || internalToken == "" {
-		fmt.Fprintf(os.Stderr, "Warning: cannot notify approval needed - missing CONTROLPLANE_URL or INTERNAL_API_TOKEN\n")
+	if controlplaneURL == "" {
+		fmt.Fprintf(os.Stderr, "Warning: cannot notify approval needed - missing CONTROLPLANE_URL\n")
 		return
+	}
+	dashboardID := ""
+	if v, ok := sessionDashboards.Load(sessionID); ok {
+		dashboardID = v.(string)
 	}
 
 	url := fmt.Sprintf("%s/internal/sessions/%s/approval-request", controlplaneURL, sessionID)
@@ -261,7 +283,10 @@ func notifyApprovalNeeded(sessionID, secretName, domain string) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, dashboardID); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: cannot notify approval needed: %v\n", err)
+		return
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -496,8 +521,7 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 	}
 
 	controlplaneURL := os.Getenv("CONTROLPLANE_URL")
-	internalToken := os.Getenv("INTERNAL_API_TOKEN")
-	if controlplaneURL == "" || internalToken == "" {
+	if controlplaneURL == "" {
 		return nil
 	}
 
@@ -506,7 +530,9 @@ func (s *Session) fetchUserMCPTools() []mcp.MCPTool {
 	if err != nil {
 		return nil
 	}
-	req.Header.Set("X-Internal-Token", internalToken)
+	if err := cpauth.Apply(req, s.DashboardID); err != nil {
+		return nil
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

@@ -31,6 +31,9 @@ export interface Env {
   INTERNAL_API_TOKEN: string;
   /** Control-plane-only HMAC key for PTY + dashboard tokens. Never sent to sandboxes. */
   PTY_TOKEN_SECRET?: string;
+  /** 'true' = new sandbox VMs no longer receive INTERNAL_API_TOKEN; they authenticate
+   *  to /internal/* only with their dashboard-scoped token (X-Dashboard-Token). */
+  WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX?: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
   /** Desktop per-boot token: when set, dev-auth is only honored for requests
