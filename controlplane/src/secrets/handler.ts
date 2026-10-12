@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: secrets-v2-signed-sandbox-requests
+
 import type { Env, UserSecret, SecretType } from '../types';
 import {
   encryptSecret,
@@ -10,6 +12,9 @@ import {
   isEncryptedValue,
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
+
+const MODULE_REVISION = 'secrets-v2-signed-sandbox-requests';
+console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
  * Auto-apply secrets to all active sessions for affected dashboards.
@@ -52,7 +57,7 @@ export async function autoApplySecretsToSessions(
       return;
     }
 
-    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
     // Process each session - get fresh secrets and apply
     // Use a Set to avoid processing same dashboard twice (for global secrets)

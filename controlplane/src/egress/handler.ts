@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-handler-v9-deny-always
-console.log(`[egress] REVISION: egress-handler-v9-deny-always loaded at ${new Date().toISOString()}`);
+// REVISION: egress-handler-v10-signed-sandbox-requests
+console.log(`[egress] REVISION: egress-handler-v10-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
 
 /**
  * Egress Proxy Management
@@ -89,7 +89,7 @@ export async function handleApproveEgress(
 
   try {
     const approveUrl = sandboxUrl(env, '/egress/approve');
-    const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+    const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'POST', approveUrl);
     headers.set('Content-Type', 'application/json');
 
     const resp = await fetch(approveUrl.toString(), {
@@ -232,7 +232,7 @@ export async function handleListPendingEgress(
 
   try {
     const pendingUrl = sandboxUrl(env, '/egress/pending');
-    const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+    const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'GET', pendingUrl);
     const resp = await fetch(pendingUrl.toString(), {
       method: 'GET',
       headers,
@@ -304,7 +304,7 @@ export async function handleRevokeEgressDomain(
   if (sandbox) {
     try {
       const revokeUrl = sandboxUrl(env, '/egress/revoke');
-      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'POST', revokeUrl);
       headers.set('Content-Type', 'application/json');
 
       const resp = await fetch(revokeUrl.toString(), {
@@ -389,7 +389,7 @@ export async function handleRevokeEgressDenied(
   if (sandbox) {
     try {
       const revokeUrl = sandboxUrl(env, '/egress/revoke');
-      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'POST', revokeUrl);
       headers.set('Content-Type', 'application/json');
 
       const resp = await fetch(revokeUrl.toString(), {
@@ -484,7 +484,7 @@ export async function handleBlockDefault(
   if (sandbox) {
     try {
       const blockUrl = sandboxUrl(env, '/egress/block-default');
-      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'POST', blockUrl);
       headers.set('Content-Type', 'application/json');
       const resp = await fetch(blockUrl.toString(), {
         method: 'POST',
@@ -549,7 +549,7 @@ export async function handleUnblockDefault(
   if (sandbox) {
     try {
       const unblockUrl = sandboxUrl(env, `/egress/block-default/${encodeURIComponent(normalizedPattern)}`);
-      const headers = sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined);
+      const headers = await sandboxHeaders(env, undefined, sandbox.sandbox_machine_id || undefined, 'DELETE', unblockUrl);
       const resp = await fetch(unblockUrl.toString(), {
         method: 'DELETE',
         headers,

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-delivery-v28-edge-dashboard-scope
-const MODULE_REVISION = 'messaging-delivery-v28-edge-dashboard-scope';
+// REVISION: messaging-delivery-v29-signed-sandbox-requests
+const MODULE_REVISION = 'messaging-delivery-v29-signed-sandbox-requests';
 console.log(`[messaging-delivery] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -162,7 +162,7 @@ export async function deliverOrWakeAndDrain(
       // Don't return — we can still deliver to note/prompt items
     } else {
       const { sandboxSessionId, sandboxMachineId } = sandboxResult;
-      sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
       for (const terminal of connectedTerminals.results) {
         try {
@@ -900,7 +900,7 @@ export async function retryBufferedMessages(env: Env): Promise<void> {
     return;
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
   for (const row of targets.results) {
     try {

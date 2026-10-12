@@ -34,6 +34,10 @@ export interface Env {
   /** 'true' = new sandbox VMs no longer receive INTERNAL_API_TOKEN; they authenticate
    *  to /internal/* only with their dashboard-scoped token (X-Dashboard-Token). */
   WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX?: string;
+  /** Ed25519 private key (PKCS#8 DER, base64) used to sign every control plane →
+   *  sandbox request per target machine. VMs receive only the public key
+   *  (SANDBOX_AUTH_PUBLIC_KEY). Set via: wrangler secret put SANDBOX_AUTH_SIGNING_KEY */
+  SANDBOX_AUTH_SIGNING_KEY?: string;
   SANDBOX_INTERNAL_TOKEN: string;
   DEV_AUTH_ENABLED?: string;
   /** Desktop per-boot token: when set, dev-auth is only honored for requests

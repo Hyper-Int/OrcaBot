@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v20-sandbox-scoped-auth
-console.log(`[controlplane] REVISION: controlplane-v20-sandbox-scoped-auth loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v21-signed-sandbox-requests
+console.log(`[controlplane] REVISION: controlplane-v21-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -56,6 +56,7 @@ import * as blog from './blog/handler';
 import * as tts from './tts/handler';
 import * as releases from './releases/handler';
 import { sandboxHeaders, sandboxUrl } from './sandbox/fetch';
+import { sandboxAuthEnv } from './sandbox/request-signing';
 
 // Export Durable Objects
 export { DashboardDO } from './dashboards/DurableObject';
@@ -390,7 +391,7 @@ async function prоxySandbоxWebSоcket(
   const requestUrl = new URL(request.url);
   const origin = request.headers.get('Origin') || '';
 
-  const headers = sandboxHeaders(env, request.headers, machineId);
+  const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');
 
   const body = ['POST', 'PUT', 'PATCH'].includes(request.method)
@@ -445,7 +446,7 @@ async function prоxySandbоxControlWebSоcket(
 ): Promise<Response> {
   const sandboxUrlValue = sandboxUrl(env, `/sessions/${sandboxSessionId}/control`);
 
-  const headers = sandboxHeaders(env, request.headers, machineId);
+  const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');
 
   const proxyRequest = new Request(sandboxUrlValue.toString(), {
@@ -466,7 +467,7 @@ async function prоxySandbоxRequest(
   const sandboxUrlValue = sandboxUrl(env, path);
   sandboxUrlValue.search = new URL(request.url).search;
 
-  const headers = sandboxHeaders(env, request.headers, machineId);
+  const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');
 
   const body = request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body;
@@ -489,7 +490,7 @@ async function prоxySandbоxWebSоcketPath(
   const sandboxUrlValue = sandboxUrl(env, path);
   sandboxUrlValue.search = new URL(request.url).search;
 
-  const headers = sandboxHeaders(env, request.headers, machineId);
+  const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');
 
   const proxyRequest = new Request(sandboxUrlValue.toString(), {
@@ -748,7 +749,7 @@ async function replenishWarmPool(env: EnvWithBindings): Promise<void> {
         // (WARM_POOL_TARGET) so the always-on cost is bounded.
         autostop: 'off',
         env: {
-          SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN || '',
+          ...(await sandboxAuthEnv(env)),
           CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
           ...sandboxInternalTokenEnv(env),
           ALLOWED_ORIGINS: env.ALLOWED_ORIGINS || 'https://orcabot.com',

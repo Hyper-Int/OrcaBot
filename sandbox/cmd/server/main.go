@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v42-dashboard-token-auth
+// REVISION: main-v43-signed-inbound-auth
 
 package main
 
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v42-dashboard-token-auth"
+const mainRevision = "main-v43-signed-inbound-auth"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -447,7 +447,7 @@ type Server struct {
 func NewServer(sm *sessions.Manager) *Server {
 	authMiddleware := auth.NewMiddleware()
 	if !authMiddleware.IsEnabled() {
-		log.Println("WARNING: SANDBOX_INTERNAL_TOKEN not set - authentication is disabled, all requests will be rejected")
+		log.Println("WARNING: neither SANDBOX_AUTH_PUBLIC_KEY nor SANDBOX_INTERNAL_TOKEN set - all requests will be rejected")
 	}
 	return &Server{
 		sessions:         sm,

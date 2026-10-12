@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: health-checker-v2-signed-sandbox-requests
+
 /**
  * Background Health Checker
  *
@@ -10,6 +12,9 @@
 
 import type { Env } from '../types';
 import { SandboxClient } from '../sandbox/client';
+
+const MODULE_REVISION = 'health-checker-v2-signed-sandbox-requests';
+console.log(`[health-checker] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 export interface HealthStatus {
   service: string;
@@ -23,7 +28,7 @@ export interface HealthStatus {
  * Check sandbox health and store result in D1
  */
 export async function checkAndCacheSandbоxHealth(env: Env): Promise<void> {
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const now = new Date().toISOString();
 
   try {

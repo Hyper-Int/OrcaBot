@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v21-sandbox-scoped-auth
-const sessionsRevision = "sessions-v21-sandbox-scoped-auth";
+// REVISION: sessions-v22-signed-sandbox-requests
+const sessionsRevision = "sessions-v22-signed-sandbox-requests";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -17,6 +17,7 @@ import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storag
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken } from '../auth/dashboard-token';
 import { sandboxInternalTokenEnv } from '../auth/sandbox-auth';
+import { sandboxAuthEnv } from '../sandbox/request-signing';
 import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { sandboxFetch } from '../sandbox/fetch';
 import { requireAuth, type AuthContext } from '../auth/middleware';
@@ -518,7 +519,7 @@ async function ensureDashbоardSandbоxCreate(
   flyProvisioningEnabled: boolean,
   preferredRegion?: string
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const now = new Date().toISOString();
   const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
 
@@ -607,7 +608,7 @@ export async function preProvisionDashboardSandbox(
   if (existing?.sandbox_session_id) return;
 
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const now = new Date().toISOString();
   const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
 
@@ -713,12 +714,10 @@ async function claimWarmMachine(
 
     // Clean up lost+found (ext4 creates this on new volumes)
     try {
-      const headers = new Headers({ 'Content-Type': 'application/json' });
-      headers.set('Authorization', `Bearer ${env.SANDBOX_INTERNAL_TOKEN}`);
-      headers.set('X-Sandbox-Machine-ID', machineId);
-      await fetch(`${env.SANDBOX_URL}/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
+      await sandboxFetch(env, `/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
         method: 'DELETE',
-        headers,
+        machineId,
+        headers: { 'Content-Type': 'application/json' },
       });
     } catch {
       // Best-effort cleanup
@@ -803,7 +802,7 @@ async function coldProvisionMachine(
       // connecting"). The cron escalates long-idle VMs from suspended → stopped.
       autostop: 'suspend',
       env: {
-        SANDBOX_INTERNAL_TOKEN: env.SANDBOX_INTERNAL_TOKEN,
+        ...(await sandboxAuthEnv(env)),
         CONTROLPLANE_URL: env.FLY_SANDBOX_CONTROLPLANE_URL || 'https://api.orcabot.com',
         ...sandboxInternalTokenEnv(env),
         DASHBOARD_ID: dashboardId,
@@ -838,12 +837,10 @@ async function coldProvisionMachine(
 
     // Step 4b: Clean up lost+found (ext4 creates this on new volumes)
     try {
-      const headers = new Headers({ 'Content-Type': 'application/json' });
-      headers.set('Authorization', `Bearer ${env.SANDBOX_INTERNAL_TOKEN}`);
-      headers.set('X-Sandbox-Machine-ID', machineId);
-      await fetch(`${env.SANDBOX_URL}/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
+      await sandboxFetch(env, `/sessions/${sandboxSession.id}/file?path=/workspace/lost%2Bfound`, {
         method: 'DELETE',
-        headers,
+        machineId,
+        headers: { 'Content-Type': 'application/json' },
       });
     } catch {
       // Best-effort cleanup
@@ -1416,7 +1413,7 @@ async function createSessionImpl(
     return Response.json({ error: 'E79202: Terminal item not found' }, { status: 404 });
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
   // Check if session already exists for this item
   const existingSession = await env.DB.prepare(`
@@ -2007,7 +2004,7 @@ export async function getDashbоardSandbоxStatus(
     // app restarts / sandbox crashes, but the actual sandbox session is in-memory — so
     // trusting the row alone shows green while the VM is still booting or has crashed.
     // Probe the local sandbox /health instead; not-yet-serving reads as "starting".
-    const localSandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const localSandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
     const healthy = await localSandbox.health(undefined, 3000);
     return Response.json({
       state: healthy ? 'ready' : 'starting',
@@ -2389,7 +2386,7 @@ export async function updateSessiоnEnv(
     }
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   if (payload.applyNow) {
     console.warn(`[updateSessionEnv] Ignoring applyNow=true for session ${sessionId}; env changes apply on next PTY start`);
   }
@@ -2423,7 +2420,7 @@ export async function stоpSessiоn(
     return Response.json({ error: 'E79204: Session already stopped' }, { status: 400 });
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
   // REVISION: preserve-sandbox-v1-stop-keeps-sandbox
   // Preserve the sandbox (and dashboard_sandboxes mapping) when stopping the last session.
@@ -2449,7 +2446,7 @@ export async function stоpSessiоn(
 
     // Always just delete this session's PTY (not the sandbox session)
     if (session.pty_id) {
-      await sandbox.deletePty(session.sandbox_session_id as string, session.pty_id as string);
+      await sandbox.deletePty(session.sandbox_session_id as string, session.pty_id as string, (session.sandbox_machine_id as string) || undefined);
     }
   } catch {
     // Ignore errors - sandbox might already be gone
@@ -2523,7 +2520,7 @@ export async function sandboxKeepalive(
     return Response.json({ error: 'E79751: No sandbox for this dashboard' }, { status: 404 });
   }
 
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const healthy = await sandbox.health(sandboxInfo.sandbox_machine_id || undefined);
 
   return Response.json({ alive: healthy });
@@ -2639,7 +2636,7 @@ export async function applySecretsToSession(
       return Response.json({ applied: 0, approvedDomains: 0, unset: 0 });
     }
 
-    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
     // Don't use applyNow - new PTYs will load from .env automatically
     // Existing PTYs can run `source ~/.env` if needed
     await sandbox.updateEnv(

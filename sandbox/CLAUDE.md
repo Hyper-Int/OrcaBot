@@ -284,6 +284,7 @@ Defined in `internal/egress/defaults.json` (embedded into `allowlist.go` via `//
 Glob matching: `*.example.com` matches subdomains but NOT `example.com` itself.
 
 ### Control Plane Credentials
+- Inbound (`internal/auth`): requests from the control plane carry `X-Sandbox-Auth`, verified with `SANDBOX_AUTH_PUBLIC_KEY` and required to name this machine (`FLY_MACHINE_ID`/`FLY_ALLOC_ID`), the method and the raw request target. The static `SANDBOX_INTERNAL_TOKEN` is accepted only while set; a present-but-invalid signature is always rejected.
 - Calls to the control plane's `/internal/*` go through `internal/cpauth`: `cpauth.Apply(req, dashboardID)` attaches the dashboard-scoped token (`X-Dashboard-Token`) the control plane sent with the session, refreshing it before its 7-day expiry. Never read `INTERNAL_API_TOKEN` directly — it is only a legacy fallback and is absent once the control plane sets `WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX=true`.
 
 ### Feature Flag

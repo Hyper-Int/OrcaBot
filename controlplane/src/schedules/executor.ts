@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: server-side-cron-v8-edge-dashboard-scope
+// REVISION: server-side-cron-v9-signed-sandbox-requests
 
 /**
  * Edge-Based Schedule Executor
@@ -15,7 +15,7 @@
  * The sandbox reports completion via POST /internal/schedule-executions/:id/pty-completed
  */
 
-const MODULE_REVISION = 'server-side-cron-v8-edge-dashboard-scope';
+const MODULE_REVISION = 'server-side-cron-v9-signed-sandbox-requests';
 console.log(`[executor] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env, Schedule, ScheduleExecution, ScheduleExecutionTerminal } from '../types';
@@ -152,7 +152,7 @@ export async function executeScheduleByEdges(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxResult;
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
   // 3. For each connected terminal, trigger execution
   for (let i = 0; i < terminals.length; i++) {

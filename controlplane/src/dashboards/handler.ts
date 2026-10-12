@@ -5,8 +5,8 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v9-edge-item-ownership
-console.log(`[dashboards] REVISION: dashboards-v9-edge-item-ownership loaded at ${new Date().toISOString()}`);
+// REVISION: dashboards-v10-signed-sandbox-requests
+console.log(`[dashboards] REVISION: dashboards-v10-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
@@ -382,7 +382,7 @@ export async function deleteDashbоard(
   // wedging it.
   if (sandboxRow?.sandbox_session_id && env.SANDBOX_URL) {
     try {
-      const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
       await sandbox.deleteSession(
         sandboxRow.sandbox_session_id,
         sandboxRow.sandbox_machine_id || undefined
