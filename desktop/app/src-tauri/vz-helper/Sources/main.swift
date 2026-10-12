@@ -1,7 +1,10 @@
+// REVISION: vz-helper-v2-bridge-write-all
 import Foundation
 import Virtualization
 import ArgumentParser
 import Network
+
+let vzHelperRevision = "vz-helper-v2-bridge-write-all"
 
 // MARK: - Global references to prevent deallocation
 var globalVM: VZVirtualMachine?
@@ -54,6 +57,7 @@ struct VZHelper: ParsableCommand {
     var minimal: Bool = false
 
     mutating func run() throws {
+        print("[vz-helper] REVISION: \(vzHelperRevision) loaded at \(ISO8601DateFormatter().string(from: Date()))")
         print("Starting Orcabot sandbox VM...")
         print("  Kernel: \(kernel)")
         print("  Initrd: \(initrd)")
@@ -681,14 +685,14 @@ class ConnectionBridge {
                 if ConnectionBridge.verboseLogs {
                     print("[BRIDGE] \(connId): TCP->Vsock \(data.count) bytes")
                 }
-                // Write to vsock using file descriptor
-                data.withUnsafeBytes { buffer in
-                    if let ptr = buffer.baseAddress {
-                        let written = Darwin.write(self.vsockConnection.fileDescriptor, ptr, buffer.count)
-                        if written < 0 {
-                            print("[BRIDGE] \(connId): Vsock write error: \(errno)")
-                        }
-                    }
+                // The vsock fd is non-blocking (see startReadingFromVsock), so one
+                // write() can take only part of the data, or none (EAGAIN) once the
+                // guest's buffer is full (~8KB). Dropping the rest truncated every
+                // larger transfer, e.g. file uploads and big control-plane responses.
+                if !ConnectionBridge.writeAll(self.vsockConnection.fileDescriptor, data) {
+                    print("[BRIDGE] \(connId): Vsock write error: errno=\(errno)")
+                    self.close()
+                    return
                 }
             }
 
@@ -698,6 +702,30 @@ class ConnectionBridge {
             } else if self.tcpOpen {
                 self.startReadingFromTCP()
             }
+        }
+    }
+
+    /// Write all of `data` to a non-blocking fd, waiting (up to 30s at a time)
+    /// for buffer space on EAGAIN. Blocks only this connection's queue.
+    static func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+        return data.withUnsafeBytes { raw -> Bool in
+            guard var ptr = raw.baseAddress else { return true }
+            var remaining = raw.count
+            while remaining > 0 {
+                let n = Darwin.write(fd, ptr, remaining)
+                if n > 0 {
+                    ptr = ptr.advanced(by: n)
+                    remaining -= n
+                } else if n < 0 && errno == EINTR {
+                    continue
+                } else if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                    if poll(&pfd, 1, 30_000) <= 0 { return false }
+                } else {
+                    return false
+                }
+            }
+            return true
         }
     }
 
