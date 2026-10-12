@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v37-oauth-state-browser-binding
-const integrationsRevision = "integrations-v37-oauth-state-browser-binding";
+// REVISION: integrations-v38-connect-on-callback-host
+const integrationsRevision = "integrations-v38-connect-on-callback-host";
 
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
@@ -410,6 +410,33 @@ async function createState(
     VALUES (?, ?, ?, ?)
   `).bind(state, userId, provider, JSON.stringify(stored)).run();
   return binding;
+}
+
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * The binding cookie is host-only, so connect has to run on the host the
+ * provider redirects back to. Desktop opens connect on 127.0.0.1 (the baked API
+ * base) while its callback is OAUTH_REDIRECT_BASE=localhost, so bounce once to
+ * the callback host with the same path and query (desktop passes its dev-auth
+ * identity and surface token in the query, so it authenticates there too).
+ * Only between loopback aliases of the same port: a remote host's session
+ * cookie wouldn't follow, and an open redirect isn't wanted.
+ */
+export function connectOnCallbackHost(request: Request, env: EnvWithDriveCache): Response | null {
+  if (!env.OAUTH_REDIRECT_BASE) return null; // callback uses the request's own origin
+  let base: URL;
+  try {
+    base = new URL(env.OAUTH_REDIRECT_BASE);
+  } catch {
+    return null;
+  }
+  const current = new URL(request.url);
+  if (current.host === base.host && current.protocol === base.protocol) return null;
+  if (!LOOPBACK_HOSTNAMES.has(current.hostname) || !LOOPBACK_HOSTNAMES.has(base.hostname)) return null;
+  if (current.port !== base.port || current.protocol !== base.protocol) return null;
+  const target = new URL(current.pathname + current.search, base.origin);
+  return new Response(null, { status: 302, headers: { Location: target.toString() } });
 }
 
 /** 302 to the provider, setting the cookie that binds `state` to this browser. */

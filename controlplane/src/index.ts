@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v22-browser-editor-only
-console.log(`[controlplane] REVISION: controlplane-v22-browser-editor-only loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v23-oauth-connect-host
+console.log(`[controlplane] REVISION: controlplane-v23-oauth-connect-host loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -2362,6 +2362,11 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
 
     const handler = integrationRoutes[routeKey];
     if (handler) {
+      // OAuth connect must run on the callback host so the state-binding cookie reaches the callback.
+      if (method === 'GET' && routeKey.endsWith('/connect')) {
+        const hop = integrations.connectOnCallbackHost(request, ensureDriveCache(env));
+        if (hop) return hop;
+      }
       return handler(request, ensureDriveCache(env), auth);
     }
   }

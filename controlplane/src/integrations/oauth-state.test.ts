@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cоnnectGithub, callbackGithub } from './handler';
+import { cоnnectGithub, callbackGithub, connectOnCallbackHost } from './handler';
 import type { AuthContext } from '../auth/middleware';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 
@@ -136,5 +136,44 @@ describe('OAuth state is bound to the browser that started the flow', () => {
     await callback(state, cookie);
     const again = await callback(state, cookie);
     expect(await again.text()).toContain('Invalid or expired state');
+  });
+});
+
+describe('connect runs on the callback host', () => {
+  const env = (base?: string) => ({ OAUTH_REDIRECT_BASE: base }) as unknown as EnvWithDriveCache;
+  const hop = (url: string, base?: string) => connectOnCallbackHost(new Request(url), env(base));
+
+  it('bounces desktop 127.0.0.1 connect to the localhost callback host, keeping the query', () => {
+    const res = hop('http://127.0.0.1:8787/integrations/github/connect?dashboard_id=d&user_id=u&surface=s', 'http://localhost:8787');
+    expect(res?.status).toBe(302);
+    expect(res?.headers.get('Location')).toBe('http://localhost:8787/integrations/github/connect?dashboard_id=d&user_id=u&surface=s');
+  });
+
+  it.each([
+    ['same host', 'http://localhost:8787/integrations/github/connect', 'http://localhost:8787'],
+    ['no OAUTH_REDIRECT_BASE', 'http://127.0.0.1:8787/integrations/github/connect', undefined],
+    ['different port', 'http://127.0.0.1:9999/integrations/github/connect', 'http://localhost:8787'],
+    ['remote hosts', 'https://api.orcabot.com/integrations/github/connect', 'https://other.orcabot.com'],
+    ['remote callback host', 'http://127.0.0.1:8787/integrations/github/connect', 'https://evil.example'],
+  ])('does not bounce: %s', (_label, url, base) => {
+    expect(hop(url, base)).toBeNull();
+  });
+
+  it('desktop flow: the cookie set after the bounce is sent to the callback', async () => {
+    const fetchMock = vi.fn<[], Promise<Response>>(async () => new Response(JSON.stringify({ error: 'x' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const e = {
+      DB: fakeDb({}), GITHUB_CLIENT_ID: 'cid', GITHUB_CLIENT_SECRET: 's', OAUTH_REDIRECT_BASE: 'http://localhost:8787',
+    } as unknown as EnvWithDriveCache;
+    const first = connectOnCallbackHost(new Request('http://127.0.0.1:8787/integrations/github/connect?user_id=victim'), e)!;
+    const res = await cоnnectGithub(new Request(first.headers.get('Location')!), e, auth('victim'));
+    const location = new URL(res.headers.get('Location')!);
+    expect(location.searchParams.get('redirect_uri')).toBe('http://localhost:8787/integrations/github/callback');
+    // The cookie was set on localhost, where the callback lands; no session cookie needed.
+    const cookie = res.headers.get('Set-Cookie')!.split(';')[0];
+    await callbackGithub(new Request(`http://localhost:8787/integrations/github/callback?code=c&state=${location.searchParams.get('state')}`, { headers: { Cookie: cookie } }), e);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('Set-Cookie')).not.toContain('Secure');
+    vi.unstubAllGlobals();
   });
 });

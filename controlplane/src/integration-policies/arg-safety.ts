@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: arg-safety-v1-gateway-arg-validation
-const MODULE_REVISION = 'arg-safety-v1-gateway-arg-validation';
+// REVISION: arg-safety-v2-github-paths-encoded
+const MODULE_REVISION = 'arg-safety-v2-github-paths-encoded';
 console.log(`[arg-safety] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -59,10 +59,14 @@ export function isSafePathSegment(value: string): boolean {
     !UNSAFE_PATH_CHARS.test(value) && !CONTROL_OR_SPACE.test(value);
 }
 
-/** A relative file path: safe segments joined by `/`, no `.`/`..`. */
+/**
+ * A relative file path: no `.`/`..` segments (traversal) and no control
+ * characters. Anything else is a legitimate filename character; the client
+ * URL-encodes each segment (github.ts encodeRepoPath).
+ */
 function isSafeRelativePath(value: string): boolean {
-  if (value === '') return true; // repo root
-  return value.split('/').every(isSafePathSegment);
+  if (/[\x00-\x1f\x7f]/.test(value)) return false;
+  return value.split('/').every((segment) => segment !== '.' && segment !== '..');
 }
 
 /** Google Chat space: `spaces/<id>` or a bare `<id>`. */
@@ -89,7 +93,7 @@ export function validateGatewayArgs(provider: string, args: Record<string, unkno
 
   if (provider === 'github' && args.path !== undefined) {
     if (typeof args.path !== 'string' || !isSafeRelativePath(args.path.replace(/^\/+/, ''))) {
-      return "E79611: Invalid path: no '.', '..', '?', '#', '%' or spaces in path segments";
+      return "E79611: Invalid path: '.' and '..' segments are not allowed";
     }
   }
 

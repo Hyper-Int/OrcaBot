@@ -1,8 +1,17 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: github-client-v1
-console.log(`[github-client] REVISION: github-client-v1 loaded at ${new Date().toISOString()}`);
+// REVISION: github-client-v2-encoded-paths
+console.log(`[github-client] REVISION: github-client-v2-encoded-paths loaded at ${new Date().toISOString()}`);
+
+/**
+ * Encode a repo file path one segment at a time, so names with spaces, `#`, `?`
+ * or `%` stay part of the filename. `.`/`..` segments are rejected earlier
+ * (arg-safety.ts) since encoding leaves dots unchanged.
+ */
+function encodeRepoPath(path: string): string {
+  return path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+}
 
 /**
  * GitHub API Client
@@ -131,7 +140,7 @@ async function getRepo(
     throw new Error('owner and repo are required');
   }
 
-  const response = await githubFetch(`/repos/${owner}/${repo}`, accessToken);
+  const response = await githubFetch(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`, accessToken);
   return response.json() as Promise<GitHubRepo>;
 }
 
@@ -153,7 +162,7 @@ async function listIssues(
     per_page: perPage.toString(),
   });
 
-  const response = await githubFetch(`/repos/${owner}/${repo}/issues?${params}`, accessToken);
+  const response = await githubFetch(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?${params}`, accessToken);
   return response.json() as Promise<GitHubIssue[]>;
 }
 
@@ -171,7 +180,7 @@ async function createIssue(
   const body = args.body as string || '';
   const labels = args.labels as string[] || [];
 
-  const response = await githubFetch(`/repos/${owner}/${repo}/issues`, accessToken, {
+  const response = await githubFetch(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`, accessToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, body, labels }),
@@ -198,7 +207,7 @@ async function listPRs(
     per_page: perPage.toString(),
   });
 
-  const response = await githubFetch(`/repos/${owner}/${repo}/pulls?${params}`, accessToken);
+  const response = await githubFetch(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?${params}`, accessToken);
   return response.json() as Promise<GitHubPR[]>;
 }
 
@@ -218,7 +227,7 @@ async function createPR(
   const body = args.body as string || '';
   const draft = args.draft as boolean || false;
 
-  const response = await githubFetch(`/repos/${owner}/${repo}/pulls`, accessToken, {
+  const response = await githubFetch(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`, accessToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, body, head, base, draft }),
@@ -242,7 +251,7 @@ async function getFileContent(
   const params = ref ? `?ref=${encodeURIComponent(ref)}` : '';
 
   const response = await githubFetch(
-    `/repos/${owner}/${repo}/contents/${path}${params}`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeRepoPath(path)}${params}`,
     accessToken
   );
 
@@ -264,7 +273,7 @@ async function listFiles(
   const params = ref ? `?ref=${encodeURIComponent(ref)}` : '';
 
   const response = await githubFetch(
-    `/repos/${owner}/${repo}/contents/${path}${params}`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeRepoPath(path)}${params}`,
     accessToken
   );
 
