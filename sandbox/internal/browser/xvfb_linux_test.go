@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,7 +265,7 @@ func TestControllerStartIntegration(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(ws, ".browser")); !os.IsNotExist(err) {
 		t.Fatal("profile created in the workspace")
 	}
-	if _, err := os.Stat(filepath.Join(mustBrowserHome(t), "profile", "Default")); err != nil {
+	if _, err := os.Stat(filepath.Join(profilePath(browserIdentity{home: mustBrowserHome(t)}, ws), "Default")); err != nil {
 		t.Fatalf("no profile in the browser home: %v", err)
 	}
 
@@ -302,4 +304,70 @@ func mustBrowserHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return id.home
+}
+
+// Desktop runs one browser controller per dashboard in the same VM. Local
+// storage saved by dashboard A must not be readable from dashboard B, while A
+// itself keeps it (the control that shows the check can see sharing at all).
+func TestDashboardProfilesAreIsolatedIntegration(t *testing.T) {
+	if os.Getenv("ORCABOT_BROWSER_IT") != "1" {
+		t.Skip("set ORCABOT_BROWSER_IT=1 inside the sandbox image")
+	}
+	needBrowserStack(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html><body>ok</body></html>")
+	}))
+	defer srv.Close()
+
+	base := worldReadableTempDir(t)
+	wsA, wsB := filepath.Join(base, "dash-a"), filepath.Join(base, "dash-b")
+	os.Mkdir(wsA, 0o755)
+	os.Mkdir(wsB, 0o755)
+
+	read := func(ws, set string) string {
+		t.Helper()
+		c := NewController(ws)
+		st, err := c.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Stop()
+		for deadline := time.Now().Add(60 * time.Second); !st.Ready; st = c.Status() {
+			if time.Now().After(deadline) {
+				t.Fatalf("browser never became ready: %+v", st)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if err := c.Navigate(srv.URL + "/"); err != nil {
+			t.Fatalf("Navigate: %v", err)
+		}
+		time.Sleep(time.Second)
+		got, err := c.Evaluate(`String(localStorage.getItem("k"))`)
+		if err != nil {
+			t.Fatalf("Evaluate: %v", err)
+		}
+		if set != "" {
+			if _, err := c.Evaluate(`localStorage.setItem("k", "` + set + `"), "ok"`); err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			// Stop kills the process group, which loses unflushed storage;
+			// close Chromium cleanly so A's data reaches its profile.
+			cdp := NewCDPClient(c.debugPort)
+			if err := cdp.Connect(); err != nil {
+				t.Fatalf("CDP: %v", err)
+			}
+			_, _ = cdp.call("Browser.close", nil)
+			cdp.Close()
+			time.Sleep(3 * time.Second)
+		}
+		return got
+	}
+
+	read(wsA, "secret-from-a")
+	if got := read(wsB, ""); strings.Contains(got, "secret-from-a") {
+		t.Fatalf("dashboard B read dashboard A's local storage: %q", got)
+	}
+	if got := read(wsA, ""); !strings.Contains(got, "secret-from-a") {
+		t.Fatalf("control: dashboard A lost its own local storage (%q), so the check above proves nothing", got)
+	}
 }

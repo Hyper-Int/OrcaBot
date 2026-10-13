@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-isolation-v5-profile-per-dashboard
+
 //go:build linux
 
 package browser
@@ -238,14 +240,30 @@ func TestRootOwnedProfileDirIsChowned(t *testing.T) {
 // could rename it and swap in its own directory while the browser runs.
 func TestProfileIsInBrowserHomeNotWorkspace(t *testing.T) {
 	id := browserIdentity{uid: 1990, gid: 1990, home: "/home/orcabot-browser"}
-	got := profilePath(id)
-	if got != "/home/orcabot-browser/profile" {
-		t.Fatalf("profilePath = %s", got)
-	}
-	for _, ws := range []string{"/workspace", "/workspace/"} {
-		if strings.HasPrefix(got, ws) {
+	for _, ws := range []string{"/workspace", "/workspace/dash-a"} {
+		got := profilePath(id, ws)
+		if !strings.HasPrefix(got, "/home/orcabot-browser/profiles/") {
+			t.Fatalf("profilePath(%s) = %s", ws, got)
+		}
+		if strings.HasPrefix(got, "/workspace") {
 			t.Fatalf("profile %s is under the workspace", got)
 		}
+	}
+}
+
+// Desktop runs every dashboard in one VM, each with its own browser
+// controller: they must not share cookies or local storage.
+func TestEachDashboardWorkspaceGetsItsOwnProfile(t *testing.T) {
+	id := browserIdentity{uid: 1990, gid: 1990, home: "/home/orcabot-browser"}
+	a, b := profilePath(id, "/workspace/dash-a"), profilePath(id, "/workspace/dash-b")
+	if a == b {
+		t.Fatalf("dashboards share profile %s", a)
+	}
+	if profilePath(id, "/workspace/dash-a/") != a {
+		t.Fatal("profile depends on a trailing slash")
+	}
+	if filepath.Dir(a) != "/home/orcabot-browser/profiles" || strings.ContainsAny(filepath.Base(a), "/.") {
+		t.Fatalf("profile %s is not one fixed component under profiles/", a)
 	}
 }
 

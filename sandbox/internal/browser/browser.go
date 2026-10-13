@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v17-liveness-private-profile
+// REVISION: browser-v18-profile-per-dashboard
 package browser
 
 import (
@@ -73,8 +73,8 @@ type Controller struct {
 	legacyCleanup   sync.Once
 }
 
-// REVISION: browser-v17-liveness-private-profile
-const browserRevision = "browser-v17-liveness-private-profile"
+// REVISION: browser-v18-profile-per-dashboard
+const browserRevision = "browser-v18-profile-per-dashboard"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -147,7 +147,11 @@ func (c *Controller) Start() (Status, error) {
 	// there and swap in its own directory while the browser runs). Make it a
 	// browser-owned 0700 dir and clear stale locks / crash state (no
 	// concurrent writer: Chromium isn't launched yet and Start holds c.mu).
-	userDataDir := profilePath(identity)
+	// One profile per workspace: on desktop each dashboard has its own.
+	if err := prepareProfileDir(profilesPath(identity), identity); err != nil {
+		return Status{}, err
+	}
+	userDataDir := profilePath(identity, c.workspace)
 	if err := prepareProfileDir(userDataDir, identity); err != nil {
 		return Status{}, err
 	}
@@ -156,6 +160,12 @@ func (c *Controller) Start() (Status, error) {
 		go func() {
 			if err := removeLegacyProfile(workspace, identity); err != nil {
 				log.Printf("[browser] legacy profile cleanup: %v", err)
+			}
+			// The briefly shared profile mixes every dashboard's state. Only
+			// root and the browser user can write the home, and RemoveAll
+			// unlinks symlinks rather than following them.
+			if err := os.RemoveAll(filepath.Join(identity.home, sharedProfileDirName)); err != nil {
+				log.Printf("[browser] shared profile cleanup: %v", err)
 			}
 		}()
 	})

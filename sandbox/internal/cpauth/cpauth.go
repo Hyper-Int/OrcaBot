@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v2-expired-callers-wait
+// REVISION: cpauth-v3-newest-sandbox-generation
 
 // Package cpauth authenticates sandbox → control plane /internal/* calls.
 //
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const moduleRevision = "cpauth-v2-expired-callers-wait"
+const moduleRevision = "cpauth-v3-newest-sandbox-generation"
 
 func init() {
 	log.Printf("[cpauth] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
@@ -46,6 +46,7 @@ const refreshBefore = 48 * time.Hour
 type entry struct {
 	token string
 	exp   time.Time
+	gen   int64 // sbx_gen: which sandbox the token was minted for (0 = none)
 }
 
 type store struct {
@@ -71,8 +72,8 @@ var defaultStore = newStore()
 
 var fallbackLogged sync.Map
 
-// SetDashboardToken records a token for a dashboard, keeping whichever of the
-// stored and new tokens expires later.
+// SetDashboardToken records a token for a dashboard, keeping the one for the
+// newest sandbox generation, then the later expiry (see newerToken).
 func SetDashboardToken(dashboardID, token string) {
 	defaultStore.set(dashboardID, token)
 }
@@ -113,17 +114,31 @@ func (s *store) set(dashboardID, token string) {
 	if dashboardID == "" || token == "" {
 		return
 	}
-	exp, err := tokenExpiry(token)
+	exp, gen, err := tokenClaims(token)
 	if err != nil {
 		log.Printf("[cpauth] ignoring unparseable token for dashboard %s: %v", dashboardID, err)
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.tokens[dashboardID]; ok && !exp.After(cur.exp) {
+	if cur, ok := s.tokens[dashboardID]; ok && !newerToken(gen, exp, cur) {
 		return
 	}
-	s.tokens[dashboardID] = entry{token: token, exp: exp}
+	s.tokens[dashboardID] = entry{token: token, exp: exp, gen: gen}
+}
+
+// newerToken reports whether a token (gen, exp) should replace cur. The
+// control plane only refreshes a token minted for the dashboard's current
+// sandbox, so a newer sandbox generation always wins, even when it expires no
+// later: a replacement minted in the same second as the old token's refresh
+// has the same exp, and keeping the old one would leave this VM unable to
+// refresh at all. A token for an older sandbox (a late refresh reply) never
+// replaces a newer one. Within a generation, the later expiry wins.
+func newerToken(gen int64, exp time.Time, cur entry) bool {
+	if gen != cur.gen {
+		return gen > cur.gen
+	}
+	return exp.After(cur.exp)
 }
 
 func (s *store) get(dashboardID string) string {
@@ -219,25 +234,27 @@ func (s *store) refresh(dashboardID, current string) {
 	log.Printf("[cpauth] refreshed dashboard token for %s", dashboardID)
 }
 
-// tokenExpiry reads the exp claim without verifying the signature — the sandbox
-// cannot verify it, and the control plane re-verifies on every call.
-func tokenExpiry(token string) (time.Time, error) {
+// tokenClaims reads the exp and sbx_gen claims without verifying the
+// signature — the sandbox cannot verify it, and the control plane re-verifies
+// on every call.
+func tokenClaims(token string) (time.Time, int64, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return time.Time{}, errors.New("not a JWT")
+		return time.Time{}, 0, errors.New("not a JWT")
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
 	var claims struct {
 		Exp int64 `json:"exp"`
+		Gen int64 `json:"sbx_gen"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return time.Time{}, err
+		return time.Time{}, 0, err
 	}
 	if claims.Exp == 0 {
-		return time.Time{}, errors.New("missing exp")
+		return time.Time{}, 0, errors.New("missing exp")
 	}
-	return time.Unix(claims.Exp, 0), nil
+	return time.Unix(claims.Exp, 0), claims.Gen, nil
 }

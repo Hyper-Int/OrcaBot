@@ -1,11 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v4-private-profile
+// REVISION: browser-isolation-v5-profile-per-dashboard
 package browser
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const isolationRevision = "browser-isolation-v4-private-profile"
+const isolationRevision = "browser-isolation-v5-profile-per-dashboard"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", isolationRevision, time.Now().Format(time.RFC3339))
@@ -154,12 +155,27 @@ func writeXauthority(path string, display int, cookie []byte, id browserIdentity
 	return os.Rename(tmp, path)
 }
 
-// profileDirName is the Chromium profile's directory in the browser user's
-// home. It used to be /workspace/.browser; see removeLegacyProfile.
-const profileDirName = "profile"
+// profilesDirName holds one Chromium profile per workspace in the browser
+// user's home. Desktop runs one VM for every dashboard, each with its own
+// workspace root (/workspace/<dashboardID>) and browser controller, so a single
+// profile would let one dashboard's pages read another's cookies and storage.
+// It used to be /workspace/.browser (see removeLegacyProfile), and briefly one
+// shared <home>/profile (see sharedProfileDirName).
+const profilesDirName = "profiles"
 
-func profilePath(id browserIdentity) string {
-	return filepath.Join(id.home, profileDirName)
+// sharedProfileDirName is the single profile every dashboard used to share;
+// it is deleted rather than handed to any one of them.
+const sharedProfileDirName = "profile"
+
+func profilesPath(id browserIdentity) string {
+	return filepath.Join(id.home, profilesDirName)
+}
+
+// profilePath is the profile for one workspace: a hash of its root, so the
+// name is a fixed-length, path-safe component whatever the dashboard ID holds.
+func profilePath(id browserIdentity, workspace string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(workspace)))
+	return filepath.Join(profilesPath(id), hex.EncodeToString(sum[:16]))
 }
 
 // checkBrowserHome verifies the browser user's home is a place only that user

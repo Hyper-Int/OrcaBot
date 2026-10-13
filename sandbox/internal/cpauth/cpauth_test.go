@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: cpauth-v3-newest-sandbox-generation
+
 package cpauth
 
 import (
@@ -22,6 +24,45 @@ func fakeToken(dashboardID string, exp time.Time) string {
 	header := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	payload, _ := json.Marshal(map[string]interface{}{"dashboard_id": dashboardID, "aud": "mcp-ui", "exp": exp.Unix()})
 	return header + "." + enc.EncodeToString(payload) + ".sig"
+}
+
+// genToken is fakeToken for a given sandbox generation (sbx_gen).
+func genToken(dashboardID string, exp time.Time, gen int64) string {
+	enc := base64.RawURLEncoding
+	header := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload, _ := json.Marshal(map[string]interface{}{"dashboard_id": dashboardID, "aud": "mcp-ui", "exp": exp.Unix(), "sbx_gen": gen})
+	return header + "." + enc.EncodeToString(payload) + ".sig"
+}
+
+// The control plane only refreshes a token for the dashboard's current
+// sandbox. A replacement minted in the same second as the old token has the
+// same exp: keeping the old one meant every refresh got E79398 and internal
+// calls failed once it expired.
+func TestSetPrefersNewerSandboxGeneration(t *testing.T) {
+	s := newStore()
+	exp := time.Now().Add(7 * 24 * time.Hour)
+	old, replacement := genToken("d1", exp, 1000), genToken("d1", exp, 2000)
+	s.set("d1", old)
+	s.set("d1", replacement)
+	if got := s.get("d1"); got != replacement {
+		t.Fatal("same-second replacement for a newer sandbox was discarded")
+	}
+	// A late refresh reply for the replaced sandbox never wins, even if it
+	// expires later.
+	s.set("d1", genToken("d1", exp.Add(time.Hour), 1000))
+	if got := s.get("d1"); got != replacement {
+		t.Fatal("a later-expiring token for the replaced sandbox displaced the current one")
+	}
+	// A token for a newer sandbox wins even if it expires sooner.
+	s.set("d1", genToken("d1", exp.Add(-time.Hour), 3000))
+	if got := s.get("d1"); got != genToken("d1", exp.Add(-time.Hour), 3000) {
+		t.Fatal("token for the newest sandbox rejected for expiring sooner")
+	}
+	// A token from before generations existed loses to a generation-bound one.
+	s.set("d1", fakeToken("d1", exp.Add(24*time.Hour)))
+	if got := s.get("d1"); got != genToken("d1", exp.Add(-time.Hour), 3000) {
+		t.Fatal("pre-generation token displaced a generation-bound one")
+	}
 }
 
 func newTestStore(t *testing.T, handler http.HandlerFunc) (*store, *int32) {
