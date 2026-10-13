@@ -1,13 +1,14 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v5-pool-default-deny
+// REVISION: egress-kernel-tests-v9-root-skip
 
 //go:build linux
 
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -32,6 +33,21 @@ func TestParseExtraTCPPorts(t *testing.T) {
 	}
 	if got := parseExtraTCPPorts(""); len(got) != 0 {
 		t.Fatalf("empty input should yield no ports, got %v", got)
+	}
+}
+
+func TestPoolEgressOwnersSkipsMissingBrowserUser(t *testing.T) {
+	got := poolEgressOwners(func(string) error { return nil })
+	if want := []string{"2000-2099", browser.BrowserUser}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("with browser user: %v, want %v", got, want)
+	}
+	var asked string
+	got = poolEgressOwners(func(name string) error { asked = name; return user.UnknownUserError(name) })
+	if want := []string{"2000-2099"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("without browser user: %v, want %v", got, want)
+	}
+	if asked != browser.BrowserUser {
+		t.Fatalf("looked up %q", asked)
 	}
 }
 
@@ -61,8 +77,9 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	if os.Getenv("ORCABOT_IPTABLES_IT") != "1" {
 		t.Skip("set ORCABOT_IPTABLES_IT=1 in a disposable NET_ADMIN container to run")
 	}
-	if os.Getuid() != 0 {
-		t.Fatal("must run as root")
+	needRootIT(t)
+	if _, err := user.Lookup(browser.BrowserUser); err != nil {
+		t.Skip("needs the browser user (useradd --uid 1990 orcabot-browser, or the sandbox image); see TestPoolEgressWithoutBrowserUserIntegration")
 	}
 
 	// Stand-in for the transparent proxy: anything redirected from 80/443 lands here.
@@ -101,6 +118,16 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	out, _ := exec.Command("iptables", "-S", "OUTPUT").CombinedOutput()
 	if n := strings.Count(string(out), "-j "+poolEgressChain); n != 2 {
 		t.Fatalf("expected exactly 2 jumps to %s, got %d:\n%s", poolEgressChain, n, out)
+	}
+	// The browser-port REJECT must come before the pool jump: the chain's
+	// loopback RETURN would otherwise let pool UIDs reach the browser ports.
+	for _, cmd := range []string{"iptables", "ip6tables"} {
+		rules, _ := exec.Command(cmd, "-S", "OUTPUT").CombinedOutput()
+		block := strings.Index(string(rules), fmt.Sprintf("--dport %d:%d", browser.PortRangeStart, browser.PortRangeEnd))
+		jump := strings.Index(string(rules), "-j "+poolEgressChain)
+		if block < 0 || jump < 0 || block > jump {
+			t.Fatalf("%s: browser-port block must precede the pool egress jump:\n%s", cmd, rules)
+		}
 	}
 
 	// A browser-range port (CDP/VNC/websockify) is off limits to pool UIDs.
@@ -167,6 +194,15 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	})
 }
 
+// needRootIT skips (rather than failing or passing on nothing) when the
+// iptables integration tests are not running as root.
+func needRootIT(t *testing.T) {
+	t.Helper()
+	if os.Getuid() != 0 {
+		t.Skip("needs root (iptables, setuid dials)")
+	}
+}
+
 func acceptAndClose(l net.Listener) {
 	for {
 		c, err := l.Accept()
@@ -180,7 +216,11 @@ func acceptAndClose(l net.Listener) {
 // dialAsUID connects to addr from a child process running as uid, since iptables
 // owner matching applies to the socket's creating UID.
 func dialAsUID(uid uint32, addr string) error {
-	cmd := exec.Command("/bin/bash", "-c", "exec 3<>/dev/tcp/${0%:*}/${0##*:}", addr)
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("/bin/bash", "-c", `exec 3<>/dev/tcp/"$1"/"$2"`, "dial", host, port)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: uid}}
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
@@ -204,4 +244,69 @@ func lookupUID(t *testing.T, name string) uint32 {
 	}
 	uid, _ := strconv.Atoi(u.Uid)
 	return uint32(uid)
+}
+
+// TestPoolEgressWithoutBrowserUserIntegration: on an image without the browser
+// user, the chain still installs (pool jump only) instead of failing. Run like
+// TestPoolEgressDefaultDenyIntegration, in a container WITHOUT orcabot-browser.
+func TestPoolEgressWithoutBrowserUserIntegration(t *testing.T) {
+	if os.Getenv("ORCABOT_IPTABLES_IT") != "1" {
+		t.Skip("set ORCABOT_IPTABLES_IT=1 in a disposable NET_ADMIN container to run")
+	}
+	needRootIT(t)
+	if _, err := user.Lookup(browser.BrowserUser); err == nil {
+		t.Skip("browser user exists in this container")
+	}
+	if err := setupPoolEgressDenyIptables(); err != nil {
+		t.Fatalf("setupPoolEgressDenyIptables without browser user: %v", err)
+	}
+	out, _ := exec.Command("iptables", "-S", "OUTPUT").CombinedOutput()
+	if n := strings.Count(string(out), "-j "+poolEgressChain); n != 1 {
+		t.Fatalf("expected exactly 1 jump to %s, got %d:\n%s", poolEgressChain, n, out)
+	}
+	if !strings.Contains(string(out), "--uid-owner 2000-2099") {
+		t.Fatalf("pool jump missing:\n%s", out)
+	}
+}
+
+// Run only in a disposable network namespace; checks both real loopback stacks.
+func TestPoolBrowserPortBlockIntegration(t *testing.T) {
+	if os.Getenv("ORCABOT_IPTABLES_IT") != "1" {
+		t.Skip("requires disposable NET_ADMIN container")
+	}
+	needRootIT(t)
+	if err := setupPoolBrowserPortBlock(); err != nil {
+		t.Fatal(err)
+	}
+	if err := setupPoolBrowserPortBlock(); err != nil {
+		t.Fatal(err)
+	}
+	portRange := fmt.Sprintf("--dport %d:%d", browser.PortRangeStart, browser.PortRangeEnd)
+	for _, cmd := range []string{"iptables", "ip6tables"} {
+		out, _ := exec.Command(cmd, "-S", "OUTPUT").CombinedOutput()
+		if n := strings.Count(string(out), portRange); n != 1 {
+			t.Fatalf("%s: want exactly 1 browser-port rule after two installs, got %d:\n%s", cmd, n, out)
+		}
+	}
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		t.Run(host, func(t *testing.T) {
+			listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(browser.PortRangeStart+9)))
+			if host == "::1" && errors.Is(err, syscall.EADDRNOTAVAIL) {
+				// Docker disables IPv6 by default: run with
+				// --sysctl net.ipv6.conf.all.disable_ipv6=0 to cover it.
+				t.Skip("no IPv6 loopback in this container")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			go acceptAndClose(listener)
+			if err := dialAsUID(0, listener.Addr().String()); err != nil {
+				t.Fatalf("root blocked: %v", err)
+			}
+			if err := dialAsUID(2000, listener.Addr().String()); err == nil {
+				t.Fatal("pool UID reached browser port")
+			}
+		})
+	}
 }

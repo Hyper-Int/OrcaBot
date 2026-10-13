@@ -210,7 +210,7 @@ curl "http://localhost:8787/internal/sessions/{sessionId}/approved-domains" \
 ```
 
 ### Auto-Apply Mechanism
-When secrets change, `autoApplySecretsToSessions()` pushes updates to all active sandbox sessions for that dashboard via the sandbox's `updateEnv()` endpoint.
+When secrets change, `autoApplySecretsToSessions()` pushes updates to all active sandbox sessions for that dashboard via the sandbox's `updateEnv()` endpoint. Only the dashboard owner's secrets are applied. Before starting a terminal, `applyDashboardOwnerSecrets()` reconciles previously applied names, unsetting legacy collaborator secrets (and their `_BROKER` variables), even if the owner has no secrets. Cleanup must succeed before terminal startup and before replacing the tracked names (a stale/unreachable sandbox instead takes the normal reprovision path; the fresh VM's pre-apply is fail-closed too). Loading the owner's own secrets is best-effort: if it fails (e.g. no `SECRETS_ENCRYPTION_KEY`), every tracked name is unset and the terminal starts without them. Existing processes retain their inherited environment until restarted.
 
 ### Encryption
 - Secrets encrypted at rest using configured encryption key

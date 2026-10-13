@@ -1,3 +1,4 @@
+// REVISION: session-tests-v4-fail-closed-no-pty
 /**
  * Session Handler Tests
  *
@@ -5,7 +6,8 @@
  * Full integration tests should use a real D1 database.
  */
 
-import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import * as secretsHandler from '../secrets/handler';
 import {
   createTestContext,
   seedUser,
@@ -29,8 +31,12 @@ describe('Session Handlers', () => {
     mockSandbox.server.listen({ onUnhandledRequest: 'error' });
   });
 
+  // The terminal must not start: no PTY in any sandbox session.
+  const ptysStarted = () => [...mockSandbox.sessions.values()].reduce((n, s) => n + s.ptys.size, 0);
+
   afterEach(() => {
     mockSandbox.reset();
+    vi.restoreAllMocks();
   });
 
   afterAll(() => {
@@ -39,6 +45,7 @@ describe('Session Handlers', () => {
 
   beforeEach(async () => {
     ctx = await createTestContext();
+    ctx.env.SECRETS_ENCRYPTION_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
     testUser = createTestUser({ id: 'user-1' });
     await seedUser(ctx.db, testUser);
   });
@@ -84,6 +91,53 @@ describe('Session Handlers', () => {
         result!.sandbox_machine_id === undefined
           || typeof result!.sandbox_machine_id === 'string'
       ).toBe(true);
+    });
+
+    it('reprovisions instead of failing when the sandbox session is gone at secret cleanup', async () => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+      // The first sandbox session vanishes (redeploy) before secret cleanup:
+      // updateEnv 404s. That must take the reprovision path, not fail creation.
+      const calls: string[] = [];
+      vi.spyOn(secretsHandler, 'applyDashboardOwnerSecrets').mockImplementation(async (_e, _s, _d, sessionId) => {
+        calls.push(sessionId);
+        if (calls.length === 1) throw new Error('Failed to update env: 404');
+        return ['OWNER_KEY'];
+      });
+
+      const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
+      expect(response.status).toBe(201);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).not.toBe(calls[0]);
+      const data = await response.json() as Record<string, any>;
+      expect(data.session.status).toBe('active');
+      expect(data.session.sandboxSessionId).toBe(calls[1]);
+    });
+
+    it.each([
+      ['cleanup rejected by the sandbox', 'Failed to update env: 403'],
+      ['tracking could not be written', 'D1 error'],
+    ])('still fails closed when %s', async (_name, message) => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+      vi.spyOn(secretsHandler, 'applyDashboardOwnerSecrets').mockRejectedValue(new Error(message));
+
+      const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
+      expect(response.status).toBeGreaterThanOrEqual(500);
+      expect(ptysStarted()).toBe(0);
+    });
+
+    it('fails closed when cleanup fails on the reprovisioned sandbox too', async () => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+      const spy = vi.spyOn(secretsHandler, 'applyDashboardOwnerSecrets')
+        .mockRejectedValueOnce(new Error('Failed to update env: 404'))
+        .mockRejectedValueOnce(new Error('Failed to update env: 403'));
+
+      const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
+      expect(response.status).toBeGreaterThanOrEqual(500);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(ptysStarted()).toBe(0);
     });
 
     it('should seed and query sessions', async () => {

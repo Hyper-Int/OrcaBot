@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secrets-v3-owner-secrets-only
+// REVISION: secrets-v5-owner-secrets-nonblocking
 
 import type { Env, UserSecret, SecretType } from '../types';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
-const MODULE_REVISION = 'secrets-v3-owner-secrets-only';
+const MODULE_REVISION = 'secrets-v5-owner-secrets-nonblocking';
 console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -35,6 +35,63 @@ export async function dashboardSecretsOwner(env: Env, dashboardId: string): Prom
     .bind(dashboardId)
     .first<{ owner_id: string }>();
   return row?.owner_id ?? null;
+}
+
+/**
+ * Reconcile legacy collaborator secrets before starting a new terminal.
+ *
+ * Only the cleanup is fail-closed: if unsetting previously applied names fails
+ * the error propagates and terminal startup aborts. Loading the owner's own
+ * secrets is best-effort (as before): if it fails (e.g. no
+ * SECRETS_ENCRYPTION_KEY on this deployment) the terminal starts without them,
+ * and every previously applied name is unset since none can be kept.
+ */
+export async function applyDashboardOwnerSecrets(
+  env: Env,
+  sandbox: SandboxClient,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string
+): Promise<string[]> {
+  const ownerId = await dashboardSecretsOwner(env, dashboardId);
+  if (!ownerId) throw new Error('Dashboard owner not found');
+  let secrets: Record<string, SecretWithProtection> = {};
+  let approvedDomains: Awaited<ReturnType<typeof getApprovedDomainsForDashboard>> = [];
+  try {
+    secrets = await getSecretsWithProtection(env, ownerId, dashboardId);
+    approvedDomains = await getApprovedDomainsForDashboard(env, ownerId, dashboardId);
+  } catch (err) {
+    console.error(`[secrets] could not load owner secrets for dashboard ${dashboardId}; starting without them:`, err);
+    secrets = {};
+    approvedDomains = [];
+  }
+  const row = await env.DB.prepare(`
+    SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ applied_secret_names: string }>();
+  let previousNames: string[] = [];
+  try {
+    const parsed: unknown = row?.applied_secret_names ? JSON.parse(row.applied_secret_names) : [];
+    previousNames = Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === 'string') : [];
+  } catch {
+    // Unknowable names can't be unset; failing here would block every terminal
+    // on this dashboard for good.
+    console.error(`[secrets] corrupt applied_secret_names for dashboard ${dashboardId}; ignoring it`);
+  }
+  const names = Object.keys(secrets);
+  const unset = previousNames.filter(name => !names.includes(name))
+    .flatMap(name => [name, `${name}_BROKER`]);
+
+  if (names.length || approvedDomains.length || unset.length) {
+    // Unset even when the owner has no secrets. Only return the new tracking
+    // names after the sandbox has acknowledged cleanup; failures abort startup.
+    await sandbox.updateEnv(sandboxSessionId, {
+      secrets: names.length ? secrets : undefined,
+      approvedDomains: approvedDomains.length ? approvedDomains : undefined,
+      unset: unset.length ? unset : undefined,
+      applyNow: false,
+    }, sandboxMachineId || undefined);
+  }
+  return names;
 }
 
 export async function autoApplySecretsToSessions(

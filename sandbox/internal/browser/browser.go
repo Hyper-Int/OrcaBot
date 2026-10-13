@@ -1,16 +1,18 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v13-unprivileged-user
+// REVISION: browser-v16-xvfb-exit-test-hook
 package browser
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -65,19 +66,18 @@ type Controller struct {
 	wsPort          int
 	vncPort         int
 	debugPort       int
+	xauth           string // the display's cookie file, removed on stop
 	running         bool
 	ready           bool
 	processes       []*exec.Cmd
 }
 
-// REVISION: browser-v13-unprivileged-user
-const browserRevision = "browser-v13-unprivileged-user"
+// REVISION: browser-v16-xvfb-exit-test-hook
+const browserRevision = "browser-v16-xvfb-exit-test-hook"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
 }
-
-var displayCounter uint32 = 90
 
 func NewController(workspace string) *Controller {
 	return &Controller{workspace: workspace}
@@ -123,7 +123,6 @@ func (c *Controller) Start() (Status, error) {
 		return Status{}, err
 	}
 
-	display := int(atomic.AddUint32(&displayCounter, 1))
 	wsPort, err := freePortInRange()
 	if err != nil {
 		return Status{}, err
@@ -147,18 +146,19 @@ func (c *Controller) Start() (Status, error) {
 	if err := os.MkdirAll("/tmp/.X11-unix", 0o777); err == nil {
 		_ = os.Chmod("/tmp/.X11-unix", 0o777|os.ModeSticky)
 	}
-	xauth := xauthorityPath(identity, display)
-	if err := writeXauthority(xauth, display, identity); err != nil {
-		return Status{}, fmt.Errorf("browser X auth: %w", err)
+
+	// Xvfb picks a free display itself (-displayfd), so an agent squatting
+	// /tmp/.X11-unix/X<n> can't make it fail or hand our clients its server.
+	xvfbCmd, display, xauth, err := startXvfb(identity, xvfbReadyTimeout)
+	if err != nil {
+		return Status{}, err
+	}
+	if testHookXvfbStarted != nil {
+		testHookXvfbStarted(xvfbCmd)
 	}
 
 	displayVar := fmt.Sprintf(":%d", display)
 	env := identity.env(displayVar, xauth)
-
-	// -auth: only holders of the cookie can open the display (no keystroke
-	// injection into the browser from agents).
-	xvfbCmd := exec.Command("Xvfb", displayVar, "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-auth", xauth)
-	xvfbCmd.Env = env
 
 	vncCmd := exec.Command(
 		"x11vnc",
@@ -246,8 +246,16 @@ func (c *Controller) Start() (Status, error) {
 		for _, cmd := range processes {
 			killProcessTree(cmd)
 		}
+		_ = os.Remove(xauth)
 	}
-	for i, cmd := range processes {
+	for _, cmd := range processes[1:] {
+		// x11vnc and Chromium connect to the display by name; if Xvfb has
+		// died since it reported ready, whatever now owns :N would get them.
+		if (cmd == vncCmd || cmd == chromiumCmd) && !processRunning(xvfbCmd) {
+			log.Printf("browser Xvfb on display %d exited before %s started", display, cmd.Path)
+			killAll()
+			return Status{}, fmt.Errorf("browser display server exited")
+		}
 		log.Printf("browser starting %s", cmd.Path)
 		procName := filepath.Base(cmd.Path)
 		logWriter := newProcessLogWriter(procName)
@@ -261,10 +269,6 @@ func (c *Controller) Start() (Status, error) {
 			log.Printf("browser failed to start %s: %v", cmd.Path, err)
 			killAll()
 			return Status{}, err
-		}
-		if i == 0 {
-			// Wait for Xvfb to be ready before starting x11vnc
-			time.Sleep(500 * time.Millisecond)
 		}
 	}
 
@@ -289,6 +293,7 @@ func (c *Controller) Start() (Status, error) {
 	c.wsPort = wsPort
 	c.vncPort = vncPort
 	c.debugPort = debugPort
+	c.xauth = xauth
 	c.processes = processes
 	c.running = true
 	spawnElapsed := time.Since(startTime)
@@ -391,6 +396,14 @@ func (c *Controller) Stop() {
 	c.processes = nil
 	c.running = false
 	c.ready = false
+	c.removeXauthLocked()
+}
+
+func (c *Controller) removeXauthLocked() {
+	if c.xauth != "" {
+		_ = os.Remove(c.xauth)
+		c.xauth = ""
+	}
 }
 
 func (c *Controller) Status() Status {
@@ -402,9 +415,15 @@ func (c *Controller) Status() Status {
 	// If we think the browser is running, verify websockify is still listening.
 	// If it's gone the processes died unexpectedly and we need to allow a restart.
 	if running && wsPort > 0 {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", wsPort), 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		conn, err := DialBrowser(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", wsPort))
+		cancel()
 		if err == nil {
 			conn.Close()
+		} else if !websockifyGone(err) {
+			// A slow /proc lookup or a timeout under load is not evidence the
+			// stack died; tearing it down would drop every viewer's session.
+			log.Printf("[browser] websockify port %d check inconclusive, keeping state: %v", wsPort, err)
 		} else {
 			c.mu.Lock()
 			// Only clear if no concurrent Start() has already replaced the state.
@@ -417,6 +436,7 @@ func (c *Controller) Status() Status {
 				c.processes = nil
 				c.running = false
 				c.ready = false
+				c.removeXauthLocked()
 			}
 			c.mu.Unlock()
 		}
@@ -468,7 +488,7 @@ func (c *Controller) OpenURL(target string) error {
 	c.ready = true
 	c.mu.Unlock()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := newBrowserHTTPClient(5 * time.Second)
 
 	// If a tab already has this URL, just activate it — don't open a duplicate.
 	// This happens when the frontend BrowserBlock echoes the URL back after
@@ -630,18 +650,44 @@ func trimForLog(value string) string {
 	return trimmed
 }
 
-
+// waitForPort waits until the browser user is accepting on port. A port served
+// by anyone else fails at once: the real process can't bind it any more.
 func waitForPort(port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		ctx, cancel := context.WithDeadline(context.Background(), minTime(deadline, time.Now().Add(time.Second)))
+		conn, err := DialBrowser(ctx, "tcp", addr)
+		cancel()
 		if err == nil {
 			_ = conn.Close()
 			return true
 		}
+		if errors.Is(err, errNotBrowserSocket) {
+			log.Printf("[browser] SECURITY: %v", err)
+			return false
+		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
+}
+
+// websockifyGone reports whether a failed liveness dial means the browser
+// stack is really gone: nothing listens on the port any more, or another user
+// now does (so websockify must have exited and the port was taken).
+func websockifyGone(err error) bool {
+	if errors.Is(err, errNotBrowserSocket) {
+		log.Printf("[browser] SECURITY: %v", err)
+		return true
+	}
+	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // probeDebugReady does a single quick check of chromium's DevTools endpoint.
@@ -651,31 +697,126 @@ func probeDebugReady(port int) bool {
 	if port == 0 {
 		return false
 	}
-	client := &http.Client{Timeout: 300 * time.Millisecond}
+	return debugVersionOK(newBrowserHTTPClient(300*time.Millisecond), port)
+}
+
+func debugVersionOK(client *http.Client, port int) bool {
 	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/json/version", port))
 	if err != nil {
 		return false
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	return resp.StatusCode < 300
 }
 
+// waitForDebugReady waits for DevTools to answer, within `timeout` overall.
+// Each request is bounded too: Start() calls this holding c.mu, so a listener
+// that accepts and never answers must not hang it.
 func waitForDebugReady(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
 	if !waitForPort(port, timeout) {
 		return false
 	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/version", port))
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode < 300 {
-				return true
-			}
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		if debugVersionOK(newBrowserHTTPClient(min(remaining, 2*time.Second)), port) {
+			return true
+		}
+		if time.Until(deadline) <= 200*time.Millisecond {
+			return false
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return false
+}
+
+const xvfbReadyTimeout = 10 * time.Second
+
+// testHookXvfbStarted, when set by a test, runs right after Xvfb reports its
+// display, so a test can kill it before x11vnc and Chromium start.
+var testHookXvfbStarted func(*exec.Cmd)
+
+// startXvfb starts Xvfb as the browser user with -displayfd, so the server
+// chooses a free display and reports it only once it accepts connections (no
+// fixed sleep, and an agent squatting /tmp/.X11-unix/X<n> can't make it fail
+// or stand in for it). The cookie exists before Xvfb starts so -auth is in
+// force from the first connection; the server ignores an entry's display
+// number, so the file is rewritten with the real one once Xvfb reports it.
+func startXvfb(id browserIdentity, timeout time.Duration) (*exec.Cmd, int, string, error) {
+	cookie, err := newXCookie()
+	if err != nil {
+		return nil, 0, "", err
+	}
+	xauth, err := xauthorityPath(id)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if err := writeXauthority(xauth, 0, cookie, id); err != nil {
+		return nil, 0, "", fmt.Errorf("browser X auth: %w", err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		os.Remove(xauth)
+		return nil, 0, "", err
+	}
+	defer r.Close()
+
+	// ExtraFiles[0] is fd 3 in the child.
+	cmd := exec.Command("Xvfb", "-displayfd", "3", "-screen", "0", "1280x720x24", "-nolisten", "tcp", "-auth", xauth)
+	cmd.Env = id.env("", xauth)
+	cmd.ExtraFiles = []*os.File{w}
+	logWriter := newProcessLogWriter("Xvfb")
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+	cmd.SysProcAttr = id.sysProcAttr()
+	log.Printf("browser starting %s", cmd.Path)
+	err = cmd.Start()
+	w.Close() // only the child holds the write end now, so its exit reads as EOF
+	if err != nil {
+		os.Remove(xauth)
+		return nil, 0, "", err
+	}
+
+	fail := func(err error) (*exec.Cmd, int, string, error) {
+		killProcessTree(cmd)
+		os.Remove(xauth)
+		return nil, 0, "", err
+	}
+	display, err := readDisplayFD(r, timeout)
+	if err != nil {
+		return fail(fmt.Errorf("browser display server failed to start: %w", err))
+	}
+	if !processRunning(cmd) {
+		return fail(fmt.Errorf("browser display server exited after reporting display %d", display))
+	}
+	if err := writeXauthority(xauth, display, cookie, id); err != nil {
+		return fail(fmt.Errorf("browser X auth: %w", err))
+	}
+	return cmd, display, xauth, nil
+}
+
+// readDisplayFD reads the newline-terminated display number Xvfb writes to its
+// -displayfd once it is ready. EOF means Xvfb exited without becoming ready.
+func readDisplayFD(r *os.File, timeout time.Duration) (int, error) {
+	if err := r.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return 0, err
+	}
+	line, err := bufio.NewReader(io.LimitReader(r, 32)).ReadString('\n')
+	if err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return 0, fmt.Errorf("no display reported within %s", timeout)
+		}
+		return 0, fmt.Errorf("Xvfb exited before reporting a display (%v)", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("bad display %q from Xvfb", strings.TrimSpace(line))
+	}
+	return n, nil
 }
 
 func ensureBinary(name string) error {
@@ -684,4 +825,3 @@ func ensureBinary(name string) error {
 	}
 	return nil
 }
-

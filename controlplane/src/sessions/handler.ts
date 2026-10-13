@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v23-owner-secrets-only
-const sessionsRevision = "sessions-v23-owner-secrets-only";
+// REVISION: sessions-v26-apply-tracks-after-cleanup
+const sessionsRevision = "sessions-v26-apply-tracks-after-cleanup";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1385,6 +1385,16 @@ export async function createSessiоn(
   }
 }
 
+function isUnreachableSandbox(err: unknown): boolean {
+  return err instanceof Error &&
+    (err.name === 'AbortError' || err.message.includes('The operation was aborted'));
+}
+
+// Definitively gone (404) or completely unreachable (timeout/abort): reprovision.
+function isStaleOrUnreachableSandbox(err: unknown): boolean {
+  return (err instanceof Error && err.message.includes('404')) || isUnreachableSandbox(err);
+}
+
 async function createSessionImpl(
   env: EnvWithDriveCache,
   dashboardId: string,
@@ -1496,29 +1506,8 @@ async function createSessionImpl(
       sandboxSessionId: string,
       sandboxMachineId: string
     ): Promise<string[]> => {
-      const { getSecretsWithProtection, getApprovedDomainsForDashboard, dashboardSecretsOwner } = await import('../secrets/handler');
-      // The VM is shared by every member's terminals: it gets the dashboard
-      // owner's secrets, never those of whoever created this terminal.
-      const secretsOwnerId = await dashboardSecretsOwner(env, dashboardId);
-      if (!secretsOwnerId) return [];
-      const secrets = await getSecretsWithProtection(env, secretsOwnerId, dashboardId);
-      const approvedDomains = await getApprovedDomainsForDashboard(env, secretsOwnerId, dashboardId);
-      const secretNames = Object.keys(secrets);
-
-      if (secretNames.length > 0 || approvedDomains.length > 0) {
-        await sandbox.updateEnv(
-          sandboxSessionId,
-          {
-            secrets: secretNames.length > 0 ? secrets : undefined,
-            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-            // PTYs started after this call load from .env at process start.
-            applyNow: false,
-          },
-          sandboxMachineId || undefined
-        );
-      }
-
-      return secretNames;
+      const { applyDashboardOwnerSecrets } = await import('../secrets/handler');
+      return applyDashboardOwnerSecrets(env, sandbox, dashboardId, sandboxSessionId, sandboxMachineId);
     };
 
     // Use ensureDashboardSandbox which checks machine health via Fly API,
@@ -1537,11 +1526,19 @@ async function createSessionImpl(
     let { sandboxSessionId, sandboxMachineId } = sandboxResult;
 
     // Apply dashboard secrets before PTY start so agent apps inherit env at launch.
+    // A stale (404) or unreachable sandbox is not a cleanup failure: skip straight
+    // to the reprovision path below — a fresh VM holds no legacy secrets, and its
+    // own pre-apply still fails closed.
+    let sandboxGoneErr: Error | null = null;
     try {
       appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
     } catch (err) {
-      console.error('[createSession] Failed to pre-apply secrets before PTY start:', err);
-      // Non-fatal - continue with session creation
+      if (!isStaleOrUnreachableSandbox(err)) {
+        console.error('[createSession] Failed to pre-apply secrets before PTY start:', err);
+        // Fail closed: never launch with legacy secrets or discard their tracking.
+        throw err;
+      }
+      sandboxGoneErr = err as Error;
     }
 
     // Create PTY within the dashboard sandbox, assigning control to the creator
@@ -1558,6 +1555,7 @@ async function createSessionImpl(
 
     let pty: { id: string };
     try {
+      if (sandboxGoneErr) throw sandboxGoneErr;
       // Inner try: handle working directory not found (E79708) — fall back to workspace root.
       // This happens when reopening an old dashboard whose GitHub mirror / workspace is gone.
       try {
@@ -1584,12 +1582,10 @@ async function createSessionImpl(
       // If the sandbox timed out, the Fly machine is effectively gone — retrying the same
       // machine won't help. Reprovision to get a working sandbox.
       // Other errors (502, 409 Fly-Replay) may be transient — let them propagate.
-      const isStaleSession = err instanceof Error && err.message.includes('404');
-      const isUnreachable = err instanceof Error &&
-        (err.name === 'AbortError' || err.message.includes('The operation was aborted'));
-      if (!isStaleSession && !isUnreachable) {
+      if (!isStaleOrUnreachableSandbox(err)) {
         throw err;
       }
+      const isUnreachable = isUnreachableSandbox(err);
 
       // Stale/unreachable session — clear it and create a fresh sandbox
       console.log(`[createSession] Sandbox ${isUnreachable ? 'unreachable (timeout)' : 'stale (404)'} for session ${sandboxSessionId}, reprovisioning`);
@@ -1609,7 +1605,7 @@ async function createSessionImpl(
         appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
       } catch (secretErr) {
         console.error('[createSession] Failed to pre-apply secrets on reprovisioned sandbox:', secretErr);
-        // Non-fatal - continue with session creation
+        throw secretErr;
       }
 
       // Regenerate integration token with fresh sandbox session ID
@@ -2628,13 +2624,6 @@ export async function applySecretsToSession(
       }
     }
 
-    // Update the applied secret names for next time (upsert in case row doesn't exist)
-    await env.DB.prepare(`
-      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, applied_secret_names)
-      VALUES (?, ?, ?)
-      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
-    `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
-
     // Skip updateEnv call if there's nothing to do
     const hasSecrets = Object.keys(secrets).length > 0;
     const hasUnset = unset.length > 0;
@@ -2658,6 +2647,14 @@ export async function applySecretsToSession(
       },
       (session.sandbox_machine_id as string) || undefined
     );
+
+    // Track the new names only once the sandbox has acknowledged the unset:
+    // recording them first would forget names that are still set if it failed.
+    await env.DB.prepare(`
+      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, applied_secret_names)
+      VALUES (?, ?, ?)
+      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
+    `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
 
     return Response.json({ applied: Object.keys(secrets).length, approvedDomains: approvedDomains.length, unset: unset.length });
   } catch (error) {

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v6-browser-isolation
+// REVISION: egress-kernel-v9-revision-timestamp
 
 //go:build linux
 
@@ -13,17 +13,19 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-const egressKernelRevision = "egress-kernel-v6-browser-isolation"
+const egressKernelRevision = "egress-kernel-v9-revision-timestamp"
 
 func init() {
-	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, "init")
+	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, time.Now().Format(time.RFC3339))
 }
 
 // checkNetAdmin reads CapEff from /proc/self/status and returns true if
@@ -145,19 +147,24 @@ func setupPoolMCPIptables(mcpPort string) error {
 // VNC would hand an agent the browser — and its egress — outside every check;
 // the server is the only legitimate client (it runs as root, outside the range).
 func setupPoolBrowserPortBlock() error {
-	ruleArgs := []string{
-		"-p", "tcp",
-		"-d", "127.0.0.0/8",
-		"--dport", fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd),
-		"-m", "owner", "--uid-owner", "2000-2099",
-		"-j", "REJECT", "--reject-with", "tcp-reset",
-	}
-	if exec.Command("iptables", append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
-		return nil
-	}
-	out, err := exec.Command("iptables", append([]string{"-A", "OUTPUT"}, ruleArgs...)...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("iptables pool browser-port block: %w: %s", err, strings.TrimSpace(string(out)))
+	for _, family := range []struct{ command, loopback string }{
+		{"iptables", "127.0.0.0/8"},
+		{"ip6tables", "::1/128"},
+	} {
+		ruleArgs := []string{
+			"-p", "tcp", "-d", family.loopback,
+			"--dport", fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd),
+			"-m", "owner", "--uid-owner", "2000-2099",
+			"-j", "REJECT", "--reject-with", "tcp-reset",
+		}
+		if exec.Command(family.command, append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
+			continue
+		}
+		// Insert ahead of any existing loopback allowances.
+		out, err := exec.Command(family.command, append([]string{"-I", "OUTPUT", "1"}, ruleArgs...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s pool browser-port block: %w: %s", family.command, err, strings.TrimSpace(string(out)))
+		}
 	}
 	log.Printf("[pool-iptables] Blocked pool UIDs 2000-2099 from browser ports %d-%d", browser.PortRangeStart, browser.PortRangeEnd)
 	return nil
@@ -237,10 +244,7 @@ func installPoolEgressChain(cmd string, rules [][]string) error {
 		}
 	}
 
-	// Pool UIDs, and the dashboard browser's user: Chromium is pointed at the
-	// egress proxy, and this keeps anything it loads (or an extension changing
-	// its proxy) from leaving any other way.
-	for _, owner := range []string{"2000-2099", browser.BrowserUser} {
+	for _, owner := range poolEgressOwners(lookupUser) {
 		jump := []string{"-m", "owner", "--uid-owner", owner, "-j", poolEgressChain}
 		if exec.Command(cmd, append([]string{"-C", "OUTPUT"}, jump...)...).Run() == nil {
 			continue
@@ -250,6 +254,28 @@ func installPoolEgressChain(cmd string, rules [][]string) error {
 		}
 	}
 	return nil
+}
+
+// poolEgressOwners lists the --uid-owner matches that jump to the pool egress
+// chain: the pool UIDs, and the dashboard browser's user — Chromium is pointed
+// at the egress proxy, and this keeps anything it loads (or an extension
+// changing its proxy) from leaving any other way. iptables resolves the name
+// itself and rejects an unknown one, so on an image without that user (built
+// before it existed) the browser jump is skipped with a warning instead of
+// failing the chain and leaving the pool without egress control. Such an
+// image also runs no browser: browser.Start refuses without the user.
+func poolEgressOwners(lookup func(name string) error) []string {
+	owners := []string{"2000-2099"}
+	if err := lookup(browser.BrowserUser); err != nil {
+		log.Printf("[egress-kernel] WARNING: browser user %q not found, skipping its egress jump: %v", browser.BrowserUser, err)
+		return owners
+	}
+	return append(owners, browser.BrowserUser)
+}
+
+func lookupUser(name string) error {
+	_, err := user.Lookup(name)
+	return err
 }
 
 // resolvConfNameservers returns the IPv4 and IPv6 nameservers from resolv.conf.

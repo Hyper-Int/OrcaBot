@@ -1,6 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-cdp-v2-verified-dial
 package browser
 
 import (
@@ -8,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +59,9 @@ func (c *CDPClient) connectToTarget(preferredTargetID string) error {
 	}
 
 	// Get list of targets to find a page target
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	// Both the target list and the websocket go through DialBrowser, so a
+	// listener squatting the debug port never sees our commands.
+	httpClient := newBrowserHTTPClient(10 * time.Second)
 	resp, err := httpClient.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
 	if err != nil {
 		return fmt.Errorf("failed to list targets: %w", err)
@@ -104,10 +106,7 @@ func (c *CDPClient) connectToTarget(preferredTargetID string) error {
 	}
 
 	// Connect via WebSocket
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-	}
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, _, err := browserWSDialer().Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to CDP: %w", err)
 	}
@@ -338,9 +337,9 @@ func (c *CDPClient) Type(selector string, text string) error {
 
 	// Clear existing content
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
-		"type":                "keyDown",
-		"key":                 "a",
-		"modifiers":           2, // Ctrl
+		"type":                  "keyDown",
+		"key":                   "a",
+		"modifiers":             2, // Ctrl
 		"windowsVirtualKeyCode": 65,
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
@@ -348,8 +347,8 @@ func (c *CDPClient) Type(selector string, text string) error {
 		"key":  "a",
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
-		"type":                "keyDown",
-		"key":                 "Backspace",
+		"type":                  "keyDown",
+		"key":                   "Backspace",
 		"windowsVirtualKeyCode": 8,
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{

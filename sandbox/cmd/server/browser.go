@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v8-autoopen-dashboard-token
+// REVISION: browser-v9-verified-vnc-proxy
 package main
 
 import (
@@ -18,10 +18,18 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
+
+// browserProxyTransport carries the noVNC page and its websocket to
+// websockify. Its dialer checks the accepting socket belongs to the browser
+// user, so a viewer's VNC session can't be handed to an agent that bound the
+// port first.
+// REVISION: browser-v9-verified-vnc-proxy
+var browserProxyTransport = browser.NewBrowserTransport()
 
 type browserStatusResponse struct {
 	Running   bool `json:"running"`
@@ -271,6 +279,7 @@ func (s *Server) handleBrowserProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = browserProxyTransport
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		resp.Header.Del("X-Frame-Options")
 		return nil
