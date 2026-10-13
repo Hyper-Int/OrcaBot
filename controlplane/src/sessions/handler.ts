@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v26-apply-tracks-after-cleanup
-const sessionsRevision = "sessions-v26-apply-tracks-after-cleanup";
+// REVISION: sessions-v27-reprovision-keeps-secret-tracking
+const sessionsRevision = "sessions-v27-reprovision-keeps-secret-tracking";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -257,6 +257,34 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
   }>();
 }
 
+/**
+ * Forget a dashboard's dead sandbox so the next ensure provisions a new one.
+ *
+ * The row is blanked rather than deleted so applied_secret_names survives: the
+ * replacement can reuse the workspace (on desktop it always does, .env
+ * included), and its pre-apply must still unset every name tracked here. The
+ * inserts in ensureDashboardSandboxCreate / provisioning claim a blank row.
+ */
+async function retireDashboardSandbox(env: EnvWithDriveCache, dashboardId: string): Promise<void> {
+  await env.DB.prepare(`
+    UPDATE dashboard_sandboxes
+    SET sandbox_session_id = '', sandbox_machine_id = '', fly_volume_id = '', machine_state = 'unknown'
+    WHERE dashboard_id = ?
+  `).bind(dashboardId).run();
+}
+
+// A blank row (retireDashboardSandbox, or the idle-machine cleanup) is free to
+// claim; a live one means a concurrent request already provisioned this
+// dashboard, so the insert changes nothing and the caller defers to it.
+const CLAIM_DASHBOARD_SANDBOX = `
+  ON CONFLICT(dashboard_id) DO UPDATE SET
+    sandbox_session_id = excluded.sandbox_session_id,
+    sandbox_machine_id = excluded.sandbox_machine_id,
+    fly_volume_id = excluded.fly_volume_id,
+    machine_state = excluded.machine_state,
+    created_at = excluded.created_at
+  WHERE dashboard_sandboxes.sandbox_session_id = ''`;
+
 // ── Fly machine-state cache (anti-429) ─────────────────────────────────
 // REVISION: fly-getmachine-cache-v1-anti-429
 // Every browser asset request (noVNC loads 20+ assets at once: svg/css/js) and
@@ -399,9 +427,7 @@ export async function ensureDashbоardSandbоx(
           } catch (waitErr) {
             if (waitErr instanceof FlyMachineNotFoundError) {
               console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} disappeared while waiting, clearing for reprovision`);
-              await env.DB.prepare(`
-                DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-              `).bind(dashboardId).run();
+              await retireDashboardSandbox(env, dashboardId);
               return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
             }
             // Otherwise fall through to session validation (may work if machine just came up)
@@ -412,9 +438,7 @@ export async function ensureDashbоardSandbоx(
         if (err instanceof FlyMachineNotFoundError) {
           // Machine was destroyed externally — clear and reprovision below
           console.log(`[ensureDashboardSandbox] Machine ${existingSandbox.sandbox_machine_id} not found, clearing for reprovision`);
-          await env.DB.prepare(`
-            DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-          `).bind(dashboardId).run();
+          await retireDashboardSandbox(env, dashboardId);
           // Fall through to provisioning below
           return ensureDashbоardSandbоxCreate(env, dashboardId, flyProvisioningEnabled, preferredRegion);
         }
@@ -459,18 +483,14 @@ export async function ensureDashbоardSandbоx(
       if (checkRes.status === 404) {
         // Session definitively gone (sandbox process restarted, lost in-memory state)
         console.log(`[ensureDashboardSandbox] Session ${existingSandbox.sandbox_session_id} not found on sandbox (404), clearing for reprovision`);
-        await env.DB.prepare(`
-          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-        `).bind(dashboardId).run();
+        await retireDashboardSandbox(env, dashboardId);
         // Fall through to create new sandbox below
       } else if (
         (checkRes.status === 502 || checkRes.status === 503)
         && existingSandbox.sandbox_machine_id
       ) {
         console.warn(`[ensureDashboardSandbox] Session validation returned ${checkRes.status} for machine ${existingSandbox.sandbox_machine_id}, clearing for reprovision`);
-        await env.DB.prepare(`
-          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-        `).bind(dashboardId).run();
+        await retireDashboardSandbox(env, dashboardId);
         // Fall through to create new sandbox below
       } else {
         // Other non-404 responses may be transient; keep existing mapping.
@@ -488,9 +508,7 @@ export async function ensureDashbоardSandbоx(
         (fetchErr.name === 'AbortError' || fetchErr.message.includes('The operation was aborted'));
       if (isTimeout) {
         console.warn(`[ensureDashboardSandbox] Session validation timed out — sandbox unreachable, clearing for reprovision`);
-        await env.DB.prepare(`
-          DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-        `).bind(dashboardId).run();
+        await retireDashboardSandbox(env, dashboardId);
         // Fall through to create new sandbox below
       } else {
         // Non-timeout error (e.g. connection reset) — could be transient.
@@ -559,8 +577,9 @@ async function ensureDashbоardSandbоxCreate(
     throw lastCreateErr instanceof Error ? lastCreateErr : new Error('Failed to create sandbox session');
   }
   const insertResult = await env.DB.prepare(`
-    INSERT OR IGNORE INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, created_at)
+    VALUES (?, ?, ?, '', 'unknown', ?)
+    ${CLAIM_DASHBOARD_SANDBOX}
   `).bind(dashboardId, sandboxSession.id, sandboxSession.machineId || '', now).run();
 
   if (insertResult.meta.changes === 0) {
@@ -725,9 +744,10 @@ async function claimWarmMachine(
 
     // Store in DB
     const insertResult = await env.DB.prepare(`
-      INSERT OR IGNORE INTO dashboard_sandboxes
+      INSERT INTO dashboard_sandboxes
         (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, created_at)
       VALUES (?, ?, ?, ?, 'started', ?)
+      ${CLAIM_DASHBOARD_SANDBOX}
     `).bind(dashboardId, sandboxSession.id, machineId, volumeId, now).run();
 
     if (insertResult.meta.changes === 0) {
@@ -850,9 +870,10 @@ async function coldProvisionMachine(
     let insertResult;
     try {
       insertResult = await env.DB.prepare(`
-        INSERT OR IGNORE INTO dashboard_sandboxes
+        INSERT INTO dashboard_sandboxes
           (dashboard_id, sandbox_session_id, sandbox_machine_id, fly_volume_id, machine_state, created_at)
         VALUES (?, ?, ?, ?, 'started', ?)
+        ${CLAIM_DASHBOARD_SANDBOX}
       `).bind(dashboardId, sandboxSession.id, machineId, volumeId, now).run();
     } catch (dbErr) {
       // FK constraint = dashboard was deleted during provisioning; clean up
@@ -1527,8 +1548,9 @@ async function createSessionImpl(
 
     // Apply dashboard secrets before PTY start so agent apps inherit env at launch.
     // A stale (404) or unreachable sandbox is not a cleanup failure: skip straight
-    // to the reprovision path below — a fresh VM holds no legacy secrets, and its
-    // own pre-apply still fails closed.
+    // to the reprovision path below. Its tracking is kept (retireDashboardSandbox),
+    // so the replacement session's own pre-apply — which still fails closed —
+    // unsets those names in the workspace it may reuse.
     let sandboxGoneErr: Error | null = null;
     try {
       appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
@@ -1589,9 +1611,7 @@ async function createSessionImpl(
 
       // Stale/unreachable session — clear it and create a fresh sandbox
       console.log(`[createSession] Sandbox ${isUnreachable ? 'unreachable (timeout)' : 'stale (404)'} for session ${sandboxSessionId}, reprovisioning`);
-      await env.DB.prepare(`
-        DELETE FROM dashboard_sandboxes WHERE dashboard_id = ?
-      `).bind(dashboardId).run();
+      await retireDashboardSandbox(env, dashboardId);
 
       // Create fresh sandbox session (uses Fly provisioning if enabled)
       const flyProvisioningEnabled = env.FLY_PROVISIONING_ENABLED === 'true'
@@ -1600,7 +1620,8 @@ async function createSessionImpl(
       sandboxSessionId = freshResult.sandboxSessionId;
       sandboxMachineId = freshResult.sandboxMachineId;
 
-      // Fresh sandbox starts empty; pre-apply secrets before launching PTY.
+      // Pre-apply before launching the PTY; this also unsets the names tracked for
+      // the old session, since the new one may share its workspace and .env.
       try {
         appliedSecretNames = await applyDashboardSecretsBeforePtyStart(sandboxSessionId, sandboxMachineId);
       } catch (secretErr) {
@@ -2569,7 +2590,7 @@ export async function applySecretsToSession(
   userId: string
 ): Promise<Response> {
   // Import dynamically to avoid circular dependency
-  const { getSecretsWithProtection, getApprovedDomainsForDashboard, dashboardSecretsOwner } = await import('../secrets/handler');
+  const { pushDashboardOwnerSecrets, dashboardSecretsOwner } = await import('../secrets/handler');
 
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -2591,62 +2612,17 @@ export async function applySecretsToSession(
     if (!secretsOwnerId) {
       return Response.json({ error: 'E79620: Dashboard owner not found' }, { status: 404 });
     }
-    const secrets = await getSecretsWithProtection(
-      env,
-      secretsOwnerId,
-      session.dashboard_id as string
-    );
-
-    // Get approved domains for custom secrets
-    const approvedDomains = await getApprovedDomainsForDashboard(
-      env,
-      secretsOwnerId,
-      session.dashboard_id as string
-    );
-
-    // Get previously applied secret names to compute what to unset
-    const dashboardSandbox = await env.DB.prepare(`
-      SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
-    `).bind(session.dashboard_id).first<{ applied_secret_names: string }>();
-
-    const previousNames: string[] = dashboardSandbox?.applied_secret_names
-      ? JSON.parse(dashboardSandbox.applied_secret_names)
-      : [];
-    const currentNames = Object.keys(secrets);
-
-    // Compute secrets to unset (were applied before but not in current set)
-    const unset: string[] = [];
-    for (const name of previousNames) {
-      if (!currentNames.includes(name)) {
-        unset.push(name);
-        // Also unset the _BROKER suffix for custom secrets
-        unset.push(`${name}_BROKER`);
-      }
-    }
-
-    // Skip updateEnv call if there's nothing to do
-    const hasSecrets = Object.keys(secrets).length > 0;
-    const hasUnset = unset.length > 0;
-    const hasApprovedDomains = approvedDomains.length > 0;
-
-    if (!hasSecrets && !hasUnset && !hasApprovedDomains) {
-      // Nothing to apply - return success without calling sandbox
-      return Response.json({ applied: 0, approvedDomains: 0, unset: 0 });
-    }
-
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
-    // Don't use applyNow - new PTYs will load from .env automatically
-    // Existing PTYs can run `source ~/.env` if needed
-    await sandbox.updateEnv(
+    const pushed = await pushDashboardOwnerSecrets(
+      env,
+      sandbox,
+      session.dashboard_id as string,
+      secretsOwnerId,
       session.sandbox_session_id as string,
-      {
-        secrets: hasSecrets ? secrets : undefined,
-        approvedDomains: hasApprovedDomains ? approvedDomains : undefined,
-        unset: hasUnset ? unset : undefined,
-        applyNow: false,
-      },
-      (session.sandbox_machine_id as string) || undefined
+      (session.sandbox_machine_id as string) || '',
+      { bestEffortLoad: false }
     );
+    const currentNames = pushed.names;
 
     // Track the new names only once the sandbox has acknowledged the unset:
     // recording them first would forget names that are still set if it failed.
@@ -2656,7 +2632,7 @@ export async function applySecretsToSession(
       ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
     `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
 
-    return Response.json({ applied: Object.keys(secrets).length, approvedDomains: approvedDomains.length, unset: unset.length });
+    return Response.json({ applied: currentNames.length, approvedDomains: pushed.approvedDomains, unset: pushed.unset });
   } catch (error) {
     console.error('Failed to apply secrets:', error);
     return Response.json(

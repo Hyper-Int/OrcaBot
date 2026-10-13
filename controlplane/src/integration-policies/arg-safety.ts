@@ -1,8 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: arg-safety-v2-github-paths-encoded
-const MODULE_REVISION = 'arg-safety-v2-github-paths-encoded';
+// REVISION: arg-safety-v3-gateway-provider-ids
+import type { IntegrationProvider } from '../types';
+
+const MODULE_REVISION = 'arg-safety-v3-gateway-provider-ids';
 console.log(`[arg-safety] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -31,22 +33,30 @@ export const MESSAGING_TARGET_FIELD: Record<string, string> = {
   google_chat: 'space',
 };
 
-/** Args each client interpolates into a URL path without encoding. */
-const PATH_SEGMENT_ARGS: Record<string, string[]> = {
+/**
+ * Args each client interpolates into a URL path. Keyed by the gateway's
+ * provider identifiers (IntegrationProvider) — a key that matches no provider
+ * silently disables the check, so the type only admits real providers.
+ */
+export const PATH_SEGMENT_ARGS: Partial<Record<IntegrationProvider, string[]>> = {
   discord: ['channel', 'message_id', 'guild_id', 'user_id', 'user'],
   github: ['owner', 'repo'],
-  drive: ['fileId', 'folderId'],
+  google_drive: ['fileId', 'folderId'],
   gmail: ['messageId', 'threadId', 'labelId'],
   google_chat: ['member_id'],
   teams: ['team_id', 'channel_id', 'message_id', 'conversation_id', 'user_id'],
   whatsapp: ['phone_number_id', 'message_id'],
   twitter: ['tweet_id', 'user_id', 'username', 'target_user_id', 'account_id'],
-  calendar: ['eventId', 'event_id'],
+  google_calendar: ['eventId', 'event_id'],
 };
 
 const EMAIL_PROVIDERS = new Set(['gmail', 'outlook']);
 const EMAIL_HEADER_ARGS = ['subject', 'to', 'cc', 'bcc'];
 const RECIPIENT_ARGS = ['to', 'cc', 'bcc'];
+
+// Drive file/folder IDs are URL-safe base64-ish; folderId is also quoted into a
+// Drive search query (`'<id>' in parents`), so a quote must never get through.
+const DRIVE_ID = /^[A-Za-z0-9_-]+$/;
 
 const CONTROL_OR_SPACE = /[\s\x00-\x1f\x7f]/;
 const UNSAFE_PATH_CHARS = /[\/\\?#%]/;
@@ -83,11 +93,21 @@ function stringValues(value: unknown): string[] {
 
 /** Returns a denial reason, or null if the args are safe to enforce and execute. */
 export function validateGatewayArgs(provider: string, args: Record<string, unknown>): string | null {
-  for (const field of PATH_SEGMENT_ARGS[provider] ?? []) {
+  for (const field of PATH_SEGMENT_ARGS[provider as IntegrationProvider] ?? []) {
     const value = args[field];
     if (value === undefined || value === null) continue;
     if (typeof value !== 'string' || !isSafePathSegment(value)) {
       return `E79610: Invalid ${field}: must be a single ID without '/', '..', '?', '#', '%' or spaces`;
+    }
+  }
+
+  if (provider === 'google_drive') {
+    for (const field of ['fileId', 'folderId']) {
+      const value = args[field];
+      if (value === undefined || value === null || value === '') continue;
+      if (typeof value !== 'string' || !DRIVE_ID.test(value)) {
+        return `E79621: Invalid ${field}: must be a Drive ID (letters, digits, '-' and '_')`;
+      }
     }
   }
 

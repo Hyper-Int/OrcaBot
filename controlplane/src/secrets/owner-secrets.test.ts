@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-// REVISION: owner-secrets-tests-v4-apply-endpoint-tracking
+// REVISION: owner-secrets-tests-v5-full-approval-list
 import { applyDashboardOwnerSecrets, autoApplySecretsToSessions, dashboardSecretsOwner } from './handler';
 import { applySecretsToSession } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
@@ -126,6 +126,26 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
     const envPush = pushes.find((p) => p.url.includes('/sessions/sbx-1/env'));
     expect(envPush?.body).toContain('owner_KEY');
     expect(envPush?.body).not.toContain('collaborator');
+  });
+
+  // The sandbox reads an omitted list as "keep the current approvals", so a
+  // collaborator's approvals for a same-named secret would authorize the
+  // owner's value. Every push must carry the full list, [] included.
+  it.each([
+    ['terminal start', async (env: Env) => {
+      await applyDashboardOwnerSecrets(env, new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN), 'dash-1', 'sbx-1', '');
+    }],
+    ['owner secret change', (env: Env) => autoApplySecretsToSessions(env, 'owner', 'dash-1')],
+    ['explicit apply', async (env: Env) => {
+      expect((await applySecretsToSession(env as never, 's1', 'owner')).status).toBe(200);
+    }],
+  ] as const)('%s replaces approvals with the owner\'s (empty) list', async (_path, run) => {
+    const env = fakeEnv(['owner_KEY']);
+    const pushes = captureEnvPushes();
+    await run(env);
+    const body = JSON.parse(pushes.find((p) => p.url.includes('/sessions/sbx-1/env'))!.body);
+    expect(Object.keys(body.secrets)).toEqual(['owner_KEY']);
+    expect(body.approved_domains).toEqual([]);
   });
 
   describe('explicit apply endpoint', () => {

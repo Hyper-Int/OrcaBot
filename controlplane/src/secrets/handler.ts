@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secrets-v5-owner-secrets-nonblocking
+// REVISION: secrets-v6-full-approval-list
 
 import type { Env, UserSecret, SecretType } from '../types';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
-const MODULE_REVISION = 'secrets-v5-owner-secrets-nonblocking';
+const MODULE_REVISION = 'secrets-v6-full-approval-list';
 console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -38,29 +38,36 @@ export async function dashboardSecretsOwner(env: Env, dashboardId: string): Prom
 }
 
 /**
- * Reconcile legacy collaborator secrets before starting a new terminal.
+ * Push a dashboard owner's secrets to its sandbox session and unset every
+ * previously applied name the owner no longer has (and its `_BROKER`).
  *
- * Only the cleanup is fail-closed: if unsetting previously applied names fails
- * the error propagates and terminal startup aborts. Loading the owner's own
- * secrets is best-effort (as before): if it fails (e.g. no
- * SECRETS_ENCRYPTION_KEY on this deployment) the terminal starts without them,
- * and every previously applied name is unset since none can be kept.
+ * The approval list is always sent in full, `[]` included: the sandbox treats
+ * an omitted list as "keep the current approvals", which would let approvals
+ * made for a collaborator's secret authorize the owner's same-named one.
+ *
+ * Returns the names to track; the caller records them only after this
+ * resolves, i.e. once the sandbox has acknowledged the unset.
+ *
+ * With `bestEffortLoad`, failing to load the owner's secrets (e.g. no
+ * SECRETS_ENCRYPTION_KEY on this deployment) pushes none — so every previously
+ * applied name is unset — instead of throwing. Sandbox errors always throw.
  */
-export async function applyDashboardOwnerSecrets(
+export async function pushDashboardOwnerSecrets(
   env: Env,
   sandbox: SandboxClient,
   dashboardId: string,
+  ownerId: string,
   sandboxSessionId: string,
-  sandboxMachineId: string
-): Promise<string[]> {
-  const ownerId = await dashboardSecretsOwner(env, dashboardId);
-  if (!ownerId) throw new Error('Dashboard owner not found');
+  sandboxMachineId: string,
+  opts: { bestEffortLoad: boolean }
+): Promise<{ names: string[]; approvedDomains: number; unset: number }> {
   let secrets: Record<string, SecretWithProtection> = {};
   let approvedDomains: Awaited<ReturnType<typeof getApprovedDomainsForDashboard>> = [];
   try {
     secrets = await getSecretsWithProtection(env, ownerId, dashboardId);
     approvedDomains = await getApprovedDomainsForDashboard(env, ownerId, dashboardId);
   } catch (err) {
+    if (!opts.bestEffortLoad) throw err;
     console.error(`[secrets] could not load owner secrets for dashboard ${dashboardId}; starting without them:`, err);
     secrets = {};
     approvedDomains = [];
@@ -81,16 +88,37 @@ export async function applyDashboardOwnerSecrets(
   const unset = previousNames.filter(name => !names.includes(name))
     .flatMap(name => [name, `${name}_BROKER`]);
 
+  // Nothing set, nothing to unset: no secret is configured for leftover
+  // approvals to authorize, and the next push that sets one replaces them.
   if (names.length || approvedDomains.length || unset.length) {
-    // Unset even when the owner has no secrets. Only return the new tracking
-    // names after the sandbox has acknowledged cleanup; failures abort startup.
     await sandbox.updateEnv(sandboxSessionId, {
       secrets: names.length ? secrets : undefined,
-      approvedDomains: approvedDomains.length ? approvedDomains : undefined,
+      approvedDomains,
       unset: unset.length ? unset : undefined,
       applyNow: false,
     }, sandboxMachineId || undefined);
   }
+  return { names, approvedDomains: approvedDomains.length, unset: unset.length };
+}
+
+/**
+ * Reconcile the dashboard's secrets before starting a new terminal.
+ *
+ * Only the sandbox update is fail-closed: if unsetting previously applied
+ * names fails the error propagates and terminal startup aborts. Loading the
+ * owner's own secrets is best-effort (see pushDashboardOwnerSecrets).
+ */
+export async function applyDashboardOwnerSecrets(
+  env: Env,
+  sandbox: SandboxClient,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string
+): Promise<string[]> {
+  const ownerId = await dashboardSecretsOwner(env, dashboardId);
+  if (!ownerId) throw new Error('Dashboard owner not found');
+  const { names } = await pushDashboardOwnerSecrets(
+    env, sandbox, dashboardId, ownerId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: true });
   return names;
 }
 
@@ -151,42 +179,8 @@ export async function autoApplySecretsToSessions(
       }
 
       try {
-        // Get fresh secrets for this dashboard
-        const secrets = await getSecretsWithProtection(env, userId, sessionDashboardId);
-
-        // Get approved domains for custom secrets
-        const approvedDomains = await getApprovedDomainsForDashboard(env, userId, sessionDashboardId);
-
-        // Get previously applied secrets to compute unset list
-        const dashboardSandbox = await env.DB.prepare(`
-          SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
-        `).bind(sessionDashboardId).first<{ applied_secret_names: string }>();
-
-        const previousNames: string[] = dashboardSandbox?.applied_secret_names
-          ? JSON.parse(dashboardSandbox.applied_secret_names)
-          : [];
-        const currentNames = Object.keys(secrets);
-
-        // Compute what to unset
-        const unset: string[] = [];
-        for (const name of previousNames) {
-          if (!currentNames.includes(name)) {
-            unset.push(name);
-            unset.push(`${name}_BROKER`);
-          }
-        }
-
-        // Apply to sandbox
-        await sandbox.updateEnv(
-          sandboxSessionId,
-          {
-            secrets,
-            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-            unset: unset.length > 0 ? unset : undefined,
-            applyNow: false,
-          },
-          sandboxMachineId || undefined
-        );
+        const { names: currentNames } = await pushDashboardOwnerSecrets(
+          env, sandbox, sessionDashboardId, userId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: false });
 
         // Update tracking
         await env.DB.prepare(`

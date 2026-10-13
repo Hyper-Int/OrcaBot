@@ -14,10 +14,13 @@ describe('validateGatewayArgs: IDs in URL paths', () => {
     ['github', { owner: 'myorg', repo: 'ok', path: './x' }],
     ['github', { owner: 'myorg', repo: 'ok', path: 'docs/a\nb.md' }],
     ['discord', { channel: 'C1', message_id: '../../C2/messages/9' }],
-    ['drive', { fileId: 'OTHER/permissions?x=' }],
+    ['google_drive', { fileId: 'OTHER/permissions?x=' }],
     ['gmail', { messageId: 'abc/trash' }],
     ['teams', { team_id: 'T/channels/OTHER/messages#', channel_id: '19:ok@thread.tacv2' }],
-    ['calendar', { calendarId: 'mine', eventId: '../../other@group.calendar.google.com/events/1' }],
+    ['google_calendar', { calendarId: 'mine', eventId: '../../other@group.calendar.google.com/events/1' }],
+    ['google_drive', { fileId: 'ID?alt=media#' }],
+    ['google_drive', { folderId: "x' in parents or 'y" }],
+    ['google_calendar', { calendarId: 'mine', event_id: 'a/../../b' }],
     ['twitter', { tweet_id: '1?x=y' }],
     ['google_chat', { space: 'spaces/A', message_id: 'spaces/B/messages/1' }],
     ['google_chat', { space: 'spaces/../B' }],
@@ -33,10 +36,10 @@ describe('validateGatewayArgs: IDs in URL paths', () => {
     ['github', { owner: 'o', repo: 'r', path: 'data/100%/a..b.txt' }],
     ['discord', { channel: '123456789', message_id: '987654321' }],
     ['teams', { team_id: '8c1e-guid', channel_id: '19:abc@thread.tacv2', message_id: '1700000000000' }],
-    ['drive', { fileId: '1AbC_d-EfG' }],
+    ['google_drive', { fileId: '1AbC_d-EfG' }],
     ['google_chat', { space: 'spaces/AAAA', message_id: 'spaces/AAAA/messages/BBB.CCC' }],
     ['google_chat', { space: 'AAAA', message_id: 'BBB' }],
-    ['calendar', { calendarId: 'en.usa#holiday@group.v.calendar.google.com', eventId: 'abc123' }],
+    ['google_calendar', { calendarId: 'en.usa#holiday@group.v.calendar.google.com', eventId: 'abc123' }],
   ])('%s accepts %j', (provider, args) => {
     expect(validateGatewayArgs(provider, args)).toBeNull();
   });
