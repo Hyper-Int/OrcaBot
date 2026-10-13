@@ -1,3 +1,4 @@
+// REVISION: sandbox-auth-tests-v2-refresh-bound-to-sandbox
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   authorizeSandboxForDashboard,
@@ -5,7 +6,7 @@ import {
   refreshSandboxDashboardToken,
   sandboxInternalTokenEnv,
 } from './sandbox-auth';
-import { createDashboardToken, verifyDashboardToken } from './dashboard-token';
+import { createDashboardToken, sandboxGeneration, verifyDashboardToken } from './dashboard-token';
 import { tokenSigningSecret } from './pty-token';
 import { createTestContext, seedDashboard, seedSession } from '../../tests/helpers';
 import type { TestContext } from '../../tests/helpers';
@@ -95,8 +96,54 @@ describe('sandbox auth', () => {
     const refreshReq = (headers: Record<string, string>) =>
       new Request('https://api.example.com/internal/sandbox/dashboard-token/refresh', { method: 'POST', headers });
 
+    const CREATED_AT = '2026-10-01T12:00:00.000Z';
+    const GEN = sandboxGeneration(CREATED_AT);
+    const setSandbox = (sessionId: string, createdAt = CREATED_AT) => ctx.db.prepare(`
+      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, created_at)
+      VALUES ('dash-a', ?, '', ?)
+      ON CONFLICT(dashboard_id) DO UPDATE SET sandbox_session_id = excluded.sandbox_session_id, created_at = excluded.created_at
+    `).bind(sessionId, createdAt).run();
+    const refresh = async (token: string) => {
+      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
+      return { res, body: await res.json() as { token?: string; error?: string } };
+    };
+
     beforeEach(async () => {
       await seedDashboard(ctx.db, 'owner-1', { id: 'dash-a' });
+      await setSandbox('sbx-a');
+    });
+
+    it('keeps the token bound to the sandbox it was minted for', async () => {
+      const token = await createDashboardToken('dash-a', tokenSigningSecret(ctx.env), undefined, GEN);
+      const { res, body } = await refresh(token);
+      expect(res.status).toBe(200);
+      expect((await verifyDashboardToken(body.token!, tokenSigningSecret(ctx.env)))?.sbx_gen).toBe(GEN);
+    });
+
+    it('binds a token minted before sandbox generations to the current sandbox', async () => {
+      const { res, body } = await refresh(await createDashboardToken('dash-a', tokenSigningSecret(ctx.env)));
+      expect(res.status).toBe(200);
+      expect((await verifyDashboardToken(body.token!, tokenSigningSecret(ctx.env)))?.sbx_gen).toBe(GEN);
+    });
+
+    it('a token copied out of a VM stops refreshing once that sandbox is replaced', async () => {
+      let token = await createDashboardToken('dash-a', tokenSigningSecret(ctx.env), undefined, GEN);
+      token = (await refresh(token)).body.token!;
+      await setSandbox('sbx-b', '2026-10-09T08:00:00.000Z');
+      const { res, body } = await refresh(token);
+      expect(res.status).toBe(401);
+      expect(body.error).toMatch(/^E79398/);
+    });
+
+    it('refuses while the dashboard has no live sandbox (retired)', async () => {
+      await setSandbox('');
+      const { res, body } = await refresh(await createDashboardToken('dash-a', tokenSigningSecret(ctx.env), undefined, GEN));
+      expect(res.status).toBe(401);
+      expect(body.error).toMatch(/^E79399/);
+    });
+
+    it('reads SQLite datetime() timestamps as UTC', () => {
+      expect(sandboxGeneration('2026-10-01 12:00:00')).toBe(Date.parse('2026-10-01T12:00:00Z'));
     });
 
     it('issues a fresh token for the same dashboard', async () => {

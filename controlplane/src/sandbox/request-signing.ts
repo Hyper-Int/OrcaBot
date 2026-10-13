@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-request-signing-v1
-const MODULE_REVISION = 'sandbox-request-signing-v1';
+// REVISION: sandbox-request-signing-v2-30s-ttl
+const MODULE_REVISION = 'sandbox-request-signing-v2-30s-ttl';
 console.log(`[sandbox-signing] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -21,7 +21,7 @@ console.log(`[sandbox-signing] REVISION: ${MODULE_REVISION} loaded at ${new Date
  */
 
 export const SANDBOX_AUTH_HEADER = 'X-Sandbox-Auth';
-const SIGNATURE_TTL_SECONDS = 60;
+const SIGNATURE_TTL_SECONDS = 30; // plus the VM's 30s skew allowance: replayable for at most 60s
 const SIGNING_CONTEXT = 'orcabot-sandbox-auth-v1.';
 
 interface SigningKey {

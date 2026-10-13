@@ -391,7 +391,7 @@ chmod +x /mnt/rootfs/etc/init.d/orcabot
 mkdir -p /mnt/rootfs/etc/rc.d
 cat > /mnt/rootfs/etc/rc.local << "RCLOCAL"
 #!/bin/sh
-echo "Starting Orcabot sandbox (rc.local v6-reverse-vsock-cp)..." > /dev/console
+echo "Starting Orcabot sandbox (rc.local v7-guest-timesync)..." > /dev/console
 
 # Ensure log/run dirs exist
 mkdir -p /var/log /run
@@ -415,6 +415,22 @@ if [ -e /dev/vsock ]; then
   echo "/dev/vsock present" > /dev/console
 else
   echo "/dev/vsock missing" > /dev/console
+fi
+
+# REVISION: rclocal-v3-guest-timesync
+# Guest clock sync. The VM has no NTP and the kernel reads the RTC only at boot,
+# so after the host sleeps the guest clock lags by the sleep time and every signed
+# control-plane request fails ("issued in the future"). The host (vz-helper /
+# the Linux QEMU backend) pushes its UTC time over vsock port 1023; this root
+# daemon steps CLOCK_REALTIME when drift > 2s. Reserved vsock port + host-CID-only
+# peer check: agent processes cannot set the time. Started before the server so the
+# first host push (right after boot) lands as early as possible.
+echo "[rc.local] REVISION: rclocal-v3-guest-timesync" > /dev/console
+if [ -x /usr/local/bin/orcabot-guest-timesync ]; then
+  /usr/local/bin/orcabot-guest-timesync -port 1023 > /dev/console 2>&1 &
+  echo $! > /run/guest-timesync.pid
+else
+  echo "orcabot-guest-timesync missing; guest clock will drift after host sleep" > /dev/console
 fi
 
 # Bring up outbound networking. systemd boots here but ifupdown/networking.service

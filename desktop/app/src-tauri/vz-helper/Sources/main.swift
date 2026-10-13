@@ -1,10 +1,11 @@
-// REVISION: vz-helper-v2-bridge-write-all
+// REVISION: vz-helper-v3-guest-timesync
+import AppKit
 import Foundation
 import Virtualization
 import ArgumentParser
 import Network
 
-let vzHelperRevision = "vz-helper-v2-bridge-write-all"
+let vzHelperRevision = "vz-helper-v3-guest-timesync"
 
 // MARK: - Global references to prevent deallocation
 var globalVM: VZVirtualMachine?
@@ -12,6 +13,7 @@ var globalForwarders: [TCPToVsockForwarder] = []
 var globalVsockListeners: [VsockListener] = []
 var globalConsolePipe: Pipe?
 var globalConsoleLogFile: FileHandle?
+var globalTimeSync: GuestTimeSync?
 
 @main
 struct VZHelper: ParsableCommand {
@@ -46,6 +48,9 @@ struct VZHelper: ParsableCommand {
 
     @Option(name: .long, help: "Reverse forward: guest vsock port to host TCP port (vsockPort:hostPort). Lets the guest reach host loopback services, e.g. the control plane.")
     var reversePortForward: [String] = []
+
+    @Option(name: .long, help: "Guest vsock port of the root time-sync daemon (orcabot-guest-timesync). When set, the host pushes its UTC time to the guest after boot, on host wake and every 60s. 0 = off.")
+    var guestTimeSyncPort: UInt32 = 0
 
     @Flag(name: .long, help: "Disable directory sharing (for debugging)")
     var noShare: Bool = false
@@ -366,6 +371,15 @@ struct VZHelper: ParsableCommand {
             fflush(stdout)
         }
 
+        // Keep the guest wall clock in step with the host. The guest has no NTP and
+        // its clock stops while the host sleeps, so without this every signed
+        // control-plane request fails after a sleep ("issued in the future").
+        if guestTimeSyncPort > 0 {
+            let ts = GuestTimeSync(vm: vm, port: guestTimeSyncPort)
+            globalTimeSync = ts
+            ts.start()
+        }
+
         // Handle signals for graceful shutdown
         signal(SIGINT) { _ in
             print("\nReceived SIGINT, shutting down...")
@@ -581,6 +595,215 @@ class VsockListener: NSObject, VZVirtioSocketListenerDelegate {
             bridge.start()
         }
         return true
+    }
+}
+
+// MARK: - Guest clock sync (host -> guest)
+
+/// Pushes the host's UTC time to the guest's root-only time-sync daemon
+/// (`orcabot-guest-timesync`, sandbox/cmd/guest-timesync) over vsock. The guest
+/// steps its clock when the drift exceeds 2s and replies with the delta.
+///
+/// When: right after boot (retried every 5s until the guest daemon answers), on
+/// host wake (NSWorkspace.didWakeNotification, plus a wall-clock-vs-uptime jump
+/// check as a backstop since uptime stops while the Mac sleeps), and every 60s.
+///
+/// Only the host can reach this: the guest listens on a reserved vsock port and
+/// drops any peer that isn't CID 2 (the host), so agent processes can't set the
+/// time. Nothing is exposed on a host TCP port either.
+final class GuestTimeSync {
+    let port: UInt32
+    weak var vm: VZVirtualMachine?
+
+    static let tick: TimeInterval = 5
+    static let period: TimeInterval = 60
+    static let wakeJumpThreshold: TimeInterval = 3
+    /// Before the first success, retry every tick for this many attempts (~2 min,
+    /// covers guest boot), then fall back to the period (e.g. an old VM image
+    /// without the daemon) so we don't spin forever.
+    static let bootFastAttempts = 24
+
+    private var timer: DispatchSourceTimer?
+    private var wakeObserver: NSObjectProtocol?
+    private var lastWall = Date()
+    private var lastUptime = ProcessInfo.processInfo.systemUptime
+    private var nextDue = Date()
+    private var everSynced = false
+    private var inFlight = false
+    private var inFlightSince = Date.distantPast
+    /// Bumped per attempt so a late completion of an abandoned attempt is ignored.
+    private var attempt: UInt64 = 0
+    static let attemptTimeout: TimeInterval = 20
+    private var consecutiveFailures = 0
+    private var lastFailureLog: Date = .distantPast
+    private let ioQueue = DispatchQueue(label: "guest-timesync-io")
+
+    init(vm: VZVirtualMachine, port: UInt32) {
+        self.vm = vm
+        self.port = port
+    }
+
+    private func log(_ msg: String) {
+        print("[timesync] \(msg)")
+        fflush(stdout)
+    }
+
+    /// Everything runs on the main queue (VZ socket APIs require it); only the
+    /// blocking socket I/O hops to ioQueue.
+    func start() {
+        log("REVISION: \(vzHelperRevision) guest clock sync -> vsock:\(port) (tick \(Int(Self.tick))s, period \(Int(Self.period))s) started at \(ISO8601DateFormatter().string(from: Date()))")
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.log("host wake notification -> syncing guest clock")
+            self.syncNow(reason: "wake")
+            // The VM may need a moment to resume; push once more shortly after.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.syncNow(reason: "wake+3s")
+            }
+        }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 1, repeating: Self.tick, leeway: .milliseconds(500))
+        t.setEventHandler { [weak self] in self?.onTick() }
+        t.resume()
+        timer = t
+    }
+
+    private func onTick() {
+        let now = Date()
+        let up = ProcessInfo.processInfo.systemUptime
+        // systemUptime does not advance while the Mac sleeps, wall time does: a
+        // gap between the two means we just woke (or the host clock was changed).
+        let jump = now.timeIntervalSince(lastWall) - (up - lastUptime)
+        lastWall = now
+        lastUptime = up
+        if abs(jump) > Self.wakeJumpThreshold {
+            log(String(format: "host wall clock jumped %.1fs relative to uptime (sleep/wake or clock change) -> syncing", jump))
+            syncNow(reason: "wall-jump")
+            return
+        }
+        if now >= nextDue {
+            syncNow(reason: everSynced ? "periodic" : "boot")
+        }
+    }
+
+    func syncNow(reason: String) {
+        if inFlight {
+            // Never let one hung attempt (e.g. a vsock connect that never
+            // completes) wedge the sync forever: abandon it after a timeout.
+            guard Date().timeIntervalSince(inFlightSince) > Self.attemptTimeout else { return }
+            finish(reason: reason, reply: nil, error: "previous attempt hung > \(Int(Self.attemptTimeout))s", id: attempt)
+        }
+        guard let vm = vm, vm.state == .running,
+              let device = vm.socketDevices.first as? VZVirtioSocketDevice else {
+            return
+        }
+        attempt &+= 1
+        let id = attempt
+        inFlight = true
+        inFlightSince = Date()
+        let port = self.port
+        device.connect(toPort: port) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .failure(let error):
+                self.finish(reason: reason, reply: nil, error: "vsock connect: \(error.localizedDescription)", id: id)
+            case .success(let conn):
+                self.ioQueue.async {
+                    let (reply, err) = GuestTimeSync.exchange(fd: conn.fileDescriptor)
+                    conn.close()
+                    DispatchQueue.main.async {
+                        self.finish(reason: reason, reply: reply, error: err, id: id)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One request/reply on a connected vsock fd. Host time is read immediately
+    /// before the write so connection setup latency doesn't count as drift.
+    static func exchange(fd: Int32) -> (String?, String?) {
+        let flags = fcntl(fd, F_GETFL)
+        if flags >= 0 { _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) }
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        var ts = timespec()
+        clock_gettime(CLOCK_REALTIME, &ts)
+        let ns = Int64(ts.tv_sec) * 1_000_000_000 + Int64(ts.tv_nsec)
+        let req = Data("ORCABOT-TIMESYNC 1 \(ns)\n".utf8)
+        if !ConnectionBridge.writeAll(fd, req) {
+            return (nil, "write failed: errno=\(errno)")
+        }
+        var out = Data()
+        var buf = [UInt8](repeating: 0, count: 256)
+        while out.count < 512 {
+            let n = Darwin.read(fd, &buf, buf.count)
+            if n > 0 {
+                out.append(contentsOf: buf[0..<n])
+                if out.contains(UInt8(ascii: "\n")) { break }
+            } else if n < 0 && errno == EINTR {
+                continue
+            } else if n == 0 {
+                break
+            } else {
+                return (nil, "read failed: errno=\(errno)")
+            }
+        }
+        let line = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if line.isEmpty {
+            // Guest daemon closed without replying: it rejected the peer or
+            // nothing is listening (old VM image without orcabot-guest-timesync).
+            return (nil, "no reply (guest daemon missing on an older VM image?)")
+        }
+        return (line, nil)
+    }
+
+    private func finish(reason: String, reply: String?, error: String?, id: UInt64) {
+        guard id == attempt, inFlight else { return }  // stale/abandoned attempt
+        inFlight = false
+        let now = Date()
+        if let reply = reply, reply.hasPrefix("OK ") {
+            let fields = Dictionary(
+                reply.split(separator: " ").dropFirst().compactMap { kv -> (String, String)? in
+                    let p = kv.split(separator: "=", maxSplits: 1)
+                    return p.count == 2 ? (String(p[0]), String(p[1])) : nil
+                },
+                uniquingKeysWith: { a, _ in a })
+            let before = fields["before_ms"] ?? "?"
+            let after = fields["after_ms"] ?? "?"
+            if fields["stepped"] == "1" {
+                log("guest clock STEPPED (\(reason)): delta before=\(before)ms after=\(after)ms (positive = guest was behind)")
+            } else if !everSynced {
+                log("guest clock in sync (\(reason)): delta=\(before)ms, guest \(fields["rev"] ?? "?")")
+            }
+            if consecutiveFailures > 0 && everSynced {
+                log("guest clock sync recovered after \(consecutiveFailures) failure(s)")
+            }
+            everSynced = true
+            consecutiveFailures = 0
+            nextDue = now.addingTimeInterval(Self.period)
+            return
+        }
+
+        consecutiveFailures += 1
+        let detail = error ?? "unexpected reply: \(reply ?? "")"
+        if everSynced {
+            nextDue = now.addingTimeInterval(10)
+        } else if consecutiveFailures < Self.bootFastAttempts {
+            // tick - 1: due again on the very next timer tick, not the one after.
+            nextDue = now.addingTimeInterval(Self.tick - 1)
+        } else {
+            nextDue = now.addingTimeInterval(Self.period)
+        }
+        // Quiet while the guest is still booting; afterwards at most every 5 min.
+        let booting = !everSynced && consecutiveFailures < Self.bootFastAttempts
+        if !booting && now.timeIntervalSince(lastFailureLog) >= 300 {
+            lastFailureLog = now
+            log("guest clock sync failed (\(reason), \(consecutiveFailures) in a row): \(detail)")
+        }
     }
 }
 

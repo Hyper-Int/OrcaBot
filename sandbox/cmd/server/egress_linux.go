@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v9-revision-timestamp
+// REVISION: egress-kernel-v10-browser-sport-block
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-const egressKernelRevision = "egress-kernel-v9-revision-timestamp"
+const egressKernelRevision = "egress-kernel-v10-browser-sport-block"
 
 func init() {
 	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, time.Now().Format(time.RFC3339))
@@ -146,27 +146,48 @@ func setupPoolMCPIptables(mcpPort string) error {
 // loopback ports (x11vnc, websockify, Chromium DevTools). Unauthenticated CDP or
 // VNC would hand an agent the browser — and its egress — outside every check;
 // the server is the only legitimate client (it runs as root, outside the range).
+//
+// Two rules per family:
+//   - --dport: pool UIDs can't connect to those ports.
+//   - --sport: a pool UID's own listener on those ports can't answer anyone.
+//     Agents can still bind() a port in the range (iptables can't stop that),
+//     e.g. x11vnc's once it has died. websockify (browser user) connects to
+//     x11vnc by port and can't check who accepted, so without this rule every
+//     viewer's VNC session would land on the agent's listener. The rule drops
+//     the listener's SYN-ACK (owner match applies to it), so the connect fails.
+//
+// REVISION: egress-kernel-v10-browser-sport-block
 func setupPoolBrowserPortBlock() error {
+	portRange := fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd)
 	for _, family := range []struct{ command, loopback string }{
 		{"iptables", "127.0.0.0/8"},
 		{"ip6tables", "::1/128"},
 	} {
-		ruleArgs := []string{
-			"-p", "tcp", "-d", family.loopback,
-			"--dport", fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd),
-			"-m", "owner", "--uid-owner", "2000-2099",
-			"-j", "REJECT", "--reject-with", "tcp-reset",
-		}
-		if exec.Command(family.command, append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
-			continue
-		}
-		// Insert ahead of any existing loopback allowances.
-		out, err := exec.Command(family.command, append([]string{"-I", "OUTPUT", "1"}, ruleArgs...)...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%s pool browser-port block: %w: %s", family.command, err, strings.TrimSpace(string(out)))
+		for _, ruleArgs := range [][]string{
+			{
+				"-p", "tcp", "-d", family.loopback,
+				"--dport", portRange,
+				"-m", "owner", "--uid-owner", "2000-2099",
+				"-j", "REJECT", "--reject-with", "tcp-reset",
+			},
+			{
+				"-p", "tcp", "-s", family.loopback,
+				"--sport", portRange,
+				"-m", "owner", "--uid-owner", "2000-2099",
+				"-j", "DROP",
+			},
+		} {
+			if exec.Command(family.command, append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
+				continue
+			}
+			// Insert ahead of any existing loopback allowances.
+			out, err := exec.Command(family.command, append([]string{"-I", "OUTPUT", "1"}, ruleArgs...)...).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("%s pool browser-port block: %w: %s", family.command, err, strings.TrimSpace(string(out)))
+			}
 		}
 	}
-	log.Printf("[pool-iptables] Blocked pool UIDs 2000-2099 from browser ports %d-%d", browser.PortRangeStart, browser.PortRangeEnd)
+	log.Printf("[pool-iptables] Blocked pool UIDs 2000-2099 from browser ports %d-%d (connect and serve)", browser.PortRangeStart, browser.PortRangeEnd)
 	return nil
 }
 

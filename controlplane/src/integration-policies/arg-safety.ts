@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: arg-safety-v3-gateway-provider-ids
+// REVISION: arg-safety-v4-policy-args-are-strings
 import type { IntegrationProvider } from '../types';
 
-const MODULE_REVISION = 'arg-safety-v3-gateway-provider-ids';
+const MODULE_REVISION = 'arg-safety-v4-policy-args-are-strings';
 console.log(`[arg-safety] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -48,7 +48,22 @@ export const PATH_SEGMENT_ARGS: Partial<Record<IntegrationProvider, string[]>> =
   whatsapp: ['phone_number_id', 'message_id'],
   twitter: ['tweet_id', 'user_id', 'username', 'target_user_id', 'account_id'],
   google_calendar: ['eventId', 'event_id'],
+  outlook_calendar: ['event_id', 'eventId', 'id'],
 };
+
+/**
+ * Args the gateway reads into the policy context (gateway.ts buildContext),
+ * each only when it is a string. Any other type was skipped by the check but
+ * still used by the client — `calendarId: ["FORBIDDEN"]` was checked as the
+ * default calendar and sent as `/me/calendars/FORBIDDEN` — so a non-string
+ * here is rejected for every provider.
+ */
+const POLICY_SCALAR_ARGS = [
+  'fileId', 'folderId', 'name', 'mimeType',
+  'messageId', 'message_id', 'eventId', 'event_id', 'ts', 'timestamp',
+  'owner', 'repo', 'calendarId', 'calendar_id',
+  'thread_ts', 'reply_to_message_id', 'thread_key', 'user', 'user_id',
+];
 
 const EMAIL_PROVIDERS = new Set(['gmail', 'outlook']);
 const EMAIL_HEADER_ARGS = ['subject', 'to', 'cc', 'bcc'];
@@ -93,6 +108,15 @@ function stringValues(value: unknown): string[] {
 
 /** Returns a denial reason, or null if the args are safe to enforce and execute. */
 export function validateGatewayArgs(provider: string, args: Record<string, unknown>): string | null {
+  // Plus the messaging target (Gmail's `to` is a recipient list, WhatsApp's is a number).
+  const targetField = MESSAGING_TARGET_FIELD[provider];
+  for (const field of targetField ? [...POLICY_SCALAR_ARGS, targetField] : POLICY_SCALAR_ARGS) {
+    const value = args[field];
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      return `E79622: Invalid ${field}: must be a string`;
+    }
+  }
+
   for (const field of PATH_SEGMENT_ARGS[provider as IntegrationProvider] ?? []) {
     const value = args[field];
     if (value === undefined || value === null) continue;

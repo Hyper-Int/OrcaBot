@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v3-trusted-root-tree
+// REVISION: browser-isolation-v4-private-profile
 package browser
 
 import (
@@ -24,7 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const isolationRevision = "browser-isolation-v3-trusted-root-tree"
+const isolationRevision = "browser-isolation-v4-private-profile"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", isolationRevision, time.Now().Format(time.RFC3339))
@@ -154,26 +154,60 @@ func writeXauthority(path string, display int, cookie []byte, id browserIdentity
 	return os.Rename(tmp, path)
 }
 
-// prepareProfileDir makes `path` a real directory owned by the browser user
-// (0700) and clears Chromium's stale lock and crash state, without root ever
-// following a symlink. The profile lives in /workspace, which every pool UID
-// can write (group sandbox, no sticky bit), so an agent could replace
-// `.browser` with a symlink or its own directory; every root operation here
-// goes through a directory fd opened with O_NOFOLLOW instead of the path.
-//
-// Ownership decides what happens to an existing directory:
-//   - browser user: used as is.
-//   - root: a profile from before the browser ran unprivileged; handed over
-//     (owner changed, group/other permission bits stripped throughout) — but
-//     only if the whole tree is root-owned and nothing in it is group- or
-//     world-writable (rootTreeTrusted). /workspace has no sticky bit, so an
-//     agent can rename any root-owned directory it can write into `.browser`;
-//     such a tree may hold agent-owned files, or root-owned ones the agent
-//     still has open for writing, and handing it over would give the agent
-//     the browser's profile. It is moved aside like a foreign one.
-//   - anyone else: an agent planted it (possibly pre-seeded with hard links,
-//     setgid dirs or group-writable files), so it is moved aside and a fresh
-//     profile created. It is never handed over.
+// profileDirName is the Chromium profile's directory in the browser user's
+// home. It used to be /workspace/.browser; see removeLegacyProfile.
+const profileDirName = "profile"
+
+func profilePath(id browserIdentity) string {
+	return filepath.Join(id.home, profileDirName)
+}
+
+// checkBrowserHome verifies the browser user's home is a place only that user
+// (and root) can reach: a real directory owned by the browser user with no
+// group/other bits, every parent a real, root-owned directory nobody else can
+// write. The profile and the X cookie live there; if an agent
+// could rename or replace any directory on the way, it could swap in its own
+// profile (cookie theft, planted prefs/extensions) as it could under
+// /workspace. Fails closed.
+func checkBrowserHome(id browserIdentity) error {
+	if id.home == "" || !filepath.IsAbs(id.home) {
+		return fmt.Errorf("browser user home %q is not an absolute path", id.home)
+	}
+	home := filepath.Clean(id.home)
+	fi, err := os.Lstat(home)
+	if err != nil {
+		return fmt.Errorf("browser user home: %w", err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("browser user home %s is not a directory", home)
+	}
+	if int(st.Uid) != id.uid || st.Mode&0o077 != 0 {
+		return fmt.Errorf("browser user home %s must be owned by %s with mode 0700 (uid %d mode %o)", home, BrowserUser, st.Uid, st.Mode&0o7777)
+	}
+	for dir := filepath.Dir(home); ; dir = filepath.Dir(dir) {
+		fi, err := os.Lstat(dir)
+		if err != nil {
+			return fmt.Errorf("browser user home parent: %w", err)
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 || st.Uid != 0 || st.Mode&0o022 != 0 {
+			return fmt.Errorf("browser user home parent %s must be a root-owned directory only root can write", dir)
+		}
+		if dir == "/" {
+			return nil
+		}
+	}
+}
+
+// prepareProfileDir makes `path` (in the browser user's private home, see
+// checkBrowserHome) a real directory owned by the browser user (0700) and
+// clears Chromium's stale lock and crash state. Only root and the browser user
+// can write the home, so the one party that could have planted a symlink or a
+// foreign directory there is the browser itself; root still works through a
+// directory fd opened with O_NOFOLLOW and moves anything that isn't a browser-
+// or root-owned directory aside rather than adopting it. A root-owned
+// directory can only be the one root just created.
 func prepareProfileDir(path string, id browserIdentity) error {
 	for attempt := 0; ; attempt++ {
 		fd, err := openProfileDir(path)
@@ -185,29 +219,13 @@ func prepareProfileDir(path string, id browserIdentity) error {
 			unix.Close(fd)
 			return err
 		}
-		var untrusted string
-		switch int(st.Uid) {
-		case id.uid:
-		case 0:
-			// Root-owned: a legacy profile, or the directory we just created.
-			if err := rootTreeTrusted(fd, st, "."); err != nil {
-				untrusted = err.Error()
-				break
-			}
-			log.Printf("[browser] handing profile %s over to %s", path, BrowserUser)
-			if err := handOverTree(fd, id); err != nil {
-				unix.Close(fd)
-				return fmt.Errorf("hand over profile: %w", err)
-			}
-		default:
-			untrusted = fmt.Sprintf("owned by uid %d", st.Uid)
-		}
-		if untrusted != "" {
+		if int(st.Uid) != id.uid && st.Uid != 0 {
 			unix.Close(fd)
+			why := fmt.Sprintf("owned by uid %d", st.Uid)
 			if attempt > 0 {
-				return fmt.Errorf("profile %s replaced while preparing it (%s)", path, untrusted)
+				return fmt.Errorf("profile %s replaced while preparing it (%s)", path, why)
 			}
-			if err := moveAside(path, untrusted); err != nil {
+			if err := moveAside(path, why); err != nil {
 				return err
 			}
 			continue
@@ -270,7 +288,7 @@ func finishProfileDir(fd int, id browserIdentity) error {
 }
 
 // readDirFd lists dirfd from the start. A dup shares the file offset, so it
-// rewinds first: rootTreeTrusted and handOverTree read the same fds in turn.
+// rewinds first.
 func readDirFd(dirfd int) ([]os.DirEntry, error) {
 	dup, err := unix.Dup(dirfd)
 	if err != nil {
@@ -284,124 +302,81 @@ func readDirFd(dirfd int) ([]os.DirEntry, error) {
 	return d.ReadDir(-1)
 }
 
-// rootTreeTrusted checks a root-owned profile can be handed over: every entry
-// is owned by root, and no directory or regular file is group- or
-// world-writable (so no other user could have created entries in it or holds
-// it open for writing). st is dirfd's own stat; name is for messages.
-func rootTreeTrusted(dirfd int, st unix.Stat_t, name string) error {
-	if st.Uid != 0 || st.Mode&0o022 != 0 {
-		return fmt.Errorf("an untrusted legacy profile (%s: uid %d mode %o)", name, st.Uid, st.Mode&0o7777)
-	}
-	entries, err := readDirFd(dirfd)
+// legacyProfileName is where the profile lived before it moved out of the
+// workspace.
+const legacyProfileName = ".browser"
+
+// removeLegacyProfile deletes the old /workspace/.browser profile (cookies and
+// sessions the browser no longer uses) rather than migrating it: adopting a
+// tree from the agent-writable workspace is exactly the hand-over attack
+// surface (planted dirs, hard links, fds held open) that moving the profile
+// removes. Only a real directory owned by the browser user is removed, and
+// only through fds opened with O_NOFOLLOW: its contents are writable by no one
+// but the browser user, and it is unlinked from the workspace only if the
+// entry still names the directory that was emptied. Anything else (an agent's
+// directory or symlink renamed into place) is left alone.
+func removeLegacyProfile(workspace string, id browserIdentity) error {
+	wsfd, err := unix.Open(workspace, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
-		child := name + "/" + e.Name()
-		if e.IsDir() {
-			sub, err := unix.Openat(dirfd, e.Name(), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-			if err != nil {
-				return fmt.Errorf("an unreadable legacy profile (%s: %v)", child, err)
-			}
-			var sst unix.Stat_t
-			err = unix.Fstat(sub, &sst)
-			if err == nil {
-				err = rootTreeTrusted(sub, sst, child)
-			}
-			unix.Close(sub)
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		var est unix.Stat_t
-		if err := unix.Fstatat(dirfd, e.Name(), &est, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return fmt.Errorf("an unreadable legacy profile (%s: %v)", child, err)
-		}
-		writable := est.Mode&unix.S_IFMT == unix.S_IFREG && est.Mode&0o022 != 0
-		if est.Uid != 0 || writable {
-			return fmt.Errorf("an untrusted legacy profile (%s: uid %d mode %o)", child, est.Uid, est.Mode&0o7777)
-		}
+	defer unix.Close(wsfd)
+	fd, err := unix.Openat(wsfd, legacyProfileName, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("open legacy profile: %w", err)
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		return err
+	}
+	if int(st.Uid) != id.uid {
+		return fmt.Errorf("legacy profile %s/%s is owned by uid %d, not %s; leaving it", workspace, legacyProfileName, st.Uid, BrowserUser)
+	}
+	if err := removeTreeAt(fd); err != nil {
+		return err
+	}
+	var now unix.Stat_t
+	if err := unix.Fstatat(wsfd, legacyProfileName, &now, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if now.Dev != st.Dev || now.Ino != st.Ino {
+		return fmt.Errorf("legacy profile replaced while removing it; leaving the new entry")
+	}
+	return unix.Unlinkat(wsfd, legacyProfileName, unix.AT_REMOVEDIR)
 }
 
-// handOverTree recursively gives every entry under dirfd to the browser user
-// and strips group/other (and setuid/setgid/sticky) bits, never following
-// symlinks: directories and regular files are changed through an fd opened
-// with O_NOFOLLOW, symlinks only have their own owner changed. A regular file
-// with more than one link is unlinked from the profile instead — chowning it
-// would also hand over whatever other path shares the inode, and leaving it
-// root-owned would leave Chromium unable to write it.
-func handOverTree(dirfd int, id browserIdentity) error {
+// removeTreeAt empties the directory dirfd without following symlinks.
+func removeTreeAt(dirfd int) error {
 	entries, err := readDirFd(dirfd)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
 		name := e.Name()
-		switch {
-		case e.Type()&os.ModeSymlink != 0:
-			if err := unix.Fchownat(dirfd, name, id.uid, id.gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
-		case e.IsDir():
+		if e.IsDir() {
 			sub, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-			err = handOverTree(sub, id)
-			if err == nil {
-				err = handOverFd(sub, name, id)
-			}
+			err = removeTreeAt(sub)
 			unix.Close(sub)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-		case e.Type().IsRegular():
-			f, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
-			if err != nil {
+			if err := unix.Unlinkat(dirfd, name, unix.AT_REMOVEDIR); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-			var st unix.Stat_t
-			if err = unix.Fstat(f, &st); err == nil && st.Nlink > 1 {
-				unix.Close(f)
-				log.Printf("[browser] SECURITY: unlinking %s from profile during handover: %d hard links", name, st.Nlink)
-				if err := unix.Unlinkat(dirfd, name, 0); err != nil {
-					return fmt.Errorf("%s: %w", name, err)
-				}
-				continue
-			}
-			if err == nil {
-				err = handOverFd(f, name, id)
-			}
-			unix.Close(f)
-			if err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
-		default:
-			// Sockets, FIFOs, devices: nothing Chromium needs to keep, and
-			// opening a device to fchmod it could have side effects.
-			log.Printf("[browser] removing special file %s from profile during handover", name)
-			if err := unix.Unlinkat(dirfd, name, 0); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
+			continue
+		}
+		if err := unix.Unlinkat(dirfd, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
 	return nil
-}
-
-// handOverFd chowns an open file or directory to the browser user and keeps
-// only the owner permission bits.
-func handOverFd(fd int, name string, id browserIdentity) error {
-	var st unix.Stat_t
-	if err := unix.Fstat(fd, &st); err != nil {
-		return err
-	}
-	if err := unix.Fchown(fd, id.uid, id.gid); err != nil {
-		return err
-	}
-	return unix.Fchmod(fd, uint32(st.Mode)&0o700)
 }
 
 // cleanCrashStateAt sets profile.exit_type=Normal / exited_cleanly=true in

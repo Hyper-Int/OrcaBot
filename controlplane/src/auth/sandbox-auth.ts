@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-auth-v1-dashboard-scoped
-const MODULE_REVISION = 'sandbox-auth-v1-dashboard-scoped';
+// REVISION: sandbox-auth-v2-refresh-bound-to-sandbox
+const MODULE_REVISION = 'sandbox-auth-v2-refresh-bound-to-sandbox';
 console.log(`[sandbox-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -20,7 +20,7 @@ console.log(`[sandbox-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().
 
 import type { Env } from '../types';
 import { requireInternalAuth } from './middleware';
-import { createDashboardToken, verifyDashboardToken } from './dashboard-token';
+import { createDashboardToken, sandboxGeneration, verifyDashboardToken } from './dashboard-token';
 import { tokenSigningSecret } from './pty-token';
 
 export type SandboxAuth =
@@ -120,8 +120,13 @@ export function sandboxInternalTokenEnv(env: Env): Record<string, string> {
  * Sandbox sessions are created once per dashboard and live as long as the VM,
  * which can outlast the 7-day token. The sandbox exchanges its token for a fresh
  * one before it expires. A token that expired while the VM was suspended is still
- * accepted here for REFRESH_EXPIRED_GRACE_SECONDS. Only dashboard tokens are
- * accepted, and only while the dashboard still exists.
+ * accepted here for REFRESH_EXPIRED_GRACE_SECONDS.
+ *
+ * Only the dashboard's current sandbox can refresh: the token's sbx_gen must
+ * match its dashboard_sandboxes row, which retiring (blank session) or
+ * replacing (new created_at) the sandbox invalidates. Otherwise a token copied
+ * out of a VM would renew itself forever. Tokens minted before sbx_gen existed
+ * are bound to the current sandbox on their first refresh.
  */
 const REFRESH_EXPIRED_GRACE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -142,6 +147,20 @@ export async function refreshSandboxDashboardToken(request: Request, env: Env): 
     return Response.json({ error: 'E79396: Dashboard not found' }, { status: 404 });
   }
 
-  const token = await createDashboardToken(claims.dashboard_id, tokenSigningSecret(env));
+  const sandbox = await env.DB.prepare('SELECT sandbox_session_id, created_at FROM dashboard_sandboxes WHERE dashboard_id = ?')
+    .bind(claims.dashboard_id).first<{ sandbox_session_id: string; created_at: string }>();
+  const generation = sandbox?.sandbox_session_id ? sandboxGeneration(sandbox.created_at) : NaN;
+  if (Number.isNaN(generation)) {
+    console.warn(`[sandbox-auth] refresh denied: dashboard ${claims.dashboard_id} has no live sandbox`);
+    return Response.json({ error: 'E79399: Dashboard has no live sandbox' }, { status: 401 });
+  }
+  if (claims.sbx_gen === undefined) {
+    console.log(`[sandbox-auth] binding pre-generation token for dashboard ${claims.dashboard_id} to its current sandbox`);
+  } else if (claims.sbx_gen !== generation) {
+    console.warn(`[sandbox-auth] refresh denied: token for dashboard ${claims.dashboard_id} belongs to a replaced sandbox`);
+    return Response.json({ error: 'E79398: Token belongs to a sandbox that was replaced' }, { status: 401 });
+  }
+
+  const token = await createDashboardToken(claims.dashboard_id, tokenSigningSecret(env), undefined, generation);
   return Response.json({ token, revision: MODULE_REVISION });
 }

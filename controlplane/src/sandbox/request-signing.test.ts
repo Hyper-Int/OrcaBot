@@ -39,7 +39,7 @@ describe('sandbox request signing', () => {
     await signSandboxRequest(signingKey, headers, 'post', 'https://sandbox.fly.dev/sessions/s1/file?path=/workspace/lost%2Bfound');
     const claims = await verify(headers.get(SANDBOX_AUTH_HEADER)!);
     expect(claims).toMatchObject({ mid: 'machine-b', m: 'POST', p: '/sessions/s1/file?path=/workspace/lost%2Bfound' });
-    expect((claims!.exp as number) - (claims!.iat as number)).toBe(60);
+    expect((claims!.exp as number) - (claims!.iat as number)).toBe(30);
     expect(headers.get('fly-force-instance-id')).toBe('machine-b');
   });
 

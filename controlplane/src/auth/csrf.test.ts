@@ -1,3 +1,4 @@
+// REVISION: csrf-tests-v2-same-origin
 import { describe, it, expect } from 'vitest';
 import { checkCsrf } from '../index';
 
@@ -6,6 +7,11 @@ const req = (method: string, headers: Record<string, string> = {}) =>
   new Request('https://api.orcabot.com/secrets', { method, headers });
 
 describe('checkCsrf()', () => {
+  it('allows same-origin POSTs from pages the control plane serves (Drive picker)', () => {
+    expect(checkCsrf(req('POST', { Origin: 'https://api.orcabot.com' }), 'session', allowed)).toBeNull();
+    expect(checkCsrf(req('POST', { Origin: 'https://api.orcabot.com.evil.com' }), 'session', allowed)?.status).toBe(403);
+  });
+
   it('allows cookie POST from an allowed origin', () => {
     expect(checkCsrf(req('POST', { Origin: 'https://orcabot.com' }), 'session', allowed)).toBeNull();
   });

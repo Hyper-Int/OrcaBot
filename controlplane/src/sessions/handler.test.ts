@@ -1,4 +1,4 @@
-// REVISION: session-tests-v5-reprovision-keeps-tracking
+// REVISION: session-tests-v6-push-current-sandbox
 /**
  * Session Handler Tests
  *
@@ -19,7 +19,7 @@ import {
 } from '../../tests/helpers';
 import { createMockSandboxServer } from '../../tests/mocks/sandbox';
 import { SandboxClient } from '../sandbox/client';
-import { createSessiоn } from './handler';
+import { createSessiоn, applySecretsToSession } from './handler';
 import { ensureDriveCache } from '../storage/drive-cache';
 import type { TestContext } from '../../tests/helpers';
 
@@ -165,6 +165,62 @@ describe('Session Handlers', () => {
       const response = await createSessiоn(ensureDriveCache(ctx.env), dashboard.id, item.id, testUser.id, testUser.name);
       expect(response.status).toBe(201);
       expect(pushes.map((b) => b.unset)).toEqual([['COLLAB_KEY', 'COLLAB_KEY_BROKER']]);
+    });
+
+    // A reprovision (timeout, 502/503) leaves older `sessions` rows pointing at
+    // the replaced sandbox session, which may still be alive.
+    it.each([
+      ['secret change', (dashboardId: string, sessionId: string) =>
+        secretsHandler.autoApplySecretsToSessions(ctx.env, testUser.id, dashboardId).then(() => sessionId)],
+      ['explicit apply', async (_dashboardId: string, sessionId: string) => {
+        expect((await applySecretsToSession(ensureDriveCache(ctx.env), sessionId, testUser.id)).status).toBe(200);
+      }],
+    ] as const)('%s pushes to the current sandbox session, not a replaced one', async (_name, run) => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+      const client = new SandboxClient(ctx.env.SANDBOX_URL);
+      const old = await client.createSessiоn();
+      const current = await client.createSessiоn();
+      const stale = await seedSession(ctx.db, dashboard.id, item.id, { sandboxSessionId: old.id, ownerUserId: testUser.id });
+      await ctx.db.prepare(`
+        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+        VALUES (?, ?, '', ?, ?)
+      `).bind(dashboard.id, current.id, JSON.stringify(['DELETED_KEY']), new Date().toISOString()).run();
+      const pushes: Array<{ session: string; body: Record<string, unknown> }> = [];
+      mockSandbox.server.use(http.post(`${ctx.env.SANDBOX_URL}/sessions/:id/env`, async ({ params, request }) => {
+        pushes.push({ session: params.id as string, body: await request.json() as Record<string, unknown> });
+        return HttpResponse.json({ status: 'ok' });
+      }));
+
+      await run(dashboard.id, stale.id);
+
+      expect(pushes.map((p) => p.session)).toEqual([current.id]);
+      expect(pushes[0].body.unset).toEqual(['DELETED_KEY', 'DELETED_KEY_BROKER']);
+      const row = await ctx.db.prepare(`SELECT sandbox_session_id, applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?`)
+        .bind(dashboard.id).first<{ sandbox_session_id: string; applied_secret_names: string }>();
+      expect(row?.sandbox_session_id).toBe(current.id);
+      expect(JSON.parse(row!.applied_secret_names)).toEqual([]);
+    });
+
+    it('does not push to a retired sandbox', async () => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id);
+      const item = await seedDashboardItem(ctx.db, dashboard.id, { type: 'terminal' });
+      const old = await new SandboxClient(ctx.env.SANDBOX_URL).createSessiоn();
+      await seedSession(ctx.db, dashboard.id, item.id, { sandboxSessionId: old.id, ownerUserId: testUser.id });
+      await ctx.db.prepare(`
+        INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+        VALUES (?, '', '', ?, ?)
+      `).bind(dashboard.id, JSON.stringify(['DELETED_KEY']), new Date().toISOString()).run();
+      const pushes: string[] = [];
+      mockSandbox.server.use(http.post(`${ctx.env.SANDBOX_URL}/sessions/:id/env`, ({ params }) => {
+        pushes.push(params.id as string);
+        return HttpResponse.json({ status: 'ok' });
+      }));
+      await secretsHandler.autoApplySecretsToSessions(ctx.env, testUser.id, dashboard.id);
+      expect(pushes).toEqual([]);
+      const row = await ctx.db.prepare(`SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?`)
+        .bind(dashboard.id).first<{ applied_secret_names: string }>();
+      expect(JSON.parse(row!.applied_secret_names)).toEqual(['DELETED_KEY']);
     });
 
     it.each([

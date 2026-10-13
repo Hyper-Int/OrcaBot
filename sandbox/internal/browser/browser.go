@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v16-xvfb-exit-test-hook
+// REVISION: browser-v17-liveness-private-profile
 package browser
 
 import (
@@ -70,10 +70,11 @@ type Controller struct {
 	running         bool
 	ready           bool
 	processes       []*exec.Cmd
+	legacyCleanup   sync.Once
 }
 
-// REVISION: browser-v16-xvfb-exit-test-hook
-const browserRevision = "browser-v16-xvfb-exit-test-hook"
+// REVISION: browser-v17-liveness-private-profile
+const browserRevision = "browser-v17-liveness-private-profile"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -123,6 +124,12 @@ func (c *Controller) Start() (Status, error) {
 		return Status{}, err
 	}
 
+	// The profile and X cookie live in the browser user's home; refuse to
+	// start if anyone but that user and root could reach it.
+	if err := checkBrowserHome(identity); err != nil {
+		return Status{}, err
+	}
+
 	wsPort, err := freePortInRange()
 	if err != nil {
 		return Status{}, err
@@ -136,12 +143,22 @@ func (c *Controller) Start() (Status, error) {
 		return Status{}, err
 	}
 
-	// Make the profile a browser-owned 0700 dir and clear stale locks / crash
-	// state (no concurrent writer: Chromium isn't launched yet and Start holds c.mu).
-	userDataDir := filepath.Join(c.workspace, ".browser")
+	// The profile lives outside /workspace (an agent could rename a profile
+	// there and swap in its own directory while the browser runs). Make it a
+	// browser-owned 0700 dir and clear stale locks / crash state (no
+	// concurrent writer: Chromium isn't launched yet and Start holds c.mu).
+	userDataDir := profilePath(identity)
 	if err := prepareProfileDir(userDataDir, identity); err != nil {
 		return Status{}, err
 	}
+	c.legacyCleanup.Do(func() {
+		workspace := c.workspace
+		go func() {
+			if err := removeLegacyProfile(workspace, identity); err != nil {
+				log.Printf("[browser] legacy profile cleanup: %v", err)
+			}
+		}()
+	})
 
 	if err := os.MkdirAll("/tmp/.X11-unix", 0o777); err == nil {
 		_ = os.Chmod("/tmp/.X11-unix", 0o777|os.ModeSticky)
@@ -166,7 +183,14 @@ func (c *Controller) Start() (Status, error) {
 		"-auth", xauth,
 		"-rfbport", strconv.Itoa(vncPort),
 		// Loopback only: websockify (below) is the one client, reached through
-		// the server's authenticated proxy. Pool UIDs are blocked from the port range.
+		// the server's authenticated proxy. Pool UIDs are blocked from the port
+		// range. websockify can't verify who it connects to, so if x11vnc dies
+		// and an agent binds its port, the kernel stops the agent's listener
+		// from answering (setupPoolBrowserPortBlock's source-port rule) and
+		// Status() tears the stack down on the next poll.
+		//
+		// Not -unixsock: x11vnc 0.9.16 never accepts on its unix socket in
+		// -threads mode (tested), and -threads is kept for frame rate.
 		"-localhost",
 		"-forever",
 		"-shared",
@@ -305,8 +329,8 @@ func (c *Controller) Start() (Status, error) {
 
 	// Perf: spawn = time to launch all 4 processes; debugReady = time waiting for
 	// chromium's DevTools endpoint to answer; total = full cold bring-up.
-	log.Printf("[browser][perf] started display=%d wsPort=%d vncPort=%d spawn=%dms debugReady=%dms total=%dms ready=%t",
-		display, wsPort, vncPort,
+	log.Printf("[browser][perf] started display=%d wsPort=%d vncPort=%d debugPort=%d spawn=%dms debugReady=%dms total=%dms ready=%t",
+		display, wsPort, vncPort, debugPort,
 		spawnElapsed.Milliseconds(), time.Since(readyStart).Milliseconds(), time.Since(startTime).Milliseconds(), c.ready)
 	return c.statusLocked(), nil
 }
@@ -388,26 +412,52 @@ func (c *Controller) Stop() {
 	if !c.running {
 		return
 	}
+	c.teardownLocked()
+}
 
+// teardownLocked kills every browser process and clears all state, ports
+// included: a stopped or dead browser must not keep reporting the ports it
+// had, which an agent may have bound since.
+func (c *Controller) teardownLocked() {
 	for i := len(c.processes) - 1; i >= 0; i-- {
+		// Kill the group and reap.
 		killProcessTree(c.processes[i])
 	}
-
 	c.processes = nil
 	c.running = false
 	c.ready = false
-	c.removeXauthLocked()
-}
-
-func (c *Controller) removeXauthLocked() {
+	c.wsPort = 0
+	c.vncPort = 0
+	c.debugPort = 0
+	c.display = 0
 	if c.xauth != "" {
 		_ = os.Remove(c.xauth)
 		c.xauth = ""
 	}
 }
 
+// deadProcessLocked returns the name of a browser process that has exited,
+// or "" if all are alive. x11vnc, Xvfb or Chromium can die while websockify
+// keeps listening, so the websockify port check alone would keep reporting a
+// broken stack as running — and, with x11vnc gone, keep proxying viewers to
+// whatever binds its port next.
+func (c *Controller) deadProcessLocked() string {
+	for _, p := range c.processes {
+		if !processRunning(p) {
+			return filepath.Base(p.Path)
+		}
+	}
+	return ""
+}
+
 func (c *Controller) Status() Status {
 	c.mu.Lock()
+	if c.running {
+		if dead := c.deadProcessLocked(); dead != "" {
+			log.Printf("[browser] %s exited unexpectedly — tearing down the browser stack", dead)
+			c.teardownLocked()
+		}
+	}
 	running := c.running
 	wsPort := c.wsPort
 	c.mu.Unlock()
@@ -429,14 +479,7 @@ func (c *Controller) Status() Status {
 			// Only clear if no concurrent Start() has already replaced the state.
 			if c.running && c.wsPort == wsPort {
 				log.Printf("[browser] websockify port %d gone, processes exited unexpectedly — clearing state", wsPort)
-				for _, p := range c.processes {
-					// Kill the group and reap, same as Stop().
-					killProcessTree(p)
-				}
-				c.processes = nil
-				c.running = false
-				c.ready = false
-				c.removeXauthLocked()
+				c.teardownLocked()
 			}
 			c.mu.Unlock()
 		}

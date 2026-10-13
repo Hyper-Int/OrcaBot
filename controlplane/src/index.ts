@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v23-oauth-connect-host
-console.log(`[controlplane] REVISION: controlplane-v23-oauth-connect-host loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v24-csrf-same-origin
+console.log(`[controlplane] REVISION: controlplane-v24-csrf-same-origin loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -100,12 +100,6 @@ const CSRF_CHECKED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CSRF_COOKIE_AUTH_METHODS = new Set(['session', 'cf-access']);
 
 /**
- * Reject cross-site state-changing requests authenticated by an ambient cookie.
- * Bearer/PAT/dev-header auth can't be attached cross-site, so they're exempt.
- * Requests with no Origin are allowed unless Sec-Fetch-Site marks them cross-site
- * (non-browser clients send neither header and aren't a CSRF vector).
- */
-/**
  * Starting, stopping or steering the dashboard browser drives a shared VM
  * browser, so it takes the same role as editing the dashboard (owner/editor).
  */
@@ -120,6 +114,14 @@ async function requireBrowserControl(env: Env, dashboardId: string, userId: stri
   return null;
 }
 
+/**
+ * Reject cross-site state-changing requests authenticated by an ambient cookie.
+ * Bearer/PAT/dev-header auth can't be attached cross-site, so they're exempt.
+ * Requests with no Origin are allowed unless Sec-Fetch-Site marks them cross-site
+ * (non-browser clients send neither header and aren't a CSRF vector).
+ * Pages the control plane serves itself (e.g. the Drive folder picker) post
+ * same-origin, so the request's own origin is always allowed.
+ */
 export function checkCsrf(
   request: Request,
   authMethod: string | undefined,
@@ -131,7 +133,7 @@ export function checkCsrf(
 
   const origin = request.headers.get('Origin');
   if (origin !== null) {
-    if (allowedOrigins.has(origin)) return null;
+    if (allowedOrigins.has(origin) || origin === new URL(request.url).origin) return null;
   } else {
     const fetchSite = request.headers.get('Sec-Fetch-Site');
     if (fetchSite !== 'cross-site') return null;

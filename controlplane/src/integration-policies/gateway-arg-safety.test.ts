@@ -1,6 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: gateway-arg-safety-tests-v2-outlook-calendar
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { handleGatewayExecute } from './gateway';
 import { createPtyToken } from '../auth/pty-token';
@@ -10,7 +11,7 @@ import type { Env, IntegrationProvider } from '../types';
 // with the identifiers the gateway really receives (google_drive, not drive).
 const SECRET = 'pty-secret';
 
-function fakeEnv(provider: IntegrationProvider) {
+function fakeEnv(provider: IntegrationProvider, policy: Record<string, unknown> = { canRead: true, canWrite: true }) {
   const audits: unknown[][] = [];
   const stmt = (sql: string, args: unknown[] = []) => ({
     bind: (...a: unknown[]) => stmt(sql, a),
@@ -19,7 +20,7 @@ function fakeEnv(provider: IntegrationProvider) {
         return {
           id: 'ti-1', terminal_id: 'term-1', item_id: null, dashboard_id: 'dash-1', user_id: 'alice',
           provider, user_integration_id: 'ui-1', active_policy_id: 'pol-1',
-          policy: JSON.stringify({ canRead: true, canWrite: true }), security_level: 'restricted',
+          policy: JSON.stringify(policy), security_level: 'restricted',
           policy_id: 'pol-1', policy_version: 1,
         };
       }
@@ -39,8 +40,8 @@ function fakeEnv(provider: IntegrationProvider) {
   return { env, audits };
 }
 
-async function execute(provider: IntegrationProvider, action: string, args: Record<string, unknown>) {
-  const { env } = fakeEnv(provider);
+async function execute(provider: IntegrationProvider, action: string, args: Record<string, unknown>, policy?: Record<string, unknown>) {
+  const { env } = fakeEnv(provider, policy);
   const token = await createPtyToken('term-1', 'sbx-1', 'dash-1', 'alice', SECRET);
   const req = new Request(`https://cp.test/internal/gateway/${provider}/execute`, {
     method: 'POST',
@@ -66,6 +67,37 @@ describe('gateway rejects unsafe IDs for Google providers', () => {
     const res = await execute(provider, action, args);
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ decision: 'denied', reason: expect.stringMatching(/^E796/) });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
+describe('gateway rejects args the policy check would skip', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const onlyAllowed = { canRead: true, calendarFilter: { mode: 'allowlist', calendarIds: ['ALLOWED'] } };
+
+  it.each([
+    // An array was skipped by the calendar check (so it counted as the default
+    // calendar) but sent as /me/calendars/FORBIDDEN.
+    ['outlook_calendar.list_events', { calendarId: ['FORBIDDEN'] }],
+    ['outlook_calendar.get_event', { calendar_id: { id: 'FORBIDDEN' }, event_id: 'e1' }],
+    ['outlook_calendar.get_event', { calendarId: 'ALLOWED', event_id: '../../calendars/FORBIDDEN/events/e1' }],
+  ] as const)('%s %j is denied before any provider call', async (action, args) => {
+    const upstream = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', upstream);
+    const res = await execute('outlook_calendar', action, args, onlyAllowed);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ decision: 'denied', reason: expect.stringMatching(/^E796/) });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('a non-allowlisted string calendarId is still denied by policy', async () => {
+    const upstream = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', upstream);
+    const res = await execute('outlook_calendar', 'outlook_calendar.list_events', { calendarId: 'FORBIDDEN' }, onlyAllowed);
+    expect(res.status).toBe(403);
     expect(upstream).not.toHaveBeenCalled();
   });
 });

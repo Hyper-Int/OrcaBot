@@ -148,6 +148,24 @@ heredoc, not MININIT.** rc.local:
   console (root-only), readable from `/tmp/vz-console.log` — a non-root agent can't
   read it. This is the primitive the `orcabot` CLI uses to run guest shell commands.
 
+### Guest clock sync
+The VM has no NTP and its kernel reads the RTC only at boot, so while the host
+sleeps the guest clock stops and then lags (signed control-plane requests then
+fail with "issued in the future"). The host pushes its UTC time to a root-only
+guest daemon, `orcabot-guest-timesync` (`sandbox/cmd/guest-timesync`, started by
+`rc.local`), over **vsock port 1023**: right after boot, on host wake, and every
+60s. The guest steps the clock only when drift > 2s and logs each step (old/new
+delta) to the console. The port is reserved (<1024) and the daemon drops any peer
+that isn't the host CID, so agents can't set the time.
+- macOS: the loop lives in **vz-helper** (`GuestTimeSync`, `--guest-time-sync-port`;
+  NSWorkspace wake notification + wall-vs-uptime jump check). `macos.rs` passes
+  the flag only if the helper's `--help` lists it (a stale dev helper would
+  otherwise refuse to start the VM) — rebuild with `vz-helper/build.sh`.
+- Linux QEMU: `vm/timesync.rs` thread over a `vhost-vsock-pci` device, enabled
+  only when `/dev/vhost-vsock` is accessible.
+- Needs an image with the daemon (rc.local `rclocal-v3-guest-timesync`); on an
+  older image the host logs one "sync failed" line and carries on.
+
 ### Image staging
 `vm/image.rs` stages `resources/vm/sandbox.img` → the **cache dir**
 (`~/Library/Caches/com.orcabot.desktop/vm/`, resolved via `app_cache_dir()` in

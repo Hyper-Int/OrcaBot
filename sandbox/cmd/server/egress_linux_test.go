@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-tests-v9-root-skip
+// REVISION: egress-kernel-tests-v10-browser-sport-block
 
 //go:build linux
 
@@ -281,11 +281,13 @@ func TestPoolBrowserPortBlockIntegration(t *testing.T) {
 	if err := setupPoolBrowserPortBlock(); err != nil {
 		t.Fatal(err)
 	}
-	portRange := fmt.Sprintf("--dport %d:%d", browser.PortRangeStart, browser.PortRangeEnd)
 	for _, cmd := range []string{"iptables", "ip6tables"} {
 		out, _ := exec.Command(cmd, "-S", "OUTPUT").CombinedOutput()
-		if n := strings.Count(string(out), portRange); n != 1 {
-			t.Fatalf("%s: want exactly 1 browser-port rule after two installs, got %d:\n%s", cmd, n, out)
+		for _, flag := range []string{"--dport", "--sport"} {
+			portRange := fmt.Sprintf("%s %d:%d", flag, browser.PortRangeStart, browser.PortRangeEnd)
+			if n := strings.Count(string(out), portRange); n != 1 {
+				t.Fatalf("%s: want exactly 1 %s browser-port rule after two installs, got %d:\n%s", cmd, flag, n, out)
+			}
 		}
 	}
 	for _, host := range []string{"127.0.0.1", "::1"} {
@@ -309,4 +311,38 @@ func TestPoolBrowserPortBlockIntegration(t *testing.T) {
 			}
 		})
 	}
+
+	// A pool UID that binds a browser port (e.g. x11vnc's, after it died)
+	// must not be able to answer the browser user's websockify, or root.
+	t.Run("pool listener can't serve", func(t *testing.T) {
+		addr := fmt.Sprintf("127.0.0.1:%d", browser.PortRangeStart+11)
+		stop := listenAsUID(t, 2000, addr)
+		defer stop()
+		if err := dialAsUID(0, addr); err == nil {
+			t.Fatal("pool UID's listener on a browser port answered")
+		}
+	})
+}
+
+// listenAsUID runs a listener on addr as uid (python3) until stop is called.
+func listenAsUID(t *testing.T, uid uint32, addr string) (stop func()) {
+	t.Helper()
+	host, port, _ := net.SplitHostPort(addr)
+	cmd := exec.Command("python3", "-c", `import socket,sys,time
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(8)
+print("ok", flush=True)
+while True:
+    c,_=s.accept(); c.close()`, host, port)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: uid}}
+	out, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Skipf("python3: %v", err)
+	}
+	buf := make([]byte, 3)
+	if _, err := out.Read(buf); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("listener as uid %d failed to start", uid)
+	}
+	return func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }
 }

@@ -41,7 +41,7 @@ func TestProfileSymlinkIsMovedAsideNotFollowed(t *testing.T) {
 	ws := t.TempDir()
 	victim := t.TempDir() // e.g. /etc/cron.d
 	os.WriteFile(filepath.Join(victim, "SingletonLock"), []byte("keep"), 0o644)
-	profile := filepath.Join(ws, ".browser")
+	profile := filepath.Join(ws, "profile")
 	if err := os.Symlink(victim, profile); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestProfileSymlinkIsMovedAsideNotFollowed(t *testing.T) {
 	}
 	fi, _ := os.Lstat(profile)
 	if !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf(".browser should be a real directory now, got %v", fi.Mode())
+		t.Fatalf("profile should be a real directory now, got %v", fi.Mode())
 	}
 	if owner(t, profile) != testID.uid || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("profile owner/mode = %d/%v", owner(t, profile), fi.Mode().Perm())
@@ -68,37 +68,10 @@ func TestProfileSymlinkIsMovedAsideNotFollowed(t *testing.T) {
 	}
 }
 
-func TestLegacyRootProfileIsHandedOverWithoutFollowingLinks(t *testing.T) {
-	needRoot(t)
-	ws := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "secret")
-	os.WriteFile(outside, []byte("x"), 0o600)
-	profile := filepath.Join(ws, ".browser")
-	os.MkdirAll(filepath.Join(profile, "Default", "Cache"), 0o755)
-	os.WriteFile(filepath.Join(profile, "Default", "Cookies"), []byte("c"), 0o644)
-	os.Symlink(outside, filepath.Join(profile, "Default", "link"))
-	os.WriteFile(filepath.Join(profile, "SingletonLock"), nil, 0o644)
-
-	if err := prepareProfileDir(profile, testID); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []string{profile, filepath.Join(profile, "Default"), filepath.Join(profile, "Default", "Cache"), filepath.Join(profile, "Default", "Cookies"), filepath.Join(profile, "Default", "link")} {
-		if owner(t, p) != testID.uid {
-			t.Errorf("%s not handed to the browser user", p)
-		}
-	}
-	if owner(t, outside) != 0 {
-		t.Fatal("chown followed a symlink out of the profile")
-	}
-	if _, err := os.Lstat(filepath.Join(profile, "SingletonLock")); !os.IsNotExist(err) {
-		t.Fatal("stale SingletonLock not removed")
-	}
-}
-
 func TestCrashStateCleanedWithoutFollowingDefaultSymlink(t *testing.T) {
 	needRoot(t)
 	ws := t.TempDir()
-	profile := filepath.Join(ws, ".browser")
+	profile := filepath.Join(ws, "profile")
 	os.MkdirAll(profile, 0o700)
 	elsewhere := t.TempDir()
 	prefs := filepath.Join(elsewhere, "Preferences")
@@ -115,7 +88,7 @@ func TestCrashStateCleanedWithoutFollowingDefaultSymlink(t *testing.T) {
 
 func TestCrashStateCleaned(t *testing.T) {
 	needRoot(t)
-	profile := filepath.Join(t.TempDir(), ".browser")
+	profile := filepath.Join(t.TempDir(), "profile")
 	os.MkdirAll(filepath.Join(profile, "Default"), 0o700)
 	os.WriteFile(filepath.Join(profile, "Default", "Preferences"), []byte(`{"profile":{"exit_type":"Crashed","name":"p"}}`), 0o600)
 
@@ -187,9 +160,10 @@ func TestXauthorityTempSymlinkNotFollowed(t *testing.T) {
 func TestForeignOwnedProfileIsMovedAsideNotHandedOver(t *testing.T) {
 	needRoot(t)
 	ws := t.TempDir()
-	profile := filepath.Join(ws, ".browser")
-	// An agent (pool UID) pre-creates the profile, seeding it with a
-	// setgid, group-writable dir it can keep writing to.
+	profile := filepath.Join(ws, "profile")
+	// Something other than the browser user or root owns the profile (it
+	// can't happen in the 0700 home, but if it did): seeded with a setgid,
+	// group-writable dir its owner could keep writing to.
 	os.MkdirAll(filepath.Join(profile, "Default"), 0o777)
 	os.WriteFile(filepath.Join(profile, "Default", "Preferences"), []byte(`{}`), 0o666)
 	for _, p := range []string{profile, filepath.Join(profile, "Default"), filepath.Join(profile, "Default", "Preferences")} {
@@ -218,7 +192,7 @@ func TestForeignOwnedProfileIsMovedAsideNotHandedOver(t *testing.T) {
 
 func TestBrowserOwnedProfileKept(t *testing.T) {
 	needRoot(t)
-	profile := filepath.Join(t.TempDir(), ".browser")
+	profile := filepath.Join(t.TempDir(), "profile")
 	os.MkdirAll(filepath.Join(profile, "Default"), 0o700)
 	os.WriteFile(filepath.Join(profile, "Default", "Cookies"), []byte("c"), 0o600)
 	os.Chown(profile, testID.uid, testID.gid)
@@ -234,134 +208,6 @@ func TestBrowserOwnedProfileKept(t *testing.T) {
 	}
 }
 
-func TestRootProfileHandoverStripsGroupOtherBits(t *testing.T) {
-	needRoot(t)
-	// A legitimate legacy profile: root-owned, nothing group/other-writable,
-	// but readable by others and with setgid/sticky/setuid bits about.
-	profile := filepath.Join(t.TempDir(), ".browser")
-	sub := filepath.Join(profile, "Default", "Cache")
-	os.MkdirAll(sub, 0o755)
-	os.Chmod(profile, 0o755)
-	os.Chmod(filepath.Join(profile, "Default"), 0o2755)
-	os.Chmod(sub, 0o1755)
-	file := filepath.Join(profile, "Default", "Cookies")
-	os.WriteFile(file, []byte("c"), 0o644)
-	os.Chmod(file, 0o4744)
-
-	if err := prepareProfileDir(profile, testID); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]os.FileMode{
-		profile:                           os.ModeDir | 0o700,
-		filepath.Join(profile, "Default"): os.ModeDir | 0o700,
-		sub:                               os.ModeDir | 0o700,
-		file:                              0o700,
-	}
-	for p, mode := range want {
-		fi, err := os.Lstat(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi.Mode() != mode || owner(t, p) != testID.uid {
-			t.Errorf("%s: mode %v owner %d, want %v owner %d", p, fi.Mode(), owner(t, p), mode, testID.uid)
-		}
-	}
-}
-
-// An agent can rename any root-owned directory it can write into `.browser`
-// (/workspace has no sticky bit). Such a tree is moved aside, never handed
-// over, whichever part of it betrays the agent's access.
-func TestPlantedRootOwnedProfileIsMovedAside(t *testing.T) {
-	needRoot(t)
-	for _, tc := range []struct {
-		name  string
-		plant func(profile string)
-	}{
-		{"group-writable top dir", func(p string) {
-			os.Chmod(p, 0o2775)
-		}},
-		{"group-writable subdir", func(p string) {
-			os.Mkdir(filepath.Join(p, "Default"), 0o755)
-			os.Chmod(filepath.Join(p, "Default"), 0o777)
-		}},
-		{"agent-owned file", func(p string) {
-			os.MkdirAll(filepath.Join(p, "Default"), 0o755)
-			f := filepath.Join(p, "Default", "Preferences")
-			os.WriteFile(f, []byte(`{}`), 0o600)
-			os.Chown(f, 2000, 2000)
-		}},
-		{"agent-owned symlink", func(p string) {
-			os.Symlink("/tmp", filepath.Join(p, "link"))
-			os.Lchown(filepath.Join(p, "link"), 2000, 2000)
-		}},
-		{"root file the agent can write", func(p string) {
-			f := filepath.Join(p, "Local State")
-			os.WriteFile(f, []byte(`{}`), 0o644)
-			os.Chmod(f, 0o666)
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			profile := filepath.Join(t.TempDir(), ".browser")
-			os.Mkdir(profile, 0o755)
-			tc.plant(profile)
-
-			if err := prepareProfileDir(profile, testID); err != nil {
-				t.Fatal(err)
-			}
-			if entries, _ := os.ReadDir(profile); len(entries) != 0 || owner(t, profile) != testID.uid {
-				t.Fatalf("planted tree handed over: owner %d, entries %v", owner(t, profile), entries)
-			}
-			moved, _ := filepath.Glob(profile + ".invalid-*")
-			if len(moved) != 1 {
-				t.Fatalf("planted tree not moved aside: %v", moved)
-			}
-			if owner(t, moved[0]) != 0 {
-				t.Fatal("planted tree chowned before being moved aside")
-			}
-		})
-	}
-}
-
-func TestRootProfileHandoverUnlinksHardLinks(t *testing.T) {
-	needRoot(t)
-	// Same filesystem, as a hard link needs.
-	base := t.TempDir()
-	outside := filepath.Join(base, "shadow")
-	os.WriteFile(outside, []byte("x"), 0o640)
-	profile := filepath.Join(base, ".browser")
-	os.MkdirAll(profile, 0o755)
-	if err := os.Link(outside, filepath.Join(profile, "linked")); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := prepareProfileDir(profile, testID); err != nil {
-		t.Fatal(err)
-	}
-	fi, _ := os.Stat(outside)
-	if owner(t, outside) != 0 || fi.Mode().Perm() != 0o640 {
-		t.Fatalf("hard-linked file outside the profile changed: owner %d mode %v", owner(t, outside), fi.Mode().Perm())
-	}
-	if _, err := os.Lstat(filepath.Join(profile, "linked")); !os.IsNotExist(err) {
-		t.Fatal("hard link left in the profile (root-owned, unwritable by Chromium)")
-	}
-}
-
-func TestRootProfileHandoverRemovesSpecialFiles(t *testing.T) {
-	needRoot(t)
-	profile := filepath.Join(t.TempDir(), ".browser")
-	os.MkdirAll(profile, 0o755)
-	fifo := filepath.Join(profile, "fifo")
-	if err := syscall.Mkfifo(fifo, 0o666); err != nil {
-		t.Fatal(err)
-	}
-	if err := prepareProfileDir(profile, testID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(fifo); !os.IsNotExist(err) {
-		t.Fatal("FIFO left in handed-over profile")
-	}
-}
-
 func TestPortsComeFromTheBlockedRange(t *testing.T) {
 	a, err := freePortInRange()
 	if err != nil {
@@ -370,5 +216,137 @@ func TestPortsComeFromTheBlockedRange(t *testing.T) {
 	b, _ := freePortInRange(a)
 	if a < PortRangeStart || a > PortRangeEnd || b < PortRangeStart || b > PortRangeEnd || a == b {
 		t.Fatalf("ports %d, %d", a, b)
+	}
+}
+
+// A root-owned profile directory can only be one root itself created (the
+// home is 0700, owned by the browser user): it is given to the browser user.
+func TestRootOwnedProfileDirIsChowned(t *testing.T) {
+	needRoot(t)
+	profile := filepath.Join(t.TempDir(), "profile")
+	os.Mkdir(profile, 0o755)
+	if err := prepareProfileDir(profile, testID); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Lstat(profile)
+	if owner(t, profile) != testID.uid || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("profile owner/mode = %d/%v", owner(t, profile), fi.Mode().Perm())
+	}
+}
+
+// The profile must never live in the agent-writable workspace again: an agent
+// could rename it and swap in its own directory while the browser runs.
+func TestProfileIsInBrowserHomeNotWorkspace(t *testing.T) {
+	id := browserIdentity{uid: 1990, gid: 1990, home: "/home/orcabot-browser"}
+	got := profilePath(id)
+	if got != "/home/orcabot-browser/profile" {
+		t.Fatalf("profilePath = %s", got)
+	}
+	for _, ws := range []string{"/workspace", "/workspace/"} {
+		if strings.HasPrefix(got, ws) {
+			t.Fatalf("profile %s is under the workspace", got)
+		}
+	}
+}
+
+func TestCheckBrowserHome(t *testing.T) {
+	needRoot(t)
+	// Parents must be root-owned and not group/other-writable, so build the
+	// chain under / rather than the sticky, world-writable /tmp.
+	base, err := os.MkdirTemp("/", "orcabot-home-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	os.Chmod(base, 0o755)
+	home := filepath.Join(base, "home")
+	os.Mkdir(home, 0o700)
+	os.Chown(home, testID.uid, testID.gid)
+	id := browserIdentity{uid: testID.uid, gid: testID.gid, home: home}
+	if err := checkBrowserHome(id); err != nil {
+		t.Fatalf("good home rejected: %v", err)
+	}
+
+	os.Chmod(home, 0o750)
+	if checkBrowserHome(id) == nil {
+		t.Fatal("group-readable home accepted")
+	}
+	os.Chmod(home, 0o700)
+
+	os.Chmod(base, 0o775)
+	if checkBrowserHome(id) == nil {
+		t.Fatal("home under a group-writable parent accepted")
+	}
+	os.Chmod(base, 0o755)
+
+	os.Chown(base, 2000, 2000)
+	if checkBrowserHome(id) == nil {
+		t.Fatal("home under an agent-owned parent accepted")
+	}
+	os.Chown(base, 0, 0)
+
+	link := filepath.Join(base, "link")
+	os.Symlink(home, link)
+	if checkBrowserHome(browserIdentity{uid: testID.uid, gid: testID.gid, home: link}) == nil {
+		t.Fatal("symlinked home accepted")
+	}
+
+	tmpHome := t.TempDir() // under /tmp: sticky, world-writable parent
+	os.Chown(tmpHome, testID.uid, testID.gid)
+	os.Chmod(tmpHome, 0o700)
+	if checkBrowserHome(browserIdentity{uid: testID.uid, gid: testID.gid, home: tmpHome}) == nil {
+		t.Fatal("home under /tmp accepted")
+	}
+}
+
+func TestLegacyWorkspaceProfileRemoved(t *testing.T) {
+	needRoot(t)
+	ws := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "keep")
+	os.WriteFile(outside, []byte("keep"), 0o600)
+	legacy := filepath.Join(ws, ".browser")
+	os.MkdirAll(filepath.Join(legacy, "Default", "Cache"), 0o700)
+	os.WriteFile(filepath.Join(legacy, "Default", "Cookies"), []byte("c"), 0o600)
+	os.Symlink(filepath.Dir(outside), filepath.Join(legacy, "Default", "link"))
+	filepath.Walk(legacy, func(p string, _ os.FileInfo, _ error) error {
+		os.Lchown(p, testID.uid, testID.gid)
+		return nil
+	})
+
+	if err := removeLegacyProfile(ws, testID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(legacy); !os.IsNotExist(err) {
+		t.Fatal("legacy profile not removed")
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "keep" {
+		t.Fatal("removal followed a symlink out of the profile")
+	}
+}
+
+func TestLegacyProfileNotBrowserOwnedIsLeftAlone(t *testing.T) {
+	needRoot(t)
+	ws := t.TempDir()
+	// An agent's directory renamed to .browser: not ours to delete.
+	agentDir := filepath.Join(ws, ".browser")
+	os.MkdirAll(agentDir, 0o775)
+	os.WriteFile(filepath.Join(agentDir, "work"), []byte("w"), 0o664)
+	os.Chown(agentDir, 2000, 2000)
+	if err := removeLegacyProfile(ws, testID); err == nil {
+		t.Fatal("expected a refusal for a foreign-owned .browser")
+	}
+	if _, err := os.Stat(filepath.Join(agentDir, "work")); err != nil {
+		t.Fatal("agent's files deleted")
+	}
+
+	// A symlink to somewhere else: never followed.
+	os.RemoveAll(agentDir)
+	target := t.TempDir()
+	os.WriteFile(filepath.Join(target, "f"), []byte("x"), 0o600)
+	os.Chown(target, testID.uid, testID.gid)
+	os.Symlink(target, agentDir)
+	_ = removeLegacyProfile(ws, testID)
+	if _, err := os.Stat(filepath.Join(target, "f")); err != nil {
+		t.Fatal("removal followed a .browser symlink")
 	}
 }

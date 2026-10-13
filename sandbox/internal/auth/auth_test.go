@@ -1,6 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: auth-v4-60s-replay-window
 package auth
 
 import (
@@ -40,7 +41,7 @@ func newSignedMiddleware(t *testing.T, staticToken string) (*Middleware, ed25519
 
 func validClaims(method, path string) signedClaims {
 	now := time.Now().Unix()
-	return signedClaims{MachineID: "machine-b", Method: method, Path: path, IssuedAt: now, ExpiresAt: now + 60}
+	return signedClaims{MachineID: "machine-b", Method: method, Path: path, IssuedAt: now, ExpiresAt: now + 30}
 }
 
 func TestSignedRequestAccepted(t *testing.T) {
@@ -85,6 +86,16 @@ func TestSignedRequestRejections(t *testing.T) {
 		{"expired", "GET", "/sessions/s1/ptys", func() string {
 			c := validClaims("GET", "/sessions/s1/ptys")
 			c.IssuedAt, c.ExpiresAt = now-600, now-300
+			return sign(t, priv, c)
+		}},
+		{"replayed 61s after signing", "GET", "/sessions/s1/ptys", func() string {
+			c := validClaims("GET", "/sessions/s1/ptys")
+			c.IssuedAt, c.ExpiresAt = now-61, now-31
+			return sign(t, priv, c)
+		}},
+		{"claims a lifetime over 60s", "GET", "/sessions/s1/ptys", func() string {
+			c := validClaims("GET", "/sessions/s1/ptys")
+			c.ExpiresAt = now + 3600
 			return sign(t, priv, c)
 		}},
 		{"issued in the future", "GET", "/sessions/s1/ptys", func() string {

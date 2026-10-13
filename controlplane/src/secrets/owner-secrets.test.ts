@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-// REVISION: owner-secrets-tests-v5-full-approval-list
-import { applyDashboardOwnerSecrets, autoApplySecretsToSessions, dashboardSecretsOwner } from './handler';
+// REVISION: owner-secrets-tests-v6-valid-env-names
+import { applyDashboardOwnerSecrets, autoApplySecretsToSessions, createSecret, dashboardSecretsOwner } from './handler';
 import { applySecretsToSession } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
 import type { Env } from '../types';
 
 // Fake D1 for the auto-apply path: one active session on dashboard `dash-1`
 // (owned by `owner`), and one stored secret per user.
-function fakeEnv(previousNames: string[] | string = [], emptyOwner = false, writes: string[] = []) {
+function fakeEnv(previousNames: string[] | string = [], emptyOwner = false, writes: string[] = [], extraOwnerSecrets: string[] = []) {
   const stmt = (sql: string, args: unknown[] = []) => ({
     bind: (...a: unknown[]) => stmt(sql, a),
     async first() {
@@ -28,7 +28,8 @@ function fakeEnv(previousNames: string[] | string = [], emptyOwner = false, writ
       }
       if (sql.includes('FROM user_secrets')) {
         if (emptyOwner && args[0] === 'owner') return { results: [] };
-        return { results: [{ name: `${args[0]}_KEY`, value: `${args[0]}-value`, type: 'secret', broker_protected: 1, dashboard_id: 'dash-1' }] };
+        const extra = args[0] === 'owner' ? extraOwnerSecrets : [];
+        return { results: [`${String(args[0]).toUpperCase()}_KEY`, ...extra].map(name => ({ name, value: `${name}-value`, type: 'secret', broker_protected: 1, dashboard_id: 'dash-1' })) };
       }
       return { results: [] };
     },
@@ -60,21 +61,21 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
   }
 
   it.each([false, true])('removes legacy collaborator keys before tracking owner secrets (empty owner: %s)', async (emptyOwner) => {
-    const env = fakeEnv(['collaborator_KEY', 'owner_KEY'], emptyOwner);
+    const env = fakeEnv(['COLLABORATOR_KEY', 'OWNER_KEY'], emptyOwner);
     const pushes = captureEnvPushes();
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
     const names = await applyDashboardOwnerSecrets(env, sandbox, 'dash-1', 'sbx-1', '');
     expect(pushes).toHaveLength(1);
     const body = JSON.parse(pushes[0].body);
     expect(body.unset).toEqual(emptyOwner
-      ? ['collaborator_KEY', 'collaborator_KEY_BROKER', 'owner_KEY', 'owner_KEY_BROKER']
-      : ['collaborator_KEY', 'collaborator_KEY_BROKER']);
-    expect(names).toEqual(emptyOwner ? [] : ['owner_KEY']);
-    expect(body.secrets?.collaborator_KEY).toBeUndefined();
+      ? ['COLLABORATOR_KEY', 'COLLABORATOR_KEY_BROKER', 'OWNER_KEY', 'OWNER_KEY_BROKER']
+      : ['COLLABORATOR_KEY', 'COLLABORATOR_KEY_BROKER']);
+    expect(names).toEqual(emptyOwner ? [] : ['OWNER_KEY']);
+    expect(body.secrets?.COLLABORATOR_KEY).toBeUndefined();
   });
 
   it('fails startup rather than forgetting tracking when cleanup fails', async () => {
-    const env = fakeEnv(['collaborator_KEY'], true);
+    const env = fakeEnv(['COLLABORATOR_KEY'], true);
     vi.stubGlobal('fetch', vi.fn(async () => new Response('cleanup failed', { status: 403 })));
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
     await expect(applyDashboardOwnerSecrets(env, sandbox, 'dash-1', 'sbx-1', '')).rejects.toThrow();
@@ -83,7 +84,7 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
   it('still cleans up, and starts the terminal, when owner secrets cannot be loaded', async () => {
     // e.g. a deployment without SECRETS_ENCRYPTION_KEY: this used to block
     // every terminal once the pre-apply step became fail-closed.
-    const env = fakeEnv(['collaborator_KEY', 'owner_KEY']);
+    const env = fakeEnv(['COLLABORATOR_KEY', 'OWNER_KEY']);
     delete (env as unknown as Record<string, unknown>).SECRETS_ENCRYPTION_KEY;
     const pushes = captureEnvPushes();
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
@@ -91,7 +92,7 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
     expect(names).toEqual([]);
     expect(pushes).toHaveLength(1);
     const body = JSON.parse(pushes[0].body);
-    expect(body.unset).toEqual(['collaborator_KEY', 'collaborator_KEY_BROKER', 'owner_KEY', 'owner_KEY_BROKER']);
+    expect(body.unset).toEqual(['COLLABORATOR_KEY', 'COLLABORATOR_KEY_BROKER', 'OWNER_KEY', 'OWNER_KEY_BROKER']);
     expect(body.secrets).toBeUndefined();
   });
 
@@ -100,8 +101,24 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
     const pushes = captureEnvPushes();
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
     const names = await applyDashboardOwnerSecrets(env, sandbox, 'dash-1', 'sbx-1', '');
-    expect(names).toEqual(['owner_KEY']);
+    expect(names).toEqual(['OWNER_KEY']);
     expect(JSON.parse(pushes[0].body).unset).toBeUndefined();
+  });
+
+  // The sandbox rejects a whole update (E79746) over one bad name, which used
+  // to fail every terminal on the dashboard.
+  it('skips a stored secret whose name is not a valid env var name', async () => {
+    const env = fakeEnv(['OWNER_KEY'], false, [], ['1PASSWORD_TOKEN']);
+    const pushes = captureEnvPushes();
+    const names = await applyDashboardOwnerSecrets(env, new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN), 'dash-1', 'sbx-1', '');
+    expect(names).toEqual(['OWNER_KEY']);
+    expect(Object.keys(JSON.parse(pushes[0].body).secrets)).toEqual(['OWNER_KEY']);
+  });
+
+  it.each(['1PASSWORD_TOKEN', 'my_key', 'A-B', 'A B'])('createSecret rejects the name %j', async (name) => {
+    const res = await createSecret(fakeEnv(), 'owner', { name, value: 'v', dashboardId: 'dash-1' });
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toMatch(/^E79732/);
   });
 
   it('resolves the owner', async () => {
@@ -124,8 +141,8 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
     const pushes = captureEnvPushes();
     await autoApplySecretsToSessions(fakeEnv(), 'owner', 'dash-1');
     const envPush = pushes.find((p) => p.url.includes('/sessions/sbx-1/env'));
-    expect(envPush?.body).toContain('owner_KEY');
-    expect(envPush?.body).not.toContain('collaborator');
+    expect(envPush?.body).toContain('OWNER_KEY');
+    expect(envPush?.body).not.toContain('COLLABORATOR');
   });
 
   // The sandbox reads an omitted list as "keep the current approvals", so a
@@ -140,11 +157,11 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
       expect((await applySecretsToSession(env as never, 's1', 'owner')).status).toBe(200);
     }],
   ] as const)('%s replaces approvals with the owner\'s (empty) list', async (_path, run) => {
-    const env = fakeEnv(['owner_KEY']);
+    const env = fakeEnv(['OWNER_KEY']);
     const pushes = captureEnvPushes();
     await run(env);
     const body = JSON.parse(pushes.find((p) => p.url.includes('/sessions/sbx-1/env'))!.body);
-    expect(Object.keys(body.secrets)).toEqual(['owner_KEY']);
+    expect(Object.keys(body.secrets)).toEqual(['OWNER_KEY']);
     expect(body.approved_domains).toEqual([]);
   });
 
@@ -153,7 +170,7 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
 
     it('keeps the old tracking when the sandbox rejects the cleanup', async () => {
       const writes: string[] = [];
-      const env = fakeEnv(['collaborator_KEY'], false, writes);
+      const env = fakeEnv(['COLLABORATOR_KEY'], false, writes);
       vi.stubGlobal('fetch', vi.fn(async () => new Response('cleanup failed', { status: 403 })));
       const res = await applySecretsToSession(env as never, 's1', 'owner');
       expect(res.status).toBe(500);
@@ -162,13 +179,13 @@ describe('a dashboard VM only receives its owner\'s secrets', () => {
 
     it('unsets collaborator names (and _BROKER), then updates tracking', async () => {
       const writes: string[] = [];
-      const env = fakeEnv(['collaborator_KEY'], false, writes);
+      const env = fakeEnv(['COLLABORATOR_KEY'], false, writes);
       const pushes = captureEnvPushes();
       const res = await applySecretsToSession(env as never, 's1', 'owner');
       expect(res.status).toBe(200);
       const body = JSON.parse(pushes.find((p) => p.url.includes('/sessions/sbx-1/env'))!.body);
-      expect(body.unset).toEqual(['collaborator_KEY', 'collaborator_KEY_BROKER']);
-      expect(Object.keys(body.secrets)).toEqual(['owner_KEY']);
+      expect(body.unset).toEqual(['COLLABORATOR_KEY', 'COLLABORATOR_KEY_BROKER']);
+      expect(Object.keys(body.secrets)).toEqual(['OWNER_KEY']);
       expect(tracked(writes)).toHaveLength(1);
     });
   });

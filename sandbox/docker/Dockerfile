@@ -19,6 +19,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/orcabot-server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/browser-ctl ./cmd/browser-ctl
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/mcp-bridge ./cmd/mcp-bridge
+# REVISION: guest-timesync-v1-vsock-step
+# Desktop VM only: rc.local starts it (root) so the host can step the guest clock
+# over vsock after host sleep. Fly never starts it.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/orcabot-guest-timesync ./cmd/guest-timesync
 
 # =============================================================================
 # Stage 2: Sandbox runtime image
@@ -249,6 +253,7 @@ ENV PATH="/home/sandbox/.local/bin:${PATH}"
 COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
 COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
 COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
+COPY --from=builder /build/orcabot-guest-timesync /usr/local/bin/orcabot-guest-timesync
 
 # uv (fast Python package manager) — baked in so benchmark harnesses
 # (e.g. slop-code-bench `uv sync`) can build a venv without a network install.

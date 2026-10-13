@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v27-reprovision-keeps-secret-tracking
-const sessionsRevision = "sessions-v27-reprovision-keeps-secret-tracking";
+// REVISION: sessions-v29-token-bound-to-sandbox
+const sessionsRevision = "sessions-v29-token-bound-to-sandbox";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -15,7 +15,7 @@ console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toI
 import type { Session, DashboardItem } from '../types';
 import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
-import { createDashboardToken } from '../auth/dashboard-token';
+import { createDashboardToken, sandboxGeneration } from '../auth/dashboard-token';
 import { sandboxInternalTokenEnv } from '../auth/sandbox-auth';
 import { sandboxAuthEnv } from '../sandbox/request-signing';
 import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
@@ -539,7 +539,8 @@ async function ensureDashbоardSandbоxCreate(
 ): Promise<{ sandboxSessionId: string; sandboxMachineId: string }> {
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const now = new Date().toISOString();
-  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
+  // Bound to the row this claim writes (created_at = now): see refreshSandboxDashboardToken.
+  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env), undefined, sandboxGeneration(now));
 
   if (flyProvisioningEnabled) {
     return provisionDedicatedMachine(env, dashboardId, sandbox, mcpToken, now, preferredRegion);
@@ -629,7 +630,8 @@ export async function preProvisionDashboardSandbox(
   const fly = new FlyMachinesClient(env.FLY_APP_NAME!, env.FLY_API_TOKEN!);
   const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
   const now = new Date().toISOString();
-  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env));
+  // Bound to the row this claim writes (created_at = now): see refreshSandboxDashboardToken.
+  const mcpToken = await createDashboardToken(dashboardId, tokenSigningSecret(env), undefined, sandboxGeneration(now));
 
   const result = await claimWarmMachine(
     env, fly, dashboardId, sandbox, mcpToken, now, preferredRegion,
@@ -2590,7 +2592,7 @@ export async function applySecretsToSession(
   userId: string
 ): Promise<Response> {
   // Import dynamically to avoid circular dependency
-  const { pushDashboardOwnerSecrets, dashboardSecretsOwner } = await import('../secrets/handler');
+  const { pushOwnerSecretsToCurrentSandbox, dashboardSecretsOwner } = await import('../secrets/handler');
 
   const session = await env.DB.prepare(`
     SELECT s.*, dm.role FROM sessions s
@@ -2613,24 +2615,18 @@ export async function applySecretsToSession(
       return Response.json({ error: 'E79620: Dashboard owner not found' }, { status: 404 });
     }
     const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
-    const pushed = await pushDashboardOwnerSecrets(
+    const pushed = await pushOwnerSecretsToCurrentSandbox(
       env,
       sandbox,
       session.dashboard_id as string,
       secretsOwnerId,
       session.sandbox_session_id as string,
-      (session.sandbox_machine_id as string) || '',
-      { bestEffortLoad: false }
+      (session.sandbox_machine_id as string) || ''
     );
+    if (!pushed) {
+      return Response.json({ error: 'E79623: The dashboard sandbox is being replaced; secrets apply when a terminal starts' }, { status: 409 });
+    }
     const currentNames = pushed.names;
-
-    // Track the new names only once the sandbox has acknowledged the unset:
-    // recording them first would forget names that are still set if it failed.
-    await env.DB.prepare(`
-      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, applied_secret_names)
-      VALUES (?, ?, ?)
-      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
-    `).bind(session.dashboard_id, session.sandbox_session_id, JSON.stringify(currentNames)).run();
 
     return Response.json({ applied: currentNames.length, approvedDomains: pushed.approvedDomains, unset: pushed.unset });
   } catch (error) {

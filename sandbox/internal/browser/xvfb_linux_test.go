@@ -7,6 +7,7 @@ package browser
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -239,9 +240,66 @@ func TestControllerStartIntegration(t *testing.T) {
 	if _, err := c.GetCurrentURL(); err != nil {
 		t.Fatalf("CDP: %v", err)
 	}
+
+	// websockify reaches x11vnc: a websocket handshake gets the RFB banner.
+	conn, err := DialBrowser(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", st.WSPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n")
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var got []byte
+	buf := make([]byte, 512)
+	for !strings.Contains(string(got), "RFB 003.") {
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("no RFB banner through websockify: %q (%v)", got, err)
+		}
+		got = append(got, buf[:n]...)
+	}
+	conn.Close()
+
+	// The profile is in the browser home, not the workspace.
+	if _, err := os.Lstat(filepath.Join(ws, ".browser")); !os.IsNotExist(err) {
+		t.Fatal("profile created in the workspace")
+	}
+	if _, err := os.Stat(filepath.Join(mustBrowserHome(t), "profile", "Default")); err != nil {
+		t.Fatalf("no profile in the browser home: %v", err)
+	}
+
+	// Screenshots go into the workspace without following links.
+	if p, err := c.Screenshot("shots/s.png"); err != nil {
+		t.Fatalf("Screenshot: %v", err)
+	} else if fi, err := os.Lstat(p); err != nil || fi.Size() == 0 {
+		t.Fatalf("screenshot %s: %v", p, err)
+	}
+
+	// x11vnc dies: Status must stop reporting the stack (and its ports).
+	_ = c.processes[1].Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+	if st := c.Status(); st.Running || st.WSPort != 0 || st.DebugPort != 0 {
+		t.Fatalf("status after x11vnc died = %+v", st)
+	}
+
+	st, err = c.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
 	xauth := c.xauth
 	c.Stop()
 	if _, err := os.Stat(xauth); !os.IsNotExist(err) {
 		t.Fatal("xauth cookie left behind after Stop")
 	}
+	if st := c.Status(); st.Running || st.WSPort != 0 || st.DebugPort != 0 {
+		t.Fatalf("status after Stop = %+v", st)
+	}
+}
+
+func mustBrowserHome(t *testing.T) string {
+	t.Helper()
+	id, err := lookupBrowserIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id.home
 }

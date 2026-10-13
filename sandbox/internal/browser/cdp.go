@@ -1,23 +1,28 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-cdp-v2-verified-dial
+// REVISION: browser-cdp-v3-nofollow-screenshot
 package browser
 
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const cdpRevision = "browser-cdp-v3-nofollow-screenshot"
+
+func init() {
+	log.Printf("[browser-cdp] REVISION: %s loaded at %s", cdpRevision, time.Now().Format(time.RFC3339))
+}
 
 // CDPClient provides Chrome DevTools Protocol access to control the browser
 type CDPClient struct {
@@ -542,39 +547,19 @@ func (c *Controller) Screenshot(outputPath string) (string, error) {
 		return "", err
 	}
 
-	// Determine output path - always resolve within workspace
+	// Root writes this into the agent-writable workspace, so the write never
+	// follows a symlink at the target or any parent (writeWorkspaceFile).
 	if outputPath == "" {
-		outputPath = filepath.Join(c.workspace, fmt.Sprintf("screenshot-%d.png", time.Now().Unix()))
-	} else if filepath.IsAbs(outputPath) {
-		// Reject absolute paths to prevent writes outside workspace
-		return "", fmt.Errorf("absolute paths are not allowed; use a relative path")
-	} else {
-		outputPath = filepath.Join(c.workspace, outputPath)
+		outputPath = fmt.Sprintf("screenshot-%d.png", time.Now().Unix())
 	}
-
-	// Verify resolved path is within workspace (prevent ../ traversal)
-	resolved, err := filepath.Abs(outputPath)
+	path, err := writeWorkspaceFile(c.workspace, outputPath, data, 0o644)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
-	}
-	workspaceAbs, err := filepath.Abs(c.workspace)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve workspace: %w", err)
-	}
-	if !strings.HasPrefix(resolved, workspaceAbs+string(filepath.Separator)) && resolved != workspaceAbs {
-		return "", fmt.Errorf("path escapes workspace directory")
-	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		if errors.Is(err, errSymlinkInPath) {
+			log.Printf("[browser] SECURITY: screenshot path %q goes through a symlink — refused", outputPath)
+		}
 		return "", fmt.Errorf("failed to write screenshot: %w", err)
 	}
-
-	return outputPath, nil
+	return path, nil
 }
 
 // Click clicks an element

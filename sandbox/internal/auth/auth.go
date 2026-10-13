@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// REVISION: auth-v3-signed-requests
-const authRevision = "auth-v3-signed-requests"
+// REVISION: auth-v4-60s-replay-window
+const authRevision = "auth-v4-60s-replay-window"
 
 // SignedRequestHeader carries the control plane's per-machine Ed25519 signature.
 const SignedRequestHeader = "X-Sandbox-Auth"
@@ -25,7 +25,12 @@ const SignedRequestHeader = "X-Sandbox-Auth"
 const signingContext = "orcabot-sandbox-auth-v1."
 
 // maxClockSkew tolerates small clock differences between control plane and VM.
-const maxClockSkew = 60 * time.Second
+// A signature is accepted until exp+maxClockSkew, so the replay window is the
+// control plane's TTL (30s) plus this: 60s in all.
+const maxClockSkew = 30 * time.Second
+
+// maxSignatureTTL caps the lifetime a signature may claim for itself.
+const maxSignatureTTL = 60 * time.Second
 
 func init() {
 	log.Printf("[auth] REVISION: %s loaded", authRevision)
@@ -109,6 +114,9 @@ func (m *Middleware) verifySigned(r *http.Request, value string) (bool, string) 
 		return false, "malformed payload"
 	}
 	now := m.now()
+	if c.ExpiresAt <= c.IssuedAt || time.Duration(c.ExpiresAt-c.IssuedAt)*time.Second > maxSignatureTTL {
+		return false, "bad lifetime"
+	}
 	if now.After(time.Unix(c.ExpiresAt, 0).Add(maxClockSkew)) {
 		return false, "expired"
 	}
