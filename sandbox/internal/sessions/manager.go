@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: manager-v3-forget-session-dashboard
+// REVISION: manager-v4-forget-session-token
 
 package sessions
 
@@ -17,9 +17,16 @@ import (
 	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/geminishim"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
+
+const managerRevision = "manager-v4-forget-session-token"
+
+func init() {
+	log.Printf("[sessions] REVISION: %s loaded at %s", managerRevision, time.Now().Format(time.RFC3339))
+}
 
 var (
 	ErrSessionNotFound = errors.New("session not found")
@@ -220,6 +227,7 @@ func (m *Manager) Delete(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 	sessionDashboards.Delete(id)
+	cpauth.ForgetSession(id)
 
 	// REVISION: manager-v2-evict-logged-routes
 	// Release this session's per-session state on the shared broker so it doesn't

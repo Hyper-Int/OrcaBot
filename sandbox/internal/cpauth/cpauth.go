@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v3-newest-sandbox-generation
+// REVISION: cpauth-v4-live-session-generation
 
 // Package cpauth authenticates sandbox → control plane /internal/* calls.
 //
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const moduleRevision = "cpauth-v3-newest-sandbox-generation"
+const moduleRevision = "cpauth-v4-live-session-generation"
 
 func init() {
 	log.Printf("[cpauth] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
@@ -49,9 +49,18 @@ type entry struct {
 	gen   int64 // sbx_gen: which sandbox the token was minted for (0 = none)
 }
 
+// dashboard holds a dashboard's tokens: the best one per sandbox generation,
+// and which live session brought which generation. Only generations a live
+// session still holds are used.
+type dashboard struct {
+	gens    map[int64]entry
+	holders map[string]int64 // session ID → generation of the token it brought
+}
+
 type store struct {
 	mu         sync.Mutex
-	tokens     map[string]entry
+	dashboards map[string]*dashboard
+	sessions   map[string]string        // session ID → dashboard ID
 	refreshing map[string]chan struct{} // closed when that dashboard's in-flight refresh ends
 	client     *http.Client
 	now        func() time.Time
@@ -60,7 +69,8 @@ type store struct {
 
 func newStore() *store {
 	return &store{
-		tokens:     make(map[string]entry),
+		dashboards: make(map[string]*dashboard),
+		sessions:   make(map[string]string),
 		refreshing: make(map[string]chan struct{}),
 		client:     &http.Client{Timeout: 10 * time.Second},
 		now:        time.Now,
@@ -72,10 +82,18 @@ var defaultStore = newStore()
 
 var fallbackLogged sync.Map
 
-// SetDashboardToken records a token for a dashboard, keeping the one for the
-// newest sandbox generation, then the later expiry (see newerToken).
-func SetDashboardToken(dashboardID, token string) {
-	defaultStore.set(dashboardID, token)
+// SetSessionToken records the token the control plane sent with a session.
+// The token stays usable while that session lives (see ForgetSession).
+func SetSessionToken(sessionID, dashboardID, token string) {
+	defaultStore.set(sessionID, dashboardID, token)
+}
+
+// ForgetSession drops a deleted session's claim on its token. On desktop the
+// control plane deletes the session of a provisioning request that lost the
+// race for the dashboard: that session's token is for a sandbox the control
+// plane never recorded and will not refresh.
+func ForgetSession(sessionID string) {
+	defaultStore.forget(sessionID)
 }
 
 // DashboardToken returns the current token for a dashboard ("" if none),
@@ -110,8 +128,8 @@ func legacyInternalToken() string {
 	return strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
 }
 
-func (s *store) set(dashboardID, token string) {
-	if dashboardID == "" || token == "" {
+func (s *store) set(sessionID, dashboardID, token string) {
+	if sessionID == "" || dashboardID == "" || token == "" {
 		return
 	}
 	exp, gen, err := tokenClaims(token)
@@ -121,58 +139,128 @@ func (s *store) set(dashboardID, token string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.tokens[dashboardID]; ok && !newerToken(gen, exp, cur) {
-		return
+	s.releaseLocked(sessionID) // a session brings one token
+	d := s.dashboards[dashboardID]
+	if d == nil {
+		d = &dashboard{gens: make(map[int64]entry), holders: make(map[string]int64)}
+		s.dashboards[dashboardID] = d
 	}
-	s.tokens[dashboardID] = entry{token: token, exp: exp, gen: gen}
+	s.sessions[sessionID] = dashboardID
+	d.holders[sessionID] = gen
+	d.offer(entry{token: token, exp: exp, gen: gen})
 }
 
-// newerToken reports whether a token (gen, exp) should replace cur. The
-// control plane only refreshes a token minted for the dashboard's current
-// sandbox, so a newer sandbox generation always wins, even when it expires no
-// later: a replacement minted in the same second as the old token's refresh
-// has the same exp, and keeping the old one would leave this VM unable to
-// refresh at all. A token for an older sandbox (a late refresh reply) never
-// replaces a newer one. Within a generation, the later expiry wins.
-func newerToken(gen int64, exp time.Time, cur entry) bool {
-	if gen != cur.gen {
-		return gen > cur.gen
+func (s *store) forget(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.releaseLocked(sessionID)
+}
+
+// releaseLocked removes a session's hold, and its generation's token once no
+// live session holds it.
+func (s *store) releaseLocked(sessionID string) {
+	dashboardID, ok := s.sessions[sessionID]
+	if !ok {
+		return
 	}
-	return exp.After(cur.exp)
+	delete(s.sessions, sessionID)
+	d := s.dashboards[dashboardID]
+	if d == nil {
+		return
+	}
+	gen := d.holders[sessionID]
+	delete(d.holders, sessionID)
+	for _, g := range d.holders {
+		if g == gen {
+			return
+		}
+	}
+	delete(d.gens, gen)
+	if len(d.holders) == 0 {
+		delete(s.dashboards, dashboardID)
+	}
+}
+
+// offer keeps e if it expires later than the token held for its generation.
+func (d *dashboard) offer(e entry) {
+	if cur, ok := d.gens[e.gen]; ok && !e.exp.After(cur.exp) {
+		return
+	}
+	d.gens[e.gen] = e
+}
+
+// current is the token to use: the newest sandbox generation a live session
+// holds. The control plane only refreshes a token minted for the dashboard's
+// current sandbox, and a newer live session can only come from a later claim.
+// A token for a sandbox that lost the provisioning race is never used: its
+// session is deleted (ForgetSession), and if that delete never arrives the
+// control plane's E79398 on refresh drops it (see refresh).
+func (d *dashboard) current() (entry, bool) {
+	var best entry
+	found := false
+	for gen, e := range d.gens {
+		if !found || gen > best.gen {
+			best, found = e, true
+		}
+	}
+	return best, found
+}
+
+func (s *store) currentLocked(dashboardID string) (entry, bool) {
+	d := s.dashboards[dashboardID]
+	if d == nil {
+		return entry{}, false
+	}
+	return d.current()
 }
 
 func (s *store) get(dashboardID string) string {
 	if dashboardID == "" {
 		return ""
 	}
-	s.mu.Lock()
-	cur, ok := s.tokens[dashboardID]
-	s.mu.Unlock()
-	if !ok {
-		return ""
-	}
-	now := s.now()
-	switch {
-	case !now.Before(cur.exp):
-		// Expired (e.g. the VM was suspended past the expiry) — the old token is
-		// useless, so wait for the refresh, whether this caller started it or
-		// joined one already in flight. Bounded by the refresh request timeout.
-		<-s.startRefresh(dashboardID)
-	case cur.exp.Sub(now) < refreshBefore:
-		// Still valid: refresh in the background and carry on with this token.
-		s.startRefresh(dashboardID)
-		return cur.token
-	default:
-		return cur.token
+	// Each pass refreshes the current token if it has expired; a refresh
+	// rejected as replaced drops that generation, so the next pass falls back
+	// to the next one held. Bounded so a stuck refresh can't spin.
+	for attempt := 0; attempt < 4; attempt++ {
+		s.mu.Lock()
+		cur, ok := s.currentLocked(dashboardID)
+		s.mu.Unlock()
+		if !ok {
+			return ""
+		}
+		now := s.now()
+		switch {
+		case !now.Before(cur.exp):
+			// Expired (e.g. the VM was suspended past the expiry) — the old token is
+			// useless, so wait for the refresh, whether this caller started it or
+			// joined one already in flight. Bounded by the refresh request timeout.
+			<-s.startRefresh(dashboardID)
+			s.mu.Lock()
+			next, ok := s.currentLocked(dashboardID)
+			s.mu.Unlock()
+			if !ok {
+				return ""
+			}
+			if next.gen == cur.gen {
+				return next.token
+			}
+		case cur.exp.Sub(now) < refreshBefore:
+			// Still valid: refresh in the background and carry on with this token.
+			s.startRefresh(dashboardID)
+			return cur.token
+		default:
+			return cur.token
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.tokens[dashboardID].token
+	cur, _ := s.currentLocked(dashboardID)
+	return cur.token
 }
 
-// startRefresh begins swapping the dashboard's token for a fresh one, or joins
-// the refresh already in flight, and returns a channel closed when it finishes.
-// Concurrent calls for the same dashboard collapse into one request.
+// startRefresh begins swapping the dashboard's current token for a fresh one,
+// or joins the refresh already in flight, and returns a channel closed when it
+// finishes. Concurrent calls for the same dashboard collapse into one request.
 func (s *store) startRefresh(dashboardID string) <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,7 +268,7 @@ func (s *store) startRefresh(dashboardID string) <-chan struct{} {
 		return done
 	}
 	done := make(chan struct{})
-	cur, ok := s.tokens[dashboardID]
+	cur, ok := s.currentLocked(dashboardID)
 	if !ok {
 		close(done)
 		return done
@@ -193,13 +281,13 @@ func (s *store) startRefresh(dashboardID string) <-chan struct{} {
 			s.mu.Unlock()
 			close(done)
 		}()
-		s.refresh(dashboardID, cur.token)
+		s.refresh(dashboardID, cur)
 	}()
 	return done
 }
 
 // refresh exchanges current for a fresh token. Only startRefresh calls it.
-func (s *store) refresh(dashboardID, current string) {
+func (s *store) refresh(dashboardID string, current entry) {
 
 	base := s.baseURL()
 	if base == "" {
@@ -211,7 +299,7 @@ func (s *store) refresh(dashboardID, current string) {
 	if err != nil {
 		return
 	}
-	req.Header.Set("X-Dashboard-Token", current)
+	req.Header.Set("X-Dashboard-Token", current.token)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		log.Printf("[cpauth] token refresh for dashboard %s failed: %v", dashboardID, err)
@@ -221,6 +309,12 @@ func (s *store) refresh(dashboardID, current string) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		log.Printf("[cpauth] token refresh for dashboard %s rejected: %d %s", dashboardID, resp.StatusCode, strings.TrimSpace(string(body)))
+		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(string(body), "E79398") {
+			// The token is for a sandbox the dashboard no longer runs on (e.g. a
+			// lost provisioning race whose session delete never arrived): it will
+			// never refresh, so stop using it and fall back to the next one held.
+			s.dropGeneration(dashboardID, current.gen)
+		}
 		return
 	}
 	var out struct {
@@ -230,8 +324,50 @@ func (s *store) refresh(dashboardID, current string) {
 		log.Printf("[cpauth] token refresh for dashboard %s returned no token", dashboardID)
 		return
 	}
-	s.set(dashboardID, out.Token)
+	s.replaceRefreshed(dashboardID, current.gen, out.Token)
 	log.Printf("[cpauth] refreshed dashboard token for %s", dashboardID)
+}
+
+// replaceRefreshed stores a refresh reply for the token of generation gen. The
+// reply normally has the same generation; a token minted before generations
+// existed comes back bound to the current sandbox, so every session holding
+// the old generation moves to the reply's.
+func (s *store) replaceRefreshed(dashboardID string, gen int64, token string) {
+	exp, newGen, err := tokenClaims(token)
+	if err != nil {
+		log.Printf("[cpauth] ignoring unparseable refreshed token for dashboard %s: %v", dashboardID, err)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.dashboards[dashboardID]
+	if d == nil {
+		return
+	}
+	if _, ok := d.gens[gen]; !ok {
+		return // every session holding it was deleted meanwhile
+	}
+	if newGen != gen {
+		delete(d.gens, gen)
+		for id, g := range d.holders {
+			if g == gen {
+				d.holders[id] = newGen
+			}
+		}
+	}
+	d.offer(entry{token: token, exp: exp, gen: newGen})
+}
+
+// dropGeneration stops using a generation's token. Its sessions stay live, but
+// without a token of their own.
+func (s *store) dropGeneration(dashboardID string, gen int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.dashboards[dashboardID]
+	if d == nil {
+		return
+	}
+	delete(d.gens, gen)
 }
 
 // tokenClaims reads the exp and sbx_gen claims without verifying the

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v44-browser-port-block
+// REVISION: main-v45-session-owned-token
 
 package main
 
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v44-browser-port-block"
+const mainRevision = "main-v45-session-owned-token"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -745,16 +745,16 @@ func (s *Server) handleCreateSessiоn(w http.ResponseWriter, r *http.Request) {
 			req.MCPToken = ""
 		}
 	}
-	// Dashboard-scoped credential for this VM's /internal/* calls (must precede the allowlist fetch).
-	cpauth.SetDashboardToken(req.DashboardID, req.MCPToken)
-	if err := s.ensureEgressAllowlistLoaded(req.DashboardID); err != nil {
-		log.Printf("[egress-proxy] Allowlist hydration skipped for dashboard %q: %v", req.DashboardID, err)
-	}
-
+	// Creating the session registers its dashboard-scoped token for this VM's
+	// /internal/* calls, so it must precede the allowlist fetch.
+	// REVISION: main-v45-session-owned-token
 	session, err := s.sessions.Create(req.DashboardID, req.MCPToken)
 	if err != nil {
 		http.Error(w, "E79706: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if err := s.ensureEgressAllowlistLoaded(req.DashboardID); err != nil {
+		log.Printf("[egress-proxy] Allowlist hydration skipped for dashboard %q: %v", req.DashboardID, err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

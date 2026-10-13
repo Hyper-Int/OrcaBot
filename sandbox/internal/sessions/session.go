@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v24-dashboard-token-auth
+// REVISION: session-v25-session-owned-token
 
 // Package sessions manages session lifecycle.
 //
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v24-dashboard-token-auth"
+const sessionRevision = "session-v25-session-owned-token"
 
 // Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
 // This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
@@ -184,7 +184,7 @@ type Session struct {
 // through that port so redirects/subresources are subject to egress approval.
 // REVISION: browser-v7-proxy-server
 func NewSessiоn(id string, dashboardID string, mcpToken string, workspaceRoot string, sharedBroker *broker.SecretsBroker, brokerPort int, egressProxyPort int) *Session {
-	cpauth.SetDashboardToken(dashboardID, mcpToken)
+	cpauth.SetSessionToken(id, dashboardID, mcpToken)
 	sessionDashboards.Store(id, dashboardID)
 
 	s := &Session{

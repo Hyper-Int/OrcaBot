@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v3-newest-sandbox-generation
+// REVISION: cpauth-v4-live-session-generation
 
 package cpauth
 
@@ -38,30 +38,112 @@ func genToken(dashboardID string, exp time.Time, gen int64) string {
 // sandbox. A replacement minted in the same second as the old token has the
 // same exp: keeping the old one meant every refresh got E79398 and internal
 // calls failed once it expired.
-func TestSetPrefersNewerSandboxGeneration(t *testing.T) {
+func TestNewestLiveSandboxGenerationWins(t *testing.T) {
 	s := newStore()
 	exp := time.Now().Add(7 * 24 * time.Hour)
 	old, replacement := genToken("d1", exp, 1000), genToken("d1", exp, 2000)
-	s.set("d1", old)
-	s.set("d1", replacement)
+	s.set("sA", "d1", old)
+	s.set("sB", "d1", replacement)
 	if got := s.get("d1"); got != replacement {
 		t.Fatal("same-second replacement for a newer sandbox was discarded")
 	}
-	// A late refresh reply for the replaced sandbox never wins, even if it
-	// expires later.
-	s.set("d1", genToken("d1", exp.Add(time.Hour), 1000))
-	if got := s.get("d1"); got != replacement {
-		t.Fatal("a later-expiring token for the replaced sandbox displaced the current one")
-	}
 	// A token for a newer sandbox wins even if it expires sooner.
-	s.set("d1", genToken("d1", exp.Add(-time.Hour), 3000))
-	if got := s.get("d1"); got != genToken("d1", exp.Add(-time.Hour), 3000) {
+	newest := genToken("d1", exp.Add(-time.Hour), 3000)
+	s.set("sC", "d1", newest)
+	if got := s.get("d1"); got != newest {
 		t.Fatal("token for the newest sandbox rejected for expiring sooner")
 	}
 	// A token from before generations existed loses to a generation-bound one.
-	s.set("d1", fakeToken("d1", exp.Add(24*time.Hour)))
-	if got := s.get("d1"); got != genToken("d1", exp.Add(-time.Hour), 3000) {
+	s.set("sD", "d1", fakeToken("d1", exp.Add(24*time.Hour)))
+	if got := s.get("d1"); got != newest {
 		t.Fatal("pre-generation token displaced a generation-bound one")
+	}
+}
+
+// Desktop: two concurrent provisioning requests each create a session. A wins
+// the dashboard_sandboxes claim; B, minted later (newer generation), loses and
+// the control plane deletes its session. B's token must not be used: the
+// control plane refuses to refresh it (E79398), so internal calls would fail
+// once it expired.
+func TestLosingProvisioningSessionTokenIsNotUsed(t *testing.T) {
+	s := newStore()
+	exp := time.Now().Add(7 * 24 * time.Hour)
+	winner, loser := genToken("d1", exp, 1000), genToken("d1", exp, 2000)
+	s.set("sA", "d1", winner)
+	s.set("sB", "d1", loser)
+	s.forget("sB")
+	if got := s.get("d1"); got != winner {
+		t.Fatal("kept the token of the session that lost the provisioning claim")
+	}
+	// Forgetting the last session drops the dashboard's token entirely.
+	s.forget("sA")
+	if got := s.get("d1"); got != "" {
+		t.Fatal("token outlived every session that brought it")
+	}
+}
+
+// Two live sessions of the same sandbox share a generation: deleting one
+// keeps the token for the other.
+func TestForgetKeepsGenerationStillHeld(t *testing.T) {
+	s := newStore()
+	tok := genToken("d1", time.Now().Add(7*24*time.Hour), 1000)
+	s.set("sA", "d1", tok)
+	s.set("sB", "d1", tok)
+	s.forget("sA")
+	if got := s.get("d1"); got != tok {
+		t.Fatal("dropped a token another live session still holds")
+	}
+}
+
+// If the losing session's delete never arrives, its refresh is refused as
+// replaced: stop using it and fall back to the winner's token.
+func TestReplacedRefreshFallsBackToOlderGeneration(t *testing.T) {
+	winner := genToken("d1", time.Now().Add(7*24*time.Hour), 1000)
+	loser := genToken("d1", time.Now().Add(-time.Minute), 2000) // expired: get must refresh it
+	s, calls := newTestStore(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Dashboard-Token") != loser {
+			t.Errorf("unexpected refresh of %q", r.Header.Get("X-Dashboard-Token"))
+		}
+		http.Error(w, `{"error":"E79398: Token belongs to a sandbox that was replaced"}`, http.StatusUnauthorized)
+	})
+	s.set("sA", "d1", winner)
+	s.set("sB", "d1", loser)
+	if got := s.get("d1"); got != winner {
+		t.Fatal("did not fall back to the winning sandbox's token")
+	}
+	if got := s.get("d1"); got != winner {
+		t.Fatal("went back to the replaced token")
+	}
+	if n := atomic.LoadInt32(calls); n != 1 {
+		t.Fatalf("refresh calls = %d, want 1", n)
+	}
+}
+
+// A refused refresh for any other reason keeps the still-valid token.
+func TestOtherRefreshRejectionKeepsGeneration(t *testing.T) {
+	s, _ := newTestStore(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"E79399: Dashboard has no live sandbox"}`, http.StatusUnauthorized)
+	})
+	tok := genToken("d1", time.Now().Add(time.Hour), 1000)
+	s.set("sA", "d1", tok)
+	<-s.startRefresh("d1")
+	if got := s.get("d1"); got != tok {
+		t.Fatal("dropped a valid token on a non-replacement rejection")
+	}
+}
+
+// A token minted before generations existed comes back from refresh bound to
+// the current sandbox: it stays the session's token.
+func TestRefreshBindsLegacyTokenToGeneration(t *testing.T) {
+	fresh := genToken("d1", time.Now().Add(7*24*time.Hour), 5000)
+	s, _ := newTestStore(t, refreshHandler(t, fresh))
+	s.set("sA", "d1", fakeToken("d1", time.Now().Add(-time.Hour)))
+	if got := s.get("d1"); got != fresh {
+		t.Fatal("refreshed legacy token not used")
+	}
+	s.forget("sA")
+	if got := s.get("d1"); got != "" {
+		t.Fatal("refreshed token not released with its session")
 	}
 }
 
@@ -94,12 +176,12 @@ func TestSetKeepsLaterExpiry(t *testing.T) {
 	s := newStore()
 	later := fakeToken("d1", time.Now().Add(7*24*time.Hour))
 	earlier := fakeToken("d1", time.Now().Add(5*24*time.Hour))
-	s.set("d1", later)
-	s.set("d1", earlier)
+	s.set("s1", "d1", later)
+	s.set("s2", "d1", earlier)
 	if got := s.get("d1"); got != later {
 		t.Fatalf("older token replaced newer one")
 	}
-	s.set("d1", "not-a-jwt")
+	s.set("s3", "d1", "not-a-jwt")
 	if got := s.get("d1"); got != later {
 		t.Fatalf("garbage token replaced valid one")
 	}
@@ -108,7 +190,7 @@ func TestSetKeepsLaterExpiry(t *testing.T) {
 func TestFreshTokenNoRefresh(t *testing.T) {
 	s, calls := newTestStore(t, refreshHandler(t, "unused"))
 	tok := fakeToken("d1", time.Now().Add(7*24*time.Hour))
-	s.set("d1", tok)
+	s.set("s1", "d1", tok)
 	if got := s.get("d1"); got != tok {
 		t.Fatalf("get = %q", got)
 	}
@@ -122,7 +204,7 @@ func TestNearExpiryRefreshesInBackground(t *testing.T) {
 	fresh := fakeToken("d1", time.Now().Add(7*24*time.Hour))
 	s, calls := newTestStore(t, refreshHandler(t, fresh))
 	old := fakeToken("d1", time.Now().Add(time.Hour))
-	s.set("d1", old)
+	s.set("s1", "d1", old)
 	if got := s.get("d1"); got != old {
 		t.Fatalf("near-expiry get should still return the current token immediately")
 	}
@@ -138,7 +220,7 @@ func TestNearExpiryRefreshesInBackground(t *testing.T) {
 func TestExpiredRefreshesSynchronously(t *testing.T) {
 	fresh := fakeToken("d1", time.Now().Add(7*24*time.Hour))
 	s, calls := newTestStore(t, refreshHandler(t, fresh))
-	s.set("d1", fakeToken("d1", time.Now().Add(-time.Hour)))
+	s.set("s1", "d1", fakeToken("d1", time.Now().Add(-time.Hour)))
 	if got := s.get("d1"); got != fresh {
 		t.Fatalf("expired token should be refreshed before returning")
 	}
@@ -152,7 +234,7 @@ func TestRefreshFailureKeepsCurrentToken(t *testing.T) {
 		http.Error(w, `{"error":"E79396: Dashboard not found"}`, http.StatusNotFound)
 	})
 	old := fakeToken("d1", time.Now().Add(time.Hour))
-	s.set("d1", old)
+	s.set("s1", "d1", old)
 	<-s.startRefresh("d1")
 	if got := s.get("d1"); got != old {
 		t.Fatalf("failed refresh dropped the still-valid token")
@@ -162,7 +244,7 @@ func TestRefreshFailureKeepsCurrentToken(t *testing.T) {
 func TestApplyPrefersDashboardToken(t *testing.T) {
 	t.Setenv("INTERNAL_API_TOKEN", "shared")
 	tok := fakeToken("dash-apply", time.Now().Add(7*24*time.Hour))
-	SetDashboardToken("dash-apply", tok)
+	SetSessionToken("sess-apply", "dash-apply", tok)
 
 	req := httptest.NewRequest(http.MethodGet, "http://cp/internal/x", nil)
 	if err := Apply(req, "dash-apply"); err != nil {
@@ -208,7 +290,7 @@ func TestConcurrentExpiredCallersWaitForRefresh(t *testing.T) {
 		<-release
 		fmt.Fprintf(w, `{"token":%q}`, fresh)
 	})
-	s.set("d1", fakeToken("d1", time.Now().Add(-time.Hour)))
+	s.set("s1", "d1", fakeToken("d1", time.Now().Add(-time.Hour)))
 
 	const n = 8
 	results := make(chan string, n)
@@ -253,7 +335,7 @@ func TestNearExpiryCallersDoNotWait(t *testing.T) {
 	})
 	defer close(release)
 	old := fakeToken("d1", time.Now().Add(time.Hour))
-	s.set("d1", old)
+	s.set("s1", "d1", old)
 	done := make(chan string, 2)
 	go func() { done <- s.get("d1") }()
 	go func() { done <- s.get("d1") }()
