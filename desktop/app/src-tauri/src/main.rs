@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v16-egress-flag-cmdline
-const MODULE_REVISION: &str = "main-v16-egress-flag-cmdline";
+// REVISION: main-v17-csprng-fail-closed
+const MODULE_REVISION: &str = "main-v17-csprng-fail-closed";
 
 mod commands;
 mod vm;
@@ -247,6 +247,23 @@ fn tee_child_stream<R: std::io::Read + Send + 'static>(
   });
 }
 
+/// 32 bytes from the OS CSPRNG (getrandom: getentropy/getrandom/BCryptGenRandom),
+/// on every platform. Panics if randomness is unavailable: every per-boot secret
+/// (surface token, PTY HMAC key, INTERNAL_API_TOKEN, sandbox signing seed) must be
+/// unpredictable, and an all-zero fallback would make tokens forgeable — failing
+/// startup is the only safe outcome.
+fn random_bytes_32() -> [u8; 32] {
+  let mut buf = [0u8; 32];
+  if let Err(e) = getrandom::getrandom(&mut buf) {
+    panic!("[main] FATAL: OS random number generator unavailable ({e}); refusing to start with predictable secrets");
+  }
+  buf
+}
+
+fn random_hex_32() -> String {
+  random_bytes_32().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// Per-boot token that gates dev-auth to the trusted host frontend. Generated
 /// once at startup, passed to the control-plane worker (`SURFACE_TOKEN`) and
 /// handed to the GUI webview via the `get_surface_token` command. The sandbox VM
@@ -256,17 +273,7 @@ fn tee_child_stream<R: std::io::Read + Send + 'static>(
 static SURFACE_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub fn surface_token() -> &'static str {
-  SURFACE_TOKEN.get_or_init(|| {
-    let mut buf = [0u8; 32];
-    #[cfg(unix)]
-    {
-      use std::io::Read;
-      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-      }
-    }
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
-  })
+  SURFACE_TOKEN.get_or_init(random_hex_32)
 }
 
 /// Per-boot HMAC key for PTY + dashboard tokens (`PTY_TOKEN_SECRET`). Only the
@@ -276,17 +283,7 @@ pub fn surface_token() -> &'static str {
 static PTY_TOKEN_SECRET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn pty_token_secret() -> &'static str {
-  PTY_TOKEN_SECRET.get_or_init(|| {
-    let mut buf = [0u8; 32];
-    #[cfg(unix)]
-    {
-      use std::io::Read;
-      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-      }
-    }
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
-  })
+  PTY_TOKEN_SECRET.get_or_init(random_hex_32)
 }
 
 /// Per-boot INTERNAL_API_TOKEN for host-side callers of the control plane's
@@ -301,16 +298,8 @@ fn internal_api_token() -> &'static str {
         return value;
       }
     }
-    // Same generation as pty_token_secret, which isn't reused so the two stay independent.
-    let mut buf = [0u8; 32];
-    #[cfg(unix)]
-    {
-      use std::io::Read;
-      if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        let _ = f.read_exact(&mut buf);
-      }
-    }
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
+    // Independent draw from pty_token_secret so the two keys stay unrelated.
+    random_hex_32()
   })
 }
 
@@ -327,19 +316,14 @@ pub struct SandboxAuthKeys {
 
 static SANDBOX_AUTH_KEYS: std::sync::OnceLock<Option<SandboxAuthKeys>> = std::sync::OnceLock::new();
 
-/// None if no randomness was available. The sandbox then has neither a public
-/// key nor a static token and rejects every request (fail closed), rather than
-/// running with a predictable key.
+/// Always Some today: random_bytes_32 panics (fails startup) when randomness is
+/// unavailable rather than produce a predictable key. The Option is kept so the
+/// sandbox side stays fail-closed if a None path is ever reintroduced.
 pub fn sandbox_auth_keys() -> Option<&'static SandboxAuthKeys> {
   SANDBOX_AUTH_KEYS
     .get_or_init(|| {
       use base64::Engine;
-      let mut seed = [0u8; 32];
-      {
-        use std::io::Read;
-        let mut f = std::fs::File::open("/dev/urandom").ok()?;
-        f.read_exact(&mut seed).ok()?;
-      }
+      let seed = random_bytes_32();
       let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
       // PKCS#8 v1 wrapping of an Ed25519 seed (RFC 8410): fixed 16-byte prefix + seed.
       let mut pkcs8 = vec![

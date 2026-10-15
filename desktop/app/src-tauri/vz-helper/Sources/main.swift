@@ -1,11 +1,11 @@
-// REVISION: vz-helper-v3-guest-timesync
+// REVISION: vz-helper-v4-bridge-nonblocking-write
 import AppKit
 import Foundation
 import Virtualization
 import ArgumentParser
 import Network
 
-let vzHelperRevision = "vz-helper-v3-guest-timesync"
+let vzHelperRevision = "vz-helper-v4-bridge-nonblocking-write"
 
 // MARK: - Global references to prevent deallocation
 var globalVM: VZVirtualMachine?
@@ -820,7 +820,17 @@ class ConnectionBridge {
     private var vsockOpen = true
     private let queue = DispatchQueue(label: "connection-bridge")
     private var vsockReadSource: DispatchSourceRead?
+    // Armed only while the guest's vsock buffer is full; cancelled once drained.
     private var vsockWriteSource: DispatchSourceWrite?
+    // TCP->vsock bytes not yet accepted by the guest. Writes never block the
+    // queue (that also stopped vsock->TCP draining, deadlocking against the
+    // guest's one-direction-at-a-time socat); instead TCP reads pause while this
+    // is above the high-water mark and resume once it's flushed (backpressure).
+    private var pendingOut = Data()
+    private var pendingOffset = 0
+    private var tcpReadPaused = false
+    private var tcpEOF = false
+    private static let pendingHighWater = 1 << 20
     private static let verboseLogs = ProcessInfo.processInfo.environment["VZ_BRIDGE_VERBOSE"] == "1"
 
     init(id: UUID, tcpConnection: NWConnection, vsockConnection: VZVirtioSocketConnection, onClose: @escaping (UUID) -> Void) {
@@ -886,6 +896,10 @@ class ConnectionBridge {
                 self.vsockOpen = false
                 self.vsockReadSource?.cancel()
                 self.vsockReadSource = nil
+                self.vsockWriteSource?.cancel()
+                self.vsockWriteSource = nil
+                self.pendingOut = Data()
+                self.pendingOffset = 0
                 Darwin.close(self.vsockConnection.fileDescriptor)
             }
             self.onClose(self.id)
@@ -910,26 +924,106 @@ class ConnectionBridge {
                 }
                 // The vsock fd is non-blocking (see startReadingFromVsock), so one
                 // write() can take only part of the data, or none (EAGAIN) once the
-                // guest's buffer is full (~8KB). Dropping the rest truncated every
-                // larger transfer, e.g. file uploads and big control-plane responses.
-                if !ConnectionBridge.writeAll(self.vsockConnection.fileDescriptor, data) {
-                    print("[BRIDGE] \(connId): Vsock write error: errno=\(errno)")
-                    self.close()
-                    return
-                }
+                // guest's buffer is full (~8KB). Every byte is queued and flushed
+                // in order (dropping the rest truncated larger transfers, e.g. file
+                // uploads and big control-plane responses).
+                guard self.vsockOpen else { return }
+                self.pendingOut.append(data)
+                if !self.flushPendingToVsock() { return }
             }
 
             if isComplete {
-                print("[BRIDGE] \(connId): TCP complete, closing")
-                self.close()
+                // Close only after everything the client sent reached the guest.
+                self.tcpEOF = true
+                if self.pendingOut.count - self.pendingOffset == 0 {
+                    print("[BRIDGE] \(connId): TCP complete, closing")
+                    self.close()
+                } else {
+                    print("[BRIDGE] \(connId): TCP complete, closing after \(self.pendingOut.count - self.pendingOffset) pending bytes flush")
+                }
             } else if self.tcpOpen {
-                self.startReadingFromTCP()
+                if self.pendingOut.count - self.pendingOffset > ConnectionBridge.pendingHighWater {
+                    self.tcpReadPaused = true
+                } else {
+                    self.startReadingFromTCP()
+                }
             }
         }
     }
 
+    /// Write as much of `pendingOut` to the vsock as it accepts without
+    /// blocking. On EAGAIN, arms a write source that calls back here once the
+    /// guest drains its buffer. When fully flushed: resumes paused TCP reads, or
+    /// closes if TCP already hit EOF. Returns false if the bridge was closed on
+    /// error. Runs only on `queue`.
+    @discardableResult
+    private func flushPendingToVsock() -> Bool {
+        guard vsockOpen else { return false }
+        let fd = vsockConnection.fileDescriptor
+        let connId = id.uuidString.prefix(8)
+        var writeErrno: Int32 = 0
+        let written: Int = pendingOut.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            var off = pendingOffset
+            while off < raw.count {
+                let n = Darwin.write(fd, base.advanced(by: off), raw.count - off)
+                if n > 0 {
+                    off += n
+                    continue
+                }
+                let e = errno
+                if n < 0 && e == EINTR { continue }
+                if n < 0 && (e == EAGAIN || e == EWOULDBLOCK) { break }
+                writeErrno = n < 0 ? e : EPIPE
+                break
+            }
+            return off - pendingOffset
+        }
+        pendingOffset += written
+        if writeErrno != 0 {
+            print("[BRIDGE] \(connId): Vsock write error: errno=\(writeErrno) (\(String(cString: strerror(writeErrno))))")
+            close()
+            return false
+        }
+
+        if pendingOffset >= pendingOut.count {
+            // Fully flushed.
+            pendingOut.removeAll(keepingCapacity: pendingOut.count <= ConnectionBridge.pendingHighWater)
+            pendingOffset = 0
+            vsockWriteSource?.cancel()
+            vsockWriteSource = nil
+            if tcpEOF {
+                print("[BRIDGE] \(connId): TCP complete and pending flushed, closing")
+                close()
+                return false
+            }
+            if tcpReadPaused && tcpOpen {
+                tcpReadPaused = false
+                startReadingFromTCP()
+            }
+            return true
+        }
+
+        // Compact once the consumed prefix dominates, so the buffer stays bounded.
+        if pendingOffset > 65536 && pendingOffset * 2 > pendingOut.count {
+            pendingOut.removeSubrange(0..<pendingOffset)
+            pendingOffset = 0
+        }
+        if vsockWriteSource == nil {
+            let ws = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
+            ws.setEventHandler { [weak self] in
+                self?.flushPendingToVsock()
+            }
+            vsockWriteSource = ws
+            ws.resume()
+        }
+        return true
+    }
+
     /// Write all of `data` to a non-blocking fd, waiting (up to 30s at a time)
-    /// for buffer space on EAGAIN. Blocks only this connection's queue.
+    /// for buffer space on EAGAIN. Blocks the calling thread, so only for small
+    /// one-shot writes (guest time sync); the bridge uses flushPendingToVsock.
+    /// On failure errno describes the cause (ETIMEDOUT on a poll timeout).
     static func writeAll(_ fd: Int32, _ data: Data) -> Bool {
         return data.withUnsafeBytes { raw -> Bool in
             guard var ptr = raw.baseAddress else { return true }
@@ -943,7 +1037,12 @@ class ConnectionBridge {
                     continue
                 } else if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
                     var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-                    if poll(&pfd, 1, 30_000) <= 0 { return false }
+                    let r = poll(&pfd, 1, 30_000)
+                    if r == 0 { errno = ETIMEDOUT; return false }
+                    if r < 0 {
+                        if errno == EINTR { continue }
+                        return false
+                    }
                 } else {
                     return false
                 }
@@ -970,6 +1069,7 @@ class ConnectionBridge {
 
             var buffer = [UInt8](repeating: 0, count: 65536)
             let bytesRead = Darwin.read(fd, &buffer, buffer.count)
+            let readErrno = errno
 
             if bytesRead > 0 {
                 if ConnectionBridge.verboseLogs {
@@ -986,9 +1086,9 @@ class ConnectionBridge {
                 // EOF
                 print("[BRIDGE] \(connId): Vsock EOF, closing")
                 self.close()
-            } else if errno != EAGAIN && errno != EWOULDBLOCK {
+            } else if readErrno != EAGAIN && readErrno != EWOULDBLOCK && readErrno != EINTR {
                 // Real error
-                print("[BRIDGE] \(connId): Vsock read error: errno=\(errno)")
+                print("[BRIDGE] \(connId): Vsock read error: errno=\(readErrno)")
                 self.close()
             }
         }
