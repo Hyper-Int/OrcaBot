@@ -276,6 +276,15 @@ RUN echo "chromium-refresh ${CHROMIUM_CACHEBUST}" \
     && rm -rf /var/lib/apt/lists/* \
     && (chromium.real --version 2>/dev/null || chromium --version)
 
+# REVISION: chromium-policies-v1-no-component-downloads
+# Managed Chromium policies (root-owned, so agents can't change them). Chromium 155
+# still fetches the on-device AI "Model Manifest" component from edgedl.me.gvt1.com
+# at startup despite --disable-component-update, which surfaced as an unexplained
+# egress approval prompt; only ComponentUpdatesEnabled=false stops it (verified with
+# a net-log probe). GenAILocalFoundationalModelSettings=1 also keeps a page calling
+# the on-device AI APIs from triggering the multi-GB model download.
+COPY docker/chromium-policies.json /etc/chromium/policies/managed/orcabot.json
+
 # Working directory
 WORKDIR /workspace
 
