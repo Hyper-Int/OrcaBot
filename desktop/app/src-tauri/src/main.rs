@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// REVISION: main-v15-no-baked-vm-tokens
-const MODULE_REVISION: &str = "main-v15-no-baked-vm-tokens";
+// REVISION: main-v16-egress-flag-cmdline
+const MODULE_REVISION: &str = "main-v16-egress-flag-cmdline";
 
 mod commands;
 mod vm;
@@ -160,6 +160,14 @@ fn passthrough_env(workerd_env: &mut Vec<(&'static str, String)>, key: &'static 
       workerd_env.push((key, value));
     }
   }
+}
+
+/// Whether the user asked for the VM's egress proxy (EGRESS_PROXY_ENABLED=true),
+/// matching the sandbox's own check.
+fn egress_proxy_requested() -> bool {
+  std::env::var("EGRESS_PROXY_ENABLED")
+    .map(|v| v.trim().eq_ignore_ascii_case("true"))
+    .unwrap_or(false)
 }
 
 /// First free TCP port at/after `preferred` on loopback, skipping `used`. Falls
@@ -991,14 +999,6 @@ impl DesktopServices {
       config = config.with_env("SANDBOX_AUTH_PUBLIC_KEY", keys.public_key_b64url.clone());
     }
 
-    // Opt-in: enable the network egress proxy inside the VM. Off by default
-    // because it requires iptables setup at boot; users who want it set the
-    // env var before launching.
-    if let Ok(value) = std::env::var("EGRESS_PROXY_ENABLED") {
-      if !value.is_empty() {
-        config = config.with_env("EGRESS_PROXY_ENABLED", value);
-      }
-    }
 
     // Add kernel/initrd/vz-helper for macOS direct boot
     if let Some(kernel) = staged_paths.kernel {
@@ -1025,10 +1025,21 @@ impl DesktopServices {
     // The kernel command line is the one host → guest channel on every backend.
     // Agents can read /proc/cmdline, which is fine for a public key and is why
     // no secret travels this way.
-    let cmdline = match sandbox_auth_keys() {
+    let mut cmdline = match sandbox_auth_keys() {
       Some(keys) => format!("{} orcabot.sandbox_auth_public_key={}", cmdline, keys.public_key_b64url),
       None => cmdline.to_string(),
     };
+    // Opt-in: enable the network egress proxy inside the VM (off by default; it
+    // prompts for unknown domains). With it on, terminals run as the unprivileged
+    // pool UIDs instead of root, which is what keeps the broker's keys, the
+    // browser user and other dashboards out of an agent's reach. The guest
+    // never sees config.env, so it travels on the command line like the key;
+    // rc.local exports it (rclocal-v4-egress-flag). Same rule as the sandbox:
+    // only "true" (any case) turns it on.
+    // REVISION: main-v16-egress-flag-cmdline
+    if egress_proxy_requested() {
+      cmdline.push_str(" orcabot.egress_proxy_enabled=1");
+    }
     config = config.with_cmdline(cmdline);
 
     // Create and start VM — unless an update was accepted while we were staging.

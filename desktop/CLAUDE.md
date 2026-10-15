@@ -326,7 +326,7 @@ production wrangler.production.toml — refer to that for descriptions.
 - OAuth client IDs + secrets: `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`, `ONEDRIVE_CLIENT_ID/SECRET`, `BOX_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `DISCORD_CLIENT_ID/SECRET`, `SLACK_CLIENT_ID/SECRET`
 - `GOOGLE_API_KEY` — server-side Google APIs (Drive metadata etc.)
 - `RESEND_API_KEY` — transactional email
-- `EGRESS_PROXY_ENABLED=true` — turn on the network egress proxy inside the sandbox VM (off by default; requires iptables setup)
+- `EGRESS_PROXY_ENABLED=true` — turn on the network egress proxy inside the sandbox VM (off by default). It reaches the guest as `orcabot.egress_proxy_enabled=1` on the kernel command line (read by rc.local `rclocal-v4-egress-flag`; `VMConfig.env` is never delivered to the macOS/Linux guest). With it on, terminals run as the unprivileged pool UIDs with kernel default-deny egress; **without it every terminal and agent runs as root in the VM**, so the broker's keys, the browser user's isolation and other dashboards' workspaces are all within an agent's reach
 - `OAUTH_REDIRECT_BASE` — overrides the localhost OAuth callback base
 - `EMAIL_FROM` — overrides the default "OrcaBot Desktop <noreply@localhost>"
 
