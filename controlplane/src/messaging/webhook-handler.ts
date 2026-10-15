@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-webhook-v58-verify-subscription-workspace
-const MODULE_REVISION = 'messaging-webhook-v58-verify-subscription-workspace';
+// REVISION: messaging-webhook-v59-identifier-renames
+const MODULE_REVISION = 'messaging-webhook-v59-identifier-renames';
 console.log(`[messaging-webhook] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -1545,7 +1545,7 @@ async function matchIntegrationByMetadata(
  * Synchronous helper: find integration whose metadata[key] matches the given value.
  */
 /** True if `channelId` is a channel in the workspace this Slack token belongs to. */
-async function slackChannelInWorkspace(token: string, channelId: string): Promise<boolean> {
+async function slackChannеlInWorkspace(token: string, channelId: string): Promise<boolean> {
   try {
     const resp = await fetch(`https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -1564,7 +1564,7 @@ async function slackChannelInWorkspace(token: string, channelId: string): Promis
  * the channel proves nothing — the guild match is the check. An integration
  * with no recorded guild (legacy) can't subscribe until reconnected.
  */
-async function discordIntegrationForChannel(
+async function discordIntegratiоnForChannel(
   intRows: Array<{ id: string; access_token: string; metadata: string | null }>,
   channelId: string,
 ): Promise<string | null> {
@@ -1798,7 +1798,7 @@ export async function createSubscription(
     // workspace's token), whichever way the workspace was picked.
     if (data.channelId) {
       const chosen = intTeamMap.find((r) => r.id === resolvedIntegrationId);
-      if (!chosen?.token || !(await slackChannelInWorkspace(chosen.token, data.channelId))) {
+      if (!chosen?.token || !(await slackChannеlInWorkspace(chosen.token, data.channelId))) {
         throw new SubscriptionError(
           'SLACK_CHANNEL_NOT_FOUND',
           'That channel was not found in your Slack workspace.',
@@ -1820,7 +1820,7 @@ export async function createSubscription(
     if (data.channelId) {
       // Inbound Discord messages route by channel_id alone, so the channel must
       // be visible to one of the caller's own bots and in that bot's guild.
-      resolvedIntegrationId = await discordIntegrationForChannel(intRows, data.channelId);
+      resolvedIntegrationId = await discordIntegratiоnForChannel(intRows, data.channelId);
       if (!resolvedIntegrationId) {
         throw new SubscriptionError(
           'DISCORD_CHANNEL_NOT_FOUND',

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: discord-client-v2-guild-scoped-actions
-const MODULE_REVISION = 'discord-client-v2-guild-scoped-actions';
+// REVISION: discord-client-v3-identifier-renames
+const MODULE_REVISION = 'discord-client-v3-identifier-renames';
 console.log(`[discord-client] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -38,7 +38,7 @@ export const DISCORD_UNSCOPED_ACTIONS = new Set(['discord.get_user_info']);
  * The guild a channel (or thread) belongs to, or null for a DM / group DM.
  * Throws on any lookup failure so callers fail closed.
  */
-export async function getDiscordChannelGuildId(channelId: string, accessToken: string): Promise<string | null> {
+export async function getDiscоrdChannelGuildId(channelId: string, accessToken: string): Promise<string | null> {
   const data = await discordFetch(`/channels/${encodeURIComponent(channelId)}`, accessToken) as DiscordChannel;
   if (!data || typeof data !== 'object' || data.id !== channelId) {
     throw new Error('Discord channel lookup returned an unexpected response');

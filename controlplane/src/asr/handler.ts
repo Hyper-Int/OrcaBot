@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: asr-handler-v6-deepgram-rest-fallback
+// REVISION: asr-handler-v7-error-codes
 
-const handlerRevision = "asr-handler-v6-deepgram-rest-fallback";
+const handlerRevision = "asr-handler-v7-error-codes";
 console.log(`[asr] REVISION: ${handlerRevision} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
@@ -65,13 +65,13 @@ export async function saveASRKey(
 ): Promise<Response> {
   const provider = data.provider as ASRProvider;
   if (!['assemblyai', 'openai', 'deepgram'].includes(provider)) {
-    return jsonResponse({ error: 'Invalid provider' }, 400);
+    return jsonResponse({ error: 'E79240: Invalid provider' }, 400);
   }
   if (!data.apiKey || typeof data.apiKey !== 'string' || data.apiKey.trim().length === 0) {
-    return jsonResponse({ error: 'API key is required' }, 400);
+    return jsonResponse({ error: 'E79241: API key is required' }, 400);
   }
   if (!hasEncryptionKey(env)) {
-    return jsonResponse({ error: 'Encryption not configured' }, 500);
+    return jsonResponse({ error: 'E79242: Encryption not configured' }, 500);
   }
 
   const key = await getEncryptionKey(env);
@@ -109,7 +109,7 @@ export async function deleteASRKey(
   provider: string
 ): Promise<Response> {
   if (!['assemblyai', 'openai', 'deepgram'].includes(provider)) {
-    return jsonResponse({ error: 'Invalid provider' }, 400);
+    return jsonResponse({ error: 'E79243: Invalid provider' }, 400);
   }
 
   const p = provider as ASRProvider;
@@ -153,7 +153,7 @@ async function getASRKey(env: Env, userId: string, provider: ASRProvider): Promi
 export async function getAssemblyAIToken(env: Env, userId: string): Promise<Response> {
   const apiKey = await getASRKey(env, userId, 'assemblyai');
   if (!apiKey) {
-    return jsonResponse({ error: 'AssemblyAI API key not configured' }, 404);
+    return jsonResponse({ error: 'E79244: AssemblyAI API key not configured' }, 404);
   }
 
   const tokenResponse = await fetch('https://api.assemblyai.com/v2/realtime/token', {
@@ -167,7 +167,7 @@ export async function getAssemblyAIToken(env: Env, userId: string): Promise<Resp
 
   if (!tokenResponse.ok) {
     const text = await tokenResponse.text();
-    return jsonResponse({ error: `AssemblyAI token exchange failed: ${text}` }, 502);
+    return jsonResponse({ error: `E79245: AssemblyAI token exchange failed: ${text}` }, 502);
   }
 
   const { token } = await tokenResponse.json() as { token: string };
@@ -190,13 +190,13 @@ const ALLOWED_RESPONSE_FORMATS = ['json', 'verbose_json'];
 export async function transcribeOpenAI(env: Env, userId: string, request: Request): Promise<Response> {
   const apiKey = await getASRKey(env, userId, 'openai');
   if (!apiKey) {
-    return jsonResponse({ error: 'OpenAI API key not configured' }, 404);
+    return jsonResponse({ error: 'E79246: OpenAI API key not configured' }, 404);
   }
 
   // Reject oversized payloads before parsing
   const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
   if (contentLength > MAX_AUDIO_SIZE) {
-    return jsonResponse({ error: `File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
+    return jsonResponse({ error: `E79247: File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
   }
 
   const formData = await request.formData();
@@ -205,20 +205,20 @@ export async function transcribeOpenAI(env: Env, userId: string, request: Reques
   const upstreamForm = new FormData();
   const audioFile = formData.get('file');
   if (!audioFile || typeof audioFile === 'string') {
-    return jsonResponse({ error: 'No audio file provided' }, 400);
+    return jsonResponse({ error: 'E79248: No audio file provided' }, 400);
   }
   if ((audioFile as File).size > MAX_AUDIO_SIZE) {
-    return jsonResponse({ error: `File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
+    return jsonResponse({ error: `E79249: File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
   }
 
   // Allowlist model and response format — don't forward arbitrary client values
   const requestedModel = (formData.get('model') as string) || 'whisper-1';
   const requestedFormat = (formData.get('response_format') as string) || 'json';
   if (!ALLOWED_MODELS.includes(requestedModel)) {
-    return jsonResponse({ error: `Unsupported model. Allowed: ${ALLOWED_MODELS.join(', ')}` }, 400);
+    return jsonResponse({ error: `E79250: Unsupported model. Allowed: ${ALLOWED_MODELS.join(', ')}` }, 400);
   }
   if (!ALLOWED_RESPONSE_FORMATS.includes(requestedFormat)) {
-    return jsonResponse({ error: `Unsupported response format. Allowed: ${ALLOWED_RESPONSE_FORMATS.join(', ')}` }, 400);
+    return jsonResponse({ error: `E79251: Unsupported response format. Allowed: ${ALLOWED_RESPONSE_FORMATS.join(', ')}` }, 400);
   }
 
   // Preserve MIME type — Workers FormData can lose content-type when re-appending File objects.
@@ -239,7 +239,7 @@ export async function transcribeOpenAI(env: Env, userId: string, request: Reques
 
   if (!whisperResponse.ok) {
     const text = await whisperResponse.text();
-    return jsonResponse({ error: `OpenAI transcription failed: ${text}` }, 502);
+    return jsonResponse({ error: `E79252: OpenAI transcription failed: ${text}` }, 502);
   }
 
   const result = await whisperResponse.json() as { text: string };
@@ -259,7 +259,7 @@ export async function transcribeOpenAI(env: Env, userId: string, request: Reques
 export async function getDeepgramToken(env: Env, userId: string): Promise<Response> {
   const apiKey = await getASRKey(env, userId, 'deepgram');
   if (!apiKey) {
-    return jsonResponse({ error: 'Deepgram API key not configured' }, 404);
+    return jsonResponse({ error: 'E79253: Deepgram API key not configured' }, 404);
   }
 
   const tokenResponse = await fetch('https://api.deepgram.com/v1/auth/grant', {
@@ -274,7 +274,7 @@ export async function getDeepgramToken(env: Env, userId: string): Promise<Respon
   if (!tokenResponse.ok) {
     const text = await tokenResponse.text();
     console.error(`[asr] Deepgram token exchange failed: ${text}`);
-    return jsonResponse({ error: `Deepgram token exchange failed: ${text}` }, 502);
+    return jsonResponse({ error: `E79254: Deepgram token exchange failed: ${text}` }, 502);
   }
 
   const data = await tokenResponse.json() as { access_token: string; expires_in: number };
@@ -293,20 +293,20 @@ export async function getDeepgramToken(env: Env, userId: string): Promise<Respon
 export async function transcribeDeepgram(env: Env, userId: string, request: Request): Promise<Response> {
   const apiKey = await getASRKey(env, userId, 'deepgram');
   if (!apiKey) {
-    return jsonResponse({ error: 'Deepgram API key not configured' }, 404);
+    return jsonResponse({ error: 'E79255: Deepgram API key not configured' }, 404);
   }
 
   const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
   if (contentLength > MAX_AUDIO_SIZE) {
-    return jsonResponse({ error: `File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
+    return jsonResponse({ error: `E79256: File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
   }
 
   const audioData = await request.arrayBuffer();
   if (audioData.byteLength === 0) {
-    return jsonResponse({ error: 'No audio data provided' }, 400);
+    return jsonResponse({ error: 'E79257: No audio data provided' }, 400);
   }
   if (audioData.byteLength > MAX_AUDIO_SIZE) {
-    return jsonResponse({ error: `File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
+    return jsonResponse({ error: `E79258: File too large (max ${MAX_AUDIO_SIZE / 1024 / 1024}MB)` }, 413);
   }
 
   const contentType = request.headers.get('Content-Type') || 'audio/webm';
@@ -325,7 +325,7 @@ export async function transcribeDeepgram(env: Env, userId: string, request: Requ
 
   if (!dgResponse.ok) {
     const text = await dgResponse.text();
-    return jsonResponse({ error: `Deepgram transcription failed: ${text}` }, 502);
+    return jsonResponse({ error: `E79259: Deepgram transcription failed: ${text}` }, 502);
   }
 
   const result = await dgResponse.json() as {

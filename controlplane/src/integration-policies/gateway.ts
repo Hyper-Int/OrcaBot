@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v33-discord-guild-pinning
-const MODULE_REVISION = 'gateway-v33-discord-guild-pinning';
+// REVISION: gateway-v35-error-codes
+const MODULE_REVISION = 'gateway-v35-error-codes';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -50,7 +50,7 @@ import { executeCalendarAction } from './api-clients/calendar';
 import { executeSlackAction } from './api-clients/slack';
 import {
   executeDiscordAction,
-  getDiscordChannelGuildId,
+  getDiscоrdChannelGuildId,
   DISCORD_CHANNEL_ACTIONS,
   DISCORD_GUILD_ACTIONS,
   DISCORD_UNSCOPED_ACTIONS,
@@ -409,7 +409,7 @@ async function checkRateLimit(
   if (limit === 0) {
     return {
       allowed: false,
-      reason: `Rate limit is 0 for ${category} (all ${category} blocked)`,
+      reason: `E79260: Rate limit is 0 for ${category} (all ${category} blocked)`,
     };
   }
 
@@ -427,20 +427,20 @@ async function checkRateLimit(
     if (!res.ok) {
       // Fail closed on error - deny requests when rate limiter is unavailable
       console.error(`[gateway] Rate limit check failed (failing closed): ${res.status}`);
-      return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
+      return { allowed: false, reason: 'E79261: Rate limiter unavailable - request denied for safety' };
     }
 
     const result = await res.json() as { allowed: boolean; remaining?: number };
     if (!result.allowed) {
       return {
         allowed: false,
-        reason: `Rate limit exceeded for ${category} (${limit}/${window})`,
+        reason: `E79262: Rate limit exceeded for ${category} (${limit}/${window})`,
       };
     }
   } catch (err) {
     // Fail closed on error - deny requests when rate limiter is unavailable
     console.error(`[gateway] Rate limit check error (failing closed):`, err);
-    return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
+    return { allowed: false, reason: 'E79263: Rate limiter unavailable - request denied for safety' };
   }
 
   return { allowed: true };
@@ -576,7 +576,7 @@ export async function handleGatewayExecute(
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Missing Authorization header' },
+      { error: 'AUTH_DENIED', reason: 'E79264: Missing Authorization header' },
       { status: 401 }
     );
   }
@@ -586,7 +586,7 @@ export async function handleGatewayExecute(
 
   if (!claims) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
+      { error: 'AUTH_DENIED', reason: 'E79265: Invalid or expired PTY token' },
       { status: 401 }
     );
   }
@@ -599,14 +599,14 @@ export async function handleGatewayExecute(
     body = await request.json() as GatewayExecuteRequest;
   } catch {
     return Response.json(
-      { error: 'INVALID_REQUEST', reason: 'Invalid JSON body' },
+      { error: 'INVALID_REQUEST', reason: 'E79266: Invalid JSON body' },
       { status: 400 }
     );
   }
 
   if (!body.action) {
     return Response.json(
-      { error: 'INVALID_REQUEST', reason: 'Missing action' },
+      { error: 'INVALID_REQUEST', reason: 'E79267: Missing action' },
       { status: 400 }
     );
   }
@@ -638,7 +638,7 @@ export async function handleGatewayExecute(
 
   if (!ti) {
     return Response.json(
-      { error: 'NOT_ATTACHED', reason: `${provider} not attached to this terminal` },
+      { error: 'NOT_ATTACHED', reason: `E79268: ${provider} not attached to this terminal` },
       { status: 403 }
     );
   }
@@ -646,7 +646,7 @@ export async function handleGatewayExecute(
   // 4. Defense-in-depth: Verify terminal_integration matches token context
   if (ti.dashboard_id !== dashboardId || ti.user_id !== userId) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Dashboard mismatch' },
+      { error: 'AUTH_DENIED', reason: 'E79269: Dashboard mismatch' },
       { status: 403 }
     );
   }
@@ -654,7 +654,7 @@ export async function handleGatewayExecute(
   // 5. Verify policy exists
   if (!ti.active_policy_id || !ti.policy) {
     return Response.json(
-      { error: 'POLICY_DENIED', reason: 'No policy configured' },
+      { error: 'POLICY_DENIED', reason: 'E79270: No policy configured' },
       { status: 403 }
     );
   }
@@ -889,14 +889,14 @@ export async function handleGatewayExecute(
 
       if (!bridgeSub) {
         return Response.json(
-          { error: 'AUTH_DENIED', reason: 'No active bridge WhatsApp connection found' },
+          { error: 'AUTH_DENIED', reason: 'E79271: No active bridge WhatsApp connection found' },
           { status: 403 }
         );
       }
 
     if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
       return Response.json(
-        { error: 'API_ERROR', reason: 'Bridge service not configured' },
+        { error: 'API_ERROR', reason: 'E79272: Bridge service not configured' },
         { status: 503 }
       );
     }
@@ -917,7 +917,7 @@ export async function handleGatewayExecute(
         }
         default:
           return Response.json(
-            { error: 'API_ERROR', reason: `Action ${body.action} is not supported for bridge WhatsApp connections` },
+            { error: 'API_ERROR', reason: `E79273: Action ${body.action} is not supported for bridge WhatsApp connections` },
             { status: 400 }
           );
       }
@@ -939,7 +939,7 @@ export async function handleGatewayExecute(
       });
 
       return Response.json(
-        { error: 'API_ERROR', reason: errorMessage },
+        { error: 'API_ERROR', reason: `E79284: ${errorMessage}` },
         { status: 502 }
       );
     }
@@ -987,7 +987,7 @@ export async function handleGatewayExecute(
       }
     } else {
       return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
+        { error: 'AUTH_DENIED', reason: 'E79274: OAuth connection not found' },
         { status: 403 }
       );
     }
@@ -996,7 +996,7 @@ export async function handleGatewayExecute(
   const accessToken = prefetchedAccessToken ?? await getAccessToken(env, ti.user_integration_id!, provider);
   if (!accessToken) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
+      { error: 'AUTH_DENIED', reason: 'E79275: OAuth token expired. Reconnect required.' },
       { status: 403 }
     );
   }
@@ -1039,7 +1039,7 @@ export async function handleGatewayExecute(
         return Response.json({
           allowed: false,
           decision: 'denied' as const,
-          reason: `Action denied: unable to verify file against policy`,
+          reason: `E79276: Action denied: unable to verify file against policy`,
           policyId,
           policyVersion,
         }, { status: 403 });
@@ -1068,7 +1068,7 @@ export async function handleGatewayExecute(
         return Response.json({
           allowed: false,
           decision: 'denied' as const,
-          reason: 'File filtered by policy (folder/filetype restriction)',
+          reason: 'E79277: File filtered by policy (folder/filetype restriction)',
           policyId,
           policyVersion,
         }, { status: 403 });
@@ -1126,7 +1126,7 @@ export async function handleGatewayExecute(
       }
       let channelGuildId: string | null;
       try {
-        channelGuildId = await getDiscordChannelGuildId(channel, accessToken);
+        channelGuildId = await getDiscоrdChannelGuildId(channel, accessToken);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
         console.warn(`[gateway] Discord channel lookup failed for ${channel}: ${msg}`);
@@ -1235,7 +1235,7 @@ export async function handleGatewayExecute(
     // Pass through provider API error messages (e.g. "Slack API error: not_in_channel")
     // These are public error codes that help the LLM and user diagnose the issue.
     return Response.json(
-      { error: 'API_ERROR', reason: errorMessage },
+      { error: 'API_ERROR', reason: `E79285: ${errorMessage}` },
       { status: 502 }
     );
   }
@@ -1300,7 +1300,7 @@ export async function handleListTerminalIntegrations(
   if (!authHeader?.startsWith('Bearer ')) {
     console.log(`[gateway] ListTerminalIntegrations: missing Authorization header`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Missing Authorization header' },
+      { error: 'AUTH_DENIED', reason: 'E79278: Missing Authorization header' },
       { status: 401 }
     );
   }
@@ -1311,7 +1311,7 @@ export async function handleListTerminalIntegrations(
   if (!claims) {
     console.log(`[gateway] ListTerminalIntegrations: invalid/expired PTY token`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
+      { error: 'AUTH_DENIED', reason: 'E79279: Invalid or expired PTY token' },
       { status: 401 }
     );
   }
@@ -1320,7 +1320,7 @@ export async function handleListTerminalIntegrations(
   if (claims.terminal_id !== ptyId) {
     console.log(`[gateway] ListTerminalIntegrations: PTY ID mismatch token=${claims.terminal_id} url=${ptyId}`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'PTY ID mismatch' },
+      { error: 'AUTH_DENIED', reason: 'E79280: PTY ID mismatch' },
       { status: 403 }
     );
   }

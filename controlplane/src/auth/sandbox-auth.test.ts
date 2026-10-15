@@ -1,9 +1,9 @@
-// REVISION: sandbox-auth-tests-v2-refresh-bound-to-sandbox
+// REVISION: sandbox-auth-tests-v3-identifier-renames
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   authorizeSandboxForDashboard,
   dashboardIdForSandboxSession,
-  refreshSandboxDashboardToken,
+  refreshSandbоxDashboardToken,
   sandboxInternalTokenEnv,
 } from './sandbox-auth';
 import { createDashboardToken, sandboxGeneration, verifyDashboardToken } from './dashboard-token';
@@ -104,7 +104,7 @@ describe('sandbox auth', () => {
       ON CONFLICT(dashboard_id) DO UPDATE SET sandbox_session_id = excluded.sandbox_session_id, created_at = excluded.created_at
     `).bind(sessionId, createdAt).run();
     const refresh = async (token: string) => {
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
       return { res, body: await res.json() as { token?: string; error?: string } };
     };
 
@@ -148,7 +148,7 @@ describe('sandbox auth', () => {
 
     it('issues a fresh token for the same dashboard', async () => {
       const token = await createDashboardToken('dash-a', tokenSigningSecret(ctx.env));
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
       expect(res.status).toBe(200);
       const body = await res.json() as { token: string };
       const claims = await verifyDashboardToken(body.token, tokenSigningSecret(ctx.env));
@@ -157,24 +157,24 @@ describe('sandbox auth', () => {
 
     it('accepts a token that expired recently (VM was suspended)', async () => {
       const expired = await tokenWithExp('dash-a', tokenSigningSecret(ctx.env), -3 * 24 * 60 * 60);
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': expired }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Dashboard-Token': expired }), ctx.env);
       expect(res.status).toBe(200);
     });
 
     it('rejects a token that expired beyond the grace period', async () => {
       const expired = await tokenWithExp('dash-a', tokenSigningSecret(ctx.env), -31 * 24 * 60 * 60);
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': expired }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Dashboard-Token': expired }), ctx.env);
       expect(res.status).toBe(401);
     });
 
     it('refuses to mint from the internal token', async () => {
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Internal-Token': 'test-internal-token' }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Internal-Token': 'test-internal-token' }), ctx.env);
       expect(res.status).toBe(401);
     });
 
     it('refuses once the dashboard is gone', async () => {
       const token = await createDashboardToken('dash-deleted', tokenSigningSecret(ctx.env));
-      const res = await refreshSandboxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
+      const res = await refreshSandbоxDashboardToken(refreshReq({ 'X-Dashboard-Token': token }), ctx.env);
       expect(res.status).toBe(404);
     });
   });

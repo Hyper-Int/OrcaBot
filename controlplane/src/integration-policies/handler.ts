@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v18-policy-owner-only
-console.log(`[integration-handler] REVISION: handler-v18-policy-owner-only loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v19-error-codes
+console.log(`[integration-handler] REVISION: handler-v19-error-codes loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -1807,7 +1807,7 @@ export async function attachIntegration(
     const browserPolicy = providedPolicy as BrowserPolicy | undefined;
     if (!browserPolicy?.urlFilter?.patterns?.length) {
       return Response.json(
-        { error: 'Browser integration requires at least one URL pattern' },
+        { error: 'E79178: Browser integration requires at least one URL pattern' },
         { status: 400 }
       );
     }
@@ -1827,7 +1827,7 @@ export async function attachIntegration(
 
       if (!bridgeSub) {
         return Response.json(
-          { error: 'No WhatsApp connection found. Configure platform credentials or connect via QR code first.' },
+          { error: 'E79179: No WhatsApp connection found. Configure platform credentials or connect via QR code first.' },
           { status: 400 }
         );
       }
@@ -1836,7 +1836,7 @@ export async function attachIntegration(
     // Non-browser providers require userIntegrationId
     if (!userIntegrationId) {
       return Response.json(
-        { error: 'userIntegrationId is required for non-browser providers' },
+        { error: 'E79180: userIntegrationId is required for non-browser providers' },
         { status: 400 }
       );
     }
@@ -1850,7 +1850,7 @@ export async function attachIntegration(
 
     if (!userInt || userInt.user_id !== userId) {
       return Response.json(
-        { error: 'OAuth connection does not belong to user' },
+        { error: 'E79181: OAuth connection does not belong to user' },
         { status: 403 }
       );
     }
@@ -1879,7 +1879,7 @@ export async function attachIntegration(
       await env.DB.prepare(`DELETE FROM terminal_integrations WHERE id = ?`).bind(existing.id).run();
     } else {
       return Response.json(
-        { error: `${provider} is already attached to this terminal` },
+        { error: `E79182: ${provider} is already attached to this terminal` },
         { status: 409 }
       );
     }
@@ -2009,7 +2009,7 @@ export async function updateIntegrationPolicy(
 
   if (!existing) {
     return Response.json(
-      { error: `${provider} is not attached to this terminal` },
+      { error: `E79183: ${provider} is not attached to this terminal` },
       { status: 404 }
     );
   }
@@ -2029,7 +2029,7 @@ export async function updateIntegrationPolicy(
     const browserPolicy = policy as BrowserPolicy;
     if (!browserPolicy?.urlFilter?.patterns?.length) {
       return Response.json(
-        { error: 'Browser policy requires at least one URL pattern' },
+        { error: 'E79184: Browser policy requires at least one URL pattern' },
         { status: 400 }
       );
     }
@@ -2120,7 +2120,7 @@ export async function detachIntegration(
 
   if (!existing) {
     return Response.json(
-      { error: `${provider} is not attached to this terminal` },
+      { error: `E79185: ${provider} is not attached to this terminal` },
       { status: 404 }
     );
   }
@@ -2181,7 +2181,7 @@ export async function getPolicyHistory(
 
   if (!ti) {
     return Response.json(
-      { error: `${provider} has never been attached to this terminal` },
+      { error: `E79186: ${provider} has never been attached to this terminal` },
       { status: 404 }
     );
   }

@@ -1,12 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-fetch-v3-strip-client-credentials
-const MODULE_REVISION = 'sandbox-fetch-v3-strip-client-credentials';
+// REVISION: sandbox-fetch-v4-identifier-renames
+const MODULE_REVISION = 'sandbox-fetch-v4-identifier-renames';
 console.log(`[sandbox-fetch] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
-import { signSandboxRequest } from './request-signing';
+import { signSandbоxRequest } from './request-signing';
 
 type SandboxFetchOptions = RequestInit & {
   machineId?: string;
@@ -77,7 +77,7 @@ export async function sandboxHeaders(
   } else {
     result.delete('X-Sandbox-Machine-ID');
   }
-  await signSandboxRequest(env.SANDBOX_AUTH_SIGNING_KEY, result, method, url);
+  await signSandbоxRequest(env.SANDBOX_AUTH_SIGNING_KEY, result, method, url);
   return result;
 }
 

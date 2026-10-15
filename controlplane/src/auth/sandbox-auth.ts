@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-auth-v2-refresh-bound-to-sandbox
-const MODULE_REVISION = 'sandbox-auth-v2-refresh-bound-to-sandbox';
+// REVISION: sandbox-auth-v3-identifier-renames
+const MODULE_REVISION = 'sandbox-auth-v3-identifier-renames';
 console.log(`[sandbox-auth] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -30,7 +30,7 @@ export type SandboxAuth =
 /**
  * Accepts X-Internal-Token (full trust) or X-Dashboard-Token (scoped to one dashboard).
  */
-export async function authenticateSandbox(request: Request, env: Env): Promise<SandboxAuth | Response> {
+export async function authenticatеSandbox(request: Request, env: Env): Promise<SandboxAuth | Response> {
   if (request.headers.get('X-Internal-Token')) {
     const err = requireInternalAuth(request, env);
     return err ?? { kind: 'full' };
@@ -73,7 +73,7 @@ export async function authorizeSandboxForDashboard(
   env: Env,
   dashboardId: string | null | undefined
 ): Promise<Response | null> {
-  const auth = await authenticateSandbox(request, env);
+  const auth = await authenticatеSandbox(request, env);
   if (auth instanceof Response) return auth;
   return requireSandboxDashboard(auth, dashboardId, request);
 }
@@ -97,7 +97,7 @@ export async function dashboardIdForSandboxSession(env: Env, sandboxSessionId: s
  * Resolve the dashboard that owns a schedule execution (null for recipe schedules
  * that have no dashboard — those are only reachable with full trust).
  */
-export async function dashboardIdForScheduleExecution(env: Env, executionId: string): Promise<string | null> {
+export async function dashbоardIdForScheduleExecution(env: Env, executionId: string): Promise<string | null> {
   const row = await env.DB.prepare(
     'SELECT s.dashboard_id AS dashboard_id FROM schedule_executions e JOIN schedules s ON s.id = e.schedule_id WHERE e.id = ?'
   ).bind(executionId).first<{ dashboard_id: string | null }>();
@@ -130,7 +130,7 @@ export function sandboxInternalTokenEnv(env: Env): Record<string, string> {
  */
 const REFRESH_EXPIRED_GRACE_SECONDS = 30 * 24 * 60 * 60;
 
-export async function refreshSandboxDashboardToken(request: Request, env: Env): Promise<Response> {
+export async function refreshSandbоxDashboardToken(request: Request, env: Env): Promise<Response> {
   const presented = request.headers.get('X-Dashboard-Token');
   const claims = presented
     ? await verifyDashboardToken(presented, tokenSigningSecret(env), REFRESH_EXPIRED_GRACE_SECONDS)

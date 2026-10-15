@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: mcp-ui-handler-v1-error-codes
 
 /**
  * MCP UI Server Handler
@@ -464,7 +465,7 @@ export async function callTool(
   const dashboardId = args.dashboard_id as string;
   if (!dashboardId) {
     return Response.json(
-      { error: 'dashboard_id is required' },
+      { error: 'E79162: dashboard_id is required' },
       { status: 400 }
     );
   }
@@ -639,7 +640,7 @@ export async function callTool(
 
     default:
       return Response.json(
-        { error: `Unknown tool: ${toolName}` },
+        { error: `E79163: Unknown tool: ${toolName}` },
         { status: 400 }
       );
   }
@@ -657,7 +658,7 @@ export async function callTool(
   if (!response.ok) {
     const error = await response.text();
     return Response.json(
-      { error: `Failed to send UI command: ${error}` },
+      { error: `E79164: Failed to send UI command: ${error}` },
       { status: 500 }
     );
   }
@@ -700,7 +701,7 @@ export async function getItems(env: Env, dashboardId: string, userId?: string): 
 
   if (!response.ok) {
     return Response.json(
-      { error: 'Failed to get dashboard items' },
+      { error: 'E79165: Failed to get dashboard items' },
       { status: 500 }
     );
   }

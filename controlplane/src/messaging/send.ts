@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-send-v8-discord-guild-bound
-const MODULE_REVISION = 'messaging-send-v8-discord-guild-bound';
+// REVISION: messaging-send-v9-error-codes
+const MODULE_REVISION = 'messaging-send-v9-error-codes';
 console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -19,7 +19,7 @@ console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date(
 import type { Env, MessagingProvider } from '../types';
 import { executeWhatsAppAction } from '../integration-policies/api-clients/whatsapp';
 import { executeSlackAction } from '../integration-policies/api-clients/slack';
-import { executeDiscordAction, getDiscordChannelGuildId } from '../integration-policies/api-clients/discord';
+import { executeDiscordAction, getDiscоrdChannelGuildId } from '../integration-policies/api-clients/discord';
 import { executeTeamsAction } from '../integration-policies/api-clients/teams';
 import { getAccessToken } from '../integration-policies/token-refresh';
 import { BridgeClient } from '../bridge/client';
@@ -74,7 +74,7 @@ export async function handleMessagingSend(
 
   if (!dashboardId || !itemId || !text?.trim()) {
     return Response.json(
-      { error: 'dashboardId, itemId, and text are required' },
+      { error: 'E79166: dashboardId, itemId, and text are required' },
       { status: 400 },
     );
   }
@@ -84,7 +84,7 @@ export async function handleMessagingSend(
     `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
   ).bind(dashboardId, userId).first<{ role: string }>();
   if (!membership) {
-    return Response.json({ error: 'Not a member of this dashboard' }, { status: 403 });
+    return Response.json({ error: 'E79167: Not a member of this dashboard' }, { status: 403 });
   }
   // Sending posts with the subscription creator's account (their Slack/WhatsApp
   // etc.), so viewers can't — same bar as editing the messaging block.
@@ -100,7 +100,7 @@ export async function handleMessagingSend(
 
   if (!subs.results?.length) {
     return Response.json(
-      { error: 'No active messaging subscriptions for this block' },
+      { error: 'E79168: No active messaging subscriptions for this block' },
       { status: 404 },
     );
   }
@@ -301,7 +301,7 @@ async function sendDiscord(
   if (!guildId) {
     throw new Error('E79630: Discord integration has no connected server; reconnect Discord');
   }
-  const channelGuildId = await getDiscordChannelGuildId(channelId, token);
+  const channelGuildId = await getDiscоrdChannelGuildId(channelId, token);
   if (channelGuildId !== guildId) {
     throw new Error('E79631: Discord channel is not in the connected server');
   }

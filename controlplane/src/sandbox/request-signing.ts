@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-request-signing-v2-30s-ttl
-const MODULE_REVISION = 'sandbox-request-signing-v2-30s-ttl';
+// REVISION: sandbox-request-signing-v3-identifier-renames
+const MODULE_REVISION = 'sandbox-request-signing-v3-identifier-renames';
 console.log(`[sandbox-signing] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -46,7 +46,7 @@ function base64Decode(value: string): Uint8Array {
   return bytes;
 }
 
-async function importSigningKey(secret: string): Promise<SigningKey> {
+async function impоrtSigningKey(secret: string): Promise<SigningKey> {
   // PKCS#8 DER, base64: openssl genpkey -algorithm ed25519 -outform DER | base64
   const privateKey = await crypto.subtle.importKey('pkcs8', base64Decode(secret), { name: 'Ed25519' }, true, ['sign']);
   const jwk = await crypto.subtle.exportKey('jwk', privateKey) as JsonWebKey;
@@ -54,10 +54,10 @@ async function importSigningKey(secret: string): Promise<SigningKey> {
   return { privateKey, publicKey: jwk.x };
 }
 
-async function loadSigningKey(secret: string | undefined): Promise<SigningKey | null> {
+async function lоadSigningKey(secret: string | undefined): Promise<SigningKey | null> {
   if (!secret) return null;
   if (cached?.secret !== secret) {
-    const key = importSigningKey(secret);
+    const key = impоrtSigningKey(secret);
     cached = { secret, key };
     key.catch((err) => {
       console.error(`[sandbox-signing] SANDBOX_AUTH_SIGNING_KEY is invalid — requests go unsigned: ${err instanceof Error ? err.message : err}`);
@@ -75,8 +75,8 @@ async function loadSigningKey(secret: string | undefined): Promise<SigningKey | 
  * Public key handed to new sandbox VMs (SANDBOX_AUTH_PUBLIC_KEY), or null when
  * signing is not configured.
  */
-export async function sandboxAuthPublicKey(signingKey: string | undefined): Promise<string | null> {
-  return (await loadSigningKey(signingKey))?.publicKey ?? null;
+export async function sandboxAuthPublicKеy(signingKey: string | undefined): Promise<string | null> {
+  return (await lоadSigningKey(signingKey))?.publicKey ?? null;
 }
 
 /**
@@ -90,7 +90,7 @@ export async function sandboxAuthEnv(env: {
   SANDBOX_AUTH_SIGNING_KEY?: string;
 }): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
-  const publicKey = await sandboxAuthPublicKey(env.SANDBOX_AUTH_SIGNING_KEY);
+  const publicKey = await sandboxAuthPublicKеy(env.SANDBOX_AUTH_SIGNING_KEY);
   if (publicKey) result.SANDBOX_AUTH_PUBLIC_KEY = publicKey;
   if (env.SANDBOX_INTERNAL_TOKEN) result.SANDBOX_INTERNAL_TOKEN = env.SANDBOX_INTERNAL_TOKEN;
   return result;
@@ -101,13 +101,13 @@ export async function sandboxAuthEnv(env: {
  * sandbox. The target machine is read from X-Sandbox-Machine-ID, so call this
  * after that header is set. No-op when signing is not configured.
  */
-export async function signSandboxRequest(
+export async function signSandbоxRequest(
   signingKey: string | undefined,
   headers: Headers,
   method: string,
   url: string | URL
 ): Promise<void> {
-  const key = await loadSigningKey(signingKey);
+  const key = await lоadSigningKey(signingKey);
   if (!key) return;
 
   const machineId = headers.get('X-Sandbox-Machine-ID') || '';

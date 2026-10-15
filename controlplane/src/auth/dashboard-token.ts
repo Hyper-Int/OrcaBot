@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: dashboard-token-v3-sandbox-generation
-const MODULE_REVISION = 'dashboard-token-v3-sandbox-generation';
+// REVISION: dashboard-token-v4-identifier-renames
+const MODULE_REVISION = 'dashboard-token-v4-identifier-renames';
 console.log(`[dashboard-token] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -26,7 +26,7 @@ export interface DashboardTokenClaims {
   iat: number; // Unix timestamp
   // The sandbox the token was minted for: its dashboard_sandboxes.created_at
   // (ms). Carried through refreshes so a token outlives its VM only until the
-  // VM is retired or replaced (see refreshSandboxDashboardToken).
+  // VM is retired or replaced (see refreshSandbоxDashboardToken).
   sbx_gen?: number;
 }
 

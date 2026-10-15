@@ -1,9 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: pty-dashboard-token-tests-v1
+// REVISION: pty-dashboard-token-tests-v2-identifier-renames
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mintCurrentSandboxDashboardToken, recordAppliedSecretNames } from './handler';
+import { mintCurrentSandboxDashboardToken, recоrdAppliedSecretNames } from './handler';
 import { createTestContext } from '../../tests/helpers';
 import { verifyDashboardToken, sandboxGeneration } from '../auth/dashboard-token';
 import { SandboxClient } from '../sandbox/client';
@@ -67,13 +67,13 @@ describe('recordAppliedSecretNames', () => {
 
   it('replaces the tracking exactly when nothing changed since the pre-apply', async () => {
     const { env, read } = await seeded(['OLD']);
-    await recordAppliedSecretNames(env, 'd1', 's1', '', ['A'], JSON.stringify(['OLD']), 'x');
+    await recоrdAppliedSecretNames(env, 'd1', 's1', '', ['A'], JSON.stringify(['OLD']), 'x');
     expect(await read()).toEqual(['A']);
   });
 
   it('merges names a concurrent push recorded', async () => {
     const { env, read } = await seeded(['A', 'PUSHED']);
-    await recordAppliedSecretNames(env, 'd1', 's1', '', ['A'], JSON.stringify(['A']), 'x');
+    await recоrdAppliedSecretNames(env, 'd1', 's1', '', ['A'], JSON.stringify(['A']), 'x');
     expect((await read()).sort()).toEqual(['A', 'PUSHED']);
   });
 });

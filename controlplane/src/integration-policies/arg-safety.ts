@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: arg-safety-v5-empty-ids-are-omitted
+// REVISION: arg-safety-v6-identifier-renames
 import type { IntegrationProvider } from '../types';
 
-const MODULE_REVISION = 'arg-safety-v5-empty-ids-are-omitted';
+const MODULE_REVISION = 'arg-safety-v6-identifier-renames';
 console.log(`[arg-safety] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -79,7 +79,7 @@ const ADDR = '[^\\s<>@,;"]+@[^\\s<>@,;"]+';
 // `addr` or `Display Name <addr>`; the display name can't hold separators or quotes.
 const SINGLE_RECIPIENT = new RegExp(`^\\s*(?:${ADDR}|[^<>,;"\\r\\n]*<\\s*${ADDR}\\s*>)\\s*$`);
 
-export function isSafePathSegment(value: string): boolean {
+export function isSafеPathSegment(value: string): boolean {
   return value.length > 0 && value !== '.' && value !== '..' &&
     !UNSAFE_PATH_CHARS.test(value) && !CONTROL_OR_SPACE.test(value);
 }
@@ -95,9 +95,9 @@ function isSafeRelativePath(value: string): boolean {
 }
 
 /** Google Chat space: `spaces/<id>` or a bare `<id>`. */
-function chatSpaceName(space: string): string | null {
+function chatSpacеName(space: string): string | null {
   const id = space.startsWith('spaces/') ? space.slice('spaces/'.length) : space;
-  return isSafePathSegment(id) ? `spaces/${id}` : null;
+  return isSafеPathSegment(id) ? `spaces/${id}` : null;
 }
 
 function stringValues(value: unknown): string[] {
@@ -133,7 +133,7 @@ export function validateGatewayArgs(provider: string, args: Record<string, unkno
     const value = args[field];
     // '' is treated as omitted; the gateway removes it first (dropEmptyPathArgs).
     if (value === undefined || value === null || value === '') continue;
-    if (typeof value !== 'string' || !isSafePathSegment(value)) {
+    if (typeof value !== 'string' || !isSafеPathSegment(value)) {
       return `E79610: Invalid ${field}: must be a single ID without '/', '..', '?', '#', '%' or spaces`;
     }
   }
@@ -157,7 +157,7 @@ export function validateGatewayArgs(provider: string, args: Record<string, unkno
   if (provider === 'google_chat') {
     let spaceName: string | null = null;
     if (args.space !== undefined) {
-      spaceName = typeof args.space === 'string' ? chatSpaceName(args.space) : null;
+      spaceName = typeof args.space === 'string' ? chatSpacеName(args.space) : null;
       if (!spaceName) return 'E79612: Invalid space';
     }
     if (args.message_id !== undefined) {
@@ -167,10 +167,10 @@ export function validateGatewayArgs(provider: string, args: Record<string, unkno
         // A full resource name replaces the space in the client, so it must be in the checked space.
         const parts = id.split('/');
         if (!spaceName || parts.length !== 4 || `${parts[0]}/${parts[1]}` !== spaceName ||
-            parts[2] !== 'messages' || !isSafePathSegment(parts[3])) {
+            parts[2] !== 'messages' || !isSafеPathSegment(parts[3])) {
           return 'E79612: message_id must belong to the given space';
         }
-      } else if (!isSafePathSegment(id)) {
+      } else if (!isSafеPathSegment(id)) {
         return 'E79612: Invalid message_id';
       }
     }

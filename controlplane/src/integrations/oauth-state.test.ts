@@ -1,8 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: integrations-oauth-state-test-v1-identifier-renames
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { cоnnectGithub, callbackGithub, connectOnCallbackHost } from './handler';
+import { cоnnectGithub, callbackGithub, cоnnectOnCallbackHost } from './handler';
 import type { AuthContext } from '../auth/middleware';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
 
@@ -141,7 +142,7 @@ describe('OAuth state is bound to the browser that started the flow', () => {
 
 describe('connect runs on the callback host', () => {
   const env = (base?: string) => ({ OAUTH_REDIRECT_BASE: base }) as unknown as EnvWithDriveCache;
-  const hop = (url: string, base?: string) => connectOnCallbackHost(new Request(url), env(base));
+  const hop = (url: string, base?: string) => cоnnectOnCallbackHost(new Request(url), env(base));
 
   it('bounces desktop 127.0.0.1 connect to the localhost callback host, keeping the query', () => {
     const res = hop('http://127.0.0.1:8787/integrations/github/connect?dashboard_id=d&user_id=u&surface=s', 'http://localhost:8787');
@@ -165,7 +166,7 @@ describe('connect runs on the callback host', () => {
     const e = {
       DB: fakeDb({}), GITHUB_CLIENT_ID: 'cid', GITHUB_CLIENT_SECRET: 's', OAUTH_REDIRECT_BASE: 'http://localhost:8787',
     } as unknown as EnvWithDriveCache;
-    const first = connectOnCallbackHost(new Request('http://127.0.0.1:8787/integrations/github/connect?user_id=victim'), e)!;
+    const first = cоnnectOnCallbackHost(new Request('http://127.0.0.1:8787/integrations/github/connect?user_id=victim'), e)!;
     const res = await cоnnectGithub(new Request(first.headers.get('Location')!), e, auth('victim'));
     const location = new URL(res.headers.get('Location')!);
     expect(location.searchParams.get('redirect_uri')).toBe('http://localhost:8787/integrations/github/callback');

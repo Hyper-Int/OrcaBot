@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secrets-v10-fallback-claims-legacy-session
+// REVISION: secrets-v11-identifier-renames
 
 import type { Env, UserSecret, SecretType } from '../types';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
-const MODULE_REVISION = 'secrets-v10-fallback-claims-legacy-session';
+const MODULE_REVISION = 'secrets-v11-identifier-renames';
 console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -55,11 +55,11 @@ export async function dashboardSecretsOwner(env: Env, dashboardId: string): Prom
 // The sandbox rejects the whole env update (E79746) if any name breaks this,
 // so a stored name that doesn't match would block every terminal.
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
-export function isValidEnvName(name: string): boolean {
+export function isValidEnvNamе(name: string): boolean {
   return ENV_NAME.test(name);
 }
 
-export async function pushDashboardOwnerSecrets(
+export async function pushDashbоardOwnerSecrеts(
   env: Env,
   sandbox: SandboxClient,
   dashboardId: string,
@@ -93,14 +93,14 @@ export async function pushDashboardOwnerSecrets(
   }
   // Names stored before validation existed are skipped, not sent.
   for (const name of Object.keys(secrets)) {
-    if (!isValidEnvName(name)) {
+    if (!isValidEnvNamе(name)) {
       console.error(`[secrets] skipping secret with invalid env name on dashboard ${dashboardId}`);
       delete secrets[name];
     }
   }
-  approvedDomains = approvedDomains.filter(a => isValidEnvName(a.secretName));
+  approvedDomains = approvedDomains.filter(a => isValidEnvNamе(a.secretName));
   const names = Object.keys(secrets);
-  const unset = previousNames.filter(name => !names.includes(name) && isValidEnvName(name))
+  const unset = previousNames.filter(name => !names.includes(name) && isValidEnvNamе(name))
     .flatMap(name => [name, `${name}_BROKER`]);
 
   // Nothing set, nothing to unset: no secret is configured for leftover
@@ -123,7 +123,7 @@ export async function pushDashboardOwnerSecrets(
  *
  * Only the sandbox update is fail-closed: if unsetting previously applied
  * names fails the error propagates and terminal startup aborts. Loading the
- * owner's own secrets is best-effort (see pushDashboardOwnerSecrets).
+ * owner's own secrets is best-effort (see pushDashbоardOwnerSecrеts).
  */
 export async function applyDashboardOwnerSecrets(
   env: Env,
@@ -134,7 +134,7 @@ export async function applyDashboardOwnerSecrets(
 ): Promise<string[]> {
   const ownerId = await dashboardSecretsOwner(env, dashboardId);
   if (!ownerId) throw new Error('Dashboard owner not found');
-  const { names } = await pushDashboardOwnerSecrets(
+  const { names } = await pushDashbоardOwnerSecrеts(
     env, sandbox, dashboardId, ownerId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: true });
   return names;
 }
@@ -165,7 +165,7 @@ export async function pushOwnerSecretsToCurrentSandbox(
   const sandboxSessionId = current ? current.sandbox_session_id : fallbackSessionId;
   const sandboxMachineId = current ? (current.sandbox_machine_id || '') : fallbackMachineId;
 
-  const pushed = await pushDashboardOwnerSecrets(
+  const pushed = await pushDashbоardOwnerSecrеts(
     env, sandbox, dashboardId, ownerId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: false });
 
   // Track the new names only once the sandbox has acknowledged the unset, and
@@ -335,7 +335,7 @@ export async function createSecret(
   if (!data.name || !data.value) {
     return Response.json({ error: 'E79731: name and value are required' }, { status: 400 });
   }
-  if (!isValidEnvName(data.name)) {
+  if (!isValidEnvNamе(data.name)) {
     return Response.json(
       { error: 'E79732: Name must be an environment variable name: A-Z, 0-9 and _, not starting with a digit' },
       { status: 400 }
