@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-send-v7-editor-required
-const MODULE_REVISION = 'messaging-send-v7-editor-required';
+// REVISION: messaging-send-v8-discord-guild-bound
+const MODULE_REVISION = 'messaging-send-v8-discord-guild-bound';
 console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -19,7 +19,7 @@ console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date(
 import type { Env, MessagingProvider } from '../types';
 import { executeWhatsAppAction } from '../integration-policies/api-clients/whatsapp';
 import { executeSlackAction } from '../integration-policies/api-clients/slack';
-import { executeDiscordAction } from '../integration-policies/api-clients/discord';
+import { executeDiscordAction, getDiscordChannelGuildId } from '../integration-policies/api-clients/discord';
 import { executeTeamsAction } from '../integration-policies/api-clients/teams';
 import { getAccessToken } from '../integration-policies/token-refresh';
 import { BridgeClient } from '../bridge/client';
@@ -286,6 +286,24 @@ async function sendDiscord(
 
   if (!channelId) {
     throw new Error('No channel ID — no inbound messages received yet and no channel configured');
+  }
+
+  // The bot token is shared by every tenant, so the bot being able to post in
+  // a channel proves nothing: the channel must be in the guild this
+  // integration was connected to (same rule as gateway step 9c).
+  const meta = await env.DB.prepare(
+    `SELECT metadata FROM user_integrations WHERE id = ?`
+  ).bind(integrationId).first<{ metadata: string | null }>();
+  let guildId: string | undefined;
+  try {
+    guildId = meta?.metadata ? (JSON.parse(meta.metadata) as { guild_id?: string }).guild_id : undefined;
+  } catch { /* treated as no guild below */ }
+  if (!guildId) {
+    throw new Error('E79630: Discord integration has no connected server; reconnect Discord');
+  }
+  const channelGuildId = await getDiscordChannelGuildId(channelId, token);
+  if (channelGuildId !== guildId) {
+    throw new Error('E79631: Discord channel is not in the connected server');
   }
 
   // Send message to channel

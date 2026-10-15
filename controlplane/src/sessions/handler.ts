@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sessions-v29-token-bound-to-sandbox
-const sessionsRevision = "sessions-v29-token-bound-to-sandbox";
+// REVISION: sessions-v30-pty-dashboard-token-merge-secret-names
+const sessionsRevision = "sessions-v30-pty-dashboard-token-merge-secret-names";
 console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -12,7 +12,7 @@ console.log(`[sessions] REVISION: ${sessionsRevision} loaded at ${new Date().toI
  * This is the bridge between the control plane and execution plane.
  */
 
-import type { Session, DashboardItem } from '../types';
+import type { Env, Session, DashboardItem } from '../types';
 import { isDesktopFeatureDisabledError, type EnvWithDriveCache } from '../storage/drive-cache';
 import { SandboxClient } from '../sandbox/client';
 import { createDashboardToken, sandboxGeneration } from '../auth/dashboard-token';
@@ -255,6 +255,90 @@ async function getDashbоardSandbоx(env: EnvWithDriveCache, dashboardId: string
     fly_volume_id: string;
     machine_state: string;
   }>();
+}
+
+async function readAppliedSecretNames(env: Env, dashboardId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`
+    SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ applied_secret_names: string | null }>();
+  return row?.applied_secret_names ?? null;
+}
+
+function parseSecretNames(raw: string | null): string[] {
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Record the names a terminal start's pre-apply left set in the sandbox.
+ *
+ * If the tracking is unchanged since that pre-apply read it, it is replaced
+ * exactly. If it changed, an owner secret push ran concurrently and recorded
+ * names this start never saw: overwriting would drop them, and a later delete
+ * of that secret would never unset it. Then the union is written instead — an
+ * extra name only costs a redundant unset, and the next push records the exact
+ * set. The write is compare-and-swap so a push landing between read and write
+ * is merged too.
+ */
+export async function recordAppliedSecretNames(
+  env: Env,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string,
+  names: string[],
+  trackedBeforePreApply: string | null,
+  createdAt: string,
+): Promise<void> {
+  const insert = await env.DB.prepare(`
+    INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(dashboard_id) DO NOTHING
+  `).bind(dashboardId, sandboxSessionId, sandboxMachineId, JSON.stringify(names), createdAt).run();
+  if (insert.meta.changes) return;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await readAppliedSecretNames(env, dashboardId);
+    if (current === null) return;
+    const next = current === trackedBeforePreApply
+      ? names
+      : Array.from(new Set([...parseSecretNames(current), ...names]));
+    const nextRaw = JSON.stringify(next);
+    if (nextRaw === current) return;
+    const update = await env.DB.prepare(`
+      UPDATE dashboard_sandboxes SET applied_secret_names = ?
+      WHERE dashboard_id = ? AND applied_secret_names = ?
+    `).bind(nextRaw, dashboardId, current).run();
+    if (update.meta.changes) return;
+  }
+  console.error(`[createSession] could not record applied secret names for dashboard ${dashboardId} (concurrent updates)`);
+}
+
+/**
+ * A fresh dashboard token for the dashboard's current sandbox, bound to its
+ * generation (dashboard_sandboxes.created_at) so the VM can keep refreshing it.
+ * Sent with each new PTY: the VM otherwise only receives a token when its
+ * sandbox session is created, so one whose token was refused (signing secret
+ * rotated, E79393/E79395) would never get another. Undefined when the row is not
+ * this sandbox session (it was replaced meanwhile) — never mint for a stale one.
+ */
+export async function mintCurrentSandboxDashboardToken(
+  env: Env,
+  dashboardId: string,
+  sandboxSessionId: string,
+): Promise<string | undefined> {
+  const row = await env.DB.prepare(`
+    SELECT sandbox_session_id, created_at FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ sandbox_session_id: string | null; created_at: string | null }>();
+  if (!row?.sandbox_session_id || row.sandbox_session_id !== sandboxSessionId || !row.created_at) {
+    return undefined;
+  }
+  const generation = sandboxGeneration(row.created_at);
+  if (Number.isNaN(generation)) return undefined;
+  return createDashboardToken(dashboardId, tokenSigningSecret(env), undefined, generation);
 }
 
 /**
@@ -1524,11 +1608,15 @@ async function createSessionImpl(
     // uniformly to every dashboard-scoped execution path, not just this UI-terminal
     // one. `workingDir` here is only the terminal's own relative sub-path (if any).
     let appliedSecretNames: string[] = [];
+    // The tracked names as they were before the latest pre-apply read them; see
+    // recordAppliedSecretNames for why the final write compares against this.
+    let trackedBeforePreApply: string | null = null;
 
     const applyDashboardSecretsBeforePtyStart = async (
       sandboxSessionId: string,
       sandboxMachineId: string
     ): Promise<string[]> => {
+      trackedBeforePreApply = await readAppliedSecretNames(env, dashboardId);
       const { applyDashboardOwnerSecrets } = await import('../secrets/handler');
       return applyDashboardOwnerSecrets(env, sandbox, dashboardId, sandboxSessionId, sandboxMachineId);
     };
@@ -1576,6 +1664,7 @@ async function createSessionImpl(
       userId,
       tokenSigningSecret(env)
     );
+    const dashboardToken = await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId);
 
     let pty: { id: string };
     try {
@@ -1588,6 +1677,7 @@ async function createSessionImpl(
           integrationToken,
           workingDir,
           modelSelection,
+          dashboardToken,
         });
       } catch (wdErr) {
         if (workingDir && wdErr instanceof Error && wdErr.message.includes('E79708')) {
@@ -1596,6 +1686,7 @@ async function createSessionImpl(
             ptyId,
             integrationToken,
             modelSelection,
+            dashboardToken,
           });
         } else {
           throw wdErr;
@@ -1645,6 +1736,7 @@ async function createSessionImpl(
         ptyId,
         integrationToken: freshIntegrationToken,
         modelSelection,
+        dashboardToken: await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId),
       });
     }
 
@@ -1800,12 +1892,9 @@ async function createSessionImpl(
       console.error('[createSession] Failed to migrate integrations:', err);
     }
 
-    // Track applied secret names for deletion tracking (upsert in case row exists from sandbox creation)
-    await env.DB.prepare(`
-      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
-    `).bind(dashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(appliedSecretNames), now).run();
+    // Track applied secret names for deletion tracking.
+    await recordAppliedSecretNames(
+      env, dashboardId, sandboxSessionId, sandboxMachineId || '', appliedSecretNames, trackedBeforePreApply, now);
 
     const session: Session = {
       id,

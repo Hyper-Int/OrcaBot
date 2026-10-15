@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 import { describe, it, expect } from 'vitest';
-import { validateGatewayArgs } from './arg-safety';
+import { validateGatewayArgs, dropEmptyPathArgs } from './arg-safety';
 import { deriveEnforcementContext } from './gateway';
 
 describe('validateGatewayArgs: IDs in URL paths', () => {
@@ -92,5 +92,28 @@ describe('deriveEnforcementContext: checks what the client sends', () => {
     expect(deriveEnforcementContext('discord.send_message', { channel: 'C', content: 'x'.repeat(500) }).messageText).toHaveLength(500);
     const blocks = [{ type: 'section', text: { type: 'mrkdwn', text: 'y'.repeat(800) } }];
     expect(deriveEnforcementContext('slack.send_message', { channel: 'C', text: 'hi', blocks }).messageText!.length).toBeGreaterThan(800);
+  });
+});
+
+describe('empty path IDs are treated as omitted', () => {
+  it.each([
+    ['google_drive', { folderId: '' }],
+    ['google_drive', { fileId: '', folderId: '' }],
+    ['gmail', { labelId: '' }],
+    ['discord', { guild_id: '' }],
+    ['github', { owner: '', repo: '' }],
+  ])('%s %j passes validation', (provider, args) => {
+    expect(validateGatewayArgs(provider, args)).toBeNull();
+  });
+
+  it('dropEmptyPathArgs removes them so no client builds a URL from an empty segment', () => {
+    const args: Record<string, unknown> = { folderId: '', fileId: 'abc', name: '' };
+    dropEmptyPathArgs('google_drive', args);
+    expect(args).toEqual({ fileId: 'abc', name: '' });
+  });
+
+  it('still rejects whitespace and traversal', () => {
+    expect(validateGatewayArgs('discord', { channel: ' ' })).toMatch(/^E79610/);
+    expect(validateGatewayArgs('google_drive', { folderId: '..' })).toMatch(/^E796/);
   });
 });

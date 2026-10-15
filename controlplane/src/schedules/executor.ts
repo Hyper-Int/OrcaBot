@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: server-side-cron-v9-signed-sandbox-requests
+// REVISION: server-side-cron-v10-pty-dashboard-token
 
 /**
  * Edge-Based Schedule Executor
@@ -15,12 +15,12 @@
  * The sandbox reports completion via POST /internal/schedule-executions/:id/pty-completed
  */
 
-const MODULE_REVISION = 'server-side-cron-v9-signed-sandbox-requests';
+const MODULE_REVISION = 'server-side-cron-v10-pty-dashboard-token';
 console.log(`[executor] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env, Schedule, ScheduleExecution, ScheduleExecutionTerminal } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
-import { ensureDashbоardSandbоx } from '../sessions/handler';
+import { ensureDashbоardSandbоx, mintCurrentSandboxDashboardToken } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
 import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { createTaskInternal, updateTaskStatusInternal } from '../agent-state/handler';
@@ -227,6 +227,7 @@ export async function executeScheduleByEdges(
               ptyId,
               integrationToken,
               executionId, // Set at creation time so callback is registered before process starts
+              dashboardToken: await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId),
             }
           );
 

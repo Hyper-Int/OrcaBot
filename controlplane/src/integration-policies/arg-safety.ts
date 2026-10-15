@@ -1,10 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: arg-safety-v4-policy-args-are-strings
+// REVISION: arg-safety-v5-empty-ids-are-omitted
 import type { IntegrationProvider } from '../types';
 
-const MODULE_REVISION = 'arg-safety-v4-policy-args-are-strings';
+const MODULE_REVISION = 'arg-safety-v5-empty-ids-are-omitted';
 console.log(`[arg-safety] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -106,6 +106,18 @@ function stringValues(value: unknown): string[] {
   return [];
 }
 
+/**
+ * An empty path ID means "not given" (LLMs often send `folderId: ""`). Remove it
+ * so the policy check and the client both see it as omitted; left in place, a
+ * client could still interpolate '' and reach a different endpoint (e.g.
+ * `/files/` instead of `/files/<id>`). Call before validateGatewayArgs.
+ */
+export function dropEmptyPathArgs(provider: string, args: Record<string, unknown>): void {
+  for (const field of PATH_SEGMENT_ARGS[provider as IntegrationProvider] ?? []) {
+    if (args[field] === '') delete args[field];
+  }
+}
+
 /** Returns a denial reason, or null if the args are safe to enforce and execute. */
 export function validateGatewayArgs(provider: string, args: Record<string, unknown>): string | null {
   // Plus the messaging target (Gmail's `to` is a recipient list, WhatsApp's is a number).
@@ -119,7 +131,8 @@ export function validateGatewayArgs(provider: string, args: Record<string, unkno
 
   for (const field of PATH_SEGMENT_ARGS[provider as IntegrationProvider] ?? []) {
     const value = args[field];
-    if (value === undefined || value === null) continue;
+    // '' is treated as omitted; the gateway removes it first (dropEmptyPathArgs).
+    if (value === undefined || value === null || value === '') continue;
     if (typeof value !== 'string' || !isSafePathSegment(value)) {
       return `E79610: Invalid ${field}: must be a single ID without '/', '..', '?', '#', '%' or spaces`;
     }

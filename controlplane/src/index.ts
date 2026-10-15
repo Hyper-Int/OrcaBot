@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: controlplane-v24-csrf-same-origin
-console.log(`[controlplane] REVISION: controlplane-v24-csrf-same-origin loaded at ${new Date().toISOString()}`);
+// REVISION: controlplane-v25-no-surface-token-to-sandbox
+console.log(`[controlplane] REVISION: controlplane-v25-no-surface-token-to-sandbox loaded at ${new Date().toISOString()}`);
 
 /**
  * OrcaBot Control Plane - Cloudflare Worker Entry Point
@@ -483,6 +483,8 @@ async function prоxySandbоxRequest(
 ): Promise<Response> {
   const sandboxUrlValue = sandboxUrl(env, path);
   sandboxUrlValue.search = new URL(request.url).search;
+  // The desktop surface token authenticates dev-auth; it must not reach the VM.
+  if (sandboxUrlValue.searchParams.has('surface')) sandboxUrlValue.searchParams.delete('surface');
 
   const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');
@@ -506,6 +508,8 @@ async function prоxySandbоxWebSоcketPath(
 ): Promise<Response> {
   const sandboxUrlValue = sandboxUrl(env, path);
   sandboxUrlValue.search = new URL(request.url).search;
+  // The desktop surface token authenticates dev-auth; it must not reach the VM.
+  if (sandboxUrlValue.searchParams.has('surface')) sandboxUrlValue.searchParams.delete('surface');
 
   const headers = await sandboxHeaders(env, request.headers, machineId, request.method, sandboxUrlValue);
   headers.delete('Host');

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v4-signed-requests
-const sandboxClientRevision = "sandbox-client-v4-signed-requests";
+// REVISION: sandbox-client-v5-pty-carries-dashboard-token
+const sandboxClientRevision = "sandbox-client-v5-pty-carries-dashboard-token";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -236,6 +236,10 @@ export class SandboxClient {
       workingDir?: string;
       // Schedule execution ID — set at creation time so callback is in place before process starts
       executionId?: string;
+      // Fresh dashboard-scoped token for the sandbox's current generation. The VM
+      // only gets one at sandbox-session create; resending it with each PTY lets a
+      // VM whose token was refused (e.g. after PTY_TOKEN_SECRET rotation) recover.
+      dashboardToken?: string;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
         provider: 'default' | 'openrouter' | 'custom';
@@ -250,7 +254,8 @@ export class SandboxClient {
   ): Promise<SandboxPty> {
     const shouldSendBody = Boolean(
       creatorId || command || options?.ptyId || options?.integrationToken ||
-      options?.workingDir || options?.executionId || options?.modelSelection
+      options?.workingDir || options?.executionId || options?.modelSelection ||
+      options?.dashboardToken
     );
     const body = shouldSendBody
       ? JSON.stringify({
@@ -266,6 +271,8 @@ export class SandboxClient {
           execution_id: options?.executionId,
           // Model selection — sandbox translates to per-harness env vars (OPENAI_BASE_URL etc.)
           model_selection: options?.modelSelection,
+          // Same field name as POST /sessions (cpauth dashboard token)
+          mcp_token: options?.dashboardToken,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());

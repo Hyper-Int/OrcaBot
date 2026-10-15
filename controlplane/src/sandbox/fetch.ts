@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-fetch-v2-signed-requests
-const MODULE_REVISION = 'sandbox-fetch-v2-signed-requests';
+// REVISION: sandbox-fetch-v3-strip-client-credentials
+const MODULE_REVISION = 'sandbox-fetch-v3-strip-client-credentials';
 console.log(`[sandbox-fetch] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env } from '../types';
@@ -28,6 +28,29 @@ export function sandboxUrl(env: Env, path: string): URL {
 }
 
 /**
+ * Client credentials that must never reach the shared dashboard VM. The proxy
+ * routes (PTY/control WS, browser, metrics) pass the browser's own headers, and
+ * a VM is shared by every member's terminals, so forwarding these would hand a
+ * user's session cookie, PAT, Cloudflare Access JWT or dev-auth identity to
+ * whatever runs in the VM. The sandbox authenticates the control plane by
+ * X-Sandbox-Auth / X-Internal-Token only (sandbox/internal/auth); it reads none
+ * of these on proxied routes (its Bearer check is the legacy static token,
+ * which the control plane never sends as Authorization).
+ */
+const CLIENT_CREDENTIAL_HEADERS = [
+  'Cookie',
+  'Authorization',
+  'Proxy-Authorization',
+  'X-Dashboard-Token',
+  'Cf-Access-Jwt-Assertion',
+  // Dev auth (auth/middleware.ts authenticateDevMode / devAuthSurfaceTrusted)
+  'X-User-ID',
+  'X-User-Email',
+  'X-User-Name',
+  'X-Orcabot-Surface',
+];
+
+/**
  * Auth + routing headers for a control plane → sandbox request: the per-machine
  * signature (X-Sandbox-Auth) when SANDBOX_AUTH_SIGNING_KEY is set, and the legacy
  * static X-Internal-Token while SANDBOX_INTERNAL_TOKEN is still configured.
@@ -41,6 +64,7 @@ export async function sandboxHeaders(
   url: string | URL
 ): Promise<Headers> {
   const result = new Headers(headers);
+  for (const name of CLIENT_CREDENTIAL_HEADERS) result.delete(name);
   result.delete('X-Sandbox-Auth');
   result.delete('fly-force-instance-id');
   if (env.SANDBOX_INTERNAL_TOKEN) {

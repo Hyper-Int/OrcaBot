@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v32-arg-validation-canonical-targets
-const MODULE_REVISION = 'gateway-v32-arg-validation-canonical-targets';
+// REVISION: gateway-v33-discord-guild-pinning
+const MODULE_REVISION = 'gateway-v33-discord-guild-pinning';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -40,7 +40,7 @@ import type {
 } from '../types';
 import { verifyPtyToken, tokenSigningSecret, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
-import { validateGatewayArgs, MESSAGING_TARGET_FIELD } from './arg-safety';
+import { validateGatewayArgs, dropEmptyPathArgs, MESSAGING_TARGET_FIELD } from './arg-safety';
 import { getAccessToken } from './token-refresh';
 import { filterResponse, type FilterResult } from './response-filter';
 import { executeGmailAction } from './api-clients/gmail';
@@ -48,7 +48,13 @@ import { executeGitHubAction } from './api-clients/github';
 import { executeDriveAction } from './api-clients/drive';
 import { executeCalendarAction } from './api-clients/calendar';
 import { executeSlackAction } from './api-clients/slack';
-import { executeDiscordAction } from './api-clients/discord';
+import {
+  executeDiscordAction,
+  getDiscordChannelGuildId,
+  DISCORD_CHANNEL_ACTIONS,
+  DISCORD_GUILD_ACTIONS,
+  DISCORD_UNSCOPED_ACTIONS,
+} from './api-clients/discord';
 import { executeTelegramAction, type TelegramD1Context } from './api-clients/telegram';
 import { executeWhatsAppAction } from './api-clients/whatsapp';
 import { executeTeamsAction } from './api-clients/teams';
@@ -604,6 +610,9 @@ export async function handleGatewayExecute(
       { status: 400 }
     );
   }
+  if (!body.args || typeof body.args !== 'object' || Array.isArray(body.args)) {
+    body.args = {};
+  }
 
   // 3. Load terminal_integration and active policy
   // Defense-in-depth: JOIN also verifies the policy belongs to this terminal_integration
@@ -684,6 +693,7 @@ export async function handleGatewayExecute(
 
   // 6b. Reject args that would mean one thing to enforcePolicy and another to the
   // provider (path traversal in IDs, header injection, multi-address recipients).
+  dropEmptyPathArgs(provider, body.args);
   const argError = validateGatewayArgs(provider, body.args);
   if (argError) {
     await logAuditEntry(env, {
@@ -1066,18 +1076,67 @@ export async function handleGatewayExecute(
     }
   }
 
-  // 9c. Discord: inject guild_id from stored metadata so LLM doesn't need to know it
+  // 9c. Discord: every integration uses the shared platform bot, which is in every
+  // customer's guild, so the guild comes from the stored integration and every
+  // channel must belong to it. Anything unverifiable is denied (fail closed).
   if (provider === 'discord') {
+    const denyDiscord = async (reason: string, resourceId?: string) => {
+      await logAuditEntry(env, {
+        terminalIntegrationId: ti.id,
+        terminalId,
+        dashboardId,
+        userId,
+        provider,
+        action: body.action,
+        resourceId,
+        policyId,
+        policyVersion,
+        decision: 'denied',
+        denialReason: reason,
+      });
+      return Response.json(
+        { allowed: false, decision: 'denied' as const, reason, policyId, policyVersion },
+        { status: 403 }
+      );
+    };
+
+    let storedGuildId: string | null = null;
     const discordMeta = await env.DB.prepare(`
       SELECT metadata FROM user_integrations WHERE id = ?
     `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
     if (discordMeta?.metadata) {
       try {
-        const meta = JSON.parse(discordMeta.metadata) as { guild_id?: string };
-        if (meta.guild_id && !body.args.guild_id) {
-          body.args.guild_id = meta.guild_id;
-        }
-      } catch { /* ignore parse errors */ }
+        const meta = JSON.parse(discordMeta.metadata) as { guild_id?: unknown };
+        if (typeof meta.guild_id === 'string' && meta.guild_id) storedGuildId = meta.guild_id;
+      } catch { /* treated as no guild */ }
+    }
+    if (!storedGuildId) {
+      return denyDiscord('E79624: Discord integration has no verified server. Reconnect Discord.');
+    }
+    const llmGuildId = body.args.guild_id;
+    if (llmGuildId !== undefined && llmGuildId !== null && llmGuildId !== '' && llmGuildId !== storedGuildId) {
+      return denyDiscord('E79625: guild_id must be the connected Discord server');
+    }
+    body.args.guild_id = storedGuildId;
+
+    if (DISCORD_CHANNEL_ACTIONS.has(body.action)) {
+      const channel = body.args.channel;
+      if (typeof channel !== 'string' || !channel) {
+        return denyDiscord('E79626: channel is required');
+      }
+      let channelGuildId: string | null;
+      try {
+        channelGuildId = await getDiscordChannelGuildId(channel, accessToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.warn(`[gateway] Discord channel lookup failed for ${channel}: ${msg}`);
+        return denyDiscord('E79627: Unable to verify the Discord channel belongs to the connected server', channel);
+      }
+      if (channelGuildId !== storedGuildId) {
+        return denyDiscord('E79628: Discord channel is not in the connected server', channel);
+      }
+    } else if (!DISCORD_GUILD_ACTIONS.has(body.action) && !DISCORD_UNSCOPED_ACTIONS.has(body.action)) {
+      return denyDiscord(`E79629: Unsupported Discord action: ${body.action}`);
     }
   }
 

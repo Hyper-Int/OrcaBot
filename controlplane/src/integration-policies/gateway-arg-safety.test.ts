@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-arg-safety-tests-v2-outlook-calendar
+// REVISION: gateway-arg-safety-tests-v3-empty-ids
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { handleGatewayExecute } from './gateway';
 import { createPtyToken } from '../auth/pty-token';
@@ -23,6 +23,9 @@ function fakeEnv(provider: IntegrationProvider, policy: Record<string, unknown> 
           policy: JSON.stringify(policy), security_level: 'restricted',
           policy_id: 'pol-1', policy_version: 1,
         };
+      }
+      if (sql.includes('FROM user_integrations WHERE id')) {
+        return { access_token: 'tok', refresh_token: null, expires_at: null, metadata: null };
       }
       return null;
     },
@@ -99,5 +102,23 @@ describe('gateway rejects args the policy check would skip', () => {
     const res = await execute('outlook_calendar', 'outlook_calendar.list_events', { calendarId: 'FORBIDDEN' }, onlyAllowed);
     expect(res.status).toBe(403);
     expect(upstream).not.toHaveBeenCalled();
+  });
+});
+
+describe('gateway treats empty path IDs as omitted', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('drive.list with folderId "" is not denied and sends no empty folder', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      return Response.json({ files: [] });
+    }));
+    const res = await execute('google_drive', 'drive.list', { folderId: '' });
+    expect(res.status).toBe(200);
+    expect(urls.length).toBe(1);
+    expect(decodeURIComponent(urls[0])).not.toContain("'' in parents");
   });
 });

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: integrations-v38-connect-on-callback-host
-const integrationsRevision = "integrations-v38-connect-on-callback-host";
+// REVISION: integrations-v39-discord-guild-manage-check
+const integrationsRevision = "integrations-v39-discord-guild-manage-check";
 
 console.log(`[integrations] REVISION: ${integrationsRevision} loaded at ${new Date().toISOString()}`);
 
@@ -10271,6 +10271,54 @@ export async function connectDiscord(
   return oauthRedirect(request, authUrl.toString(), state, oauthBinding);
 }
 
+const DISCORD_PERM_ADMINISTRATOR = BigInt(0x8);
+const DISCORD_PERM_MANAGE_GUILD = BigInt(0x20);
+
+function discordScopeIncludesBot(scope: string | undefined): boolean {
+  return typeof scope === 'string' && scope.split(/\s+/).includes('bot');
+}
+
+/** Whether a /users/@me/guilds entry lets the user manage that guild. */
+export function canManageDiscordGuild(entry: { owner?: unknown; permissions?: unknown }): boolean {
+  if (entry.owner === true) return true;
+  const raw = entry.permissions;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return false;
+  let perms: bigint;
+  try {
+    perms = BigInt(raw);
+  } catch {
+    return false;
+  }
+  return (perms & DISCORD_PERM_ADMINISTRATOR) !== BigInt(0) || (perms & DISCORD_PERM_MANAGE_GUILD) !== BigInt(0);
+}
+
+/**
+ * The guild a Discord authorization is bound to, or null when it can't be
+ * verified (fail closed). Requires the `bot` scope; prefers the token
+ * response's guild; falls back to the callback's guild_id only if the user
+ * owns it or holds MANAGE_GUILD / ADMINISTRATOR there.
+ */
+export async function resolveDiscordGuildId(
+  tokenData: { access_token?: string; scope?: string; guild?: { id?: string } },
+  queryGuildId: string | null,
+): Promise<string | null> {
+  if (!discordScopeIncludesBot(tokenData.scope)) return null;
+  if (typeof tokenData.guild?.id === 'string' && tokenData.guild.id) return tokenData.guild.id;
+  if (!queryGuildId || !tokenData.access_token) return null;
+  try {
+    const guildsResp = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (!guildsResp.ok) return null;
+    const guilds = await guildsResp.json() as Array<{ id?: unknown; owner?: unknown; permissions?: unknown }>;
+    if (!Array.isArray(guilds)) return null;
+    const entry = guilds.find((g) => g && g.id === queryGuildId);
+    return entry && canManageDiscordGuild(entry) ? queryGuildId : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function callbackDiscord(
   request: Request,
   env: EnvWithDriveCache
@@ -10336,24 +10384,17 @@ export async function callbackDiscord(
   }
 
   // The guild from the token response is Discord's word for where the bot was
-  // installed. The callback's guild_id query param is user-editable, so it is
-  // only used if the user's own guild list (guilds scope) contains it.
+  // installed by this authorization; it is only trusted when the bot scope was
+  // granted. The callback's guild_id query param is user-editable, so it is only
+  // used if the user can manage that guild (owner, MANAGE_GUILD or ADMINISTRATOR
+  // in their own guild list) — mere membership would let any member bind the
+  // shared bot to someone else's server. Anything unverified records no guild,
+  // and the gateway and subscriptions then fail closed.
   // Subscriptions trust this guild_id (messaging/webhook-handler.ts).
-  let resolvedGuildId: string | null = tokenData.guild?.id || null;
-  if (!resolvedGuildId && guildId) {
-    try {
-      const guildsResp = await fetch('https://discord.com/api/v10/users/@me/guilds', {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      });
-      if (guildsResp.ok) {
-        const guilds = await guildsResp.json() as Array<{ id: string }>;
-        if (guilds.some((g) => g.id === guildId)) resolvedGuildId = guildId;
-      }
-    } catch {
-      // Unverified: record no guild (subscriptions then fail closed).
-    }
-  }
-  const resolvedGuildName = tokenData.guild?.name || null;
+  const resolvedGuildId = await resolveDiscordGuildId(tokenData, guildId);
+  const resolvedGuildName = resolvedGuildId && tokenData.guild?.id === resolvedGuildId
+    ? tokenData.guild.name || null
+    : null;
 
   // Fetch user info using the user OAuth token
   let discordUser: { id: string; username: string; discriminator?: string; avatar?: string | null } | null = null;
