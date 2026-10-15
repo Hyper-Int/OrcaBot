@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // REVISION: guest-timesync-v1-host-push
 //! Virtual machine abstraction for running the sandbox server.
 //!

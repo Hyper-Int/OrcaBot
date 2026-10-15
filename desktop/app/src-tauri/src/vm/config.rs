@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 

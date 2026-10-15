@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // REVISION: main-v17-csprng-fail-closed

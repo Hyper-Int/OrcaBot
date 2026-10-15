@@ -1,4 +1,7 @@
 // swift-tools-version:5.9
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 import PackageDescription
 
 let package = Package(

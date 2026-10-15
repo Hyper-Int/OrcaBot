@@ -1,11 +1,14 @@
-// REVISION: vz-helper-v4-bridge-nonblocking-write
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: vz-helper-v5-copyright-header
 import AppKit
 import Foundation
 import Virtualization
 import ArgumentParser
 import Network
 
-let vzHelperRevision = "vz-helper-v4-bridge-nonblocking-write"
+let vzHelperRevision = "vz-helper-v5-copyright-header"
 
 // MARK: - Global references to prevent deallocation
 var globalVM: VZVirtualMachine?
@@ -657,20 +660,20 @@ final class GuestTimeSync {
         ) { [weak self] _ in
             guard let self = self else { return }
             self.log("host wake notification -> syncing guest clock")
-            self.syncNow(reason: "wake")
+            self.syncNоw(reason: "wake")
             // The VM may need a moment to resume; push once more shortly after.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                self?.syncNow(reason: "wake+3s")
+                self?.syncNоw(reason: "wake+3s")
             }
         }
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now() + 1, repeating: Self.tick, leeway: .milliseconds(500))
-        t.setEventHandler { [weak self] in self?.onTick() }
+        t.setEventHandler { [weak self] in self?.оnTick() }
         t.resume()
         timer = t
     }
 
-    private func onTick() {
+    private func оnTick() {
         let now = Date()
         let up = ProcessInfo.processInfo.systemUptime
         // systemUptime does not advance while the Mac sleeps, wall time does: a
@@ -680,15 +683,15 @@ final class GuestTimeSync {
         lastUptime = up
         if abs(jump) > Self.wakeJumpThreshold {
             log(String(format: "host wall clock jumped %.1fs relative to uptime (sleep/wake or clock change) -> syncing", jump))
-            syncNow(reason: "wall-jump")
+            syncNоw(reason: "wall-jump")
             return
         }
         if now >= nextDue {
-            syncNow(reason: everSynced ? "periodic" : "boot")
+            syncNоw(reason: everSynced ? "periodic" : "boot")
         }
     }
 
-    func syncNow(reason: String) {
+    func syncNоw(reason: String) {
         if inFlight {
             // Never let one hung attempt (e.g. a vsock connect that never
             // completes) wedge the sync forever: abandon it after a timeout.
@@ -711,7 +714,7 @@ final class GuestTimeSync {
                 self.finish(reason: reason, reply: nil, error: "vsock connect: \(error.localizedDescription)", id: id)
             case .success(let conn):
                 self.ioQueue.async {
-                    let (reply, err) = GuestTimeSync.exchange(fd: conn.fileDescriptor)
+                    let (reply, err) = GuestTimeSync.еxchange(fd: conn.fileDescriptor)
                     conn.close()
                     DispatchQueue.main.async {
                         self.finish(reason: reason, reply: reply, error: err, id: id)
@@ -723,7 +726,7 @@ final class GuestTimeSync {
 
     /// One request/reply on a connected vsock fd. Host time is read immediately
     /// before the write so connection setup latency doesn't count as drift.
-    static func exchange(fd: Int32) -> (String?, String?) {
+    static func еxchange(fd: Int32) -> (String?, String?) {
         let flags = fcntl(fd, F_GETFL)
         if flags >= 0 { _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) }
         var tv = timeval(tv_sec: 5, tv_usec: 0)
@@ -734,7 +737,7 @@ final class GuestTimeSync {
         clock_gettime(CLOCK_REALTIME, &ts)
         let ns = Int64(ts.tv_sec) * 1_000_000_000 + Int64(ts.tv_nsec)
         let req = Data("ORCABOT-TIMESYNC 1 \(ns)\n".utf8)
-        if !ConnectionBridge.writeAll(fd, req) {
+        if !ConnectionBridge.writеAll(fd, req) {
             return (nil, "write failed: errno=\(errno)")
         }
         var out = Data()
@@ -929,7 +932,7 @@ class ConnectionBridge {
                 // uploads and big control-plane responses).
                 guard self.vsockOpen else { return }
                 self.pendingOut.append(data)
-                if !self.flushPendingToVsock() { return }
+                if !self.flushPendingTоVsоck() { return }
             }
 
             if isComplete {
@@ -957,7 +960,7 @@ class ConnectionBridge {
     /// closes if TCP already hit EOF. Returns false if the bridge was closed on
     /// error. Runs only on `queue`.
     @discardableResult
-    private func flushPendingToVsock() -> Bool {
+    private func flushPendingTоVsоck() -> Bool {
         guard vsockOpen else { return false }
         let fd = vsockConnection.fileDescriptor
         let connId = id.uuidString.prefix(8)
@@ -1012,7 +1015,7 @@ class ConnectionBridge {
         if vsockWriteSource == nil {
             let ws = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
             ws.setEventHandler { [weak self] in
-                self?.flushPendingToVsock()
+                self?.flushPendingTоVsоck()
             }
             vsockWriteSource = ws
             ws.resume()
@@ -1022,9 +1025,9 @@ class ConnectionBridge {
 
     /// Write all of `data` to a non-blocking fd, waiting (up to 30s at a time)
     /// for buffer space on EAGAIN. Blocks the calling thread, so only for small
-    /// one-shot writes (guest time sync); the bridge uses flushPendingToVsock.
+    /// one-shot writes (guest time sync); the bridge uses flushPendingTоVsоck.
     /// On failure errno describes the cause (ETIMEDOUT on a poll timeout).
-    static func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+    static func writеAll(_ fd: Int32, _ data: Data) -> Bool {
         return data.withUnsafeBytes { raw -> Bool in
             guard var ptr = raw.baseAddress else { return true }
             var remaining = raw.count

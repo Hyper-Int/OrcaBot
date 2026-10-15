@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // REVISION: update-progress-overlay-v1
 "use client";
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // REVISION: orcabot-cli-v24-import-stage-then-merge
 //
 // `orcabot` — command-line control for the Orcabot desktop stack.
