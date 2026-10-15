@@ -1,4 +1,4 @@
-// REVISION: e2e-base-v2-diagnostics-env
+// REVISION: e2e-base-v3-desktop-surface-token
 import { test as base, expect } from "@playwright/test";
 import { login, devModeLoginViaUI, logout } from "./auth";
 import {
@@ -17,7 +17,7 @@ import { CONTROLPLANE_URL } from "../helpers/controlplane-url";
 import { createDiagnostics, type E2EDiagnostics } from "../helpers/diagnostics";
 import { getEnv, requiredEnvReport } from "../helpers/env";
 
-const MODULE_REVISION = "e2e-base-v2-diagnostics-env";
+const MODULE_REVISION = "e2e-base-v3-desktop-surface-token";
 console.log(
   `[e2e-base] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
 );
@@ -68,7 +68,37 @@ export const test = base.extend<{
   terminal: TerminalFixture;
   api: APIFixture;
   diagnostics: DiagnosticsFixture;
+  desktopSurface: void;
 }>({
+  /**
+   * Desktop builds gate dev-auth behind a per-boot surface token. The real app
+   * hands it to the frontend as ?surface= on the loading-screen redirect, and the
+   * frontend keeps it only in memory, so every full page load needs it again —
+   * HTTP calls send it as X-Orcabot-Surface and the dashboard WebSocket as
+   * ?surface=. Mirror that handoff before any page script runs. No-op unless
+   * E2E_SURFACE_TOKEN is set (it is unset on cloud/local-dev targets).
+   */
+  desktopSurface: [
+    async ({ page }, use) => {
+      const token = getEnv("E2E_SURFACE_TOKEN");
+      if (token) {
+        await page.addInitScript((t) => {
+          try {
+            const url = new URL(window.location.href);
+            if (url.protocol.startsWith("http") && !url.searchParams.has("surface")) {
+              url.searchParams.set("surface", t);
+              window.history.replaceState(window.history.state, "", url.toString());
+            }
+          } catch {
+            /* about:blank and friends */
+          }
+        }, token);
+      }
+      await use();
+    },
+    { auto: true },
+  ],
+
   diagnostics: [
     async ({ page }, use, testInfo) => {
       const collector = await createDiagnostics(page);
