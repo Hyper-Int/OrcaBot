@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: secrets-v9-fallback-row-unclaimed
+// REVISION: secrets-v10-fallback-claims-legacy-session
 
 import type { Env, UserSecret, SecretType } from '../types';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
-const MODULE_REVISION = 'secrets-v9-fallback-row-unclaimed';
+const MODULE_REVISION = 'secrets-v10-fallback-claims-legacy-session';
 console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -176,17 +176,17 @@ export async function pushOwnerSecretsToCurrentSandbox(
       WHERE dashboard_id = ? AND sandbox_session_id = ?
     `).bind(JSON.stringify(pushed.names), dashboardId, sandboxSessionId).run();
   } else {
-    // Track the names in an unclaimed (blank-session) row, like a retired
-    // sandbox. Claiming it for the fallback session with created_at = now would
-    // invent a generation no live VM's dashboard token was minted with (its
-    // refresh then fails E79398), and would block a concurrent provisioning
-    // claim (CLAIM_DASHBOARD_SANDBOX only takes blank rows). The next terminal
-    // provisions a sandbox that claims this row and unsets these names.
+    // A live sandbox that predates dashboard_sandboxes: record it as the
+    // dashboard's sandbox so later pushes (and their unsets) reach it. A blank
+    // row would read as retired, and every later delete would skip this live
+    // VM. Its dashboard tokens predate sbx_gen, so refresh binds them to this
+    // row's generation rather than rejecting them; and a provisioning claim
+    // racing this insert loses to it and reuses this session (changes === 0).
     await env.DB.prepare(`
       INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
-      VALUES (?, '', '', ?, datetime('now'))
+      VALUES (?, ?, ?, ?, datetime('now'))
       ON CONFLICT(dashboard_id) DO NOTHING
-    `).bind(dashboardId, JSON.stringify(pushed.names)).run();
+    `).bind(dashboardId, sandboxSessionId, sandboxMachineId, JSON.stringify(pushed.names)).run();
   }
   return pushed;
 }

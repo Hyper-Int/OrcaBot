@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v5-drop-invalid-backoff
+// REVISION: cpauth-v6-drop-only-rejected-token
 
 // Package cpauth authenticates sandbox → control plane /internal/* calls.
 //
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const moduleRevision = "cpauth-v5-drop-invalid-backoff"
+const moduleRevision = "cpauth-v6-drop-only-rejected-token"
 
 func init() {
 	log.Printf("[cpauth] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
@@ -351,7 +351,7 @@ func (s *store) refresh(dashboardID string, current entry) bool {
 			// all (E79395/E79393: signed under a rotated PTY_TOKEN_SECRET, or
 			// expired past the refresh grace). Stop sending it and fall back to the
 			// next one held; the next session/PTY creation delivers a fresh one.
-			s.dropGeneration(dashboardID, current.gen)
+			s.dropGeneration(dashboardID, current.gen, current.token)
 		}
 		return false
 	}
@@ -412,11 +412,17 @@ func (s *store) replaceRefreshed(dashboardID string, gen int64, token string) {
 // dropGeneration stops using a generation's token. Its sessions stay live, but
 // without a token of their own until they bring a new one (SetSessionToken);
 // they are marked dropped so nobody falls back to their original copy.
-func (s *store) dropGeneration(dashboardID string, gen int64) {
+// rejected is the token the control plane refused: if a session delivered a
+// fresh token for the same generation while that refresh was in flight, the
+// fresh one is kept and nothing is dropped.
+func (s *store) dropGeneration(dashboardID string, gen int64, rejected string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.dashboards[dashboardID]
 	if d == nil {
+		return
+	}
+	if cur, ok := d.gens[gen]; !ok || cur.token != rejected {
 		return
 	}
 	delete(d.gens, gen)

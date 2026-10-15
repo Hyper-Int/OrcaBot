@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v5-drop-invalid-backoff
+// REVISION: cpauth-v6-drop-only-rejected-token
 
 package cpauth
 
@@ -414,5 +414,30 @@ func TestSetIgnoresTokenForOtherDashboard(t *testing.T) {
 	s.set("sA", "d1", genToken("d2", time.Now().Add(time.Hour), 1))
 	if got := s.get("d1"); got != "" {
 		t.Fatal("accepted a token minted for another dashboard")
+	}
+}
+
+// A refresh of the old token that is refused only after a session delivered a
+// fresh token for the same generation must not drop the fresh one.
+func TestDelayedRejectionKeepsFreshTokenOfSameGeneration(t *testing.T) {
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	s, _ := newTestStore(t, func(w http.ResponseWriter, r *http.Request) {
+		close(inFlight)
+		<-release
+		http.Error(w, `{"error":"E79395: A valid dashboard token is required to refresh"}`, http.StatusUnauthorized)
+	})
+	s.set("sA", "d1", genToken("d1", time.Now().Add(-time.Minute), 1000))
+	done := s.startRefresh("d1")
+	<-inFlight
+	fresh := genToken("d1", time.Now().Add(7*24*time.Hour), 1000)
+	s.set("sB", "d1", fresh)
+	close(release)
+	<-done
+	if got := s.get("d1"); got != fresh {
+		t.Fatalf("fresh token dropped by the old token's rejection")
+	}
+	if s.sessionDropped("sA") || s.sessionDropped("sB") {
+		t.Fatalf("sessions marked dropped although their generation has a valid token")
 	}
 }
