@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v9-verified-vnc-proxy
+// REVISION: browser-v11-vnc-user-transport
 package main
 
 import (
@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
@@ -24,12 +25,18 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/sessions"
 )
 
+const browserHandlersRevision = "browser-v11-vnc-user-transport"
+
+func init() {
+	log.Printf("[browser] handlers REVISION: %s loaded at %s", browserHandlersRevision, time.Now().Format(time.RFC3339))
+}
+
 // browserProxyTransport carries the noVNC page and its websocket to
-// websockify. Its dialer checks the accepting socket belongs to the browser
-// user, so a viewer's VNC session can't be handed to an agent that bound the
-// port first.
-// REVISION: browser-v9-verified-vnc-proxy
-var browserProxyTransport = browser.NewBrowserTransport()
+// websockify. Its dialer checks the accepting socket belongs to the VNC user
+// (browser.VNCUser, which runs websockify), so a viewer's VNC session can't be
+// handed to an agent that bound the port first.
+// REVISION: browser-v11-vnc-user-transport
+var browserProxyTransport = browser.NewVNCTransport()
 
 type browserStatusResponse struct {
 	Running   bool `json:"running"`
@@ -142,14 +149,20 @@ func (s *Server) handleBrowserOpenLocal(w http.ResponseWriter, r *http.Request) 
 	s.handleBrowserOpenForPTY(w, r, session, req.PtyID, req.URL)
 }
 
-// checkBrowserEgress applies the egress allowlist to any agent-driven browser
-// navigation. Chromium runs as root and is outside the UID-range iptables rule,
-// so without this check an agent can exfiltrate data by encoding secrets in a URL.
-// Returns an HTTP status code and error message if navigation should be blocked,
-// or 0/nil if permitted.
-// No-op when EGRESS_PROXY_ENABLED is unset (s.egressEnabled == false).
-// REVISION: browser-v7-autoopen-notify-diag
+// checkBrowserEgress gates every agent-driven browser navigation. First, always
+// (egress on or off), the URL must be http(s) and not a loopback browser port
+// (browser.ValidateNavigationURL): Chromium runs as the browser user, which
+// owns every dashboard's profile (file://) and can reach every DevTools /
+// VNC listener in 6100-6299. Then, with egress on, the host goes through the
+// egress allowlist so an agent can't exfiltrate data by encoding it in a URL.
+// Returns an HTTP status code and error message if navigation should be
+// blocked, or 0/"" if permitted.
+// REVISION: browser-v10-navigation-url-gate
 func (s *Server) checkBrowserEgress(urlStr string) (int, string) {
+	if err := browser.ValidateNavigationURL(urlStr); err != nil {
+		log.Printf("[browser] navigation refused: %v url=%q", err, urlStr)
+		return http.StatusBadRequest, "E79823: " + err.Error()
+	}
 	if !s.egressEnabled || s.egressProxy == nil {
 		return 0, ""
 	}
@@ -159,13 +172,14 @@ func (s *Server) checkBrowserEgress(urlStr string) (int, string) {
 	}
 	host := parsed.Hostname()
 	port := 443
+	if strings.EqualFold(parsed.Scheme, "http") {
+		port = 80
+	}
+	// An explicit port wins over the scheme default.
 	if p := parsed.Port(); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
 			port = n
 		}
-	}
-	if strings.EqualFold(parsed.Scheme, "http") {
-		port = 80
 	}
 	decision := s.egressProxy.CheckAndHold(host, port)
 	if decision != egress.DecisionDefault && decision != egress.DecisionAllowOnce && decision != egress.DecisionAllowAlways {
@@ -542,8 +556,7 @@ func (s *Server) handleBrowserNavigate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Egress allowlist applies even on the internal-token-authenticated route.
-	// Chromium runs as root and bypasses iptables regardless of the caller.
+	// URL gate + egress allowlist apply even on the authenticated route.
 	if status, msg := s.checkBrowserEgress(req.URL); status != 0 {
 		http.Error(w, msg, status)
 		return

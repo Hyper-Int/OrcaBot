@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v45-session-owned-token
+// REVISION: main-v47-no-netadmin-fail-closed
 
 package main
 
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v45-session-owned-token"
+const mainRevision = "main-v47-no-netadmin-fail-closed"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -259,9 +259,18 @@ func main() {
 	if egressGlobalEnabled {
 		sessionManager.SetEgressProxyPort(egress.DefaultPort)
 	}
+	// The proxy, transparent proxy and broker run as root: they must refuse to
+	// relay to loopback services pool UIDs are blocked from (MCPLocal here; the
+	// browser port range is built in). REVISION: main-v46-egress-fail-closed
+	if n, err := strconv.Atoi(mcpLocalPort); err == nil {
+		egress.ProtectLoopbackPort(n)
+	}
 	if err := egressProxy.Start(); err != nil {
 		_ = os.Unsetenv("ORCABOT_EGRESS_PROXY_URL")
 		log.Printf("[egress-proxy] WARNING: Failed to start egress proxy: %v (PTY processes will not have HTTP_PROXY)", err)
+		if egressGlobalEnabled {
+			refusePTYSpawns(fmt.Sprintf("egress proxy failed to start: %v", err))
+		}
 	} else {
 		proxyURL := "http://127.0.0.1:8083"
 		if egressGlobalEnabled {
@@ -280,74 +289,42 @@ func main() {
 		// Kernel-level egress enforcement: iptables UID-range rules + transparent proxy.
 		// Requires CAP_NET_ADMIN (privileged container) and EGRESS_PROXY_ENABLED=true.
 		//
-		// IMPORTANT: InitPool is intentionally deferred until AFTER both iptables and the
-		// transparent listener are confirmed working. If either fails, the pool is never
-		// initialized and PTYs fall back to root-UID execution with HTTP_PROXY enforcement
-		// (bypassable but not broken). Initializing the pool before enforcement is ready
-		// would create pool-UID PTYs whose traffic is not intercepted — false security.
-		// REVISION: main-v27-pool-proxy-token-restore
+		// IMPORTANT: InitPool is intentionally deferred until AFTER every enforcement
+		// layer is confirmed working: initializing the pool earlier would create
+		// pool-UID PTYs whose traffic is not intercepted — false security.
+		//
+		// FAIL CLOSED: if any step fails, PTY creation is refused (E79770) rather
+		// than falling back to root PTYs, which would run outside every kernel rule
+		// (egress default-deny, MCPLocal and browser-port blocks). /health stays up
+		// and reports the reason so the failure is diagnosable.
+		// REVISION: main-v46-egress-fail-closed
 		if egressGlobalEnabled && checkNetAdmin() {
-			// Step 1: Install iptables NAT REDIRECT rules.
-			if err := setupEgressIptables(); err != nil {
-				log.Printf("[egress-kernel] ERROR: iptables setup failed — kernel enforcement unavailable. "+
-					"PTYs will run without UID isolation (HTTP_PROXY enforcement only): %v", err)
-			} else if err := egressProxy.StartTransparent(); err != nil {
-				// Step 2: Start transparent proxy listener.
-				// iptables rules are installed but the listener is absent — redirected
-				// connections to port %d would fail closed (connection refused), which
-				// breaks PTY egress. Log the error; PTYs run as root (rules don't match).
-				log.Printf("[egress-kernel] ERROR: transparent proxy failed — kernel enforcement unavailable. "+
-					"PTYs will run without UID isolation (HTTP_PROXY enforcement only): %v", err)
-			} else {
-				// Both enforcement layers confirmed. Check sandbox group before pool activation.
-				sandboxGID := pty.LookupSandboxGID()
-				if sandboxGID == 0 {
-					log.Printf("[egress-kernel] ERROR: 'sandbox' group not found — kernel enforcement unavailable. " +
-						"PTYs will run without UID isolation. Ensure the 'sandbox' group exists in the image.")
-				} else {
-					// Startup order is critical for client fallback correctness.
-					// REVISION: main-v29-socket-init-order
-					//
-					// mcp-bridge and xdg-open detect pool mode by testing whether the socket
-					// file exists (os.Stat / test -S). The invariant they rely on:
-					//
-					//   socket file exists → pool is initialised (GetPool() != nil)
-					//
-					// To guarantee this we must not create the socket file until ALL
-					// preconditions are satisfied. Order:
-					//   1. iptables  — no disk side-effect; safe to try first
-					//   2. socket    — creates the file; only reached if iptables succeeded
-					//   3. InitPool  — only reached if socket is ready
-					//
-					// If iptables fails  → socket never created → clients fall back to TCP ✓
-					// If socket fails    → socket file absent  → clients fall back to TCP ✓
-					// If all succeed     → socket exists AND pool is active             ✓
-					//
-					// The HTTP servers have not started yet at this point, so the brief
-					// window between socket creation (step 2) and InitPool (step 3) is safe:
-					// no PTY-creation requests can arrive until ListenAndServe is called.
-					if err := setupPoolMCPIptables(mcpLocalPort); err != nil {
-						log.Printf("[pool-iptables] ERROR: Failed to block pool UIDs from MCPLocal port — kernel enforcement unavailable: %v", err)
-					} else if err := setupPoolBrowserPortBlock(); err != nil {
-						log.Printf("[pool-iptables] ERROR: Failed to block pool UIDs from browser ports — kernel enforcement unavailable: %v", err)
-					} else if err := setupPoolEgressDenyIptables(); err != nil {
-						// Without default-deny, pool UIDs could bypass the proxy on non-80/443 ports.
-						log.Printf("[egress-kernel] ERROR: pool egress default-deny failed — kernel enforcement unavailable: %v", err)
-					} else {
-						privSock := NewPrivilegedSocket(server)
-						if err := privSock.Start(); err != nil {
-							log.Printf("[privileged-socket] ERROR: Failed to start — kernel enforcement unavailable. "+
-								"PTYs will run without UID isolation: %v", err)
-						} else {
-							pty.InitPool(sandboxGID)
-							log.Printf("[egress-kernel] Kernel enforcement active: uid-owner 2000-2099 → transparent proxy port %d, MCPLocal port %s blocked", egress.TransparentPort, mcpLocalPort)
-						}
-					}
-				}
+			if err := setupKernelEgress(server, egressProxy, mcpLocalPort); err != nil {
+				refusePTYSpawns(err.Error())
 			}
 		} else if egressGlobalEnabled {
-			log.Printf("[egress-kernel] Skipping kernel enforcement: CAP_NET_ADMIN not available (not a privileged container)")
+			// Without CAP_NET_ADMIN no kernel layer can be installed: PTYs would
+			// run as root behind HTTP_PROXY only, which any process can ignore.
+			// Fail closed like every other kernel-layer failure.
+			// REVISION: main-v47-no-netadmin-fail-closed
+			refusePTYSpawns("CAP_NET_ADMIN not available (not a privileged container): kernel egress enforcement cannot be installed")
 		}
+	}
+
+	// Chromium's user (page JS, browser_evaluate) must not reach any browser
+	// port: on desktop every dashboard's websockify/x11vnc/DevTools listens in
+	// one VM. setupKernelEgress installs this too; it is installed here as well
+	// so it holds with egress off (the threat is a hostile page, not only an
+	// agent). Idempotent. REVISION: main-v47-no-netadmin-fail-closed
+	if checkNetAdmin() {
+		if err := installBrowserUserPortBlock(); err != nil {
+			log.Printf("[pool-iptables] WARNING: browser-user port block failed: %v", err)
+			if egressGlobalEnabled {
+				refusePTYSpawns(fmt.Sprintf("browser-user port block failed: %v", err))
+			}
+		}
+	} else {
+		log.Printf("[pool-iptables] WARNING: CAP_NET_ADMIN not available — Chromium pages can reach other dashboards' browser ports")
 	}
 
 	httpServer := &http.Server{
@@ -705,10 +682,78 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// refusePTYSpawns makes every PTY spawn fail with E79770 and logs loudly.
+// REVISION: main-v46-egress-fail-closed
+func refusePTYSpawns(reason string) {
+	pty.RefuseSpawns(reason)
+	for i := 0; i < 3; i++ {
+		log.Printf("[egress-kernel] !!! FAIL CLOSED: EGRESS_PROXY_ENABLED=true but egress isolation is unavailable — ALL PTY CREATION IS REFUSED (E79770): %s", reason)
+	}
+}
+
+// setupKernelEgress installs every kernel egress layer and activates the UID
+// pool. It returns the first failure; the pool is only initialised when all
+// layers succeeded.
+//
+// Startup order is critical for client fallback correctness.
+// REVISION: main-v29-socket-init-order
+//
+// mcp-bridge and xdg-open detect pool mode by testing whether the socket
+// file exists (os.Stat / test -S). The invariant they rely on:
+//
+//	socket file exists → pool is initialised (GetPool() != nil)
+//
+// To guarantee this we must not create the socket file until ALL
+// preconditions are satisfied. Order:
+//  1. iptables  — no disk side-effect; safe to try first
+//  2. socket    — creates the file; only reached if iptables succeeded
+//  3. InitPool  — only reached if socket is ready
+//
+// The HTTP servers have not started yet at this point, so the brief
+// window between socket creation (step 2) and InitPool (step 3) is safe:
+// no PTY-creation requests can arrive until ListenAndServe is called.
+func setupKernelEgress(server *Server, egressProxy *egress.EgressProxy, mcpLocalPort string) error {
+	// Step 1: Install iptables NAT REDIRECT rules.
+	if err := setupEgressIptables(); err != nil {
+		return fmt.Errorf("iptables NAT setup failed: %w", err)
+	}
+	// Step 2: Start transparent proxy listener (redirected conns need it).
+	if err := egressProxy.StartTransparent(); err != nil {
+		return fmt.Errorf("transparent proxy failed: %w", err)
+	}
+	sandboxGID := pty.LookupSandboxGID()
+	if sandboxGID == 0 {
+		return fmt.Errorf("'sandbox' group not found — ensure it exists in the image")
+	}
+	if err := setupPoolMCPIptables(mcpLocalPort); err != nil {
+		return fmt.Errorf("failed to block pool UIDs from MCPLocal port: %w", err)
+	}
+	if err := setupPoolBrowserPortBlock(); err != nil {
+		return fmt.Errorf("failed to block pool UIDs from browser ports: %w", err)
+	}
+	if err := setupPoolEgressDenyIptables(); err != nil {
+		// Without default-deny, pool UIDs could bypass the proxy on non-80/443 ports.
+		return fmt.Errorf("pool egress default-deny failed: %w", err)
+	}
+	privSock := NewPrivilegedSocket(server)
+	if err := privSock.Start(); err != nil {
+		return fmt.Errorf("privileged socket failed to start: %w", err)
+	}
+	pty.InitPool(sandboxGID)
+	log.Printf("[egress-kernel] Kernel enforcement active: uid-owner 2000-2099 → transparent proxy port %d, MCPLocal port %s blocked", egress.TransparentPort, mcpLocalPort)
+	return nil
+}
+
 func (s *Server) handleHеalth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","revision":"%s"}`, mainRevision)
+	// Stays 200 when PTY spawns are refused (fail-closed egress): the server is up
+	// and this is where the reason is surfaced. REVISION: main-v46-egress-fail-closed
+	resp := map[string]any{"status": "ok", "revision": mainRevision}
+	if reason := pty.SpawnRefusal(); reason != "" {
+		resp["pty_spawn_refused"] = "E79770: " + reason
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleListSessions returns active session IDs (for agent discovery on localhost).
@@ -887,6 +932,11 @@ func (s *Server) handleListPTYs(w http.ResponseWriter, r *http.Request) {
 
 // REVISION: working-dir-v2-handler-logging
 func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
+	// Fail closed: egress isolation failed at startup. REVISION: main-v46-egress-fail-closed
+	if reason := pty.SpawnRefusal(); reason != "" {
+		http.Error(w, pty.ErrSpawnRefused.Error()+": "+reason, http.StatusServiceUnavailable)
+		return
+	}
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
 		return
@@ -900,6 +950,7 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 		IntegrationToken string `json:"integration_token"` // JWT for policy gateway auth
 		WorkingDir       string `json:"working_dir"`       // Relative path within workspace
 		ExecutionID      string `json:"execution_id"`      // Schedule execution tracking ID
+		MCPToken         string `json:"mcp_token"`         // Fresh dashboard token (replaces a dropped one)
 		ModelSelection   *struct {
 			Provider        string `json:"provider"`
 			Model           string `json:"model"`
@@ -912,6 +963,13 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req) // Ignore errors - all fields are optional
+	}
+	// A fresh dashboard token rides along with every PTY creation so a VM whose
+	// token cpauth dropped (E79393/E79395/E79398) gets a working one back. Bound
+	// to the session's own dashboard, never one named by the request.
+	// REVISION: main-v46-egress-fail-closed
+	if req.MCPToken != "" {
+		session.SetDashboardToken(req.MCPToken)
 	}
 
 	// Use CreatePTYWithOptions when any optional field is present
@@ -947,6 +1005,10 @@ func (s *Server) handleCreatePTY(w http.ResponseWriter, r *http.Request) {
 			r.PathValue("sessionId"), req.Command, req.PtyID, req.WorkingDir, err)
 		if errors.Is(err, sessions.ErrInvalidPTYID) {
 			http.Error(w, "E79755: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, pty.ErrSpawnRefused) {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		http.Error(w, "E79708: "+err.Error(), http.StatusInternalServerError)

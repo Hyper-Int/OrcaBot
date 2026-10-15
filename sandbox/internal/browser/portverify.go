@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-portverify-v2-cached-uid
+// REVISION: browser-portverify-v3-per-port-owner
 package browser
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const portverifyRevision = "browser-portverify-v2-cached-uid"
+const portverifyRevision = "browser-portverify-v3-per-port-owner"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", portverifyRevision, time.Now().Format(time.RFC3339))
@@ -40,7 +40,9 @@ func init() {
 // exactly the process we are talking to.
 
 // errNotBrowserSocket is returned when the accepting socket has another owner.
-var errNotBrowserSocket = errors.New("browser port is not served by " + BrowserUser)
+// Each port has one expected owner: DevTools is Chromium's (BrowserUser),
+// websockify and x11vnc are VNCUser's (DialVNC).
+var errNotBrowserSocket = errors.New("browser port is not served by the browser stack user")
 
 // procNetTCPFiles is a var so tests can point it at fixtures.
 var procNetTCPFiles = []string{"/proc/net/tcp", "/proc/net/tcp6"}
@@ -56,10 +58,20 @@ var browserUID = sync.OnceValues(func() (int, error) {
 	return id.uid, nil
 })
 
-// DialBrowser connects to a browser port (addr must be 127.0.0.1:<port>) and
-// returns the connection only if the socket that accepted it is owned by the
-// browser user. It has the net.Dialer.DialContext signature so it can back
-// HTTP transports and websocket dialers.
+// vncUID is the display-side user's uid (Xvfb, x11vnc, websockify); a var
+// for tests, like browserUID.
+var vncUID = sync.OnceValues(func() (int, error) {
+	id, err := lookupVNCIdentity()
+	if err != nil {
+		return 0, err
+	}
+	return id.uid, nil
+})
+
+// DialBrowser connects to Chromium's DevTools port (addr must be
+// 127.0.0.1:<port>) and returns the connection only if the socket that
+// accepted it is owned by the browser user. It has the net.Dialer.DialContext
+// signature so it can back HTTP transports and websocket dialers.
 func DialBrowser(ctx context.Context, network, addr string) (net.Conn, error) {
 	uid, err := browserUID()
 	if err != nil {
@@ -67,6 +79,19 @@ func DialBrowser(ctx context.Context, network, addr string) (net.Conn, error) {
 	}
 	return dialOwnedBy(ctx, network, addr, uid)
 }
+
+// DialVNC is DialBrowser for the websockify and x11vnc ports, which are
+// served by VNCUser.
+func DialVNC(ctx context.Context, network, addr string) (net.Conn, error) {
+	uid, err := vncUID()
+	if err != nil {
+		return nil, err
+	}
+	return dialOwnedBy(ctx, network, addr, uid)
+}
+
+// dialFunc is DialBrowser or DialVNC.
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func dialOwnedBy(ctx context.Context, network, addr string, wantUID int) (net.Conn, error) {
 	if network != "tcp" && network != "tcp4" {
@@ -260,11 +285,22 @@ func newBrowserHTTPClient(timeout time.Duration) *http.Client {
 }
 
 // NewBrowserTransport returns an http.RoundTripper whose connections (including
-// websocket upgrades through httputil.ReverseProxy) are verified by DialBrowser.
+// websocket upgrades through httputil.ReverseProxy) are verified by DialBrowser
+// (DevTools).
 func NewBrowserTransport() *http.Transport {
+	return newVerifiedTransport(DialBrowser)
+}
+
+// NewVNCTransport is NewBrowserTransport for websockify (the noVNC page and
+// its websocket), verified by DialVNC.
+func NewVNCTransport() *http.Transport {
+	return newVerifiedTransport(DialVNC)
+}
+
+func newVerifiedTransport(dial dialFunc) *http.Transport {
 	return &http.Transport{
 		Proxy:               nil,
-		DialContext:         DialBrowser,
+		DialContext:         dial,
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     30 * time.Second,
 	}

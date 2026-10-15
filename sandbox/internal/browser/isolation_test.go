@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v5-profile-per-dashboard
+// REVISION: browser-isolation-v6-locked-profile-nofollow-walk
 
 //go:build linux
 
@@ -11,11 +11,16 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // nobody: an unprivileged identity to hand files to. These tests need root
@@ -216,6 +221,7 @@ func TestPortsComeFromTheBlockedRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := freePortInRange(a)
+	defer releasePorts(a, b)
 	if a < PortRangeStart || a > PortRangeEnd || b < PortRangeStart || b > PortRangeEnd || a == b {
 		t.Fatalf("ports %d, %d", a, b)
 	}
@@ -367,4 +373,262 @@ func TestLegacyProfileNotBrowserOwnedIsLeftAlone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(target, "f")); err != nil {
 		t.Fatal("removal followed a .browser symlink")
 	}
+}
+
+// Ports stay reserved until released, so two concurrent Starts can't pick the
+// same port between the probe and the browser binding it.
+func TestPortReservationsAreExclusiveUntilReleased(t *testing.T) {
+	var mu sync.Mutex
+	got := map[int]bool{}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				p, err := freePortInRange()
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				if got[p] {
+					t.Errorf("port %d handed out twice", p)
+				}
+				got[p] = true
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	var all []int
+	for p := range got {
+		all = append(all, p)
+	}
+	defer releasePorts(all...)
+	if len(all) == 0 {
+		t.Fatal("no ports reserved")
+	}
+	if _, err := freePortInRange(); err == nil {
+		t.Fatal("got a port while every free one is reserved")
+	}
+	releasePorts(all[0])
+	p, err := freePortInRange()
+	if err != nil || p != all[0] {
+		t.Fatalf("after release got %d, %v; want %d", p, err, all[0])
+	}
+}
+
+func TestReserveBrowserPortsReleasesOnFailure(t *testing.T) {
+	var held []int
+	for {
+		p, err := freePortInRange()
+		if err != nil {
+			break
+		}
+		held = append(held, p)
+	}
+	defer func() { releasePorts(held...) }()
+	if len(held) < 2 {
+		t.Skip("too few free ports")
+	}
+	// Two free ports: the third pick fails and the first two are released.
+	releasePorts(held[0], held[1])
+	if _, _, _, err := reserveBrowserPorts(); err == nil {
+		t.Fatal("reserved three ports with two free")
+	}
+	a, err1 := freePortInRange()
+	b, err2 := freePortInRange()
+	if err1 != nil || err2 != nil {
+		t.Fatalf("ports not released after failed reservation: %v %v", err1, err2)
+	}
+	releasePorts(a, b)
+}
+
+// startFakeChromium runs a process named "chromium" as uid (a copy of sleep),
+// standing in for a Chromium that holds a profile lock.
+func startFakeChromium(t *testing.T, uid int) *exec.Cmd {
+	t.Helper()
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep binary")
+	}
+	data, err := os.ReadFile(sleep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(worldReadableTempDir(t), "chromium")
+	if err := os.WriteFile(exe, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(uid)}}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	return cmd
+}
+
+func setSingletonLock(t *testing.T, profile, host string, pid int) {
+	t.Helper()
+	lock := filepath.Join(profile, "SingletonLock")
+	os.Remove(lock)
+	if err := os.Symlink(fmt.Sprintf("%s-%d", host, pid), lock); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A lock naming a live Chromium of the browser user means another browser has
+// the profile open: its lock must not be deleted (a second Chromium on it
+// corrupts the profile), and the start fails with a clear error.
+func TestLiveSingletonLockIsNotRemoved(t *testing.T) {
+	needRoot(t)
+	host, _ := os.Hostname()
+	profile := filepath.Join(t.TempDir(), "profile")
+	os.MkdirAll(profile, 0o700)
+	os.Chown(profile, testID.uid, testID.gid)
+	chromium := startFakeChromium(t, testID.uid)
+	setSingletonLock(t, profile, host, chromium.Process.Pid)
+	os.WriteFile(filepath.Join(profile, "SingletonCookie"), []byte("c"), 0o600)
+
+	err := prepareProfileDir(profile, testID)
+	if !errors.Is(err, errProfileInUse) {
+		t.Fatalf("err = %v, want errProfileInUse", err)
+	}
+	for _, name := range []string{"SingletonLock", "SingletonCookie"} {
+		if _, err := os.Lstat(filepath.Join(profile, name)); err != nil {
+			t.Fatalf("%s of a live Chromium removed", name)
+		}
+	}
+
+	// Once it has exited the lock is stale and is cleared.
+	chromium.Process.Kill()
+	chromium.Wait()
+	if err := prepareProfileDir(profile, testID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(profile, "SingletonLock")); err == nil {
+		t.Fatal("stale lock kept")
+	}
+}
+
+func TestStaleSingletonLocksAreRemoved(t *testing.T) {
+	needRoot(t)
+	host, _ := os.Hostname()
+	other := exec.Command("sleep", "60") // alive, but root and not a Chromium
+	if err := other.Start(); err != nil {
+		t.Skip("no sleep binary")
+	}
+	defer func() { other.Process.Kill(); other.Wait() }()
+	chromium := startFakeChromium(t, testID.uid)
+	for _, tc := range []struct {
+		name, host string
+		pid        int
+	}{
+		{"dead pid", host, 1 << 22},
+		{"pid of another user's process", host, other.Process.Pid},
+		{"other host", host + "-elsewhere", chromium.Process.Pid},
+		{"garbage", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := filepath.Join(t.TempDir(), "profile")
+			os.MkdirAll(profile, 0o700)
+			setSingletonLock(t, profile, tc.host, tc.pid)
+			if err := prepareProfileDir(profile, testID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(filepath.Join(profile, "SingletonLock")); err == nil {
+				t.Fatal("stale lock kept")
+			}
+		})
+	}
+}
+
+// Preferences is the browser user's file: a FIFO there must not hang Start.
+func TestPreferencesFIFODoesNotHang(t *testing.T) {
+	needRoot(t)
+	profile := filepath.Join(t.TempDir(), "profile")
+	os.MkdirAll(filepath.Join(profile, "Default"), 0o700)
+	fifo := filepath.Join(profile, "Default", "Preferences")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- prepareProfileDir(profile, testID) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("prepareProfileDir hung on a Preferences FIFO")
+	}
+	if fi, err := os.Lstat(fifo); err != nil || fi.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatal("FIFO was replaced")
+	}
+}
+
+func TestOversizedPreferencesNotRead(t *testing.T) {
+	needRoot(t)
+	profile := filepath.Join(t.TempDir(), "profile")
+	os.MkdirAll(filepath.Join(profile, "Default"), 0o700)
+	prefs := filepath.Join(profile, "Default", "Preferences")
+	f, _ := os.Create(prefs)
+	f.Truncate(maxPrefsSize + 1)
+	f.Close()
+	if err := prepareProfileDir(profile, testID); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(prefs); fi.Size() != maxPrefsSize+1 {
+		t.Fatal("oversized Preferences rewritten")
+	}
+}
+
+// profiles/ swapped for a symlink: root must neither mkdir nor chown at the
+// target; the link is moved aside and a real profiles/ created in the home.
+func TestProfilesDirSymlinkNotFollowed(t *testing.T) {
+	needRoot(t)
+	home := t.TempDir()
+	victim := t.TempDir()
+	os.Chown(home, testID.uid, testID.gid)
+	if err := os.Symlink(victim, filepath.Join(home, profilesDirName)); err != nil {
+		t.Fatal(err)
+	}
+	id := browserIdentity{uid: testID.uid, gid: testID.gid, home: home}
+	path, err := prepareProfile(id, "/workspace/dash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != profilePath(id, "/workspace/dash") {
+		t.Fatalf("path = %s", path)
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatalf("root created %v in the symlink target", entries)
+	}
+	if owner(t, victim) == testID.uid {
+		t.Fatal("root chowned the symlink target")
+	}
+	fi, err := os.Lstat(filepath.Join(home, profilesDirName))
+	if err != nil || !fi.IsDir() {
+		t.Fatal("profiles is not a real directory")
+	}
+	if fi, err := os.Lstat(path); err != nil || !fi.IsDir() || owner(t, path) != testID.uid || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("profile not prepared: %v", err)
+	}
+}
+
+func TestOpenDirNoFollowRefusesSymlinkedComponent(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	os.MkdirAll(filepath.Join(real, "sub"), 0o755)
+	os.Symlink(real, filepath.Join(base, "link"))
+	if fd, err := openDirNoFollow(filepath.Join(base, "link", "sub")); err == nil {
+		syscall.Close(fd)
+		t.Fatal("followed a symlinked parent")
+	}
+	fd, err := openDirNoFollow(filepath.Join(real, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.Close(fd)
 }

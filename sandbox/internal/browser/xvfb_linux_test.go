@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-v20-vnc-user-split
+
 //go:build linux
 
 package browser
@@ -88,6 +90,9 @@ func needBrowserStack(t *testing.T) browserIdentity {
 	id, err := lookupBrowserIdentity()
 	if err != nil {
 		t.Skipf("browser user missing: %v", err)
+	}
+	if _, err := lookupVNCIdentity(); err != nil {
+		t.Skipf("vnc user missing: %v", err)
 	}
 	return id
 }
@@ -244,7 +249,12 @@ func TestControllerStartIntegration(t *testing.T) {
 	}
 
 	// websockify reaches x11vnc: a websocket handshake gets the RFB banner.
-	conn, err := DialBrowser(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", st.WSPort))
+	// websockify is the VNC user's, not Chromium's: DialBrowser must refuse it.
+	if c, err := DialBrowser(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", st.WSPort)); err == nil {
+		c.Close()
+		t.Fatal("websockify accepted as the Chromium user's socket")
+	}
+	conn, err := DialVNC(context.Background(), "tcp", fmt.Sprintf("127.0.0.1:%d", st.WSPort))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,10 +297,12 @@ func TestControllerStartIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	xauth := c.xauth
+	xauth, chromeXauth := c.xauth, c.chromeXauth
 	c.Stop()
-	if _, err := os.Stat(xauth); !os.IsNotExist(err) {
-		t.Fatal("xauth cookie left behind after Stop")
+	for _, p := range []string{xauth, chromeXauth} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("xauth cookie %s left behind after Stop", p)
+		}
 	}
 	if st := c.Status(); st.Running || st.WSPort != 0 || st.DebugPort != 0 {
 		t.Fatalf("status after Stop = %+v", st)
@@ -370,4 +382,42 @@ func TestDashboardProfilesAreIsolatedIntegration(t *testing.T) {
 	if got := read(wsA, ""); !strings.Contains(got, "secret-from-a") {
 		t.Fatalf("control: dashboard A lost its own local storage (%q), so the check above proves nothing", got)
 	}
+}
+
+// TestSharedWorkspaceOneChromiumIntegration: two sessions on one workspace get
+// one browser (not two Chromiums on one profile); the first Stop leaves it
+// for the second; a later Start finds the old lock stale and starts cleanly.
+func TestSharedWorkspaceOneChromiumIntegration(t *testing.T) {
+	if os.Getenv("ORCABOT_BROWSER_IT") != "1" {
+		t.Skip("set ORCABOT_BROWSER_IT=1 inside the sandbox image")
+	}
+	needBrowserStack(t)
+	ws := worldReadableTempDir(t)
+	a, b := NewController(ws), NewController(ws)
+	sa, err := a.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb, err := b.Start()
+	if err != nil {
+		a.Stop()
+		t.Fatal(err)
+	}
+	if sa.DebugPort != sb.DebugPort || sa.WSPort != sb.WSPort {
+		a.Stop()
+		b.Stop()
+		t.Fatalf("second session started its own browser: %+v vs %+v", sa, sb)
+	}
+	a.Stop()
+	if st := b.Status(); !st.Running {
+		t.Fatal("first session's Stop killed the shared browser")
+	}
+	b.Stop()
+	if st := b.Status(); st.Running {
+		t.Fatal("browser still running after the last Stop")
+	}
+	if _, err := a.Start(); err != nil {
+		t.Fatalf("restart after stop: %v", err)
+	}
+	a.Stop()
 }

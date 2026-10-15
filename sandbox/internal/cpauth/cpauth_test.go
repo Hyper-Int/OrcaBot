@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v4-live-session-generation
+// REVISION: cpauth-v5-drop-invalid-backoff
 
 package cpauth
 
@@ -348,5 +348,71 @@ func TestNearExpiryCallersDoNotWait(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatalf("near-expiry caller blocked on the refresh")
 		}
+	}
+}
+
+// A token the control plane no longer accepts at all (signed under a rotated
+// PTY_TOKEN_SECRET → E79395/E79393) is dropped and its session marked, so the
+// session doesn't fall back to its own copy; a new token clears that.
+func TestPermanentlyInvalidRefreshDropsToken(t *testing.T) {
+	for _, body := range []string{
+		`{"error":"E79395: A valid dashboard token is required to refresh"}`,
+		`{"error":"E79393: Invalid or missing sandbox credential"}`,
+	} {
+		s, calls := newTestStore(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, body, http.StatusUnauthorized)
+		})
+		s.set("sA", "d1", genToken("d1", time.Now().Add(-time.Minute), 1000))
+		if got := s.get("d1"); got != "" {
+			t.Fatalf("%s: kept a token the control plane refuses", body)
+		}
+		if !s.sessionDropped("sA") {
+			t.Fatalf("%s: session not marked dropped", body)
+		}
+		if n := atomic.LoadInt32(calls); n != 1 {
+			t.Fatalf("refresh calls = %d, want 1", n)
+		}
+		fresh := genToken("d1", time.Now().Add(7*24*time.Hour), 1000)
+		s.set("sA", "d1", fresh)
+		if got := s.get("d1"); got != fresh || s.sessionDropped("sA") {
+			t.Fatalf("%s: fresh token from the next session/PTY creation not used", body)
+		}
+	}
+}
+
+// Transient failures (network, 5xx, E79399) keep the token and don't mark the
+// session dropped; repeated expired-token callers are not each blocked on a
+// refresh that just failed.
+func TestTransientRefreshFailureBacksOff(t *testing.T) {
+	s, calls := newTestStore(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upstream down", http.StatusBadGateway)
+	})
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	expired := genToken("d1", now.Add(-time.Minute), 1000)
+	s.set("sA", "d1", expired)
+	for i := 0; i < 5; i++ {
+		if got := s.get("d1"); got != expired {
+			t.Fatalf("transient failure dropped the token")
+		}
+	}
+	if n := atomic.LoadInt32(calls); n != 1 {
+		t.Fatalf("refresh calls during backoff = %d, want 1", n)
+	}
+	if s.sessionDropped("sA") {
+		t.Fatal("transient failure marked the session dropped")
+	}
+	now = now.Add(refreshBackoff + time.Second)
+	s.get("d1")
+	if n := atomic.LoadInt32(calls); n != 2 {
+		t.Fatalf("refresh not retried after backoff (calls=%d)", n)
+	}
+}
+
+func TestSetIgnoresTokenForOtherDashboard(t *testing.T) {
+	s := newStore()
+	s.set("sA", "d1", genToken("d2", time.Now().Add(time.Hour), 1))
+	if got := s.get("d1"); got != "" {
+		t.Fatal("accepted a token minted for another dashboard")
 	}
 }

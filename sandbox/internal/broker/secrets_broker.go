@@ -15,14 +15,25 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-// REVISION: broker-v7-evict-logged-routes
-const brokerRevision = "broker-v7-evict-logged-routes"
+// REVISION: broker-v8-guarded-dial
+const brokerRevision = "broker-v8-guarded-dial"
 
 func init() {
 	log.Printf("[broker] REVISION: %s loaded at %s", brokerRevision, time.Now().Format(time.RFC3339))
 }
+
+// brokerTransport is DefaultTransport with a guarded dial: the broker runs as
+// root, so a custom target or approved domain resolving to loopback must not
+// reach a service pool UIDs are blocked from (browser ports, MCPLocal).
+var brokerTransport = func() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = egress.GuardedDialContext(30 * time.Second)
+	return t
+}()
 
 // ProviderConfig holds runtime configuration for a specific provider.
 type ProviderConfig struct {
@@ -475,7 +486,8 @@ func (b *SecretsBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Forward request with timeout
 	client := &http.Client{
-		Timeout: 120 * time.Second,
+		Transport: brokerTransport,
+		Timeout:   120 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// Prevent redirects to different domains for security
 			if len(via) > 0 {

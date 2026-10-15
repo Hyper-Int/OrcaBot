@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-transparent-v5-drop-no-hostname
+// REVISION: egress-transparent-v6-guarded-dial
 
 //go:build linux
 
@@ -198,7 +198,9 @@ func (p *EgressProxy) handleTransparent(conn net.Conn) {
 	// By resolving domain ourselves, the allowed name maps to its legitimate IPs.
 	// When no Host/SNI was found, domain == origIP and behaviour is unchanged.
 	target := net.JoinHostPort(domain, fmt.Sprintf("%d", origPort))
-	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
+	// Guarded: a Host/SNI resolving to loopback must not reach a protected
+	// loopback service (browser ports, MCPLocal). REVISION: egress-transparent-v6-guarded-dial
+	upstream, err := GuardedDialer(10*time.Second).Dial("tcp", target)
 	if err != nil {
 		log.Printf("[egress-transparent] Dial %s failed: %v", target, err)
 		return

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v4-live-session-generation
+// REVISION: cpauth-v5-drop-invalid-backoff
 
 // Package cpauth authenticates sandbox → control plane /internal/* calls.
 //
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const moduleRevision = "cpauth-v4-live-session-generation"
+const moduleRevision = "cpauth-v5-drop-invalid-backoff"
 
 func init() {
 	log.Printf("[cpauth] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
@@ -42,6 +42,11 @@ var ErrNoCredential = errors.New("no control plane credential for dashboard")
 
 // refreshBefore is how long before expiry a token is swapped for a fresh one.
 const refreshBefore = 48 * time.Hour
+
+// refreshBackoff is how long after a failed refresh no new one is attempted
+// for that dashboard, so callers holding an expired token don't each pay a
+// blocking round trip that will fail again. REVISION: cpauth-v5-drop-invalid-backoff
+const refreshBackoff = 30 * time.Second
 
 type entry struct {
 	token string
@@ -55,6 +60,9 @@ type entry struct {
 type dashboard struct {
 	gens    map[int64]entry
 	holders map[string]int64 // session ID → generation of the token it brought
+	// dropped marks sessions whose token the control plane refused as
+	// permanently invalid; cleared when the session brings a new token.
+	dropped map[string]bool
 }
 
 type store struct {
@@ -62,6 +70,7 @@ type store struct {
 	dashboards map[string]*dashboard
 	sessions   map[string]string        // session ID → dashboard ID
 	refreshing map[string]chan struct{} // closed when that dashboard's in-flight refresh ends
+	retryAfter map[string]time.Time     // dashboard ID → no refresh before this (after a failure)
 	client     *http.Client
 	now        func() time.Time
 	baseURL    func() string
@@ -72,6 +81,7 @@ func newStore() *store {
 		dashboards: make(map[string]*dashboard),
 		sessions:   make(map[string]string),
 		refreshing: make(map[string]chan struct{}),
+		retryAfter: make(map[string]time.Time),
 		client:     &http.Client{Timeout: 10 * time.Second},
 		now:        time.Now,
 		baseURL:    func() string { return strings.TrimSuffix(os.Getenv("CONTROLPLANE_URL"), "/") },
@@ -94,6 +104,13 @@ func SetSessionToken(sessionID, dashboardID, token string) {
 // plane never recorded and will not refresh.
 func ForgetSession(sessionID string) {
 	defaultStore.forget(sessionID)
+}
+
+// SessionTokenDropped reports whether the token sessionID brought (or its
+// refreshed successor) was refused by the control plane as permanently invalid
+// and dropped. Callers must not fall back to their own copy of that token.
+func SessionTokenDropped(sessionID string) bool {
+	return defaultStore.sessionDropped(sessionID)
 }
 
 // DashboardToken returns the current token for a dashboard ("" if none),
@@ -137,14 +154,20 @@ func (s *store) set(sessionID, dashboardID, token string) {
 		log.Printf("[cpauth] ignoring unparseable token for dashboard %s: %v", dashboardID, err)
 		return
 	}
+	if claimed := tokenDashboard(token); claimed != "" && claimed != dashboardID {
+		log.Printf("[cpauth] ignoring token for dashboard %s offered for dashboard %s", claimed, dashboardID)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.releaseLocked(sessionID) // a session brings one token
 	d := s.dashboards[dashboardID]
 	if d == nil {
-		d = &dashboard{gens: make(map[int64]entry), holders: make(map[string]int64)}
+		d = &dashboard{gens: make(map[int64]entry), holders: make(map[string]int64), dropped: make(map[string]bool)}
 		s.dashboards[dashboardID] = d
 	}
+	// A new token gets a fresh chance at refreshing.
+	delete(s.retryAfter, dashboardID)
 	s.sessions[sessionID] = dashboardID
 	d.holders[sessionID] = gen
 	d.offer(entry{token: token, exp: exp, gen: gen})
@@ -170,6 +193,7 @@ func (s *store) releaseLocked(sessionID string) {
 	}
 	gen := d.holders[sessionID]
 	delete(d.holders, sessionID)
+	delete(d.dropped, sessionID)
 	for _, g := range d.holders {
 		if g == gen {
 			return
@@ -212,6 +236,13 @@ func (s *store) currentLocked(dashboardID string) (entry, bool) {
 		return entry{}, false
 	}
 	return d.current()
+}
+
+func (s *store) sessionDropped(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.dashboards[s.sessions[sessionID]]
+	return d != nil && d.dropped[sessionID]
 }
 
 func (s *store) get(dashboardID string) string {
@@ -269,63 +300,83 @@ func (s *store) startRefresh(dashboardID string) <-chan struct{} {
 	}
 	done := make(chan struct{})
 	cur, ok := s.currentLocked(dashboardID)
-	if !ok {
+	if !ok || s.now().Before(s.retryAfter[dashboardID]) {
+		// Nothing to refresh, or a refresh just failed: don't retry yet.
 		close(done)
 		return done
 	}
 	s.refreshing[dashboardID] = done
 	go func() {
-		defer func() {
-			s.mu.Lock()
-			delete(s.refreshing, dashboardID)
-			s.mu.Unlock()
-			close(done)
-		}()
-		s.refresh(dashboardID, cur)
+		ok := s.refresh(dashboardID, cur)
+		s.mu.Lock()
+		delete(s.refreshing, dashboardID)
+		if ok {
+			delete(s.retryAfter, dashboardID)
+		} else {
+			s.retryAfter[dashboardID] = s.now().Add(refreshBackoff)
+		}
+		s.mu.Unlock()
+		close(done)
 	}()
 	return done
 }
 
-// refresh exchanges current for a fresh token. Only startRefresh calls it.
-func (s *store) refresh(dashboardID string, current entry) {
-
+// refresh exchanges current for a fresh token and reports whether it got one.
+// Only startRefresh calls it.
+func (s *store) refresh(dashboardID string, current entry) bool {
 	base := s.baseURL()
 	if base == "" {
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/internal/sandbox/dashboard-token/refresh", nil)
 	if err != nil {
-		return
+		return false
 	}
 	req.Header.Set("X-Dashboard-Token", current.token)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		log.Printf("[cpauth] token refresh for dashboard %s failed: %v", dashboardID, err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		log.Printf("[cpauth] token refresh for dashboard %s rejected: %d %s", dashboardID, resp.StatusCode, strings.TrimSpace(string(body)))
-		if resp.StatusCode == http.StatusUnauthorized && strings.Contains(string(body), "E79398") {
-			// The token is for a sandbox the dashboard no longer runs on (e.g. a
-			// lost provisioning race whose session delete never arrived): it will
-			// never refresh, so stop using it and fall back to the next one held.
+		if resp.StatusCode == http.StatusUnauthorized && permanentlyInvalid(string(body)) {
+			// The token will never refresh: it is for a sandbox the dashboard no
+			// longer runs on (E79398, e.g. a lost provisioning race whose session
+			// delete never arrived), or the control plane no longer accepts it at
+			// all (E79395/E79393: signed under a rotated PTY_TOKEN_SECRET, or
+			// expired past the refresh grace). Stop sending it and fall back to the
+			// next one held; the next session/PTY creation delivers a fresh one.
 			s.dropGeneration(dashboardID, current.gen)
 		}
-		return
+		return false
 	}
 	var out struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Token == "" {
 		log.Printf("[cpauth] token refresh for dashboard %s returned no token", dashboardID)
-		return
+		return false
 	}
 	s.replaceRefreshed(dashboardID, current.gen, out.Token)
 	log.Printf("[cpauth] refreshed dashboard token for %s", dashboardID)
+	return true
+}
+
+// permanentlyInvalid reports whether a 401 refresh rejection means the token
+// can never be refreshed (as opposed to E79399/E79396 or a transient error).
+// Codes from controlplane/src/auth/sandbox-auth.ts.
+func permanentlyInvalid(body string) bool {
+	for _, code := range []string{"E79398", "E79395", "E79393"} {
+		if strings.Contains(body, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // replaceRefreshed stores a refresh reply for the token of generation gen. The
@@ -359,7 +410,8 @@ func (s *store) replaceRefreshed(dashboardID string, gen int64, token string) {
 }
 
 // dropGeneration stops using a generation's token. Its sessions stay live, but
-// without a token of their own.
+// without a token of their own until they bring a new one (SetSessionToken);
+// they are marked dropped so nobody falls back to their original copy.
 func (s *store) dropGeneration(dashboardID string, gen int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -368,6 +420,28 @@ func (s *store) dropGeneration(dashboardID string, gen int64) {
 		return
 	}
 	delete(d.gens, gen)
+	for id, g := range d.holders {
+		if g == gen {
+			d.dropped[id] = true
+		}
+	}
+}
+
+// tokenDashboard returns the token's dashboard_id claim ("" if absent).
+func tokenDashboard(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		DashboardID string `json:"dashboard_id"`
+	}
+	_ = json.Unmarshal(payload, &claims)
+	return claims.DashboardID
 }
 
 // tokenClaims reads the exp and sbx_gen claims without verifying the

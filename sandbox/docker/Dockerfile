@@ -229,6 +229,16 @@ RUN groupadd --system --gid 1990 orcabot-browser \
     && chmod 700 /home/orcabot-browser \
     && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
+# REVISION: browser-vnc-user-v1-split
+# The display side of the browser stack (Xvfb, x11vnc, websockify) runs as a
+# second user, so Chromium (orcabot-browser) runs none of it: iptables rejects
+# every connection from orcabot-browser to 6100-6299, so a page in one
+# dashboard can't open another dashboard's noVNC/x11vnc/DevTools.
+RUN groupadd --system --gid 1991 orcabot-vnc \
+    && useradd --system --uid 1991 --gid 1991 --create-home \
+               --home-dir /home/orcabot-vnc --shell /usr/sbin/nologin orcabot-vnc \
+    && chmod 700 /home/orcabot-vnc
+
 # Set umask 0002 for all PTY shell sessions.
 # Without this, files created by pty-000 land at 0644/0755 (umask 0022) so
 # pty-001 can read them but not modify them — breaking the shared-workspace model.

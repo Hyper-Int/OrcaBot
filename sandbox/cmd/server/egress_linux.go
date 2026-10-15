@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v10-browser-sport-block
+// REVISION: egress-kernel-v11-browser-user-port-block
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-const egressKernelRevision = "egress-kernel-v10-browser-sport-block"
+const egressKernelRevision = "egress-kernel-v11-browser-user-port-block"
 
 func init() {
 	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, time.Now().Format(time.RFC3339))
@@ -188,7 +188,60 @@ func setupPoolBrowserPortBlock() error {
 		}
 	}
 	log.Printf("[pool-iptables] Blocked pool UIDs 2000-2099 from browser ports %d-%d (connect and serve)", browser.PortRangeStart, browser.PortRangeEnd)
+	return setupBrowserUserPortBlock(lookupUser)
+}
+
+// setupBrowserUserPortBlock rejects every connection from Chromium's user
+// (browser.BrowserUser) to the browser port range. Page JavaScript, links and
+// an agent's browser_evaluate all run as that user, and every dashboard's
+// stack listens on loopback in the range (desktop runs them all in one VM):
+// without this, dashboard A's page could open dashboard B's websockify/noVNC
+// (no VNC password — it views and drives B's screen) or x11vnc. Chromium
+// only *listens* there (DevTools; its replies have a source port in the range,
+// which a --dport rule never matches), and websockify -> x11vnc runs as
+// browser.VNCUser, so nothing legitimate is blocked. The server (root) stays
+// the only other client.
+//
+// Installed whenever CAP_NET_ADMIN is available, egress or not: the threat is
+// a hostile page, not only an agent. Skipped with a warning on an image
+// without the browser user (it runs no browser: Start refuses).
+// REVISION: egress-kernel-v11-browser-user-port-block
+func setupBrowserUserPortBlock(lookup func(name string) error) error {
+	if err := lookup(browser.BrowserUser); err != nil {
+		log.Printf("[pool-iptables] WARNING: browser user %q not found, skipping its browser-port block: %v", browser.BrowserUser, err)
+		return nil
+	}
+	portRange := fmt.Sprintf("%d:%d", browser.PortRangeStart, browser.PortRangeEnd)
+	for _, family := range []struct{ command, loopback string }{
+		{"iptables", "127.0.0.0/8"},
+		{"ip6tables", "::1/128"},
+	} {
+		ruleArgs := browserUserPortBlockRule(family.loopback, portRange)
+		if exec.Command(family.command, append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
+			continue
+		}
+		// Ahead of the browser user's jump to the pool egress chain, whose
+		// loopback RETURN would otherwise accept it.
+		out, err := exec.Command(family.command, append([]string{"-I", "OUTPUT", "1"}, ruleArgs...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s browser-user port block: %w: %s", family.command, err, strings.TrimSpace(string(out)))
+		}
+	}
+	log.Printf("[pool-iptables] Blocked %s (Chromium, page JS) from browser ports %d-%d", browser.BrowserUser, browser.PortRangeStart, browser.PortRangeEnd)
 	return nil
+}
+
+// installBrowserUserPortBlock is setupBrowserUserPortBlock with the real user
+// lookup, for startup outside setupKernelEgress (egress disabled).
+func installBrowserUserPortBlock() error { return setupBrowserUserPortBlock(lookupUser) }
+
+func browserUserPortBlockRule(loopback, portRange string) []string {
+	return []string{
+		"-p", "tcp", "-d", loopback,
+		"--dport", portRange,
+		"-m", "owner", "--uid-owner", browser.BrowserUser,
+		"-j", "REJECT", "--reject-with", "tcp-reset",
+	}
 }
 
 // poolEgressChain holds the default-deny rules for pool UIDs.
@@ -285,13 +338,19 @@ func installPoolEgressChain(cmd string, rules [][]string) error {
 // before it existed) the browser jump is skipped with a warning instead of
 // failing the chain and leaving the pool without egress control. Such an
 // image also runs no browser: browser.Start refuses without the user.
+//
+// The VNC user (Xvfb, x11vnc, websockify) needs nothing but loopback, so it
+// is held to the same chain. REVISION: egress-kernel-v11-browser-user-port-block
 func poolEgressOwners(lookup func(name string) error) []string {
 	owners := []string{"2000-2099"}
-	if err := lookup(browser.BrowserUser); err != nil {
-		log.Printf("[egress-kernel] WARNING: browser user %q not found, skipping its egress jump: %v", browser.BrowserUser, err)
-		return owners
+	for _, name := range []string{browser.BrowserUser, browser.VNCUser} {
+		if err := lookup(name); err != nil {
+			log.Printf("[egress-kernel] WARNING: browser user %q not found, skipping its egress jump: %v", name, err)
+			continue
+		}
+		owners = append(owners, name)
 	}
-	return append(owners, browser.BrowserUser)
+	return owners
 }
 
 func lookupUser(name string) error {

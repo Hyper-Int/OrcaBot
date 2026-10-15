@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-cdp-v3-nofollow-screenshot
+// REVISION: browser-cdp-v4-navigate-http-only
 package browser
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const cdpRevision = "browser-cdp-v3-nofollow-screenshot"
+const cdpRevision = "browser-cdp-v4-navigate-http-only"
 
 func init() {
 	log.Printf("[browser-cdp] REVISION: %s loaded at %s", cdpRevision, time.Now().Format(time.RFC3339))
@@ -492,8 +492,13 @@ func (c *CDPClient) WaitForSelector(selector string, timeout time.Duration) erro
 	return fmt.Errorf("timeout waiting for selector: %s", selector)
 }
 
-// Navigate navigates to a URL and waits for load
+// Navigate navigates to a URL and waits for load. Page.navigate loads any
+// scheme (file:// reads every profile in the browser user's home, chrome://
+// is browser-internal), so the URL must pass ValidateNavigationURL.
 func (c *CDPClient) Navigate(url string) error {
+	if err := ValidateNavigationURL(url); err != nil {
+		return err
+	}
 	_, err := c.call("Page.navigate", map[string]interface{}{
 		"url": url,
 	})
@@ -682,8 +687,13 @@ func (c *Controller) WaitForSelector(selector string, timeout time.Duration) err
 	return cdp.WaitForSelector(selector, timeout)
 }
 
-// Navigate navigates to a URL using CDP (alternative to OpenURL)
+// Navigate navigates to a URL using CDP (alternative to OpenURL). Agents
+// reach this through MCP and the HTTP API, so the URL is checked before
+// anything else (ValidateNavigationURL; CDPClient.Navigate checks again).
 func (c *Controller) Navigate(url string) error {
+	if err := ValidateNavigationURL(url); err != nil {
+		return err
+	}
 	if !c.running || c.debugPort == 0 {
 		return fmt.Errorf("browser not running")
 	}

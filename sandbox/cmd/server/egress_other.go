@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: egress-kernel-v11-browser-user-port-block
+
 //go:build !linux
 
 package main
@@ -19,3 +21,6 @@ func setupPoolBrowserPortBlock() error { return nil }
 
 // setupPoolEgressDenyIptables is a no-op on non-Linux platforms.
 func setupPoolEgressDenyIptables() error { return nil }
+
+// installBrowserUserPortBlock is a no-op on non-Linux platforms.
+func installBrowserUserPortBlock() error { return nil }

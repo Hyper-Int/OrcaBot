@@ -1,11 +1,12 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: pty-pool-v2-two-phase-register
+// REVISION: pty-pool-v3-fail-closed-spawn
 
 package pty
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-const poolRevision = "pty-pool-v2-two-phase-register"
+const poolRevision = "pty-pool-v3-fail-closed-spawn"
 
 func init() {
 	log.Printf("[pty-pool] REVISION: %s loaded at %s", poolRevision, time.Now().Format(time.RFC3339))
@@ -65,6 +66,36 @@ var (
 	globalPool *Pool
 	poolOnce  sync.Once
 )
+
+// ErrSpawnRefused is returned by every PTY spawn after RefuseSpawns: egress
+// control was requested but UID isolation could not be set up, so a PTY would
+// run as root outside the kernel egress rules. REVISION: pty-pool-v3-fail-closed-spawn
+var ErrSpawnRefused = errors.New("E79770: PTY creation refused: egress isolation failed to initialise (see server log)")
+
+var spawnRefusal atomic.Pointer[string]
+
+// RefuseSpawns makes all future PTY spawns fail with ErrSpawnRefused. Called at
+// startup when EGRESS_PROXY_ENABLED=true but kernel enforcement failed: running
+// PTYs as root would silently bypass egress control (fail closed instead).
+// An empty reason lifts the refusal (tests only).
+func RefuseSpawns(reason string) {
+	spawnRefusal.Store(&reason)
+}
+
+// SpawnRefusal returns why PTY spawns are refused, or "" if they are allowed.
+func SpawnRefusal() string {
+	if r := spawnRefusal.Load(); r != nil {
+		return *r
+	}
+	return ""
+}
+
+func checkSpawnAllowed() error {
+	if r := SpawnRefusal(); r != "" {
+		return fmt.Errorf("%w: %s", ErrSpawnRefused, r)
+	}
+	return nil
+}
 
 // InitPool initializes the global pool. Must be called once at server startup.
 // sandboxGID is the GID of the "sandbox" group that all pty-NNN users belong to.

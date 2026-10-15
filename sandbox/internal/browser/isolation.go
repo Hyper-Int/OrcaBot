@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v5-profile-per-dashboard
+// REVISION: browser-isolation-v7-vnc-user-split
 package browser
 
 import (
@@ -19,24 +19,38 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
 
-const isolationRevision = "browser-isolation-v5-profile-per-dashboard"
+const isolationRevision = "browser-isolation-v7-vnc-user-split"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", isolationRevision, time.Now().Format(time.RFC3339))
 }
 
-// The browser stack runs as this unprivileged user (docker/Dockerfile), never
-// root. Chromium needs --no-sandbox in the VM, so a root Chromium with a
+// Chromium runs as this unprivileged user (docker/Dockerfile), never root; the
+// display side of the stack runs as VNCUser. Chromium needs --no-sandbox in the VM, so a root Chromium with a
 // DevTools port reachable over loopback let any agent read and write files as
 // root (file:// pages, Browser.setDownloadBehavior). As this user, CDP access
 // is worth no more than the browser itself.
 const BrowserUser = "orcabot-browser"
+
+// VNCUser runs the display side of the stack (Xvfb, x11vnc, websockify), so
+// Chromium does not. Chromium runs whatever pages load, and page JavaScript
+// (or an agent's browser_evaluate) can fetch or navigate to any loopback port
+// its user can connect to: as one user, dashboard A's page could open
+// dashboard B's unauthenticated websockify/noVNC (view and drive its screen)
+// on desktop, where one VM runs every dashboard's browser. With the split,
+// iptables rejects every connection from BrowserUser to the browser port range
+// (setupBrowserUserPortBlock, cmd/server/egress_linux.go): Chromium only
+// listens there (DevTools) and never connects; websockify (this user) is the
+// one client of x11vnc. Not in the sandbox group, like BrowserUser.
+const VNCUser = "orcabot-vnc"
 
 // Ports for x11vnc, websockify and Chromium's DevTools come from this range so
 // iptables can block pool UIDs from all of them (cmd/server/egress_linux.go).
@@ -48,12 +62,23 @@ const (
 type browserIdentity struct {
 	uid, gid int
 	home     string
+	name     string // user name; empty in tests that build an identity by hand
 }
 
+// lookupBrowserIdentity is the Chromium user.
 func lookupBrowserIdentity() (browserIdentity, error) {
-	u, err := user.Lookup(BrowserUser)
+	return lookupStackIdentity(BrowserUser)
+}
+
+// lookupVNCIdentity is the Xvfb / x11vnc / websockify user.
+func lookupVNCIdentity() (browserIdentity, error) {
+	return lookupStackIdentity(VNCUser)
+}
+
+func lookupStackIdentity(name string) (browserIdentity, error) {
+	u, err := user.Lookup(name)
 	if err != nil {
-		return browserIdentity{}, fmt.Errorf("browser user %q missing (rebuild the sandbox image): %w", BrowserUser, err)
+		return browserIdentity{}, fmt.Errorf("browser user %q missing (rebuild the sandbox image): %w", name, err)
 	}
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
@@ -64,9 +89,9 @@ func lookupBrowserIdentity() (browserIdentity, error) {
 		return browserIdentity{}, err
 	}
 	if uid == 0 || gid == 0 {
-		return browserIdentity{}, fmt.Errorf("browser user %q must not be root", BrowserUser)
+		return browserIdentity{}, fmt.Errorf("browser user %q must not be root", name)
 	}
-	return browserIdentity{uid: uid, gid: gid, home: u.HomeDir}, nil
+	return browserIdentity{uid: uid, gid: gid, home: u.HomeDir, name: name}, nil
 }
 
 func (id browserIdentity) sysProcAttr() *syscall.SysProcAttr {
@@ -82,16 +107,38 @@ func (id browserIdentity) env(display, xauthority string) []string {
 	return []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=" + id.home,
-		"USER=" + BrowserUser,
+		"USER=" + id.userName(),
 		"DISPLAY=" + display,
 		"XAUTHORITY=" + xauthority,
 		"LANG=C.UTF-8",
 	}
 }
 
-// freePortInRange returns a free 127.0.0.1 port in [PortRangeStart, PortRangeEnd],
-// skipping ports already chosen for this start.
+func (id browserIdentity) userName() string {
+	if id.name == "" {
+		return BrowserUser
+	}
+	return id.name
+}
+
+// Ports handed out by freePortInRange stay reserved process-wide until the
+// stack that owns them stops (releasePorts). The probe below closes its
+// listener before the browser process binds the port, so without this two
+// concurrent Starts (two dashboards on desktop) could pick the same port and
+// one controller would end up driving the other's Chromium: DialBrowser only
+// checks the listener belongs to the browser user, and both stacks do.
+var (
+	portReserveMu sync.Mutex
+	reservedPorts = map[int]struct{}{}
+)
+
+// freePortInRange reserves a free 127.0.0.1 port in [PortRangeStart,
+// PortRangeEnd] that no other controller holds, skipping ports already chosen
+// for this start. The caller must releasePorts it when the stack stops or its
+// start fails.
 func freePortInRange(skip ...int) (int, error) {
+	portReserveMu.Lock()
+	defer portReserveMu.Unlock()
 	var b [2]byte
 	_, _ = rand.Read(b[:])
 	span := PortRangeEnd - PortRangeStart + 1
@@ -102,7 +149,7 @@ func freePortInRange(skip ...int) (int, error) {
 		for _, s := range skip {
 			taken = taken || s == port
 		}
-		if taken {
+		if _, held := reservedPorts[port]; taken || held {
 			continue
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -110,9 +157,36 @@ func freePortInRange(skip ...int) (int, error) {
 			continue
 		}
 		_ = l.Close()
+		reservedPorts[port] = struct{}{}
 		return port, nil
 	}
 	return 0, fmt.Errorf("no free port in %d-%d", PortRangeStart, PortRangeEnd)
+}
+
+// releasePorts returns ports to the pool (zero and unreserved ports are ignored).
+func releasePorts(ports ...int) {
+	portReserveMu.Lock()
+	defer portReserveMu.Unlock()
+	for _, p := range ports {
+		delete(reservedPorts, p)
+	}
+}
+
+// reserveBrowserPorts reserves the websockify, x11vnc and DevTools ports,
+// releasing any it got if it can't get all three.
+func reserveBrowserPorts() (wsPort, vncPort, debugPort int, err error) {
+	if wsPort, err = freePortInRange(); err != nil {
+		return 0, 0, 0, err
+	}
+	if vncPort, err = freePortInRange(wsPort); err != nil {
+		releasePorts(wsPort)
+		return 0, 0, 0, err
+	}
+	if debugPort, err = freePortInRange(wsPort, vncPort); err != nil {
+		releasePorts(wsPort, vncPort)
+		return 0, 0, 0, err
+	}
+	return wsPort, vncPort, debugPort, nil
 }
 
 func newXCookie() ([]byte, error) {
@@ -174,8 +248,12 @@ func profilesPath(id browserIdentity) string {
 // profilePath is the profile for one workspace: a hash of its root, so the
 // name is a fixed-length, path-safe component whatever the dashboard ID holds.
 func profilePath(id browserIdentity, workspace string) string {
+	return filepath.Join(profilesPath(id), profileName(workspace))
+}
+
+func profileName(workspace string) string {
 	sum := sha256.Sum256([]byte(filepath.Clean(workspace)))
-	return filepath.Join(profilesPath(id), hex.EncodeToString(sum[:16]))
+	return hex.EncodeToString(sum[:16])
 }
 
 // checkBrowserHome verifies the browser user's home is a place only that user
@@ -199,7 +277,7 @@ func checkBrowserHome(id browserIdentity) error {
 		return fmt.Errorf("browser user home %s is not a directory", home)
 	}
 	if int(st.Uid) != id.uid || st.Mode&0o077 != 0 {
-		return fmt.Errorf("browser user home %s must be owned by %s with mode 0700 (uid %d mode %o)", home, BrowserUser, st.Uid, st.Mode&0o7777)
+		return fmt.Errorf("browser user home %s must be owned by %s with mode 0700 (uid %d mode %o)", home, id.userName(), st.Uid, st.Mode&0o7777)
 	}
 	for dir := filepath.Dir(home); ; dir = filepath.Dir(dir) {
 		fi, err := os.Lstat(dir)
@@ -216,91 +294,239 @@ func checkBrowserHome(id browserIdentity) error {
 	}
 }
 
-// prepareProfileDir makes `path` (in the browser user's private home, see
-// checkBrowserHome) a real directory owned by the browser user (0700) and
-// clears Chromium's stale lock and crash state. Only root and the browser user
-// can write the home, so the one party that could have planted a symlink or a
-// foreign directory there is the browser itself; root still works through a
-// directory fd opened with O_NOFOLLOW and moves anything that isn't a browser-
-// or root-owned directory aside rather than adopting it. A root-owned
-// directory can only be the one root just created.
+// prepareProfile makes the workspace's profile ready for Chromium and returns
+// its path. Every step works through directory fds: the home is opened by
+// walking each component from / with O_NOFOLLOW|O_DIRECTORY, and profiles/
+// and the profile itself are created, checked and adopted relative to their
+// parent's fd. Swapping profiles/ for a symlink between steps therefore can't
+// make root mkdir or chown anywhere else.
+func prepareProfile(id browserIdentity, workspace string) (string, error) {
+	homeFd, err := openDirNoFollow(id.home)
+	if err != nil {
+		return "", fmt.Errorf("browser home: %w", err)
+	}
+	defer unix.Close(homeFd)
+	profilesFd, err := prepareDirAt(homeFd, profilesDirName, profilesPath(id), id)
+	if err != nil {
+		return "", err
+	}
+	defer unix.Close(profilesFd)
+	path := profilePath(id, workspace)
+	fd, err := prepareDirAt(profilesFd, profileName(workspace), path, id)
+	if err != nil {
+		return "", err
+	}
+	defer unix.Close(fd)
+	if err := finishProfileDir(fd, id); err != nil {
+		return "", fmt.Errorf("profile %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// prepareProfileDir prepares the profile at an absolute path (tests, and any
+// caller outside prepareProfile): its parent is reached with openDirNoFollow.
 func prepareProfileDir(path string, id browserIdentity) error {
-	for attempt := 0; ; attempt++ {
-		fd, err := openProfileDir(path)
+	parentFd, err := openDirNoFollow(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parentFd)
+	fd, err := prepareDirAt(parentFd, filepath.Base(path), path, id)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	return finishProfileDir(fd, id)
+}
+
+// openDirNoFollow opens an absolute directory path component by component
+// from /, each with O_NOFOLLOW|O_DIRECTORY, so a symlink anywhere on the path
+// fails the open instead of being followed.
+func openDirNoFollow(path string) (int, error) {
+	if !filepath.IsAbs(path) {
+		return -1, fmt.Errorf("%s is not an absolute path", path)
+	}
+	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	for _, comp := range strings.Split(filepath.Clean(path), "/") {
+		if comp == "" {
+			continue
+		}
+		next, err := unix.Openat(fd, comp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		unix.Close(fd)
 		if err != nil {
-			return err
+			return -1, fmt.Errorf("open %s (at %q): %w", path, comp, err)
+		}
+		fd = next
+	}
+	return fd, nil
+}
+
+// prepareDirAt makes name (in parentFd, inside the browser user's private
+// home, see checkBrowserHome) a real directory owned by the browser user
+// (0700) and returns an fd for it. Only root and the browser user can write
+// the home, so the one party that could have planted a symlink or a foreign
+// directory there is the browser itself; root still works only through fds
+// opened with O_NOFOLLOW and moves anything that isn't a browser- or
+// root-owned directory aside rather than adopting it. A root-owned directory
+// can only be the one root just created. display is the full path, for logs.
+func prepareDirAt(parentFd int, name, display string, id browserIdentity) (int, error) {
+	for attempt := 0; ; attempt++ {
+		fd, err := openProfileDirAt(parentFd, name, display)
+		if err != nil {
+			return -1, err
 		}
 		var st unix.Stat_t
 		if err := unix.Fstat(fd, &st); err != nil {
 			unix.Close(fd)
-			return err
+			return -1, err
 		}
 		if int(st.Uid) != id.uid && st.Uid != 0 {
 			unix.Close(fd)
 			why := fmt.Sprintf("owned by uid %d", st.Uid)
 			if attempt > 0 {
-				return fmt.Errorf("profile %s replaced while preparing it (%s)", path, why)
+				return -1, fmt.Errorf("profile %s replaced while preparing it (%s)", display, why)
 			}
-			if err := moveAside(path, why); err != nil {
-				return err
+			if err := moveAsideAt(parentFd, name, display, why); err != nil {
+				return -1, err
 			}
 			continue
 		}
-		err = finishProfileDir(fd, id)
-		unix.Close(fd)
-		return err
+		if err := unix.Fchown(fd, id.uid, id.gid); err != nil {
+			unix.Close(fd)
+			return -1, err
+		}
+		if err := unix.Fchmod(fd, 0o700); err != nil {
+			unix.Close(fd)
+			return -1, err
+		}
+		return fd, nil
 	}
 }
 
-// openProfileDir moves a non-directory (or symlink) at path aside, creates the
-// directory if missing, and opens it without following symlinks.
-func openProfileDir(path string) (int, error) {
-	fi, err := os.Lstat(path)
+// openProfileDirAt moves a non-directory (or symlink) named name in parentFd
+// aside, creates the directory if missing, and opens it without following
+// symlinks — all relative to parentFd.
+func openProfileDirAt(parentFd int, name, display string) (int, error) {
+	var st unix.Stat_t
+	err := unix.Fstatat(parentFd, name, &st, unix.AT_SYMLINK_NOFOLLOW)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, unix.ENOENT):
 	case err != nil:
-		return -1, err
-	case fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir():
-		if err := moveAside(path, fmt.Sprintf("not a directory (mode %v)", fi.Mode())); err != nil {
+		return -1, fmt.Errorf("stat %s: %w", display, err)
+	case st.Mode&unix.S_IFMT != unix.S_IFDIR:
+		if err := moveAsideAt(parentFd, name, display, fmt.Sprintf("not a directory (mode %o)", st.Mode)); err != nil {
 			return -1, err
 		}
 	}
-	if err := unix.Mkdir(path, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
-		return -1, fmt.Errorf("mkdir %s: %w", path, err)
+	if err := unix.Mkdirat(parentFd, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+		return -1, fmt.Errorf("mkdir %s: %w", display, err)
 	}
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(parentFd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return -1, fmt.Errorf("open profile dir %s: %w", path, err)
+		return -1, fmt.Errorf("open profile dir %s: %w", display, err)
 	}
 	return fd, nil
 }
 
-// moveAside renames path (whatever it is; rename never follows a symlink) out
-// of the way so a fresh profile can be created.
-func moveAside(path, why string) error {
+// moveAsideAt renames name in parentFd (whatever it is; rename never follows a
+// symlink) out of the way so a fresh profile can be created.
+func moveAsideAt(parentFd int, name, display, why string) error {
 	var suffix [4]byte
 	_, _ = rand.Read(suffix[:])
-	aside := fmt.Sprintf("%s.invalid-%d-%s", path, time.Now().Unix(), hex.EncodeToString(suffix[:]))
-	log.Printf("[browser] SECURITY: %s is %s — moving it to %s", path, why, aside)
-	if err := os.Rename(path, aside); err != nil {
-		return fmt.Errorf("move aside %s: %w", path, err)
+	aside := fmt.Sprintf("%s.invalid-%d-%s", name, time.Now().Unix(), hex.EncodeToString(suffix[:]))
+	log.Printf("[browser] SECURITY: %s is %s — moving it to %s", display, why, filepath.Join(filepath.Dir(display), aside))
+	if err := unix.Renameat(parentFd, name, parentFd, aside); err != nil {
+		return fmt.Errorf("move aside %s: %w", display, err)
 	}
 	return nil
 }
 
+// singletonFiles are Chromium's profile lock: SingletonLock is a symlink to
+// "<hostname>-<pid>" of the Chromium that has the profile open.
+var singletonFiles = []string{"SingletonLock", "SingletonSocket", "SingletonCookie"}
+
+// errProfileInUse: a live Chromium still holds the profile. Its lock files are
+// left alone — removing them let a second Chromium open the same profile and
+// corrupt it.
+var errProfileInUse = errors.New("browser profile is in use by another Chromium")
+
+// procRoot is /proc; a var so tests can fake process state.
+var procRoot = "/proc"
+
+// finishProfileDir clears a stale profile lock and crash state. A lock that
+// names a live Chromium of the browser user on this host is not stale: it is
+// another browser on this profile (one left behind by an earlier server, say),
+// and starting a second one on it would corrupt the profile, so it fails.
 func finishProfileDir(fd int, id browserIdentity) error {
-	if err := unix.Fchown(fd, id.uid, id.gid); err != nil {
-		return err
+	if pid := liveSingletonPid(fd, id); pid > 0 {
+		return fmt.Errorf("%w (pid %d)", errProfileInUse, pid)
 	}
-	if err := unix.Fchmod(fd, 0o700); err != nil {
-		return err
-	}
-	// Stale lock files from a previous run cause "profile in use" errors.
-	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+	for _, name := range singletonFiles {
 		_ = unix.Unlinkat(fd, name, 0)
 	}
 	cleanCrashStateAt(fd, id)
 	return nil
+}
+
+// liveSingletonPid returns the pid SingletonLock names if that process is
+// alive on this host, runs as the browser user and is a Chromium; else 0.
+func liveSingletonPid(fd int, id browserIdentity) int {
+	buf := make([]byte, 256)
+	n, err := unix.Readlinkat(fd, "SingletonLock", buf)
+	if err != nil || n <= 0 || n >= len(buf) {
+		return 0
+	}
+	target := string(buf[:n])
+	i := strings.LastIndexByte(target, '-')
+	if i <= 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(target[i+1:])
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	if host, err := os.Hostname(); err == nil && host != target[:i] {
+		return 0 // another machine's lock (e.g. from an image build)
+	}
+	if !isBrowserChromium(pid, id.uid) {
+		return 0
+	}
+	return pid
+}
+
+// isBrowserChromium reports whether pid is a live process running as uid
+// whose name starts with "chrom". /proc/<pid>/status is world-readable (unlike
+// /proc/<pid>/fd, which needs CAP_SYS_PTRACE the container doesn't have).
+func isBrowserChromium(pid, uid int) bool {
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "status"))
+	if err != nil {
+		return false
+	}
+	var name string
+	ruid := -1
+	for _, line := range strings.Split(string(data), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		switch k {
+		case "Name":
+			name = v
+		case "State":
+			if strings.HasPrefix(v, "Z") || strings.HasPrefix(v, "X") {
+				return false // exited, not yet reaped
+			}
+		case "Uid":
+			if f := strings.Fields(v); len(f) > 0 {
+				ruid, _ = strconv.Atoi(f[0])
+			}
+		}
+	}
+	return ruid == uid && strings.HasPrefix(name, "chrom")
 }
 
 // readDirFd lists dirfd from the start. A dup shares the file offset, so it
@@ -405,14 +631,11 @@ func cleanCrashStateAt(profileFd int, id browserIdentity) {
 	}
 	defer unix.Close(defFd)
 
-	inFd, err := unix.Openat(defFd, "Preferences", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	data, err := readPrefsAt(defFd)
 	if err != nil {
-		return
-	}
-	in := os.NewFile(uintptr(inFd), "Preferences")
-	data, err := io.ReadAll(io.LimitReader(in, 16<<20))
-	in.Close()
-	if err != nil {
+		if !errors.Is(err, unix.ENOENT) {
+			log.Printf("[browser] cleanCrashState: %v", err)
+		}
 		return
 	}
 
@@ -451,6 +674,35 @@ func cleanCrashStateAt(profileFd int, id browserIdentity) {
 	if err := unix.Renameat(defFd, "Preferences.tmp", defFd, "Preferences"); err != nil {
 		log.Printf("[browser] cleanCrashState: rename: %v", err)
 	}
+}
+
+// maxPrefsSize caps how much of Preferences root reads.
+const maxPrefsSize = 16 << 20
+
+// readPrefsAt reads Default/Preferences, which the browser user controls. It
+// is opened O_NONBLOCK so a FIFO planted there can't hang Start (which holds
+// the controller lock), and only a regular file within maxPrefsSize is read.
+func readPrefsAt(defFd int) ([]byte, error) {
+	inFd, err := unix.Openat(defFd, "Preferences", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(inFd, &st); err != nil {
+		unix.Close(inFd)
+		return nil, err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG {
+		unix.Close(inFd)
+		return nil, fmt.Errorf("Preferences is not a regular file (mode %o)", st.Mode)
+	}
+	if st.Size > maxPrefsSize {
+		unix.Close(inFd)
+		return nil, fmt.Errorf("Preferences is too large (%d bytes)", st.Size)
+	}
+	in := os.NewFile(uintptr(inFd), "Preferences")
+	defer in.Close()
+	return io.ReadAll(io.LimitReader(in, maxPrefsSize))
 }
 
 // xauthorityPath picks a fresh path for a display's cookie in the browser

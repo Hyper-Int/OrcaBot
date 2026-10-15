@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-tests-v10-browser-sport-block
+// REVISION: egress-kernel-tests-v11-browser-user-port-block
 
 //go:build linux
 
@@ -38,16 +38,38 @@ func TestParseExtraTCPPorts(t *testing.T) {
 
 func TestPoolEgressOwnersSkipsMissingBrowserUser(t *testing.T) {
 	got := poolEgressOwners(func(string) error { return nil })
-	if want := []string{"2000-2099", browser.BrowserUser}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("with browser user: %v, want %v", got, want)
+	if want := []string{"2000-2099", browser.BrowserUser, browser.VNCUser}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("with browser users: %v, want %v", got, want)
 	}
-	var asked string
-	got = poolEgressOwners(func(name string) error { asked = name; return user.UnknownUserError(name) })
+	var asked []string
+	got = poolEgressOwners(func(name string) error { asked = append(asked, name); return user.UnknownUserError(name) })
 	if want := []string{"2000-2099"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("without browser user: %v, want %v", got, want)
+		t.Fatalf("without browser users: %v, want %v", got, want)
 	}
-	if asked != browser.BrowserUser {
-		t.Fatalf("looked up %q", asked)
+	if want := []string{browser.BrowserUser, browser.VNCUser}; !reflect.DeepEqual(asked, want) {
+		t.Fatalf("looked up %v", asked)
+	}
+	// Only the Chromium user is missing: the VNC user still jumps.
+	got = poolEgressOwners(func(name string) error {
+		if name == browser.BrowserUser {
+			return user.UnknownUserError(name)
+		}
+		return nil
+	})
+	if want := []string{"2000-2099", browser.VNCUser}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("without chromium user: %v, want %v", got, want)
+	}
+}
+
+func TestBrowserUserPortBlockRule(t *testing.T) {
+	got := browserUserPortBlockRule("127.0.0.0/8", "6100:6299")
+	want := []string{"-p", "tcp", "-d", "127.0.0.0/8", "--dport", "6100:6299", "-m", "owner", "--uid-owner", browser.BrowserUser, "-j", "REJECT", "--reject-with", "tcp-reset"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rule = %v", got)
+	}
+	// A missing browser user skips the rule instead of failing egress setup.
+	if err := setupBrowserUserPortBlock(func(name string) error { return user.UnknownUserError(name) }); err != nil {
+		t.Fatalf("missing user: %v", err)
 	}
 }
 
@@ -113,11 +135,16 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	if err := setupPoolEgressDenyIptables(); err != nil {
 		t.Fatalf("second setupPoolEgressDenyIptables: %v", err)
 	}
-	// One jump for pool UIDs and one for the browser user (needs that user to
-	// exist: useradd --uid 1990 orcabot-browser in the test container).
+	// One jump for pool UIDs, one for the browser user (needs that user to
+	// exist: useradd --uid 1990 orcabot-browser in the test container) and one
+	// for the VNC user if it exists (useradd --uid 1991 orcabot-vnc).
+	wantJumps := 2
+	if _, err := user.Lookup(browser.VNCUser); err == nil {
+		wantJumps = 3
+	}
 	out, _ := exec.Command("iptables", "-S", "OUTPUT").CombinedOutput()
-	if n := strings.Count(string(out), "-j "+poolEgressChain); n != 2 {
-		t.Fatalf("expected exactly 2 jumps to %s, got %d:\n%s", poolEgressChain, n, out)
+	if n := strings.Count(string(out), "-j "+poolEgressChain); n != wantJumps {
+		t.Fatalf("expected exactly %d jumps to %s, got %d:\n%s", wantJumps, poolEgressChain, n, out)
 	}
 	// The browser-port REJECT must come before the pool jump: the chain's
 	// loopback RETURN would otherwise let pool UIDs reach the browser ports.
@@ -150,6 +177,17 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 	}
 	if err := dialAsUID(browserUID, local.Addr().String()); err != nil {
 		t.Fatalf("browser user must reach loopback (egress proxy): %v", err)
+	}
+	// Chromium's user (page JS) can't reach any browser port: another
+	// dashboard's websockify/x11vnc/DevTools.
+	if err := dialAsUID(browserUID, browserPort.Addr().String()); err == nil {
+		t.Fatal("browser user reached a browser port (another stack's VNC/DevTools)")
+	}
+	if u, err := user.Lookup(browser.VNCUser); err == nil {
+		uid, _ := strconv.Atoi(u.Uid)
+		if err := dialAsUID(uint32(uid), browserPort.Addr().String()); err != nil {
+			t.Fatalf("VNC user (websockify -> x11vnc) must reach browser ports: %v", err)
+		}
 	}
 
 	cases := []struct {
@@ -283,10 +321,27 @@ func TestPoolBrowserPortBlockIntegration(t *testing.T) {
 	}
 	for _, cmd := range []string{"iptables", "ip6tables"} {
 		out, _ := exec.Command(cmd, "-S", "OUTPUT").CombinedOutput()
+		// Owners: the pool range, and (if it exists) the browser user, which
+		// iptables -S prints as its uid.
+		owners := []string{"2000-2099"}
+		if u, err := user.Lookup(browser.BrowserUser); err == nil {
+			owners = append(owners, u.Uid)
+		}
 		for _, flag := range []string{"--dport", "--sport"} {
 			portRange := fmt.Sprintf("%s %d:%d", flag, browser.PortRangeStart, browser.PortRangeEnd)
-			if n := strings.Count(string(out), portRange); n != 1 {
-				t.Fatalf("%s: want exactly 1 %s browser-port rule after two installs, got %d:\n%s", cmd, flag, n, out)
+			for _, owner := range owners {
+				if flag == "--sport" && owner != "2000-2099" {
+					continue // Chromium's DevTools listener must still answer root
+				}
+				n := 0
+				for _, line := range strings.Split(string(out), "\n") {
+					if strings.Contains(line, portRange) && strings.Contains(line, "--uid-owner "+owner+" ") {
+						n++
+					}
+				}
+				if n != 1 {
+					t.Fatalf("%s: want exactly 1 %s browser-port rule for owner %s after two installs, got %d:\n%s", cmd, flag, owner, n, out)
+				}
 			}
 		}
 	}
@@ -308,6 +363,12 @@ func TestPoolBrowserPortBlockIntegration(t *testing.T) {
 			}
 			if err := dialAsUID(2000, listener.Addr().String()); err == nil {
 				t.Fatal("pool UID reached browser port")
+			}
+			if u, err := user.Lookup(browser.BrowserUser); err == nil {
+				uid, _ := strconv.Atoi(u.Uid)
+				if err := dialAsUID(uint32(uid), listener.Addr().String()); err == nil {
+					t.Fatal("browser user (page JS) reached a browser port")
+				}
 			}
 		})
 	}

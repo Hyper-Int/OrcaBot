@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-v20-vnc-user-split
+
 //go:build linux
 
 package browser
@@ -145,7 +147,7 @@ func TestWaitForPortFailsFastOnSquattedPort(t *testing.T) {
 	port := listenAs(t, poolUID, "hang")
 
 	start := time.Now()
-	if waitForPort(port, 10*time.Second) {
+	if waitForPort(DialBrowser, port, 10*time.Second) {
 		t.Fatal("waitForPort accepted a port served by another user")
 	}
 	if time.Since(start) > 3*time.Second {
@@ -153,7 +155,7 @@ func TestWaitForPortFailsFastOnSquattedPort(t *testing.T) {
 	}
 
 	withBrowserUID(t, poolUID)
-	if !waitForPort(port, 2*time.Second) {
+	if !waitForPort(DialBrowser, port, 2*time.Second) {
 		t.Fatal("waitForPort rejected the expected owner")
 	}
 }
@@ -187,6 +189,41 @@ func TestBrowserHTTPClientRejectsSquatter(t *testing.T) {
 	if !probeDebugReady(port) {
 		t.Fatal("probeDebugReady rejected the expected owner")
 	}
+}
+
+// withVNCUID makes DialVNC expect uid as the VNC user.
+func withVNCUID(t *testing.T, uid int) {
+	t.Helper()
+	prev := vncUID
+	vncUID = func() (int, error) { return uid, nil }
+	t.Cleanup(func() { vncUID = prev })
+}
+
+// websockify and x11vnc ports are checked against the VNC user, DevTools
+// against the browser user: each refuses the other's listener.
+func TestVNCDialerChecksVNCUser(t *testing.T) {
+	needRoot(t)
+	port := listenAs(t, testID.uid, "http")
+	url := fmt.Sprintf("http://%s/", addrOf(port))
+
+	withVNCUID(t, poolUID)
+	withBrowserUID(t, testID.uid)
+	if _, err := NewVNCTransport().RoundTrip(mustReq(t, url)); !errors.Is(err, errNotBrowserSocket) {
+		t.Fatalf("VNC transport accepted another user's listener: %v", err)
+	}
+	if waitForPort(DialVNC, port, 2*time.Second) {
+		t.Fatal("waitForPort(DialVNC) accepted another user's listener")
+	}
+	if !waitForPort(DialBrowser, port, 2*time.Second) {
+		t.Fatal("waitForPort(DialBrowser) rejected the expected owner")
+	}
+
+	withVNCUID(t, testID.uid)
+	resp, err := NewVNCTransport().RoundTrip(mustReq(t, url))
+	if err != nil {
+		t.Fatalf("VNC transport rejected the expected owner: %v", err)
+	}
+	resp.Body.Close()
 }
 
 func mustReq(t *testing.T, url string) *http.Request {
@@ -240,10 +277,11 @@ func TestStatusKeepsStackOnInconclusiveCheck(t *testing.T) {
 
 	// The ownership check can't complete (e.g. a /proc read failing): keep
 	// the stack rather than drop every viewer's VNC session.
-	prev := browserUID
-	browserUID = func() (int, error) { return 0, errors.New("transient lookup failure") }
-	t.Cleanup(func() { browserUID = prev })
-	c := &Controller{running: true, ready: true, wsPort: port}
+	// Status checks websockify, which is the VNC user's.
+	prev := vncUID
+	vncUID = func() (int, error) { return 0, errors.New("transient lookup failure") }
+	t.Cleanup(func() { vncUID = prev })
+	c := &Controller{browserStack: &browserStack{running: true, ready: true, wsPort: port}}
 	if st := c.Status(); !st.Running {
 		t.Fatal("inconclusive check tore the browser down")
 	}
@@ -252,8 +290,8 @@ func TestStatusKeepsStackOnInconclusiveCheck(t *testing.T) {
 	l, _ := net.Listen("tcp4", "127.0.0.1:0")
 	closed := l.Addr().(*net.TCPAddr).Port
 	l.Close()
-	withBrowserUID(t, testID.uid)
-	c = &Controller{running: true, ready: true, wsPort: closed}
+	withVNCUID(t, testID.uid)
+	c = &Controller{browserStack: &browserStack{running: true, ready: true, wsPort: closed}}
 	if st := c.Status(); st.Running {
 		t.Fatal("refused port not treated as gone")
 	}

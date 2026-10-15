@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: session-v25-session-owned-token
+// REVISION: session-v26-no-dropped-token-fallback
 
 // Package sessions manages session lifecycle.
 //
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/statecache"
 )
 
-const sessionRevision = "session-v25-session-owned-token"
+const sessionRevision = "session-v26-no-dropped-token-fallback"
 
 // Allow UUID-style IDs and internal random IDs while rejecting shell metacharacters.
 // This protects shell-interpolated call sites (e.g. Claude apiKeyHelper command).
@@ -241,12 +241,30 @@ var sessionDashboards sync.Map
 
 // DashboardToken returns the freshest dashboard-scoped control plane token for
 // this session's dashboard (refreshed by cpauth), falling back to the token the
-// session was created with.
+// session was created with only when cpauth never took it (e.g. it could not be
+// parsed). If the control plane refused that token as permanently invalid,
+// cpauth dropped it and there is no fallback: "" until a fresh token arrives
+// (SetDashboardToken). REVISION: session-v26-no-dropped-token-fallback
 func (s *Session) DashboardToken() string {
 	if token := cpauth.DashboardToken(s.DashboardID); token != "" {
 		return token
 	}
+	if cpauth.SessionTokenDropped(s.ID) {
+		return ""
+	}
 	return s.MCPToken
+}
+
+// SetDashboardToken hands cpauth a fresh dashboard token the control plane sent
+// for this session (with a PTY creation). It replaces the session's previous
+// token, so a VM whose token was dropped (rotated PTY_TOKEN_SECRET, replaced
+// sandbox) recovers on the next terminal create. The dashboard is always the
+// session's own, never taken from the request.
+func (s *Session) SetDashboardToken(token string) {
+	if token == "" || s.DashboardID == "" {
+		return
+	}
+	cpauth.SetSessionToken(s.ID, s.DashboardID, token)
 }
 
 // notifyApprovalNeeded sends a pending approval request to the control plane.
