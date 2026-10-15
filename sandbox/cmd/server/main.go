@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v48-error-codes
+// REVISION: main-v49-shm-rmid-forced
 
 package main
 
@@ -31,6 +31,7 @@ import (
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/auth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
+	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/cpauth"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/debug"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/drive"
@@ -41,7 +42,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v48-error-codes"
+const mainRevision = "main-v49-shm-rmid-forced"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -310,6 +311,11 @@ func main() {
 			refusePTYSpawns("CAP_NET_ADMIN not available (not a privileged container): kernel egress enforcement cannot be installed")
 		}
 	}
+
+	// Free the shared memory of an x11vnc that dies uncleanly, or enough
+	// browser restarts exhaust kernel.shmmni and the browser never starts
+	// again. REVISION: main-v49-shm-rmid-forced
+	browser.EnableOrphanShmCleanup()
 
 	// Chromium's user (page JS, browser_evaluate) must not reach any browser
 	// port: on desktop every dashboard's websockify/x11vnc/DevTools listens in

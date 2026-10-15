@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-process-v1-waitid-nowait
+// REVISION: browser-process-v2-shm-rmid-forced
 
 //go:build !linux
 
@@ -14,3 +14,6 @@ import "os/exec"
 func processRunning(cmd *exec.Cmd) bool {
 	return cmd != nil && cmd.Process != nil && cmd.ProcessState == nil
 }
+
+// EnableOrphanShmCleanup only applies on Linux.
+func EnableOrphanShmCleanup() {}

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v21-error-codes
+// REVISION: browser-v22-graceful-stop
 package browser
 
 import (
@@ -25,8 +25,8 @@ import (
 	"time"
 )
 
-// killProcessTree kills a browser process and the process group it leads, then
-// reaps it.
+// killProcessTree stops a browser process and the process group it leads,
+// then reaps it.
 //
 // Each browser process is started with Setpgid so it leads its own group.
 // Killing only the direct process leaves Chromium's children (zygote,
@@ -37,17 +37,60 @@ import (
 // process stays a zombie holding its PID. Grandchildren are reaped by tini
 // (see the Dockerfile ENTRYPOINT), which cannot be done from here.
 func killProcessTree(cmd *exec.Cmd) {
-	if cmd == nil || cmd.Process == nil {
-		return
+	stоpProcessGroups(cmd)
+}
+
+// processStopGrace is how long stоpProcessGroups waits after SIGTERM before SIGKILL.
+const processStopGrace = 2 * time.Second
+
+// stоpProcessGroups sends SIGTERM to each process group, waits up to
+// processStopGrace for the leaders to exit, SIGKILLs every group, then reaps
+// the leaders.
+//
+// SIGTERM first because x11vnc frees its SysV shared-memory framebuffers only
+// on a clean exit. Under SIGKILL the segments outlive it (several MB each):
+// after a few hundred browser starts the VM hits kernel.shmmni (4096) and
+// every later x11vnc fails ("shmget: No space left on device"), so the browser
+// never starts again until the VM restarts. kernel.shm_rmid_forced
+// (EnableOrphanShmCleanup) is the backstop for processes that die uncleanly.
+//
+// Leaders are not reaped until after the SIGKILL, so the pid each group is
+// signalled by cannot have been reused.
+func stоpProcessGroups(cmds ...*exec.Cmd) {
+	var live []*exec.Cmd
+	for _, cmd := range cmds {
+		if cmd == nil || cmd.Process == nil {
+			continue
+		}
+		live = append(live, cmd)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
 	}
-	pid := cmd.Process.Pid
-	// Negative pid = the process group led by pid. Best-effort: the group may
-	// already be gone, and children that called setsid() escape it (tini still
-	// reaps those once they exit).
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		_ = cmd.Process.Kill()
+	deadline := time.Now().Add(processStopGrace)
+	for time.Now().Before(deadline) {
+		running := false
+		for _, cmd := range live {
+			if processRunning(cmd) {
+				running = true
+				break
+			}
+		}
+		if !running {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	_, _ = cmd.Process.Wait()
+	for _, cmd := range live {
+		// Best-effort: the group may already be gone, and children that
+		// called setsid() escape it (tini still reaps those once they exit).
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
+	for _, cmd := range live {
+		_, _ = cmd.Process.Wait()
+	}
 }
 
 type Status struct {
@@ -117,7 +160,7 @@ func (c *Controller) attachLocked() {
 }
 
 // REVISION: browser-v20-vnc-user-split
-const browserRevision = "browser-v21-error-codes"
+const browserRevision = "browser-v22-graceful-stop"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -346,9 +389,7 @@ func (c *Controller) Start() (Status, error) {
 
 	processes := []*exec.Cmd{xvfbCmd, vncCmd, websockifyCmd, chromiumCmd}
 	killAll := func() {
-		for _, cmd := range processes {
-			killProcessTree(cmd)
-		}
+		stоpProcessGroups(processes...)
 		_ = os.Remove(xauth)
 		_ = os.Remove(chromeXauth)
 	}
@@ -512,10 +553,9 @@ func (c *Controller) Stop() {
 // included: a stopped or dead browser must not keep reporting the ports it
 // had, which an agent may have bound since.
 func (c *Controller) teardownLocked() {
-	for i := len(c.processes) - 1; i >= 0; i-- {
-		// Kill the group and reap.
-		killProcessTree(c.processes[i])
-	}
+	// Stop every group together so the grace period is paid once, not per
+	// process. REVISION: browser-v22-graceful-stop
+	stоpProcessGroups(c.processes...)
 	c.processes = nil
 	c.running = false
 	c.ready = false
