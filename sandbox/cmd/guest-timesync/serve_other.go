@@ -1,4 +1,7 @@
-// REVISION: guest-timesync-v1-vsock-step
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v2-error-codes
 //go:build !linux
 
 package main

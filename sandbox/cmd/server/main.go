@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: main-v47-no-netadmin-fail-closed
+// REVISION: main-v48-error-codes
 
 package main
 
@@ -41,7 +41,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/ws"
 )
 
-const mainRevision = "main-v47-no-netadmin-fail-closed"
+const mainRevision = "main-v48-error-codes"
 
 // debugExecToken is a random per-boot secret guarding POST /debug/exec. Generated
 // once at startup when ORCABOT_DEBUG_EXEC=1 and delivered to the host ONLY via the
@@ -106,7 +106,7 @@ func init() {
 // token is checked first thing in the handler, constant-time.
 func (s *Server) handleDebugExec(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("ORCABOT_DEBUG_EXEC") != "1" {
-		http.Error(w, "debug exec disabled (set ORCABOT_DEBUG_EXEC=1)", http.StatusForbidden)
+		http.Error(w, "E79113: debug exec disabled (set ORCABOT_DEBUG_EXEC=1)", http.StatusForbidden)
 		return
 	}
 	// Auth via the random per-boot token (X-Debug-Exec-Token), NOT the internal
@@ -115,7 +115,7 @@ func (s *Server) handleDebugExec(w http.ResponseWriter, r *http.Request) {
 	// agent can neither read nor guess it. Constant-time compare; empty = reject.
 	if debugExecToken == "" ||
 		subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Debug-Exec-Token")), []byte(debugExecToken)) != 1 {
-		http.Error(w, "forbidden: missing or invalid X-Debug-Exec-Token", http.StatusForbidden)
+		http.Error(w, "E79114: forbidden: missing or invalid X-Debug-Exec-Token", http.StatusForbidden)
 		return
 	}
 	var req struct {
@@ -123,7 +123,7 @@ func (s *Server) handleDebugExec(w http.ResponseWriter, r *http.Request) {
 		TimeoutMs int    `json:"timeout_ms"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Cmd) == "" {
-		http.Error(w, "bad request: need JSON {\"cmd\": \"...\"}", http.StatusBadRequest)
+		http.Error(w, "E79115: bad request: need JSON {\"cmd\": \"...\"}", http.StatusBadRequest)
 		return
 	}
 	timeout := 15 * time.Second
@@ -573,7 +573,7 @@ func (s *Server) requireLocalMCPAuth(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) poolModeGuard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if pty.GetPool() != nil {
-			http.Error(w, "use Unix socket in pool mode", http.StatusServiceUnavailable)
+			http.Error(w, "E79116: use Unix socket in pool mode", http.StatusServiceUnavailable)
 			return
 		}
 		next(w, r)
@@ -850,7 +850,7 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body) + " auth=" + credentialKind(req))
+		return errors.New("allowlist fetch failed: " + resp.Status + " " + string(body) + " auth=" + crеdentialKind(req))
 	}
 
 	var payload struct {
@@ -889,7 +889,7 @@ func (s *Server) ensureEgressAllowlistLoaded(dashboardID string) error {
 }
 
 // credentialKind names which control plane credential a request carries, for logs.
-func credentialKind(req *http.Request) string {
+func crеdentialKind(req *http.Request) string {
 	switch {
 	case req.Header.Get("X-Dashboard-Token") != "":
 		return "dashboard-token"

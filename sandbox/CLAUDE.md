@@ -394,7 +394,7 @@ curl -X POST "http://localhost:8082/broker/{sessionID}/custom/MY_API_KEY?target=
   -d '{"message": "test"}'
 
 # Expected response (403): domain requires approval
-# {"error":"domain_approval_required","domain":"api.example.com","secret":"MY_API_KEY","message":"This domain requires owner approval before the secret can be sent."}
+# {"error":"domain_approval_required","domain":"api.example.com","secret":"MY_API_KEY","message":"E79130: This domain requires owner approval before the secret can be sent."}
 
 # The broker will also notify the control plane, creating a pending approval request
 # that appears in the frontend for the dashboard owner to approve.
@@ -412,7 +412,7 @@ The sandbox runs an embedded Chromium browser accessible via WebSocket for in-br
 
 **Key behaviors:**
 - **One shared stack per workspace root** (`browserStack`, `stackFor` in `internal/browser/browser.go`): every `Controller` for the same workspace (several sessions in one web VM, or a desktop dashboard reopened while its old session lives) drives ONE Chromium on that workspace's profile instead of each launching its own on it (which corrupted the profile). `Start`/`OpenURL` register the controller as a user; `Stop` only detaches it and tears the stack down when the **last** user leaves.
-- **Profile lock**: `SingletonLock`/`SingletonSocket`/`SingletonCookie` are cleared only when the pid the lock names is dead, on another host, or not a Chromium of the browser user (`liveSingletonPid`). A live Chromium holding the profile fails the start (`errProfileInUse`) rather than having a second one open it. Crash state ("Restore pages?") is cleared on start.
+- **Profile lock**: `SingletonLock`/`SingletonSocket`/`SingletonCookie` are cleared only when the pid the lock names is dead, on another host, or not a Chromium of the browser user. A live Chromium holding the profile fails the start (`errProfileInUse`) rather than having a second one open it. Crash state ("Restore pages?") is cleared on start.
 - **Process-wide port reservations**: `freePortInRange` reserves each websockify/x11vnc/DevTools port in a process-wide map until that stack stops or its start fails (`releasePorts`), so two concurrent `Start`s (two dashboards on desktop) can't pick the same port and end up driving each other's Chromium.
 - **Navigation is http/https only** (`browser.ValidateNavigationURL`, `internal/browser/navurl.go`): every URL an agent can make the browser load (navigate, `OpenURL`, `/json/new`) must be http(s) — no `file://` (would read other dashboards' profiles), `chrome://`, `devtools://`, `javascript:`, `data:` — and loopback/unspecified hosts on ports 6100-6299 are refused (names are resolved; WHATWG IPv4 forms are understood; whitespace/control/backslash refused outright).
 - Log filtering suppresses noisy DBus/DPMS/WebSocket messages

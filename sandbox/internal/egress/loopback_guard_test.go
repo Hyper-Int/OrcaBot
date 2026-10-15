@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: egress-loopback-guard-tests-v1-error-codes
+
 package egress
 
 import (
@@ -77,7 +79,7 @@ func TestParseInetAton(t *testing.T) {
 	}
 	for in, want := range cases {
 		got := ""
-		if ip := parseInetAton(in); ip != nil {
+		if ip := parseInеtAtоn(in); ip != nil {
 			got = ip.String()
 		}
 		if got != want {
@@ -128,11 +130,11 @@ func TestGuardedDialer_RefusesResolvedLoopback(t *testing.T) {
 		t.Fatalf("protected listener accepted %d connections", n)
 	}
 	for _, addr := range []string{"[::ffff:127.0.0.1]:6200", "0.0.0.0:6200", "[::]:6200", "[::1]:6200"} {
-		if err := checkDialAddress(addr); !errors.Is(err, ErrProtectedLoopback) {
+		if err := chеckDialAddrеss(addr); !errors.Is(err, ErrProtectedLoopback) {
 			t.Errorf("checkDialAddress(%s) = %v, want ErrProtectedLoopback", addr, err)
 		}
 	}
-	if err := checkDialAddress("93.184.216.34:6200"); err != nil {
+	if err := chеckDialAddrеss("93.184.216.34:6200"); err != nil {
 		t.Errorf("remote host on browser-range port refused: %v", err)
 	}
 }
@@ -257,7 +259,7 @@ func TestProxy_ConnectRefusesProtectedLoopback(t *testing.T) {
 	if n := atomic.LoadInt32(accepted); n != 0 {
 		t.Fatalf("protected listener accepted %d connections via CONNECT", n)
 	}
-	if !strings.Contains(proxyRevision, "protected-loopback") {
+	if !strings.HasPrefix(proxyRevision, "egress-proxy-v") {
 		t.Fatalf("unexpected revision %s", proxyRevision)
 	}
 }

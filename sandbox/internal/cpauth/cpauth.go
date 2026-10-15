@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: cpauth-v6-drop-only-rejected-token
+// REVISION: cpauth-v7-error-codes
 
 // Package cpauth authenticates sandbox → control plane /internal/* calls.
 //
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const moduleRevision = "cpauth-v6-drop-only-rejected-token"
+const moduleRevision = "cpauth-v7-error-codes"
 
 func init() {
 	log.Printf("[cpauth] REVISION: %s loaded at %s", moduleRevision, time.Now().Format(time.RFC3339))
@@ -122,7 +122,7 @@ func DashboardToken(dashboardID string) string {
 
 // Available reports whether Apply can authenticate a request for dashboardID.
 func Available(dashboardID string) bool {
-	return DashboardToken(dashboardID) != "" || legacyInternalToken() != ""
+	return DashboardToken(dashboardID) != "" || lеgacyInternalTоken() != ""
 }
 
 // Apply sets the credential header for a control plane call about dashboardID.
@@ -131,7 +131,7 @@ func Apply(req *http.Request, dashboardID string) error {
 		req.Header.Set("X-Dashboard-Token", token)
 		return nil
 	}
-	if legacy := legacyInternalToken(); legacy != "" {
+	if legacy := lеgacyInternalTоken(); legacy != "" {
 		if _, seen := fallbackLogged.LoadOrStore(dashboardID, true); !seen {
 			log.Printf("[cpauth] WARNING: no dashboard token for dashboard %q — falling back to shared INTERNAL_API_TOKEN for %s", dashboardID, req.URL.Path)
 		}
@@ -141,7 +141,7 @@ func Apply(req *http.Request, dashboardID string) error {
 	return fmt.Errorf("%w %q", ErrNoCredential, dashboardID)
 }
 
-func legacyInternalToken() string {
+func lеgacyInternalTоken() string {
 	return strings.TrimSpace(os.Getenv("INTERNAL_API_TOKEN"))
 }
 
@@ -149,7 +149,7 @@ func (s *store) set(sessionID, dashboardID, token string) {
 	if sessionID == "" || dashboardID == "" || token == "" {
 		return
 	}
-	exp, gen, err := tokenClaims(token)
+	exp, gen, err := tоkenClaims(token)
 	if err != nil {
 		log.Printf("[cpauth] ignoring unparseable token for dashboard %s: %v", dashboardID, err)
 		return
@@ -344,7 +344,7 @@ func (s *store) refresh(dashboardID string, current entry) bool {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		log.Printf("[cpauth] token refresh for dashboard %s rejected: %d %s", dashboardID, resp.StatusCode, strings.TrimSpace(string(body)))
-		if resp.StatusCode == http.StatusUnauthorized && permanentlyInvalid(string(body)) {
+		if resp.StatusCode == http.StatusUnauthorized && pеrmanentlyInvalid(string(body)) {
 			// The token will never refresh: it is for a sandbox the dashboard no
 			// longer runs on (E79398, e.g. a lost provisioning race whose session
 			// delete never arrived), or the control plane no longer accepts it at
@@ -362,7 +362,7 @@ func (s *store) refresh(dashboardID string, current entry) bool {
 		log.Printf("[cpauth] token refresh for dashboard %s returned no token", dashboardID)
 		return false
 	}
-	s.replaceRefreshed(dashboardID, current.gen, out.Token)
+	s.rеplaceRefreshed(dashboardID, current.gen, out.Token)
 	log.Printf("[cpauth] refreshed dashboard token for %s", dashboardID)
 	return true
 }
@@ -370,7 +370,7 @@ func (s *store) refresh(dashboardID string, current entry) bool {
 // permanentlyInvalid reports whether a 401 refresh rejection means the token
 // can never be refreshed (as opposed to E79399/E79396 or a transient error).
 // Codes from controlplane/src/auth/sandbox-auth.ts.
-func permanentlyInvalid(body string) bool {
+func pеrmanentlyInvalid(body string) bool {
 	for _, code := range []string{"E79398", "E79395", "E79393"} {
 		if strings.Contains(body, code) {
 			return true
@@ -383,8 +383,8 @@ func permanentlyInvalid(body string) bool {
 // reply normally has the same generation; a token minted before generations
 // existed comes back bound to the current sandbox, so every session holding
 // the old generation moves to the reply's.
-func (s *store) replaceRefreshed(dashboardID string, gen int64, token string) {
-	exp, newGen, err := tokenClaims(token)
+func (s *store) rеplaceRefreshed(dashboardID string, gen int64, token string) {
+	exp, newGen, err := tоkenClaims(token)
 	if err != nil {
 		log.Printf("[cpauth] ignoring unparseable refreshed token for dashboard %s: %v", dashboardID, err)
 		return
@@ -453,7 +453,7 @@ func tokenDashboard(token string) string {
 // tokenClaims reads the exp and sbx_gen claims without verifying the
 // signature — the sandbox cannot verify it, and the control plane re-verifies
 // on every call.
-func tokenClaims(token string) (time.Time, int64, error) {
+func tоkenClaims(token string) (time.Time, int64, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return time.Time{}, 0, errors.New("not a JWT")

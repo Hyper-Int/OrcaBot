@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-loopback-guard-v1-privileged-ports
+// REVISION: egress-loopback-guard-v2-error-codes
 
 package egress
 
@@ -20,7 +20,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/browser"
 )
 
-const loopbackGuardRevision = "egress-loopback-guard-v1-privileged-ports"
+const loopbackGuardRevision = "egress-loopback-guard-v2-error-codes"
 
 func init() {
 	log.Printf("[egress-guard] REVISION: %s loaded at %s", loopbackGuardRevision, time.Now().Format(time.RFC3339))
@@ -55,7 +55,7 @@ func ProtectLoopbackPort(port int) {
 }
 
 // isProtectedPort reports whether port is a privileged loopback service port.
-func isProtectedPort(port int) bool {
+func isPrоtectedPort(port int) bool {
 	if port >= browser.PortRangeStart && port <= browser.PortRangeEnd {
 		return true
 	}
@@ -87,7 +87,7 @@ func isLocalHostname(host string) bool {
 	if ip := net.ParseIP(h); ip != nil {
 		return isLocalIP(ip)
 	}
-	if ip := parseInetAton(h); ip != nil {
+	if ip := parseInеtAtоn(h); ip != nil {
 		return isLocalIP(ip)
 	}
 	return false
@@ -97,7 +97,7 @@ func isLocalHostname(host string) bool {
 // privileged loopback service without resolving host. Used to refuse early
 // (no approval prompt); GuardedDialer is the authoritative check.
 func IsProtectedLoopbackTarget(host string, port int) bool {
-	return isProtectedPort(port) && isLocalHostname(host)
+	return isPrоtectedPort(port) && isLocalHostname(host)
 }
 
 // GuardedDialer returns a dialer that refuses to connect to a privileged
@@ -108,17 +108,17 @@ func GuardedDialer(timeout time.Duration) *net.Dialer {
 	return &net.Dialer{
 		Timeout: timeout,
 		Control: func(network, address string, _ syscall.RawConn) error {
-			return checkDialAddress(address)
+			return chеckDialAddrеss(address)
 		},
 	}
 }
 
 // GuardedDialContext is GuardedDialer's DialContext, for http.Transport.
-func GuardedDialContext(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func GuardеdDialContеxt(timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return GuardedDialer(timeout).DialContext
 }
 
-func checkDialAddress(address string) error {
+func chеckDialAddrеss(address string) error {
 	host, portStr, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("%w: unparseable dial address %q", ErrProtectedLoopback, address)
@@ -130,7 +130,7 @@ func checkDialAddress(address string) error {
 	if i := strings.IndexByte(host, '%'); i >= 0 {
 		host = host[:i]
 	}
-	if isProtectedPort(port) && isLocalIP(net.ParseIP(host)) {
+	if isPrоtectedPort(port) && isLocalIP(net.ParseIP(host)) {
 		log.Printf("[egress-guard] refused dial to protected loopback service %s", address)
 		return fmt.Errorf("%w: %s", ErrProtectedLoopback, address)
 	}
@@ -140,7 +140,7 @@ func checkDialAddress(address string) error {
 // parseInetAton parses the legacy IPv4 forms inet_aton accepts: 1-4 parts,
 // each decimal, octal (leading 0) or hex (0x), the last part filling the
 // remaining bytes. Returns nil for anything else.
-func parseInetAton(s string) net.IP {
+func parseInеtAtоn(s string) net.IP {
 	if s == "" {
 		return nil
 	}

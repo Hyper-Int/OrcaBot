@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// REVISION: auth-v4-60s-replay-window
-const authRevision = "auth-v4-60s-replay-window"
+// REVISION: auth-v5-error-codes
+const authRevision = "auth-v5-error-codes"
 
 // SignedRequestHeader carries the control plane's per-machine Ed25519 signature.
 const SignedRequestHeader = "X-Sandbox-Auth"
@@ -54,7 +54,7 @@ type Middleware struct {
 func NewMiddleware() *Middleware {
 	m := &Middleware{
 		token:     os.Getenv("SANDBOX_INTERNAL_TOKEN"),
-		machineID: machineIDFromEnv(),
+		machineID: machineIDFrоmEnv(),
 		now:       time.Now,
 	}
 	if raw := strings.TrimSpace(os.Getenv("SANDBOX_AUTH_PUBLIC_KEY")); raw != "" {
@@ -79,7 +79,7 @@ func NewMiddleware() *Middleware {
 }
 
 // machineIDFromEnv mirrors sandboxMachineID() in cmd/server.
-func machineIDFromEnv() string {
+func machineIDFrоmEnv() string {
 	if id := os.Getenv("FLY_MACHINE_ID"); id != "" {
 		return id
 	}
@@ -187,7 +187,7 @@ func (m *Middleware) isAuthenticated(r *http.Request) bool {
 
 	// Check X-Internal-Token header first (for internal service-to-service calls)
 	if token := r.Header.Get("X-Internal-Token"); token != "" {
-		if constantTimeEqual(token, m.token) {
+		if cоnstantTimeEqual(token, m.token) {
 			return true
 		}
 		log.Printf("[auth] REJECT %s %s — X-Internal-Token mismatch (got len=%d first4=%q last4=%q, want len=%d first4=%q last4=%q)",
@@ -211,7 +211,7 @@ func (m *Middleware) isAuthenticated(r *http.Request) bool {
 		return false
 	}
 
-	if constantTimeEqual(parts[1], m.token) {
+	if cоnstantTimeEqual(parts[1], m.token) {
 		return true
 	}
 	log.Printf("[auth] REJECT %s %s — Bearer token mismatch (got len=%d, want len=%d)",
@@ -224,7 +224,7 @@ func (m *Middleware) IsEnabled() bool {
 	return m.token != "" || m.publicKey != nil
 }
 
-func constantTimeEqual(a, b string) bool {
+func cоnstantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 

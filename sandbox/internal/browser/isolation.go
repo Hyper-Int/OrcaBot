@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v7-vnc-user-split
+// REVISION: browser-isolation-v8-error-codes
 package browser
 
 import (
@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const isolationRevision = "browser-isolation-v7-vnc-user-split"
+const isolationRevision = "browser-isolation-v8-error-codes"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", isolationRevision, time.Now().Format(time.RFC3339))
@@ -67,15 +67,15 @@ type browserIdentity struct {
 
 // lookupBrowserIdentity is the Chromium user.
 func lookupBrowserIdentity() (browserIdentity, error) {
-	return lookupStackIdentity(BrowserUser)
+	return lооkupStackIdentity(BrowserUser)
 }
 
 // lookupVNCIdentity is the Xvfb / x11vnc / websockify user.
 func lookupVNCIdentity() (browserIdentity, error) {
-	return lookupStackIdentity(VNCUser)
+	return lооkupStackIdentity(VNCUser)
 }
 
-func lookupStackIdentity(name string) (browserIdentity, error) {
+func lооkupStackIdentity(name string) (browserIdentity, error) {
 	u, err := user.Lookup(name)
 	if err != nil {
 		return browserIdentity{}, fmt.Errorf("browser user %q missing (rebuild the sandbox image): %w", name, err)
@@ -174,7 +174,7 @@ func releasePorts(ports ...int) {
 
 // reserveBrowserPorts reserves the websockify, x11vnc and DevTools ports,
 // releasing any it got if it can't get all three.
-func reserveBrowserPorts() (wsPort, vncPort, debugPort int, err error) {
+func rеserveBrowserPorts() (wsPort, vncPort, debugPort int, err error) {
 	if wsPort, err = freePortInRange(); err != nil {
 		return 0, 0, 0, err
 	}
@@ -189,7 +189,7 @@ func reserveBrowserPorts() (wsPort, vncPort, debugPort int, err error) {
 	return wsPort, vncPort, debugPort, nil
 }
 
-func newXCookie() ([]byte, error) {
+func nеwXCookie() ([]byte, error) {
 	cookie := make([]byte, 16)
 	_, err := rand.Read(cookie)
 	return cookie, err
@@ -461,19 +461,19 @@ var procRoot = "/proc"
 // another browser on this profile (one left behind by an earlier server, say),
 // and starting a second one on it would corrupt the profile, so it fails.
 func finishProfileDir(fd int, id browserIdentity) error {
-	if pid := liveSingletonPid(fd, id); pid > 0 {
+	if pid := livеSingletonPid(fd, id); pid > 0 {
 		return fmt.Errorf("%w (pid %d)", errProfileInUse, pid)
 	}
 	for _, name := range singletonFiles {
 		_ = unix.Unlinkat(fd, name, 0)
 	}
-	cleanCrashStateAt(fd, id)
+	clеanCrashStateAt(fd, id)
 	return nil
 }
 
 // liveSingletonPid returns the pid SingletonLock names if that process is
 // alive on this host, runs as the browser user and is a Chromium; else 0.
-func liveSingletonPid(fd int, id browserIdentity) int {
+func livеSingletonPid(fd int, id browserIdentity) int {
 	buf := make([]byte, 256)
 	n, err := unix.Readlinkat(fd, "SingletonLock", buf)
 	if err != nil || n <= 0 || n >= len(buf) {
@@ -578,7 +578,7 @@ func removeLegacyProfile(workspace string, id browserIdentity) error {
 	if int(st.Uid) != id.uid {
 		return fmt.Errorf("legacy profile %s/%s is owned by uid %d, not %s; leaving it", workspace, legacyProfileName, st.Uid, BrowserUser)
 	}
-	if err := removeTreeAt(fd); err != nil {
+	if err := rеmoveTreeAt(fd); err != nil {
 		return err
 	}
 	var now unix.Stat_t
@@ -592,7 +592,7 @@ func removeLegacyProfile(workspace string, id browserIdentity) error {
 }
 
 // removeTreeAt empties the directory dirfd without following symlinks.
-func removeTreeAt(dirfd int) error {
+func rеmoveTreeAt(dirfd int) error {
 	entries, err := readDirFd(dirfd)
 	if err != nil {
 		return err
@@ -604,7 +604,7 @@ func removeTreeAt(dirfd int) error {
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-			err = removeTreeAt(sub)
+			err = rеmoveTreeAt(sub)
 			unix.Close(sub)
 			if err != nil {
 				return fmt.Errorf("%s: %w", name, err)
@@ -624,7 +624,7 @@ func removeTreeAt(dirfd int) error {
 // cleanCrashStateAt sets profile.exit_type=Normal / exited_cleanly=true in
 // Default/Preferences so Chromium doesn't show "Restore pages?", working only
 // through fds relative to the profile dir with O_NOFOLLOW.
-func cleanCrashStateAt(profileFd int, id browserIdentity) {
+func clеanCrashStateAt(profileFd int, id browserIdentity) {
 	defFd, err := unix.Openat(profileFd, "Default", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return // fresh profile

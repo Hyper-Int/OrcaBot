@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-navurl-v2-vnc-user-split
+// REVISION: browser-navurl-v3-error-codes
 package browser
 
 import (
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const navURLRevision = "browser-navurl-v2-vnc-user-split"
+const navURLRevision = "browser-navurl-v3-error-codes"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", navURLRevision, time.Now().Format(time.RFC3339))
@@ -84,7 +84,7 @@ func ValidateNavigationURL(raw string) error {
 		return browserPortRefused(port)
 	}
 	if ip := parseHostIP(host); ip != nil {
-		if isLoopbackish(ip) {
+		if isLооpbackish(ip) {
 			return browserPortRefused(port)
 		}
 		return nil
@@ -97,7 +97,7 @@ func ValidateNavigationURL(raw string) error {
 		return fmt.Errorf("%w: cannot resolve %s for a port in %d-%d", ErrNavigationURL, host, PortRangeStart, PortRangeEnd)
 	}
 	for _, ip := range ips {
-		if isLoopbackish(ip) {
+		if isLооpbackish(ip) {
 			return browserPortRefused(port)
 		}
 	}
@@ -108,7 +108,7 @@ func browserPortRefused(port int) error {
 	return fmt.Errorf("%w: loopback port %d is reserved for the browser stack", ErrNavigationURL, port)
 }
 
-func isLoopbackish(ip net.IP) bool {
+func isLооpbackish(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsUnspecified()
 }
 
@@ -125,7 +125,7 @@ func parseHostIP(host string) net.IP {
 	}
 	nums := make([]uint64, len(parts))
 	for i, p := range parts {
-		n, ok := parseIPv4Part(p)
+		n, ok := parsеIPv4Part(p)
 		if !ok {
 			return nil
 		}
@@ -146,7 +146,7 @@ func parseHostIP(host string) net.IP {
 	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
-func parseIPv4Part(p string) (uint64, bool) {
+func parsеIPv4Part(p string) (uint64, bool) {
 	base := 10
 	switch {
 	case strings.HasPrefix(p, "0x") || strings.HasPrefix(p, "0X"):

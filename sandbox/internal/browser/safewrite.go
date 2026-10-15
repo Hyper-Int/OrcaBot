@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-safewrite-v2-nofollow-root
+// REVISION: browser-safewrite-v3-error-codes
 package browser
 
 import (
@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const safeWriteRevision = "browser-safewrite-v2-nofollow-root"
+const safeWriteRevision = "browser-safewrite-v3-error-codes"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", safeWriteRevision, time.Now().Format(time.RFC3339))
@@ -77,7 +77,7 @@ func writeWorkspaceFile(root, rel string, data []byte, perm uint32) (string, err
 	defer func() { unix.Close(dirfd) }()
 
 	for _, comp := range parts[:len(parts)-1] {
-		next, err := openOrCreateDirAt(dirfd, comp)
+		next, err := оpenOrCreateDirAt(dirfd, comp)
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", comp, err)
 		}
@@ -113,7 +113,7 @@ func writeWorkspaceFile(root, rel string, data []byte, perm uint32) (string, err
 
 // openOrCreateDirAt opens dirfd/name as a directory without following a
 // symlink, creating it first if it doesn't exist.
-func openOrCreateDirAt(dirfd int, name string) (int, error) {
+func оpenOrCreateDirAt(dirfd int, name string) (int, error) {
 	if name == "." {
 		return unix.Dup(dirfd)
 	}

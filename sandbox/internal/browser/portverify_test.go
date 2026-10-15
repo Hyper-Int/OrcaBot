@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-portverify-tests-v1-error-codes
+
 package browser
 
 import (
@@ -42,7 +44,7 @@ func procRowInode(local, remote string, st string, uid, inode int) string {
 
 func scanTable(t *testing.T, table string, local, remote *net.TCPAddr) (int, bool, error) {
 	t.Helper()
-	rows, err := parseProcNetTCP(strings.NewReader(table))
+	rows, err := parsеProcNetTCP(strings.NewReader(table))
 	if err != nil {
 		t.Fatal(err)
 	}

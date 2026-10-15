@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v12-protected-loopback
+// REVISION: egress-proxy-v13-error-codes
 
 package egress
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v12-protected-loopback"
+const proxyRevision = "egress-proxy-v13-error-codes"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -114,7 +114,7 @@ func NewEgressProxy(port int, allowlist *Allowlist) *EgressProxy {
 		auditCh:         make(chan AuditEvent, auditChannelSize),
 		// Guarded dial: the proxy runs as root, so it must never connect to a
 		// loopback service pool UIDs are blocked from (browser ports, MCPLocal).
-		transport: &http.Transport{DialContext: GuardedDialContext(30 * time.Second)},
+		transport: &http.Transport{DialContext: GuardеdDialContеxt(30 * time.Second)},
 		stopCh:    make(chan struct{}),
 	}
 }
@@ -325,26 +325,26 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		p.tunnelConnect(w, host, port)
 		return
 	}
-	http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
+	http.Error(w, "E79117: Egress denied: domain not approved", http.StatusForbidden)
 }
 
 // handleHTTP handles plain HTTP proxy requests.
 func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL, host, port, err := extractHTTPDestination(r)
 	if err != nil {
-		http.Error(w, "Bad proxy request", http.StatusBadRequest)
+		http.Error(w, "E79118: Bad proxy request", http.StatusBadRequest)
 		return
 	}
 
 	if !permitted(p.decide(r.Context(), host, port)) {
-		http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
+		http.Error(w, "E79117: Egress denied: domain not approved", http.StatusForbidden)
 		return
 	}
 
 	// Forward the request
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, "E79119: Bad request", http.StatusBadRequest)
 		return
 	}
 	outReq.Header = r.Header.Clone()
@@ -355,10 +355,10 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.transport.RoundTrip(outReq)
 	if err != nil {
 		if errors.Is(err, ErrProtectedLoopback) {
-			http.Error(w, "Egress denied: protected loopback service", http.StatusForbidden)
+			http.Error(w, "E79120: Egress denied: protected loopback service", http.StatusForbidden)
 			return
 		}
-		http.Error(w, "Upstream error", http.StatusBadGateway)
+		http.Error(w, "E79121: Upstream error", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -490,10 +490,10 @@ func (p *EgressProxy) tunnelConnect(w http.ResponseWriter, host string, port int
 	upstream, err := GuardedDialer(10*time.Second).Dial("tcp", target)
 	if err != nil {
 		if errors.Is(err, ErrProtectedLoopback) {
-			http.Error(w, "Egress denied: protected loopback service", http.StatusForbidden)
+			http.Error(w, "E79120: Egress denied: protected loopback service", http.StatusForbidden)
 			return
 		}
-		http.Error(w, "Cannot connect to upstream", http.StatusBadGateway)
+		http.Error(w, "E79122: Cannot connect to upstream", http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
@@ -501,13 +501,13 @@ func (p *EgressProxy) tunnelConnect(w http.ResponseWriter, host string, port int
 	// Hijack the client connection
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		http.Error(w, "E79123: Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		http.Error(w, "Hijack failed", http.StatusInternalServerError)
+		http.Error(w, "E79124: Hijack failed", http.StatusInternalServerError)
 		return
 	}
 	defer clientConn.Close()

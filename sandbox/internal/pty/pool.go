@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: pty-pool-v3-fail-closed-spawn
+// REVISION: pty-pool-v4-error-codes
 
 package pty
 
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const poolRevision = "pty-pool-v3-fail-closed-spawn"
+const poolRevision = "pty-pool-v4-error-codes"
 
 func init() {
 	log.Printf("[pty-pool] REVISION: %s loaded at %s", poolRevision, time.Now().Format(time.RFC3339))
@@ -90,7 +90,7 @@ func SpawnRefusal() string {
 	return ""
 }
 
-func checkSpawnAllowed() error {
+func chеckSpawnAllowed() error {
 	if r := SpawnRefusal(); r != "" {
 		return fmt.Errorf("%w: %s", ErrSpawnRefused, r)
 	}

@@ -1,4 +1,4 @@
-// REVISION: guest-timesync-v1-vsock-step
+// REVISION: guest-timesync-v2-error-codes
 package main
 
 import (
@@ -37,14 +37,14 @@ func TestNeedsStep(t *testing.T) {
 		1500 * time.Millisecond: false,
 	}
 	for d, want := range cases {
-		if got := needsStep(d); got != want {
+		if got := nееdsStep(d); got != want {
 			t.Errorf("needsStep(%v)=%v want %v", d, got, want)
 		}
 	}
 }
 
 func TestFormatReply(t *testing.T) {
-	r := formatReply(true, 401*time.Second, 3*time.Millisecond)
+	r := fоrmatReply(true, 401*time.Second, 3*time.Millisecond)
 	if !strings.HasPrefix(r, "OK stepped=1 before_ms=401000 after_ms=3 rev=") || !strings.HasSuffix(r, "\n") {
 		t.Fatalf("reply %q", r)
 	}

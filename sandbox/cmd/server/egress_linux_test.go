@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-tests-v11-browser-user-port-block
+// REVISION: egress-kernel-tests-v12-error-codes
 
 //go:build linux
 
@@ -27,11 +27,11 @@ import (
 )
 
 func TestParseExtraTCPPorts(t *testing.T) {
-	got := parseExtraTCPPorts(" 22, abc, 0, 65536, 5432 ,")
+	got := parseExtraTCPPоrts(" 22, abc, 0, 65536, 5432 ,")
 	if want := []string{"22", "5432"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseExtraTCPPorts = %v, want %v", got, want)
 	}
-	if got := parseExtraTCPPorts(""); len(got) != 0 {
+	if got := parseExtraTCPPоrts(""); len(got) != 0 {
 		t.Fatalf("empty input should yield no ports, got %v", got)
 	}
 }
@@ -62,7 +62,7 @@ func TestPoolEgressOwnersSkipsMissingBrowserUser(t *testing.T) {
 }
 
 func TestBrowserUserPortBlockRule(t *testing.T) {
-	got := browserUserPortBlockRule("127.0.0.0/8", "6100:6299")
+	got := browsеrUserPortBlockRule("127.0.0.0/8", "6100:6299")
 	want := []string{"-p", "tcp", "-d", "127.0.0.0/8", "--dport", "6100:6299", "-m", "owner", "--uid-owner", browser.BrowserUser, "-j", "REJECT", "--reject-with", "tcp-reset"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("rule = %v", got)
@@ -79,7 +79,7 @@ func TestResolvConfNameservers(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	v4, v6 := resolvConfNameservers(path)
+	v4, v6 := rеsolvConfNameservers(path)
 	if !reflect.DeepEqual(v4, []string{"10.0.0.2"}) {
 		t.Fatalf("v4 = %v", v4)
 	}
@@ -212,7 +212,7 @@ func TestPoolEgressDefaultDenyIntegration(t *testing.T) {
 		})
 	}
 
-	ns4, _ := resolvConfNameservers("/etc/resolv.conf")
+	ns4, _ := rеsolvConfNameservers("/etc/resolv.conf")
 	if len(ns4) > 0 {
 		t.Run("dns to configured resolver is allowed", func(t *testing.T) {
 			if err := dialAsUID(2000, net.JoinHostPort(ns4[0], "53")); err != nil {

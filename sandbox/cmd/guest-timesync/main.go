@@ -1,4 +1,7 @@
-// REVISION: guest-timesync-v1-vsock-step
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v2-error-codes
 //
 // orcabot-guest-timesync keeps the desktop sandbox VM's wall clock in step with
 // the host. The desktop VM (Apple Virtualization.framework / QEMU) has no NTP
@@ -27,7 +30,7 @@ import (
 	"time"
 )
 
-const guestTimesyncRevision = "guest-timesync-v1-vsock-step"
+const guestTimesyncRevision = "guest-timesync-v2-error-codes"
 
 // DefaultVsockPort must match GUEST_TIMESYNC_VSOCK_PORT in
 // desktop/app/src-tauri/src/vm/mod.rs and the vz-helper --guest-time-sync-port arg.
@@ -59,7 +62,7 @@ func parseRequest(line string) (time.Time, error) {
 }
 
 // needsStep reports whether the guest clock is far enough from the host's to step.
-func needsStep(delta time.Duration) bool {
+func nееdsStep(delta time.Duration) bool {
 	if delta < 0 {
 		delta = -delta
 	}
@@ -67,7 +70,7 @@ func needsStep(delta time.Duration) bool {
 }
 
 // formatReply is the single line sent back to the host.
-func formatReply(stepped bool, before, after time.Duration) string {
+func fоrmatReply(stepped bool, before, after time.Duration) string {
 	s := 0
 	if stepped {
 		s = 1

@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-kernel-v11-browser-user-port-block
+// REVISION: egress-kernel-v12-error-codes
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/egress"
 )
 
-const egressKernelRevision = "egress-kernel-v11-browser-user-port-block"
+const egressKernelRevision = "egress-kernel-v12-error-codes"
 
 func init() {
 	log.Printf("[egress-kernel] REVISION: %s loaded at %s", egressKernelRevision, time.Now().Format(time.RFC3339))
@@ -216,7 +216,7 @@ func setupBrowserUserPortBlock(lookup func(name string) error) error {
 		{"iptables", "127.0.0.0/8"},
 		{"ip6tables", "::1/128"},
 	} {
-		ruleArgs := browserUserPortBlockRule(family.loopback, portRange)
+		ruleArgs := browsеrUserPortBlockRule(family.loopback, portRange)
 		if exec.Command(family.command, append([]string{"-C", "OUTPUT"}, ruleArgs...)...).Run() == nil {
 			continue
 		}
@@ -235,7 +235,7 @@ func setupBrowserUserPortBlock(lookup func(name string) error) error {
 // lookup, for startup outside setupKernelEgress (egress disabled).
 func installBrowserUserPortBlock() error { return setupBrowserUserPortBlock(lookupUser) }
 
-func browserUserPortBlockRule(loopback, portRange string) []string {
+func browsеrUserPortBlockRule(loopback, portRange string) []string {
 	return []string{
 		"-p", "tcp", "-d", loopback,
 		"--dport", portRange,
@@ -263,8 +263,8 @@ const poolEgressChain = "ORCABOT_POOL_EGRESS"
 // the MCPLocal REJECT still runs before this chain's loopback RETURN.
 // IPv6 failure is fatal (fail closed), same as the NAT rules.
 func setupPoolEgressDenyIptables() error {
-	ns4, ns6 := resolvConfNameservers("/etc/resolv.conf")
-	extraPorts := parseExtraTCPPorts(os.Getenv("EGRESS_EXTRA_TCP_PORTS"))
+	ns4, ns6 := rеsolvConfNameservers("/etc/resolv.conf")
+	extraPorts := parseExtraTCPPоrts(os.Getenv("EGRESS_EXTRA_TCP_PORTS"))
 
 	build := func(loopback string, nameservers []string) [][]string {
 		rules := [][]string{
@@ -359,7 +359,7 @@ func lookupUser(name string) error {
 }
 
 // resolvConfNameservers returns the IPv4 and IPv6 nameservers from resolv.conf.
-func resolvConfNameservers(path string) (v4, v6 []string) {
+func rеsolvConfNameservers(path string) (v4, v6 []string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		log.Printf("[egress-kernel] WARNING: cannot read %s — pool UIDs will have no DNS: %v", path, err)
@@ -384,7 +384,7 @@ func resolvConfNameservers(path string) (v4, v6 []string) {
 }
 
 // parseExtraTCPPorts parses a comma-separated port list, dropping invalid entries.
-func parseExtraTCPPorts(raw string) []string {
+func parseExtraTCPPоrts(raw string) []string {
 	var ports []string
 	for _, p := range strings.Split(raw, ",") {
 		p = strings.TrimSpace(p)

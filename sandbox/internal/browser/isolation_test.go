@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-isolation-v6-locked-profile-nofollow-walk
+// REVISION: browser-isolation-v7-error-codes
 
 //go:build linux
 
@@ -118,7 +118,7 @@ func TestCrashStateCleaned(t *testing.T) {
 func TestXauthorityCookie(t *testing.T) {
 	needRoot(t)
 	path := filepath.Join(t.TempDir(), "xauth")
-	cookie, _ := newXCookie()
+	cookie, _ := nеwXCookie()
 	if err := writeXauthority(path, 91, cookie, testID); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestXauthorityTempSymlinkNotFollowed(t *testing.T) {
 	path := filepath.Join(dir, "xauth")
 	// The browser user owns its home, so it could plant this.
 	os.Symlink(victim, path+".tmp")
-	cookie, _ := newXCookie()
+	cookie, _ := nеwXCookie()
 	if err := writeXauthority(path, 1, cookie, testID); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestReserveBrowserPortsReleasesOnFailure(t *testing.T) {
 	}
 	// Two free ports: the third pick fails and the first two are released.
 	releasePorts(held[0], held[1])
-	if _, _, _, err := reserveBrowserPorts(); err == nil {
+	if _, _, _, err := rеserveBrowserPorts(); err == nil {
 		t.Fatal("reserved three ports with two free")
 	}
 	a, err1 := freePortInRange()

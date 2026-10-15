@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v19-shared-stack-per-profile
+// REVISION: browser-v20-error-codes
 
 //go:build linux
 
@@ -76,7 +76,7 @@ func TestControllersShareOneStackPerWorkspace(t *testing.T) {
 	if err := p.Start(); err != nil {
 		t.Skip("no sleep binary")
 	}
-	ws1, vnc, dbg, err := reserveBrowserPorts()
+	ws1, vnc, dbg, err := rеserveBrowserPorts()
 	if err != nil {
 		t.Fatal(err)
 	}

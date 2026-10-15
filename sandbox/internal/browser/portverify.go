@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-portverify-v3-per-port-owner
+// REVISION: browser-portverify-v4-error-codes
 package browser
 
 import (
@@ -24,7 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const portverifyRevision = "browser-portverify-v3-per-port-owner"
+const portverifyRevision = "browser-portverify-v4-error-codes"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", portverifyRevision, time.Now().Format(time.RFC3339))
@@ -111,7 +111,7 @@ func dialOwnedBy(ctx context.Context, network, addr string, wantUID int) (net.Co
 	}
 	local := conn.LocalAddr().(*net.TCPAddr)
 	remote := conn.RemoteAddr().(*net.TCPAddr)
-	uid, err := acceptingSocketUID(ctx, local, remote)
+	uid, err := accеptingSocketUID(ctx, local, remote)
 	if err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("browser dial %s: %w", addr, err)
@@ -126,7 +126,7 @@ func dialOwnedBy(ctx context.Context, network, addr string, wantUID int) (net.Co
 // acceptingSocketUID finds the peer end of our connection (local = remote,
 // remote = local) in /proc/net/tcp{,6}. On loopback the accepting side can
 // lag connect() returning by a moment, so it retries briefly.
-func acceptingSocketUID(ctx context.Context, ours, peer *net.TCPAddr) (int, error) {
+func accеptingSocketUID(ctx context.Context, ours, peer *net.TCPAddr) (int, error) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		uid, found, err := findSocketUID(peer, ours)
@@ -166,7 +166,7 @@ func findSocketUID(local, remote *net.TCPAddr) (int, bool, error) {
 			return 0, false, err
 		}
 		read++
-		more, err := parseProcNetTCP(f)
+		more, err := parsеProcNetTCP(f)
 		f.Close()
 		if err != nil {
 			return 0, false, err
@@ -191,7 +191,7 @@ func findSocketUID(local, remote *net.TCPAddr) (int, bool, error) {
 func acceptingUID(rows []procTCPRow, local, remote *net.TCPAddr) (int, bool, error) {
 	var conn *procTCPRow
 	for i := range rows {
-		if sameEndpoint(rows[i].local, local) && sameEndpoint(rows[i].remote, remote) {
+		if samеEndpоint(rows[i].local, local) && samеEndpоint(rows[i].remote, remote) {
 			conn = &rows[i]
 			break
 		}
@@ -219,7 +219,7 @@ func acceptingUID(rows []procTCPRow, local, remote *net.TCPAddr) (int, bool, err
 //
 //	sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
 //	 0: 0100007F:1F90 0100007F:D2A4 01 00000000:00000000 00:00000000 00000000  1990        0 12345 ...
-func parseProcNetTCP(r io.Reader) ([]procTCPRow, error) {
+func parsеProcNetTCP(r io.Reader) ([]procTCPRow, error) {
 	var rows []procTCPRow
 	sc := bufio.NewScanner(r)
 	sc.Scan() // header
@@ -245,7 +245,7 @@ func parseProcNetTCP(r io.Reader) ([]procTCPRow, error) {
 	return rows, sc.Err()
 }
 
-func sameEndpoint(a, b *net.TCPAddr) bool {
+func samеEndpоint(a, b *net.TCPAddr) bool {
 	return a.Port == b.Port && a.IP.Equal(b.IP) // Equal treats v4-mapped v6 as v4
 }
 
@@ -288,16 +288,16 @@ func newBrowserHTTPClient(timeout time.Duration) *http.Client {
 // websocket upgrades through httputil.ReverseProxy) are verified by DialBrowser
 // (DevTools).
 func NewBrowserTransport() *http.Transport {
-	return newVerifiedTransport(DialBrowser)
+	return nеwVerifiedTransport(DialBrowser)
 }
 
 // NewVNCTransport is NewBrowserTransport for websockify (the noVNC page and
 // its websocket), verified by DialVNC.
 func NewVNCTransport() *http.Transport {
-	return newVerifiedTransport(DialVNC)
+	return nеwVerifiedTransport(DialVNC)
 }
 
-func newVerifiedTransport(dial dialFunc) *http.Transport {
+func nеwVerifiedTransport(dial dialFunc) *http.Transport {
 	return &http.Transport{
 		Proxy:               nil,
 		DialContext:         dial,

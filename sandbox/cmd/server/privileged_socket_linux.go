@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v11-cleanup-on-start-err
+// REVISION: privileged-socket-v12-error-codes
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v11-cleanup-on-start-err"
+const privilegedSocketRevision = "privileged-socket-v12-error-codes"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -171,21 +171,21 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 
 	pool := pty.GetPool()
 	if pool == nil {
-		writeHTTP403(conn, "pool not initialised")
+		writeHTTP403(conn, "E79125: pool not initialised")
 		return
 	}
 
 	entry, ok := pool.Lookup(uid)
 	if !ok {
 		log.Printf("[privileged-socket] Rejected: uid %d not in pool registry", uid)
-		writeHTTP403(conn, "uid not in pool")
+		writeHTTP403(conn, "E79126: uid not in pool")
 		return
 	}
 
 	// Get the session to serve requests for this PTY.
 	session, err := ps.server.sessions.Get(entry.SessionID)
 	if err != nil {
-		writeHTTP403(conn, "session not found")
+		writeHTTP403(conn, "E79127: session not found")
 		return
 	}
 
@@ -198,7 +198,7 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	mux.HandleFunc("/anthropic-key", func(w http.ResponseWriter, r *http.Request) {
 		key := session.Broker().GetAnthropicKey(entry.SessionID)
 		if key == "" {
-			http.Error(w, "no anthropic key", http.StatusNotFound)
+			http.Error(w, "E79110: no anthropic key", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -218,7 +218,7 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 		case "items":
 			ps.server.handleMCPListItemsForPTY(w, r, session)
 		default:
-			http.Error(w, "not found", http.StatusNotFound)
+			http.Error(w, "E79111: not found", http.StatusNotFound)
 		}
 	})
 
@@ -255,7 +255,7 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 		var bodyMap map[string]interface{}
 		if r.Body != nil {
 			if err := json.NewDecoder(r.Body).Decode(&bodyMap); err != nil {
-				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				http.Error(w, "E79112: invalid JSON body", http.StatusBadRequest)
 				return
 			}
 		}

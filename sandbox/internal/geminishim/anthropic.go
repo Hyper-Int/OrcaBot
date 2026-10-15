@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: model-gateway-v1-anthropic
+// REVISION: model-gateway-v2-error-codes
 //
 // Anthropic Messages (Claude) ↔ OpenAI Chat Completions translation, sharing the
 // same broker-forwarding core (forwardChat) and OpenAI types as the Gemini path.
@@ -119,12 +119,12 @@ func parseAnthPath(path string) (sessionID, provider, model string, ok bool) {
 func (s *Shim) serveAnthropic(w http.ResponseWriter, r *http.Request) {
 	sessionID, provider, model, ok := parseAnthPath(r.URL.Path)
 	if !ok {
-		writeAnthropicError(w, http.StatusBadRequest, "invalid path; expected /av1/{session}/{provider}/{model}/v1/messages")
+		writeAnthropicError(w, http.StatusBadRequest, "E79141: invalid path; expected /av1/{session}/{provider}/{model}/v1/messages")
 		return
 	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeAnthropicError(w, http.StatusBadRequest, "failed to read request body")
+		writeAnthropicError(w, http.StatusBadRequest, "E79142: failed to read request body")
 		return
 	}
 
@@ -136,14 +136,14 @@ func (s *Shim) serveAnthropic(w http.ResponseWriter, r *http.Request) {
 
 	var areq anthReq
 	if err := json.Unmarshal(body, &areq); err != nil {
-		writeAnthropicError(w, http.StatusBadRequest, "invalid Anthropic request: "+err.Error())
+		writeAnthropicError(w, http.StatusBadRequest, "E79143: invalid Anthropic request: "+err.Error())
 		return
 	}
 
 	oreq := anthropicToOpenAI(areq, model)
 	oreqBody, err := json.Marshal(oreq)
 	if err != nil {
-		writeAnthropicError(w, http.StatusInternalServerError, "failed to encode upstream request")
+		writeAnthropicError(w, http.StatusInternalServerError, "E79144: failed to encode upstream request")
 		return
 	}
 	log.Printf("[model-gateway] anthropic -> session=%s provider=%s model=%s stream=%t msgs=%d tools=%d",
@@ -151,7 +151,7 @@ func (s *Shim) serveAnthropic(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.forwardChat(sessionID, provider, oreqBody)
 	if err != nil {
-		writeAnthropicError(w, http.StatusBadGateway, "broker request failed: "+err.Error())
+		writeAnthropicError(w, http.StatusBadGateway, "E79145: broker request failed: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -159,7 +159,7 @@ func (s *Shim) serveAnthropic(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[model-gateway] anthropic <- upstream HTTP %d session=%s body=%s", resp.StatusCode, sessionID, truncate(string(errBody), 2000))
-		writeAnthropicError(w, resp.StatusCode, "upstream error: "+strings.TrimSpace(string(errBody)))
+		writeAnthropicError(w, resp.StatusCode, "E79146: upstream error: "+strings.TrimSpace(string(errBody)))
 		return
 	}
 
@@ -171,11 +171,11 @@ func (s *Shim) serveAnthropic(w http.ResponseWriter, r *http.Request) {
 	respBody, _ := io.ReadAll(resp.Body)
 	var oresp oaiResp
 	if err := json.Unmarshal(respBody, &oresp); err != nil {
-		writeAnthropicError(w, http.StatusBadGateway, "failed to parse upstream response")
+		writeAnthropicError(w, http.StatusBadGateway, "E79147: failed to parse upstream response")
 		return
 	}
 	if oresp.Error != nil {
-		writeAnthropicError(w, http.StatusBadGateway, "upstream error: "+oresp.Error.String())
+		writeAnthropicError(w, http.StatusBadGateway, "E79148: upstream error: "+oresp.Error.String())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

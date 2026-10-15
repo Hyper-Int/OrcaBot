@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: browser-v20-vnc-user-split
+// REVISION: browser-v21-error-codes
 package browser
 
 import (
@@ -117,7 +117,7 @@ func (c *Controller) attachLocked() {
 }
 
 // REVISION: browser-v20-vnc-user-split
-const browserRevision = "browser-v20-vnc-user-split"
+const browserRevision = "browser-v21-error-codes"
 
 func init() {
 	log.Printf("[browser] REVISION: %s loaded at %s", browserRevision, time.Now().Format(time.RFC3339))
@@ -186,7 +186,7 @@ func (c *Controller) Start() (Status, error) {
 
 	// Reserved process-wide until teardown (or failure below), so no other
 	// controller's Chromium can be started on them meanwhile.
-	wsPort, vncPort, debugPort, err := reserveBrowserPorts()
+	wsPort, vncPort, debugPort, err := rеserveBrowserPorts()
 	if err != nil {
 		return Status{}, err
 	}
@@ -229,7 +229,7 @@ func (c *Controller) Start() (Status, error) {
 
 	// Xvfb picks a free display itself (-displayfd), so an agent squatting
 	// /tmp/.X11-unix/X<n> can't make it fail or hand our clients its server.
-	cookie, err := newXCookie()
+	cookie, err := nеwXCookie()
 	if err != nil {
 		return Status{}, err
 	}
@@ -899,7 +899,7 @@ var testHookXvfbStarted func(*exec.Cmd)
 // force from the first connection; the server ignores an entry's display
 // number, so the file is rewritten with the real one once Xvfb reports it.
 func startXvfb(id browserIdentity, timeout time.Duration) (*exec.Cmd, int, string, error) {
-	cookie, err := newXCookie()
+	cookie, err := nеwXCookie()
 	if err != nil {
 		return nil, 0, "", err
 	}

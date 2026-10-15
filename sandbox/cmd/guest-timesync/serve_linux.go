@@ -1,4 +1,7 @@
-// REVISION: guest-timesync-v1-vsock-step
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v2-error-codes
 //go:build linux
 
 package main
@@ -83,7 +86,7 @@ func handleConn(fd int, sa unix.Sockaddr) {
 	before := hostTime.Sub(received.Round(0))
 	stepped := false
 	after := before
-	if needsStep(before) {
+	if nееdsStep(before) {
 		target := hostTime.Add(time.Since(received))
 		ttv := unix.NsecToTimeval(target.UnixNano())
 		if err := unix.Settimeofday(&ttv); err != nil {
@@ -97,7 +100,7 @@ func handleConn(fd int, sa unix.Sockaddr) {
 			before.Milliseconds(), behindOrAhead(before), after.Milliseconds(),
 			time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	writeAll(fd, formatReply(stepped, before, after))
+	writeAll(fd, fоrmatReply(stepped, before, after))
 }
 
 func behindOrAhead(d time.Duration) string {
