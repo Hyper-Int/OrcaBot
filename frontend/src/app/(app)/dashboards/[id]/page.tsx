@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v56-mobile-fullscreen
-console.log(`[dashboard] REVISION: dashboard-v56-mobile-fullscreen loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v57-edge-real-item-ids
+console.log(`[dashboard] REVISION: dashboard-v57-edge-real-item-ids loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -832,6 +832,26 @@ export default function DashboardPage() {
     return map;
   }, [items]);
 
+  // Node IDs are stable keys (the optimistic temp-… ID survives the swap to the
+  // server ID), but the server only knows real item IDs and rejects edges whose
+  // endpoints aren't items on this dashboard (E79391). Edge creation translates
+  // node IDs back through these refs; a block whose create is still in flight
+  // has a pending promise that settles with its real ID.
+  const realIdToStableKeyRef = React.useRef(realIdToStableKey);
+  realIdToStableKeyRef.current = realIdToStableKey;
+  const itemsForIdRef = React.useRef(items);
+  itemsForIdRef.current = items;
+  const pendingItemIdPromisesRef = React.useRef(new Map<string, Promise<string>>());
+  const pendingItemResolversRef = React.useRef(
+    new Map<string, { resolve: (id: string) => void; reject: (err: Error) => void }>()
+  );
+  const resolveItemId = React.useCallback(async (nodeId: string): Promise<string> => {
+    const pending = pendingItemIdPromisesRef.current.get(nodeId);
+    if (pending) return pending;
+    const item = itemsForIdRef.current.find((i) => i._stableKey === nodeId);
+    return item ? item.id : nodeId;
+  }, []);
+
   // Build a map from (itemId, provider) → securityLevel from integration labels
   const integrationLabelMap = React.useMemo(() => {
     const map = new Map<string, IntegrationLabel>();
@@ -1062,6 +1082,11 @@ export default function DashboardPage() {
 
       const now = new Date().toISOString();
       const tempId = item.clientTempId || `temp-${generateId()}`;
+      const pendingId = new Promise<string>((resolve, reject) => {
+        pendingItemResolversRef.current.set(tempId, { resolve, reject });
+      });
+      pendingId.catch(() => {}); // only edge creation awaits it; a failed create is reported elsewhere
+      pendingItemIdPromisesRef.current.set(tempId, pendingId);
       const optimisticItem: DashboardItem = {
         id: tempId,
         dashboardId,
@@ -1188,6 +1213,11 @@ export default function DashboardPage() {
         return;
       }
 
+      if (context?.tempId) {
+        pendingItemResolversRef.current.get(context.tempId)?.resolve(createdItem.id);
+        pendingItemResolversRef.current.delete(context.tempId);
+      }
+
       // Track this item so the WebSocket echo doesn't trigger a refetch
       // (which would lose the _stableKey and cause the node to remount)
       recentlyCreatedItemsRef.current.add(createdItem.id);
@@ -1250,6 +1280,12 @@ export default function DashboardPage() {
       // Decrement mutations in-flight counter
       mutationsInFlightRef.current--;
 
+      if (context?.tempId) {
+        pendingItemResolversRef.current.get(context.tempId)?.reject(error);
+        pendingItemResolversRef.current.delete(context.tempId);
+        pendingItemIdPromisesRef.current.delete(context.tempId);
+      }
+
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
       }
@@ -1266,7 +1302,7 @@ export default function DashboardPage() {
   });
 
   const createEdgeMutation = useMutation({
-    mutationFn: (edge: {
+    mutationFn: async (edge: {
       sourceItemId: string;
       targetItemId: string;
       sourceHandle?: string;
@@ -1274,7 +1310,11 @@ export default function DashboardPage() {
       _tempEdgeId?: string;
     }) => {
       const { _tempEdgeId, ...payload } = edge;
-      return createEdge(dashboardId, payload);
+      const [sourceItemId, targetItemId] = await Promise.all([
+        resolveItemId(payload.sourceItemId),
+        resolveItemId(payload.targetItemId),
+      ]);
+      return createEdge(dashboardId, { ...payload, sourceItemId, targetItemId });
     },
     onSuccess: (createdEdge, variables) => {
       // If this edge (or its temp ID) was deleted while the create was in-flight,
@@ -1296,7 +1336,17 @@ export default function DashboardPage() {
           const cleaned = prev.filter(
             (e) => e.id !== variables._tempEdgeId && e.id !== createdEdge.id
           );
-          return [...cleaned, { ...toFlowEdge(createdEdge), data: tempEdge?.data }];
+          const flowEdge = toFlowEdge(createdEdge);
+          const stableKeys = realIdToStableKeyRef.current;
+          return [
+            ...cleaned,
+            {
+              ...flowEdge,
+              source: stableKeys.get(flowEdge.source) || flowEdge.source,
+              target: stableKeys.get(flowEdge.target) || flowEdge.target,
+              data: tempEdge?.data,
+            },
+          ];
         });
       }
 
