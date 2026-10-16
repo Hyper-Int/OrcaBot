@@ -148,6 +148,24 @@ heredoc, not MININIT.** rc.local:
   console (root-only), readable from `/tmp/vz-console.log` — a non-root agent can't
   read it. This is the primitive the `orcabot` CLI uses to run guest shell commands.
 
+### Guest clock sync
+The VM has no NTP and its kernel reads the RTC only at boot, so while the host
+sleeps the guest clock stops and then lags (signed control-plane requests then
+fail with "issued in the future"). The host pushes its UTC time to a root-only
+guest daemon, `orcabot-guest-timesync` (`sandbox/cmd/guest-timesync`, started by
+`rc.local`), over **vsock port 1023**: right after boot, on host wake, and every
+60s. The guest steps the clock only when drift > 2s and logs each step (old/new
+delta) to the console. The port is reserved (<1024) and the daemon drops any peer
+that isn't the host CID, so agents can't set the time.
+- macOS: the loop lives in **vz-helper** (`GuestTimeSync`, `--guest-time-sync-port`;
+  NSWorkspace wake notification + wall-vs-uptime jump check). `macos.rs` passes
+  the flag only if the helper's `--help` lists it (a stale dev helper would
+  otherwise refuse to start the VM) — rebuild with `vz-helper/build.sh`.
+- Linux QEMU: `vm/timesync.rs` thread over a `vhost-vsock-pci` device, enabled
+  only when `/dev/vhost-vsock` is accessible.
+- Needs an image with the daemon (rc.local `rclocal-v3-guest-timesync`); on an
+  older image the host logs one "sync failed" line and carries on.
+
 ### Image staging
 `vm/image.rs` stages `resources/vm/sandbox.img` → the **cache dir**
 (`~/Library/Caches/com.orcabot.desktop/vm/`, resolved via `app_cache_dir()` in
@@ -237,9 +255,19 @@ matches** (`devAuthSurfaceTrusted` in `controlplane/src/auth/middleware.ts`). Th
 VM never gets the token (filtered from PTY env) and can't reach the frontend on
 `:8788` to scrape it (only `:8080` and `:8787` are bridged), so a VM process is
 confined to the token-authed paths it's supposed to use: the integration gateway
-(PTY token) and `/internal/*` (`INTERNAL_API_TOKEN`). When `SURFACE_TOKEN` is unset
+(PTY token) and `/internal/*` (its dashboard-scoped tokens). When `SURFACE_TOKEN` is unset
 (cloud, local `wrangler dev`, older builds) enforcement is off and behavior is
 unchanged.
+
+**No baked VM tokens.** The image holds no shared secret. Each boot `main.rs`
+generates a fresh Ed25519 key (`sandbox_auth_keys()`): the control-plane worker
+gets the private key (`SANDBOX_AUTH_SIGNING_KEY`) and signs every request to the
+VM; the guest gets only the public key on the kernel command line
+(`orcabot.sandbox_auth_public_key=`, read by `rc.local`). `INTERNAL_API_TOKEN` is
+also per-boot and host-only — the VM calls `/internal/*` with dashboard-scoped
+tokens. Setting `SANDBOX_INTERNAL_TOKEN`/`INTERNAL_API_TOKEN` in the host env still
+works (e.g. `scripts/dev.sh` against a hand-run sandbox). Changing `rc.local` means
+a new VM image version (see `RELEASE.md`); a new app on an old image fails closed.
 
 **Desktop-only**: production runs `DEV_AUTH_ENABLED=false` (real Cloudflare
 Access), where header spoofing doesn't work in the first place.
@@ -298,7 +326,7 @@ production wrangler.production.toml — refer to that for descriptions.
 - OAuth client IDs + secrets: `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET`, `ONEDRIVE_CLIENT_ID/SECRET`, `BOX_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `DISCORD_CLIENT_ID/SECRET`, `SLACK_CLIENT_ID/SECRET`
 - `GOOGLE_API_KEY` — server-side Google APIs (Drive metadata etc.)
 - `RESEND_API_KEY` — transactional email
-- `EGRESS_PROXY_ENABLED=true` — turn on the network egress proxy inside the sandbox VM (off by default; requires iptables setup)
+- `EGRESS_PROXY_ENABLED=true` — turn on the network egress proxy inside the sandbox VM (off by default). It reaches the guest as `orcabot.egress_proxy_enabled=1` on the kernel command line (read by rc.local `rclocal-v4-egress-flag`; `VMConfig.env` is never delivered to the macOS/Linux guest). With it on, terminals run as the unprivileged pool UIDs with kernel default-deny egress; **without it every terminal and agent runs as root in the VM**, so the broker's keys, the browser user's isolation and other dashboards' workspaces are all within an agent's reach
 - `OAUTH_REDIRECT_BASE` — overrides the localhost OAuth callback base
 - `EMAIL_FROM` — overrides the default "OrcaBot Desktop <noreply@localhost>"
 

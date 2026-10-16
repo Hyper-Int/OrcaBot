@@ -97,7 +97,10 @@ Fly.io (execution plane – separate repo)
 - Domain approval workflow for custom secrets
 - **Integration policy enforcement** (gateway execute, rate limits, audit)
 - **OAuth token lifecycle** (connect, refresh, encrypt at rest)
-- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth — **fail-closed**: empty `INTERNAL_API_TOKEN` rejects all tokens)
+- **Control plane → sandbox auth** (`src/sandbox/request-signing.ts`): `sandboxFetch`, `sandboxHeaders(env, headers, machineId, method, url)` (async) and `SandboxClient` (3rd ctor arg `env.SANDBOX_AUTH_SIGNING_KEY`) sign each request for its target machine. `sandboxHeaders` strips client credentials (Cookie, Authorization, X-Dashboard-Token, Cf-Access-Jwt-Assertion, dev-auth `X-User-*` / `X-Orcabot-Surface`) from proxied browser headers — the VM is shared by every member and must never see them. New VMs get `sandboxAuthEnv(env)`: the derived public key, plus `SANDBOX_INTERNAL_TOKEN` only while that secret exists. Generate the key with `openssl genpkey -algorithm ed25519 -outform DER | base64`
+- **Sandbox `/internal/*` auth** (`src/auth/sandbox-auth.ts`): routes the sandbox calls accept `X-Internal-Token` (full trust) or the VM's dashboard token (`X-Dashboard-Token`) and scope-check the resource's dashboard via `authorizeSandboxForDashboard` / `requireSandboxDashboard` (sessions resolve through `dashboardIdForSandboxSession`). The sandbox refreshes its 7-day token at `POST /internal/sandbox/dashboard-token/refresh` (30-day grace for VMs that were suspended), only while the token's `sbx_gen` matches the dashboard's current `dashboard_sandboxes` row (its `created_at`): retiring or replacing the sandbox ends refresh for every token minted for the old one. Mint VM tokens with `sandboxGeneration(now)` and claim the row with that same `now`. `WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX=true` stops new VMs receiving `INTERNAL_API_TOKEN` (`sandboxInternalTokenEnv`)
+- **PTY token issuance** (HMAC-SHA256 JWT for terminal-level auth, signed with the control-plane-only `PTY_TOKEN_SECRET` via `tokenSigningSecret(env)` — never with `INTERNAL_API_TOKEN`, which sandboxes hold — **fail-closed**: an empty secret rejects all tokens)
+- **`PTY_TOKEN_SECRET` rollout**: set the secret *before or together with* the control-plane deploy that relies on it (`wrangler secret put PTY_TOKEN_SECRET -c wrangler.production.toml`, then deploy). Once it is set, tokens signed with the old `INTERNAL_API_TOKEN` fallback are rejected — by design, since VMs can read that key — so live VMs' dashboard tokens stop working (refresh → E79395, internal calls → E79393). The sandbox drops a refused token, and the control plane sends a fresh one (bound to the current `dashboard_sandboxes` generation, `mintCurrentSandboxDashboardToken`) as `mcp_token` with every new PTY, so the next terminal opened on that dashboard restores it; running terminals' MCP/integration calls fail until then. Rotating the secret later has the same effect. Never re-add an `INTERNAL_API_TOKEN` verification fallback
 - **Personal access token (PAT) issuance** (CLI / scripted auth — only the SHA-256 hash is stored; **method-gated** so a PAT cannot mint/list/revoke other PATs)
 - **File proxy** (read/write/import a session workspace, proxied to the sandbox; write + import are owner-only)
 - **Response filtering** (policy-based filtering before LLM sees data)
@@ -208,7 +211,7 @@ curl "http://localhost:8787/internal/sessions/{sessionId}/approved-domains" \
 ```
 
 ### Auto-Apply Mechanism
-When secrets change, `autoApplySecretsToSessions()` pushes updates to all active sandbox sessions for that dashboard via the sandbox's `updateEnv()` endpoint.
+When secrets change, `autoApplySecretsToSessions()` pushes updates to the dashboard's **current** sandbox session (`dashboard_sandboxes`, via `pushOwnerSecretsToCurrentSandbox` — never a `sessions` row, which can point at a session a reprovision replaced) through the sandbox's `updateEnv()` endpoint. Secret names must be env var names (`^[A-Z_][A-Z0-9_]*$`, E79732): the sandbox rejects a whole update over one bad name, so stored names that don't match are skipped. Only the dashboard owner's secrets are applied. Before starting a terminal, `applyDashboardOwnerSecrets()` reconciles previously applied names, unsetting legacy collaborator secrets (and their `_BROKER` variables), even if the owner has no secrets. Cleanup must succeed before terminal startup and before replacing the tracked names (a stale/unreachable sandbox instead takes the normal reprovision path; the fresh VM's pre-apply is fail-closed too). Loading the owner's own secrets is best-effort: if it fails (e.g. no `SECRETS_ENCRYPTION_KEY`), every tracked name is unset and the terminal starts without them. Existing processes retain their inherited environment until restarted.
 
 ### Encryption
 - Secrets encrypted at rest using configured encryption key
@@ -265,6 +268,9 @@ Sandbox MCP Server
 - `src/integration-policies/api-clients/` — Gmail, GitHub, Drive, Calendar, Twitter API wrappers
 - `src/auth/pty-token.ts` — HMAC-SHA256 JWT token creation/verification
 
+### OAuth connect/callback
+- `state` is bound to the browser that started the flow: connect sets an HttpOnly `orcabot_oauth_<state>` cookie (`SameSite=Lax`, `Path=/integrations`) whose SHA-256 is stored with the state; the callback requires it, or a session for the user that started the flow (`getState` in `src/integrations/handler.ts`). New connect handlers must return `oauthRedirect(...)`, and the callback host must be the connect host (`OAUTH_REDIRECT_BASE`)
+
 ### Database Tables
 - `user_integrations` — OAuth tokens (encrypted), provider, account email
 - `terminal_integrations` — Which integrations are attached to which terminals
@@ -277,6 +283,9 @@ Sandbox MCP Server
 4. **Fail-closed** — Missing policy, expired token, unknown action → deny
 5. **Audit before response** — Every request logged via `logAuditEntry()` before returning
 6. **Context derived server-side** — Recipient, domain, etc. extracted from args in control plane
+7. **Check what is sent** — `validateGatewayArgs` (`src/integration-policies/arg-safety.ts`) runs before `enforcePolicy`: IDs that clients put in URL paths must be single safe segments (no `/`, `..`, `?`, `#`, `%`), email headers can't contain CR/LF, and each recipient entry is exactly one address. Messaging targets are derived only from the field each client sends to (`MESSAGING_TARGET_FIELD`); channel names are resolved server-side, never taken from args. Routing values (WhatsApp `phone_number_id`, Matrix `homeserver`) come from the stored integration. Empty path IDs (`folderId: ""`) are dropped as omitted (`dropEmptyPathArgs`)
+8. **Policy belongs to the account holder** — only the member who attached an integration can change its policy; they or the dashboard owner can detach it
+9. **Discord is pinned to the stored guild** — every integration uses the shared platform bot, which is in every customer's guild. The gateway forces `guild_id` to the integration's stored guild (a different one → E79625, none stored → E79624), looks up every channel-taking action's channel (`GET /channels/{id}`) and denies DMs / other guilds (E79628) or failed lookups (E79627); actions outside `DISCORD_*_ACTIONS` are denied (E79629). The connect callback binds a guild only with the `bot` scope, from the token response, or from the `guild_id` param only if the user owns it or has MANAGE_GUILD / ADMINISTRATOR there
 
 ### Providers
 - **Gmail**: search, get, send, archive, trash, mark_read/unread, add/remove_label

@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! VM image staging, download-on-demand, and decompression utilities.
 //!
 //! The multi-GB disk image is NOT bundled in the app — it's fetched on demand

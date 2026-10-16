@@ -1,12 +1,13 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: egress-proxy-v11-held-conn-ctx-cancel
+// REVISION: egress-proxy-v13-error-codes
 
 package egress
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -21,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
 )
 
-const proxyRevision = "egress-proxy-v11-held-conn-ctx-cancel"
+const proxyRevision = "egress-proxy-v13-error-codes"
 
 func init() {
 	log.Printf("[egress-proxy] REVISION: %s loaded at %s", proxyRevision, time.Now().Format(time.RFC3339))
@@ -85,20 +86,20 @@ type Pending struct {
 // EgressProxy is an HTTP/HTTPS forward proxy that checks domains against
 // an allowlist and holds unknown connections until the user approves.
 type EgressProxy struct {
-	port                int
-	listener            net.Listener
+	port                 int
+	listener             net.Listener
 	transparentListeners []net.Listener
-	server              *http.Server
-	allowlist        *Allowlist
-	pendingByID      map[string]*Pending // requestID -> pending approval
-	pendingByDomain  map[string]*Pending // domain -> pending approval
-	pendingMu        sync.Mutex
-	onApprovalNeeded func(req ApprovalRequest) // callback to broadcast WS event
-	onResolved       func(res ApprovalResolution)
-	onAuditEvent     func(event AuditEvent)
-	auditCh          chan AuditEvent      // buffered channel for async audit delivery
-	transport        *http.Transport      // shared transport for plain HTTP forwarding
-	stopCh           chan struct{}
+	server               *http.Server
+	allowlist            *Allowlist
+	pendingByID          map[string]*Pending // requestID -> pending approval
+	pendingByDomain      map[string]*Pending // domain -> pending approval
+	pendingMu            sync.Mutex
+	onApprovalNeeded     func(req ApprovalRequest) // callback to broadcast WS event
+	onResolved           func(res ApprovalResolution)
+	onAuditEvent         func(event AuditEvent)
+	auditCh              chan AuditEvent // buffered channel for async audit delivery
+	transport            *http.Transport // shared transport for plain HTTP forwarding
+	stopCh               chan struct{}
 }
 
 const auditChannelSize = 256
@@ -111,8 +112,10 @@ func NewEgressProxy(port int, allowlist *Allowlist) *EgressProxy {
 		pendingByID:     make(map[string]*Pending),
 		pendingByDomain: make(map[string]*Pending),
 		auditCh:         make(chan AuditEvent, auditChannelSize),
-		transport:       &http.Transport{},
-		stopCh:          make(chan struct{}),
+		// Guarded dial: the proxy runs as root, so it must never connect to a
+		// loopback service pool UIDs are blocked from (browser ports, MCPLocal).
+		transport: &http.Transport{DialContext: GuardеdDialContеxt(30 * time.Second)},
+		stopCh:    make(chan struct{}),
 	}
 }
 
@@ -273,6 +276,8 @@ func isLocalhost(host string) bool {
 // browser-navigation CheckAndHold, transparent/kernel proxy) must go through this so
 // they all honor the same order:
 //
+//	protected loopback → deny  (browser ports / MCPLocal; pool UIDs are blocked
+//	                            from them directly, the root proxy must not relay)
 //	localhost          → allow (bypass, no audit)
 //	IsDenied           → deny  (permanent "deny always", precedence over allowlist)
 //	IsAllowed          → allow (default/user allowlist; audited)
@@ -282,6 +287,12 @@ func isLocalhost(host string) bool {
 // Returns DecisionDefault/DecisionAllowOnce/DecisionAllowAlways when permitted, or
 // DecisionDeny/DecisionTimeout when blocked. Callers permit on the allow set.
 func (p *EgressProxy) decide(ctx context.Context, host string, port int) string {
+	// REVISION: egress-proxy-v12-protected-loopback
+	// Names that only resolve to loopback are refused at dial time (GuardedDialer).
+	if IsProtectedLoopbackTarget(host, port) {
+		log.Printf("[egress-proxy] Denied protected loopback target %s", net.JoinHostPort(host, strconv.Itoa(port)))
+		return DecisionDeny
+	}
 	if isLocalhost(host) {
 		return DecisionDefault
 	}
@@ -314,26 +325,26 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		p.tunnelConnect(w, host, port)
 		return
 	}
-	http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
+	http.Error(w, "E79117: Egress denied: domain not approved", http.StatusForbidden)
 }
 
 // handleHTTP handles plain HTTP proxy requests.
 func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	targetURL, host, port, err := extractHTTPDestination(r)
 	if err != nil {
-		http.Error(w, "Bad proxy request", http.StatusBadRequest)
+		http.Error(w, "E79118: Bad proxy request", http.StatusBadRequest)
 		return
 	}
 
 	if !permitted(p.decide(r.Context(), host, port)) {
-		http.Error(w, "Egress denied: domain not approved", http.StatusForbidden)
+		http.Error(w, "E79117: Egress denied: domain not approved", http.StatusForbidden)
 		return
 	}
 
 	// Forward the request
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), r.Body)
 	if err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, "E79119: Bad request", http.StatusBadRequest)
 		return
 	}
 	outReq.Header = r.Header.Clone()
@@ -343,7 +354,11 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.transport.RoundTrip(outReq)
 	if err != nil {
-		http.Error(w, "Upstream error", http.StatusBadGateway)
+		if errors.Is(err, ErrProtectedLoopback) {
+			http.Error(w, "E79120: Egress denied: protected loopback service", http.StatusForbidden)
+			return
+		}
+		http.Error(w, "E79121: Upstream error", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -472,9 +487,13 @@ func (p *EgressProxy) waitForDecision(ctx context.Context, pending *Pending) str
 // tunnelConnect establishes a TCP tunnel for CONNECT requests.
 func (p *EgressProxy) tunnelConnect(w http.ResponseWriter, host string, port int) {
 	target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	upstream, err := net.DialTimeout("tcp", target, 10*time.Second)
+	upstream, err := GuardedDialer(10*time.Second).Dial("tcp", target)
 	if err != nil {
-		http.Error(w, "Cannot connect to upstream", http.StatusBadGateway)
+		if errors.Is(err, ErrProtectedLoopback) {
+			http.Error(w, "E79120: Egress denied: protected loopback service", http.StatusForbidden)
+			return
+		}
+		http.Error(w, "E79122: Cannot connect to upstream", http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
@@ -482,13 +501,13 @@ func (p *EgressProxy) tunnelConnect(w http.ResponseWriter, host string, port int
 	// Hijack the client connection
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		http.Error(w, "E79123: Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
-		http.Error(w, "Hijack failed", http.StatusInternalServerError)
+		http.Error(w, "E79124: Hijack failed", http.StatusInternalServerError)
 		return
 	}
 	defer clientConn.Close()

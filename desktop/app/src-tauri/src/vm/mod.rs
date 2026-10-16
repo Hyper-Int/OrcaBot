@@ -1,3 +1,7 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v1-host-push
 //! Virtual machine abstraction for running the sandbox server.
 //!
 //! This module provides a platform-agnostic interface for managing VMs:
@@ -18,6 +22,7 @@ pub mod windows;
 pub mod linux;
 
 pub mod image;
+pub mod timesync;
 
 pub use config::VMConfig;
 pub use error::VMError;
@@ -27,6 +32,11 @@ pub use error::VMError;
 /// it). It's the GUEST side of the host→guest port forward; the host side
 /// (`VMConfig.sandbox_port`) may be dynamic when 8080 is busy on the host.
 pub const SANDBOX_GUEST_PORT: u16 = 8080;
+
+/// Guest vsock port of the root-only clock-sync daemon (`orcabot-guest-timesync`,
+/// started by the image's rc.local). Reserved range (<1024) so no unprivileged
+/// guest process can bind it; baked into the image. See `timesync.rs`.
+pub const GUEST_TIMESYNC_VSOCK_PORT: u32 = 1023;
 
 use std::time::Duration;
 

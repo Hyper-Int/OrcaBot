@@ -391,7 +391,7 @@ chmod +x /mnt/rootfs/etc/init.d/orcabot
 mkdir -p /mnt/rootfs/etc/rc.d
 cat > /mnt/rootfs/etc/rc.local << "RCLOCAL"
 #!/bin/sh
-echo "Starting Orcabot sandbox (rc.local v6-reverse-vsock-cp)..." > /dev/console
+echo "Starting Orcabot sandbox (rc.local v7-guest-timesync)..." > /dev/console
 
 # Ensure log/run dirs exist
 mkdir -p /var/log /run
@@ -415,6 +415,22 @@ if [ -e /dev/vsock ]; then
   echo "/dev/vsock present" > /dev/console
 else
   echo "/dev/vsock missing" > /dev/console
+fi
+
+# REVISION: rclocal-v3-guest-timesync
+# Guest clock sync. The VM has no NTP and the kernel reads the RTC only at boot,
+# so after the host sleeps the guest clock lags by the sleep time and every signed
+# control-plane request fails ("issued in the future"). The host (vz-helper /
+# the Linux QEMU backend) pushes its UTC time over vsock port 1023; this root
+# daemon steps CLOCK_REALTIME when drift > 2s. Reserved vsock port + host-CID-only
+# peer check: agent processes cannot set the time. Started before the server so the
+# first host push (right after boot) lands as early as possible.
+echo "[rc.local] REVISION: rclocal-v3-guest-timesync" > /dev/console
+if [ -x /usr/local/bin/orcabot-guest-timesync ]; then
+  /usr/local/bin/orcabot-guest-timesync -port 1023 > /dev/console 2>&1 &
+  echo $! > /run/guest-timesync.pid
+else
+  echo "orcabot-guest-timesync missing; guest clock will drift after host sleep" > /dev/console
 fi
 
 # Bring up outbound networking. systemd boots here but ifupdown/networking.service
@@ -467,16 +483,45 @@ fi
 export PORT=${PORT:-8080}
 export WORKSPACE_BASE=/workspace
 export ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
-export SANDBOX_INTERNAL_TOKEN=${SANDBOX_INTERNAL_TOKEN:-dev-sandbox-token}
-# Control-plane callback config. CONTROLPLANE_URL points at the reverse vsock bridge
-# above; INTERNAL_API_TOKEN must match what the host workerd expects (main.rs default
-# is dev-internal-token). These reach only the server process — PTY env filters them,
-# so agents never see INTERNAL_API_TOKEN.
+# REVISION: rclocal-v2-signed-auth-no-baked-tokens
+# Inbound auth: the host signs every request with a per-boot Ed25519 key and passes
+# only the PUBLIC key on the kernel command line (agents can read /proc/cmdline;
+# fine for a public key). No static token is baked into the image — without
+# the key the server rejects every request (fail closed).
+# REVISION: rclocal-v4-egress-flag
+# orcabot.egress_proxy_enabled=1 means EGRESS_PROXY_ENABLED=true on the host (the
+# guest never sees the VM env set on the host): the egress proxy + kernel
+# default-deny for pool UIDs, and terminals run as those UIDs instead of root.
+# (No apostrophes anywhere in here: this whole script is inside bash -c single quotes.)
+for arg in $(cat /proc/cmdline); do
+  case "$arg" in
+    orcabot.sandbox_auth_public_key=*) export SANDBOX_AUTH_PUBLIC_KEY="${arg#*=}" ;;
+    orcabot.egress_proxy_enabled=1) export EGRESS_PROXY_ENABLED=true ;;
+  esac
+done
+[ -n "${SANDBOX_AUTH_PUBLIC_KEY:-}" ] || echo "WARNING: no orcabot.sandbox_auth_public_key on the kernel command line; sandbox will reject all requests" > /dev/console
+echo "[rc.local] REVISION: rclocal-v4-egress-flag (egress proxy: ${EGRESS_PROXY_ENABLED:-off})" > /dev/console
+# Control-plane callbacks go through the reverse vsock bridge above and authenticate
+# with the dashboard-scoped tokens the control plane hands each session — the VM
+# holds no INTERNAL_API_TOKEN.
 export CONTROLPLANE_URL=${CONTROLPLANE_URL:-http://127.0.0.1:8787}
-export INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-dev-internal-token}
 # Enable the debug-exec endpoint (POST /debug/exec) for the desktop VM only. Fly
 # starts orcabot-server via its own path, never this rc.local, so it stays off there.
 export ORCABOT_DEBUG_EXEC=1
+# With egress control on, the server allows pool UIDs DNS only to the nameservers
+# in /etc/resolv.conf at startup, and DHCP (above) runs in the background: start
+# the server before the lease and terminals can resolve nothing. Wait for a
+# nameserver (bounded; the lease normally lands within a second of boot).
+if [ "${EGRESS_PROXY_ENABLED:-}" = "true" ]; then
+  n=0
+  while [ "$n" -lt 40 ] && ! grep -q "^nameserver" /etc/resolv.conf 2>/dev/null; do
+    sleep 0.5
+    n=$((n + 1))
+  done
+  grep -q "^nameserver" /etc/resolv.conf 2>/dev/null \
+    && echo "[rc.local] nameserver ready for egress DNS rules after ${n} waits" > /dev/console \
+    || echo "WARNING: no nameserver after 20s; pool UIDs will have no DNS" > /dev/console
+fi
 touch /var/log/orcabot.log /var/log/vsock-bridge.log
 /usr/local/bin/orcabot-server >> /var/log/orcabot.log 2>&1 &
 echo $! > /run/orcabot.pid
@@ -692,7 +737,7 @@ if [ -f "$OUTPUT_DIR/custom-modules.tar.gz" ] && [ -f "$OUTPUT_DIR/sandbox.img" 
         /bin/bash -c '
 set -euo pipefail
 apt-get update -qq
-apt-get install -y -qq e2fsprogs tar kmod > /dev/null
+apt-get install -y -qq e2fsprogs tar kmod binutils > /dev/null
 
 # Extract full module tree to /tmp first, strip there, then copy only needed modules to disk.
 # The full tarball is ~1.2GB which would overflow the disk if extracted directly.
@@ -707,14 +752,25 @@ KVER=$(basename "$KVER_DIR")
 mkdir -p /tmp/keep-modules/$KVER/kernel
 if [ -d "$KVER_DIR/kernel" ]; then
   cd "$KVER_DIR/kernel"
+  # REVISION: vm-modules-v2-netfilter
+  # Netfilter (iptables/ip6tables, nft + legacy, nat, owner/conntrack/multiport
+  # matches, REDIRECT/REJECT): the sandbox installs the pool-UID default-deny
+  # egress chain, the transparent-proxy REDIRECT and the browser port block with
+  # them. Without these modules iptables fails, the PTY pool never activates and
+  # every terminal runs as root in the VM.
   find . -type f \( -name "virtio*" -o -name "vsock*" -o -name "vmw_vsock*" \
          -o -name "ext4*" -o -name "fuse*" -o -name "virtiofs*" \
          -o -name "jbd2*" -o -name "mbcache*" -o -name "crc16*" \
-         -o -name "crc32*" \) | while read f; do
+         -o -name "crc32*" -o -name "libcrc32c*" \
+         -o -path "./net/netfilter/*" -o -path "./net/ipv4/netfilter/*" \
+         -o -path "./net/ipv6/netfilter/*" \) | while read f; do
     mkdir -p "/tmp/keep-modules/$KVER/kernel/$(dirname "$f")"
     cp "$f" "/tmp/keep-modules/$KVER/kernel/$f"
   done
   cd /
+  # The custom kernel ships unstripped modules (netfilter alone is ~150MB);
+  # debug info is not needed to load them.
+  find /tmp/keep-modules -name "*.ko" -exec strip --strip-debug {} +
 fi
 # Copy module metadata
 for meta in modules.builtin modules.builtin.modinfo modules.order; do

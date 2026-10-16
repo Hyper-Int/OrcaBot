@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -82,7 +85,9 @@ impl VMConfig {
         self
     }
 
-    /// Add an environment variable.
+    /// Add an environment variable. Only the Windows stub delivers these: the
+    /// macOS (vz-helper) and Linux (QEMU) guests never see them, so anything the
+    /// guest must act on goes on the kernel command line (see main.rs).
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.insert(key.into(), value.into());
         self

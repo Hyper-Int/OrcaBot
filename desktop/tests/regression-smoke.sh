@@ -154,9 +154,19 @@ d2="$(X 'pgrep -c bash')"; z="$(X 'ps -eo stat,comm | grep -c "^Z.*bash"')"  # P
 # ---- invariants: path traversal + output redaction ------------------------
 echo "[inv] file-API path traversal blocked"
 ITEM8="$(new_term)"; sleep 3
-SSID="$(curl -s "${AUTH[@]}" "$CP/dashboards/$DID" | jq_py "import json,sys;d=json.load(sys.stdin);print(next(s['sandboxSessionId'] for s in d['sessions'] if s['itemId']=='$ITEM8'))")"
-out="$(curl -s -m6 -H 'X-Internal-Token: dev-sandbox-token' "$SB/sessions/$SSID/file?path=../../../../etc/passwd")"
+read -r CSID SSID <<<"$(curl -s "${AUTH[@]}" "$CP/dashboards/$DID" | jq_py "import json,sys;d=json.load(sys.stdin);s=next(s for s in d['sessions'] if s['itemId']=='$ITEM8');print(s['id'],s['sandboxSessionId'])")"
+# Through the control plane's file proxy, which signs the request — so this
+# reaches the sandbox's path guard rather than stopping at auth.
+okc="$(code "${AUTH[@]}" "$CP/sessions/$CSID/files")"
+[ "$okc" = "200" ] && ok "signed file proxy reaches the sandbox (200)" || bad "signed file proxy -> $okc (want 200)"
+out="$(curl -s -m6 "${AUTH[@]}" "$CP/sessions/$CSID/file?path=../../../../etc/passwd")"
 echo "$out" | grep -q "root:" && bad "path traversal LEAKED /etc/passwd" || ok "traversal blocked"
+
+echo "[inv] sandbox accepts only signed requests (no baked token)"
+c1="$(code "$SB/sessions/$SSID/files")"
+c2="$(code -H 'X-Internal-Token: dev-sandbox-token' "$SB/sessions/$SSID/files")"
+{ [ "$c1" = "401" ] && [ "$c2" = "401" ]; } && ok "unsigned -> 401, old dev-sandbox-token -> 401" \
+  || bad "sandbox accepted an unsigned request (none=$c1, dev-sandbox-token=$c2)"
 
 echo "[inv] broker-secret output redaction"
 SEC="REDACTME_smoke_55512345"

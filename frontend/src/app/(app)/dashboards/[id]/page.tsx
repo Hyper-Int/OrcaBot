@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: dashboard-v56-mobile-fullscreen
-console.log(`[dashboard] REVISION: dashboard-v56-mobile-fullscreen loaded at ${new Date().toISOString()}`);
+// REVISION: dashboard-v58-cancel-pending-edge
+console.log(`[dashboard] REVISION: dashboard-v58-cancel-pending-edge loaded at ${new Date().toISOString()}`);
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -680,6 +680,18 @@ export default function DashboardPage() {
   // Track recently deleted edge IDs (prevents sync effect from re-adding edges
   // when a query refetch arrives before the server-side DELETE completes)
   const recentlyDeletedEdgeIdsRef = React.useRef<Set<string>>(new Set());
+  // Temp edge IDs whose create is in flight (it may be awaiting a pending block
+  // create, for any length of time). Deleting one records it in
+  // cancelledTempEdgeIdsRef — not time-limited like recentlyDeletedEdgeIdsRef —
+  // so the POST is skipped, or the server edge deleted, instead of re-adding it.
+  const pendingTempEdgeIdsRef = React.useRef<Set<string>>(new Set());
+  const cancelledTempEdgeIdsRef = React.useRef<Set<string>>(new Set());
+  const markEdgeDeleted = React.useCallback((edgeId: string) => {
+    recentlyDeletedEdgeIdsRef.current.add(edgeId);
+    if (pendingTempEdgeIdsRef.current.has(edgeId)) {
+      cancelledTempEdgeIdsRef.current.add(edgeId);
+    }
+  }, []);
   // Track previous collaboration items to detect what actually changed
   const prevCollabItemsRef = React.useRef<DashboardItem[]>([]);
   const prevCollabEdgesRef = React.useRef<DashboardEdge[]>([]);
@@ -831,6 +843,26 @@ export default function DashboardPage() {
     });
     return map;
   }, [items]);
+
+  // Node IDs are stable keys (the optimistic temp-… ID survives the swap to the
+  // server ID), but the server only knows real item IDs and rejects edges whose
+  // endpoints aren't items on this dashboard (E79391). Edge creation translates
+  // node IDs back through these refs; a block whose create is still in flight
+  // has a pending promise that settles with its real ID.
+  const realIdToStableKeyRef = React.useRef(realIdToStableKey);
+  realIdToStableKeyRef.current = realIdToStableKey;
+  const itemsForIdRef = React.useRef(items);
+  itemsForIdRef.current = items;
+  const pendingItemIdPromisesRef = React.useRef(new Map<string, Promise<string>>());
+  const pendingItemResolversRef = React.useRef(
+    new Map<string, { resolve: (id: string) => void; reject: (err: Error) => void }>()
+  );
+  const resolveItemId = React.useCallback(async (nodeId: string): Promise<string> => {
+    const pending = pendingItemIdPromisesRef.current.get(nodeId);
+    if (pending) return pending;
+    const item = itemsForIdRef.current.find((i) => i._stableKey === nodeId);
+    return item ? item.id : nodeId;
+  }, []);
 
   // Build a map from (itemId, provider) → securityLevel from integration labels
   const integrationLabelMap = React.useMemo(() => {
@@ -1062,6 +1094,11 @@ export default function DashboardPage() {
 
       const now = new Date().toISOString();
       const tempId = item.clientTempId || `temp-${generateId()}`;
+      const pendingId = new Promise<string>((resolve, reject) => {
+        pendingItemResolversRef.current.set(tempId, { resolve, reject });
+      });
+      pendingId.catch(() => {}); // only edge creation awaits it; a failed create is reported elsewhere
+      pendingItemIdPromisesRef.current.set(tempId, pendingId);
       const optimisticItem: DashboardItem = {
         id: tempId,
         dashboardId,
@@ -1188,6 +1225,11 @@ export default function DashboardPage() {
         return;
       }
 
+      if (context?.tempId) {
+        pendingItemResolversRef.current.get(context.tempId)?.resolve(createdItem.id);
+        pendingItemResolversRef.current.delete(context.tempId);
+      }
+
       // Track this item so the WebSocket echo doesn't trigger a refetch
       // (which would lose the _stableKey and cause the node to remount)
       recentlyCreatedItemsRef.current.add(createdItem.id);
@@ -1250,6 +1292,12 @@ export default function DashboardPage() {
       // Decrement mutations in-flight counter
       mutationsInFlightRef.current--;
 
+      if (context?.tempId) {
+        pendingItemResolversRef.current.get(context.tempId)?.reject(error);
+        pendingItemResolversRef.current.delete(context.tempId);
+        pendingItemIdPromisesRef.current.delete(context.tempId);
+      }
+
       if (context?.previous) {
         queryClient.setQueryData(["dashboard", dashboardId], context.previous);
       }
@@ -1266,7 +1314,7 @@ export default function DashboardPage() {
   });
 
   const createEdgeMutation = useMutation({
-    mutationFn: (edge: {
+    mutationFn: async (edge: {
       sourceItemId: string;
       targetItemId: string;
       sourceHandle?: string;
@@ -1274,15 +1322,36 @@ export default function DashboardPage() {
       _tempEdgeId?: string;
     }) => {
       const { _tempEdgeId, ...payload } = edge;
-      return createEdge(dashboardId, payload);
+      if (_tempEdgeId) pendingTempEdgeIdsRef.current.add(_tempEdgeId);
+      const [sourceItemId, targetItemId] = await Promise.all([
+        resolveItemId(payload.sourceItemId),
+        resolveItemId(payload.targetItemId),
+      ]);
+      // Deleted while waiting for a block create — don't POST it at all.
+      if (_tempEdgeId && cancelledTempEdgeIdsRef.current.has(_tempEdgeId)) return null;
+      return createEdge(dashboardId, { ...payload, sourceItemId, targetItemId });
     },
     onSuccess: (createdEdge, variables) => {
       // If this edge (or its temp ID) was deleted while the create was in-flight,
-      // don't re-add it — just clean up the temp edge and bail out.
+      // don't re-add it — clean up the temp edge, and delete the server edge if
+      // the POST already went out (the user's delete only knew the temp ID).
+      const tempEdgeId = variables._tempEdgeId;
       const deletedIds = recentlyDeletedEdgeIdsRef.current;
-      if (deletedIds.has(createdEdge.id) || (variables._tempEdgeId && deletedIds.has(variables._tempEdgeId))) {
-        if (variables._tempEdgeId) {
-          setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
+      const cancelled =
+        !createdEdge ||
+        deletedIds.has(createdEdge.id) ||
+        (!!tempEdgeId && (deletedIds.has(tempEdgeId) || cancelledTempEdgeIdsRef.current.has(tempEdgeId)));
+      if (cancelled) {
+        if (tempEdgeId) {
+          setEdges((prev) => prev.filter((e) => e.id !== tempEdgeId));
+        }
+        if (createdEdge && !deletedIds.has(createdEdge.id)) {
+          const serverEdgeId = createdEdge.id;
+          deletedIds.add(serverEdgeId);
+          setTimeout(() => recentlyDeletedEdgeIdsRef.current.delete(serverEdgeId), 5000);
+          deleteEdge(dashboardId, serverEdgeId).catch((err) => {
+            console.warn("[createEdgeMutation] failed to delete edge removed while pending:", err);
+          });
         }
         return;
       }
@@ -1296,7 +1365,17 @@ export default function DashboardPage() {
           const cleaned = prev.filter(
             (e) => e.id !== variables._tempEdgeId && e.id !== createdEdge.id
           );
-          return [...cleaned, { ...toFlowEdge(createdEdge), data: tempEdge?.data }];
+          const flowEdge = toFlowEdge(createdEdge);
+          const stableKeys = realIdToStableKeyRef.current;
+          return [
+            ...cleaned,
+            {
+              ...flowEdge,
+              source: stableKeys.get(flowEdge.source) || flowEdge.source,
+              target: stableKeys.get(flowEdge.target) || flowEdge.target,
+              data: tempEdge?.data,
+            },
+          ];
         });
       }
 
@@ -1359,6 +1438,12 @@ export default function DashboardPage() {
         setEdges((prev) => prev.filter((e) => e.id !== variables._tempEdgeId));
       }
       toast.error(`Failed to save connection: ${error.message}`);
+    },
+    onSettled: (_data, _error, variables) => {
+      if (variables._tempEdgeId) {
+        pendingTempEdgeIdsRef.current.delete(variables._tempEdgeId);
+        cancelledTempEdgeIdsRef.current.delete(variables._tempEdgeId);
+      }
     },
   });
 
@@ -2243,6 +2328,11 @@ export default function DashboardPage() {
 
       // Track as recently deleted to prevent refetches from bringing it back
       recentlyDeletedItemsRef.current.add(itemId);
+      // Drop its pending-ID entry (kept after the create resolves to map stale
+      // temp IDs) so deleted items don't accumulate. Awaiters already hold the promise.
+      pendingItemIdPromisesRef.current.delete(itemId);
+      const deletedStableKey = realIdToStableKey.get(itemId);
+      if (deletedStableKey) pendingItemIdPromisesRef.current.delete(deletedStableKey);
 
       // Always cancel in-flight queries to prevent stale data overwriting our updates
       await queryClient.cancelQueries({ queryKey: ["dashboard", dashboardId] });
@@ -2280,7 +2370,12 @@ export default function DashboardPage() {
       const idsToRemove = new Set([itemId]);
       if (stableKey) idsToRemove.add(stableKey);
       setEdges((prev) =>
-        prev.filter((edge) => !idsToRemove.has(edge.source) && !idsToRemove.has(edge.target))
+        prev.filter((edge) => {
+          if (!idsToRemove.has(edge.source) && !idsToRemove.has(edge.target)) return true;
+          // An edge to this block still awaiting its create must not be POSTed.
+          if (pendingTempEdgeIdsRef.current.has(edge.id)) cancelledTempEdgeIdsRef.current.add(edge.id);
+          return false;
+        })
       );
 
       return { previous, previousEdges };
@@ -2464,7 +2559,7 @@ export default function DashboardPage() {
       // All state and cache mutations happen here, BEFORE any awaits, so the
       // edge disappears from the UI immediately.
       mutationsInFlightRef.current++;
-      recentlyDeletedEdgeIdsRef.current.add(edgeId);
+      markEdgeDeleted(edgeId);
 
       const data = queryClient.getQueryData<{
         dashboard: Dashboard;
@@ -2495,7 +2590,7 @@ export default function DashboardPage() {
               e.sourceItemId === edgeToDelete.targetItemId &&
               e.targetItemId === edgeToDelete.sourceItemId
             ) {
-              recentlyDeletedEdgeIdsRef.current.add(e.id);
+              markEdgeDeleted(e.id);
               edgeIdsToRemove.push(e.id);
             }
           }
@@ -2513,7 +2608,7 @@ export default function DashboardPage() {
           if (edgeRef && e.id !== edgeId &&
               e.source === edgeRef.source && e.target === edgeRef.target &&
               e.sourceHandle === edgeRef.sourceHandle && e.targetHandle === edgeRef.targetHandle) {
-            recentlyDeletedEdgeIdsRef.current.add(e.id);
+            markEdgeDeleted(e.id);
             return false;
           }
           return true;
@@ -2573,7 +2668,7 @@ export default function DashboardPage() {
         }, 5000);
       }
     },
-    [dashboardId, queryClient, handleIntegrationEdge, setEdges]
+    [dashboardId, queryClient, handleIntegrationEdge, setEdges, markEdgeDeleted]
   );
 
   // Callback to send UI command results back to DashboardDO for broadcast

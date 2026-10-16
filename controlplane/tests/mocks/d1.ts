@@ -200,18 +200,39 @@ class MockD1PreparedStatement {
     const columns = colMatch[1].split(',').map(c => c.trim());
     const row: Row = {};
 
+    // VALUES may mix `?` with literals ('' / 'started' / datetime('now')).
+    const valuesStart = this.query.search(/VALUES\s*\(/i);
+    const values = splitTopLevel(this.query.slice(this.query.indexOf('(', valuesStart) + 1, matchingParen(this.query, this.query.indexOf('(', valuesStart))));
+    let bindingIndex = 0;
     columns.forEach((col, i) => {
-      row[col] = this.bindings[i];
+      const expr = values[i]?.trim() ?? '?';
+      row[col] = expr === '?' ? this.bindings[bindingIndex++] : literalValue(expr);
     });
 
     const isIgnore = /INSERT\s+OR\s+IGNORE/i.test(this.query);
-    if (isIgnore && columns.length > 0) {
-      const primaryKey = columns[0];
-      const existing = this.tables.get(tableName)!.some(r => r[primaryKey] === row[primaryKey]);
-      if (existing) {
-        this.changes = 0;
-        return [] as T[];
+    const upsert = this.query.match(/ON\s+CONFLICT\s*\((\w+)\)\s*DO\s+(NOTHING|UPDATE\s+SET\s+([\s\S]+?))(?:\s+WHERE\s+([\s\S]+?))?\s*$/i);
+    const conflictKey = upsert ? upsert[1] : columns[0];
+    const existing = (isIgnore || upsert) && columns.length > 0
+      ? this.tables.get(tableName)!.find(r => r[conflictKey] === row[conflictKey])
+      : undefined;
+    if (existing) {
+      this.changes = 0;
+      if (!upsert || /^NOTHING$/i.test(upsert[2])) return [] as T[];
+      // `WHERE table.col = 'literal'` guards the update (a no-op if it fails).
+      if (upsert[4]) {
+        const guard = upsert[4].match(/(?:\w+\.)?(\w+)\s*=\s*('(?:[^']|'')*')/);
+        if (guard && existing[guard[1]] !== literalValue(guard[2])) return [] as T[];
       }
+      for (const part of splitTopLevel(upsert[3])) {
+        const eq = part.indexOf('=');
+        if (eq === -1) continue;
+        const col = part.slice(0, eq).trim();
+        const expr = part.slice(eq + 1).trim();
+        const excluded = expr.match(/^excluded\.(\w+)$/i);
+        existing[col] = excluded ? row[excluded[1]] : expr === '?' ? this.bindings[bindingIndex++] : literalValue(expr);
+      }
+      this.changes = 1;
+      return [] as T[];
     }
 
     this.tables.get(tableName)!.push(row);
@@ -247,6 +268,8 @@ class MockD1PreparedStatement {
         if (value !== null) {
           updates[col] = value;
         }
+      } else if (/^'(?:[^']|'')*'$/.test(part.substring(eqIndex + 1).trim())) {
+        updates[col] = literalValue(part.substring(eqIndex + 1).trim());
       } else {
         updates[col] = this.bindings[bindingIndex++];
       }
@@ -326,4 +349,47 @@ class MockD1PreparedStatement {
       }
     });
   }
+}
+
+/** Splits a SQL list on commas outside parentheses and quotes. */
+function splitTopLevel(list: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let current = '';
+  for (const ch of list) {
+    if (ch === "'") quoted = !quoted;
+    if (!quoted && ch === '(') depth++;
+    if (!quoted && ch === ')') depth--;
+    if (!quoted && depth === 0 && ch === ',') {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) parts.push(current);
+  return parts;
+}
+
+function matchingParen(sql: string, open: number): number {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open; i < sql.length; i++) {
+    if (sql[i] === "'") quoted = !quoted;
+    if (quoted) continue;
+    if (sql[i] === '(') depth++;
+    if (sql[i] === ')' && --depth === 0) return i;
+  }
+  return sql.length;
+}
+
+/** A SQL literal as the mock stores it: strings unquoted, datetime('now') as an ISO time. */
+function literalValue(expr: string): unknown {
+  const str = expr.match(/^'((?:[^']|'')*)'$/);
+  if (str) return str[1].replace(/''/g, "'");
+  if (/^datetime\('now'\)$/i.test(expr)) return new Date().toISOString();
+  if (/^-?\d+(\.\d+)?$/.test(expr)) return Number(expr);
+  if (/^NULL$/i.test(expr)) return null;
+  return expr;
 }

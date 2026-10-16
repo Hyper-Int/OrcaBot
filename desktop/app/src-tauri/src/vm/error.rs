@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 // REVISION: vm-image-ondemand-v1
 use std::path::PathBuf;
 use std::time::Duration;

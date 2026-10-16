@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: pty-v2-release-after-wait
+// REVISION: pty-v4-error-codes
 
 package pty
 
@@ -170,6 +170,9 @@ func newWithCmd(cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
 }
 
 func newWithCmdID(ptyID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
+	if err := chеckSpawnAllowed(); err != nil {
+		return nil, err
+	}
 	// Pre-generate ID if not provided (so it can be used in env vars before process starts)
 	if ptyID == "" {
 		var err error
@@ -194,6 +197,9 @@ func newWithCmdID(ptyID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) 
 }
 
 func newWithCmdIDSlot(slot *SlotEntry, sessionID string, cmd *exec.Cmd, cols, rows uint16) (*PTY, error) {
+	if err := chеckSpawnAllowed(); err != nil {
+		return nil, err
+	}
 	ptyID := slot.PTYID
 	if ptyID == "" {
 		var err error

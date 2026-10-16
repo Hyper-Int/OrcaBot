@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: mcp-v31-direct-dispatch
+// REVISION: mcp-v33-error-codes
 
 package main
 
@@ -23,7 +23,7 @@ import (
 )
 
 func init() {
-	log.Printf("[mcp-server] REVISION: mcp-v31-direct-dispatch loaded at %s", time.Now().Format(time.RFC3339))
+	log.Printf("[mcp-server] REVISION: mcp-v33-error-codes loaded at %s", time.Now().Format(time.RFC3339))
 }
 
 // batchIntegrationCache holds a dashboard-level cache of all terminal integrations.
@@ -267,8 +267,8 @@ func (s *Server) handleMCPListToolsForPTY(w http.ResponseWriter, r *http.Request
 		targetURL := fmt.Sprintf("%s/internal/mcp/ui/tools", controlplaneURL)
 		req, err := http.NewRequestWithContext(r.Context(), "GET", targetURL, nil)
 		if err == nil {
-			if session.MCPToken != "" {
-				req.Header.Set("X-Dashboard-Token", session.MCPToken)
+			if token := session.DashboardToken(); token != "" {
+				req.Header.Set("X-Dashboard-Token", token)
 			} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
 				req.Header.Set("X-Internal-Token", internalToken)
 			}
@@ -385,7 +385,7 @@ func (s *Server) handleMCPCallToolForPTY(w http.ResponseWriter, r *http.Request,
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"error":   true,
 				"code":    resp.Error,
-				"message": fmt.Sprintf("Browser policy error (%s): %s", resp.Error, resp.Reason),
+				"message": fmt.Sprintf("E79128: Browser policy error (%s): %s", resp.Error, resp.Reason),
 			})
 			return
 		}
@@ -394,7 +394,7 @@ func (s *Server) handleMCPCallToolForPTY(w http.ResponseWriter, r *http.Request,
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"error":    true,
-				"message":  fmt.Sprintf("Browser policy denied: %s", resp.Reason),
+				"message":  fmt.Sprintf("E79129: Browser policy denied: %s", resp.Reason),
 				"decision": resp.Decision,
 				"policyId": resp.PolicyID,
 			})
@@ -457,8 +457,8 @@ func (s *Server) handleMCPCallToolForPTY(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "E79817: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if session.MCPToken != "" {
-		req.Header.Set("X-Dashboard-Token", session.MCPToken)
+	if token := session.DashboardToken(); token != "" {
+		req.Header.Set("X-Dashboard-Token", token)
 	} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
 		req.Header.Set("X-Internal-Token", internalToken)
 	} else {
@@ -511,8 +511,8 @@ func (s *Server) handleMCPListItemsForPTY(w http.ResponseWriter, r *http.Request
 		http.Error(w, "E79819: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if session.MCPToken != "" {
-		req.Header.Set("X-Dashboard-Token", session.MCPToken)
+	if token := session.DashboardToken(); token != "" {
+		req.Header.Set("X-Dashboard-Token", token)
 	} else if internalToken := os.Getenv("INTERNAL_API_TOKEN"); internalToken != "" {
 		req.Header.Set("X-Internal-Token", internalToken)
 	} else {
@@ -698,8 +698,8 @@ func (s *Server) handleAgentStateToolCallForPTY(w http.ResponseWriter, r *http.R
 	}
 
 	if authToken == "" {
-		if session.MCPToken != "" {
-			authToken = session.MCPToken
+		if token := session.DashboardToken(); token != "" {
+			authToken = token
 			authType = mcp.AuthTypeDashboardToken
 			if sessionScoped, ok := args["sessionScoped"].(bool); ok && sessionScoped {
 				log.Printf("[mcp] WARNING: sessionScoped=true requested but no PTY token proof; creating dashboard-wide instead")

@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: dashboards-do-v1-error-codes
 
 /**
  * Dashboard Durable Object
@@ -194,14 +195,14 @@ export class DashboardDO implements DurableObject {
     // WebSocket upgrade for real-time collaboration
     if (path === '/ws') {
       if (request.headers.get('Upgrade') !== 'websocket') {
-        return new Response('Expected WebSocket', { status: 426 });
+        return new Response('E79173: Expected WebSocket', { status: 426 });
       }
 
       const userId = url.searchParams.get('user_id');
       const userName = url.searchParams.get('user_name') || 'Anonymous';
 
       if (!userId) {
-        return new Response('user_id required', { status: 400 });
+        return new Response('E79174: user_id required', { status: 400 });
       }
 
       const pair = new WebSocketPair();
@@ -418,7 +419,7 @@ export class DashboardDO implements DurableObject {
       return Response.json({ success: true });
     }
 
-    return new Response('Not found', { status: 404 });
+    return new Response('E79175: Not found', { status: 404 });
   }
 
   private handleWebSocket(ws: WebSocket, userId: string, userName: string): void {

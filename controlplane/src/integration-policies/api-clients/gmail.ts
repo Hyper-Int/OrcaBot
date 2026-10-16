@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gmail-client-v1
-console.log(`[gmail-client] REVISION: gmail-client-v1 loaded at ${new Date().toISOString()}`);
+// REVISION: gmail-client-v2-header-safety
+console.log(`[gmail-client] REVISION: gmail-client-v2-header-safety loaded at ${new Date().toISOString()}`);
 
 /**
  * Gmail API Client
@@ -130,14 +130,25 @@ async function getMessage(
   return response.json() as Promise<GmailMessage>;
 }
 
+/** to/cc/bcc as the same string list the policy check saw (a bare string is one entry). */
+function headerList(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
 async function sendMessage(
   args: Record<string, unknown>,
   accessToken: string
 ): Promise<unknown> {
-  const to = args.to as string[] || [];
-  const cc = args.cc as string[] || [];
-  const bcc = args.bcc as string[] || [];
-  const subject = args.subject as string || '';
+  const to = headerList(args.to);
+  const cc = headerList(args.cc);
+  const bcc = headerList(args.bcc);
+  const subject = typeof args.subject === 'string' ? args.subject : '';
+  // The gateway rejects these (arg-safety.ts); refuse here too so a line break
+  // can never add headers such as Bcc to the raw message.
+  if ([...to, ...cc, ...bcc, subject].some((v) => /[\r\n]/.test(v))) {
+    throw new Error('Line breaks are not allowed in email headers');
+  }
   const body = args.body as string || '';
   const threadId = args.threadId as string || undefined;
 

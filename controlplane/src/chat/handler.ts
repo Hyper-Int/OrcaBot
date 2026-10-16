@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: chat-v23-list-secret-names
+// REVISION: chat-v24-signed-sandbox-requests
 
 /**
  * Orcabot Chat Handler
@@ -14,7 +14,7 @@
  * - DELETE /chat/history - Clear conversation history
  */
 
-console.log(`[chat] REVISION: chat-v23-list-secret-names loaded at ${new Date().toISOString()}`);
+console.log(`[chat] REVISION: chat-v24-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
 
 import type { Env, ChatMessage, ChatToolCall, ChatToolResult, ChatStreamEvent, AnyUIGuidanceCommand } from '../types';
 import { type GeminiTool } from '../gemini/client';
@@ -946,7 +946,7 @@ async function executeTool(
       // last (so the marker never appears before the output is flushed).
       const wrapped = `echo ${b64} | base64 -d | bash > ${outRel} 2>&1; echo $? > ${exitRel}`;
 
-      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
       // rel = path relative to the workspace root (/workspace).
       const readMarker = async (rel: string) => {
         const res = await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { machineId });
@@ -985,7 +985,7 @@ async function executeTool(
         for (const rel of [outRel, exitRel]) {
           try { await sandboxFetch(env, `/sessions/${sessionId}/file?path=${encodeURIComponent(rel)}`, { method: 'DELETE', machineId }); } catch { /* ignore */ }
         }
-        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id, machineId); } catch { /* ignore */ } }
 
         if (exitRaw === null) {
           // The cleanup above deleted the PTY, which kills the process group — so
@@ -1009,7 +1009,7 @@ async function executeTool(
         };
       } catch (error) {
         console.error(`[run_command] THREW: ${error instanceof Error ? error.stack || error.message : String(error)}`);
-        if (pty?.id) { try { await client.deletePty(sessionId, pty.id); } catch { /* ignore */ } }
+        if (pty?.id) { try { await client.deletePty(sessionId, pty.id, machineId); } catch { /* ignore */ } }
         return { result: { error: `run_command failed: ${error instanceof Error ? error.message : String(error)}` }, isError: true };
       }
     }
@@ -1057,7 +1057,7 @@ async function executeTool(
       }
 
       // Send input to the PTY
-      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
       const textToSend = pressEnter ? `${input}\n` : input;
 
       await client.writePty(
@@ -1126,7 +1126,7 @@ async function executeTool(
       }
 
       // Send the agent command
-      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const client = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
       await client.writePty(
         sessionRow.dashboard_sandbox_session_id,
         sessionRow.pty_id,

@@ -1,12 +1,16 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: sessions-v2-export-parse-cookies
+const MODULE_REVISION = 'sessions-v2-export-parse-cookies';
+console.log(`[sessions] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 import type { Env, User } from '../types';
 
 export const SESSION_COOKIE_NAME = 'orcabot_session';
 const SESSION_MAX_AGE_DAYS = 30;
 
-function parseCookies(header: string | null): Map<string, string> {
+export function parseCookies(header: string | null): Map<string, string> {
   const cookies = new Map<string, string>();
   if (!header) {
     return cookies;

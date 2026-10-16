@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: drive-client-v5-recursive-sync-list
-console.log(`[drive-client] REVISION: drive-client-v5-recursive-sync-list loaded at ${new Date().toISOString()}`);
+// REVISION: drive-client-v6-encoded-ids
+console.log(`[drive-client] REVISION: drive-client-v6-encoded-ids loaded at ${new Date().toISOString()}`);
 
 /**
  * Google Drive API Client
@@ -12,6 +12,11 @@ console.log(`[drive-client] REVISION: drive-client-v5-recursive-sync-list loaded
  */
 
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
+
+/** Escapes a value for a single-quoted Drive search-query string. */
+function driveQueryString(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
 
 interface DriveFile {
   id: string;
@@ -107,7 +112,7 @@ async function listFiles(
     queryParts.push(query);
   }
   if (folderId) {
-    queryParts.push(`'${folderId}' in parents`);
+    queryParts.push(`'${driveQueryString(folderId)}' in parents`);
   }
   queryParts.push('trashed = false');
 
@@ -136,7 +141,7 @@ async function getFile(
     fields: 'id,name,mimeType,parents,webViewLink,webContentLink,size,modifiedTime,createdTime,owners',
   });
 
-  const response = await driveFetch(`/files/${fileId}?${params}`, accessToken);
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, accessToken);
   return response.json() as Promise<DriveFile>;
 }
 
@@ -179,13 +184,13 @@ async function downloadFile(
   // For Google Docs, Sheets, etc., use export (always text-safe)
   if (file.mimeType.startsWith('application/vnd.google-apps')) {
     const exportMimeType = getExportMimeType(file.mimeType);
-    const response = await driveFetch(`/files/${fileId}/export?mimeType=${encodeURIComponent(exportMimeType)}`, accessToken);
+    const response = await driveFetch(`/files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMimeType)}`, accessToken);
     const content = await response.text();
     return { content, mimeType: exportMimeType };
   }
 
   // For regular files, download directly
-  const response = await driveFetch(`/files/${fileId}?alt=media`, accessToken);
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?alt=media`, accessToken);
 
   if (isTextMimeType(file.mimeType)) {
     // Text files: read as UTF-8 text
@@ -311,7 +316,7 @@ async function updateFile(
 
   const body = buildMultipartBody(boundary, metadata, mimeType, content, encoding);
 
-  const response = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,mimeType,webViewLink`, {
+  const response = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart&fields=id,name,mimeType,webViewLink`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -337,7 +342,7 @@ async function deleteFile(
     throw new Error('fileId is required');
   }
 
-  const response = await driveFetch(`/files/${fileId}`, accessToken, {
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}`, accessToken, {
     method: 'DELETE',
   });
 
@@ -355,7 +360,7 @@ async function shareFile(
     throw new Error('fileId and email are required');
   }
 
-  const response = await driveFetch(`/files/${fileId}/permissions`, accessToken, {
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}/permissions`, accessToken, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -440,7 +445,7 @@ async function syncListFilesRecursive(
       const params = new URLSearchParams({
         pageSize: '1000',
         fields: 'files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,createdTime),nextPageToken',
-        q: `'${currentFolderId}' in parents and trashed = false`,
+        q: `'${driveQueryString(currentFolderId)}' in parents and trashed = false`,
       });
 
       if (pageToken) {

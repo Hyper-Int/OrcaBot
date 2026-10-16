@@ -1,6 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: secrets-v11-identifier-renames
+
 import type { Env, UserSecret, SecretType } from '../types';
 import {
   encryptSecret,
@@ -11,6 +13,9 @@ import {
 } from '../crypto/secrets';
 import { SandboxClient } from '../sandbox/client';
 
+const MODULE_REVISION = 'secrets-v11-identifier-renames';
+console.log(`[secrets] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 /**
  * Auto-apply secrets to all active sessions for affected dashboards.
  * Called after secret CRUD operations to keep .env files in sync.
@@ -19,6 +24,173 @@ import { SandboxClient } from '../sandbox/client';
  * @param userId - User who owns the secrets
  * @param dashboardId - Dashboard ID or '_global' for global secrets
  */
+/**
+ * Whose secrets a dashboard's VM gets: its owner's, and only theirs. There is one
+ * VM per dashboard but secrets are per user, so pushing whoever acted last put
+ * their keys behind every terminal's broker URL (and their plaintext secrets in
+ * the shared /workspace/.env) for every other member's agents to use.
+ */
+export async function dashboardSecretsOwner(env: Env, dashboardId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT owner_id FROM dashboards WHERE id = ?`)
+    .bind(dashboardId)
+    .first<{ owner_id: string }>();
+  return row?.owner_id ?? null;
+}
+
+/**
+ * Push a dashboard owner's secrets to its sandbox session and unset every
+ * previously applied name the owner no longer has (and its `_BROKER`).
+ *
+ * The approval list is always sent in full, `[]` included: the sandbox treats
+ * an omitted list as "keep the current approvals", which would let approvals
+ * made for a collaborator's secret authorize the owner's same-named one.
+ *
+ * Returns the names to track; the caller records them only after this
+ * resolves, i.e. once the sandbox has acknowledged the unset.
+ *
+ * With `bestEffortLoad`, failing to load the owner's secrets (e.g. no
+ * SECRETS_ENCRYPTION_KEY on this deployment) pushes none — so every previously
+ * applied name is unset — instead of throwing. Sandbox errors always throw.
+ */
+// The sandbox rejects the whole env update (E79746) if any name breaks this,
+// so a stored name that doesn't match would block every terminal.
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+export function isValidEnvNamе(name: string): boolean {
+  return ENV_NAME.test(name);
+}
+
+export async function pushDashbоardOwnerSecrеts(
+  env: Env,
+  sandbox: SandboxClient,
+  dashboardId: string,
+  ownerId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string,
+  opts: { bestEffortLoad: boolean }
+): Promise<{ names: string[]; approvedDomains: number; unset: number }> {
+  let secrets: Record<string, SecretWithProtection> = {};
+  let approvedDomains: Awaited<ReturnType<typeof getApprovedDomainsForDashboard>> = [];
+  try {
+    secrets = await getSecretsWithProtection(env, ownerId, dashboardId);
+    approvedDomains = await getApprovedDomainsForDashboard(env, ownerId, dashboardId);
+  } catch (err) {
+    if (!opts.bestEffortLoad) throw err;
+    console.error(`[secrets] could not load owner secrets for dashboard ${dashboardId}; starting without them:`, err);
+    secrets = {};
+    approvedDomains = [];
+  }
+  const row = await env.DB.prepare(`
+    SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ applied_secret_names: string }>();
+  let previousNames: string[] = [];
+  try {
+    const parsed: unknown = row?.applied_secret_names ? JSON.parse(row.applied_secret_names) : [];
+    previousNames = Array.isArray(parsed) ? parsed.filter((n): n is string => typeof n === 'string') : [];
+  } catch {
+    // Unknowable names can't be unset; failing here would block every terminal
+    // on this dashboard for good.
+    console.error(`[secrets] corrupt applied_secret_names for dashboard ${dashboardId}; ignoring it`);
+  }
+  // Names stored before validation existed are skipped, not sent.
+  for (const name of Object.keys(secrets)) {
+    if (!isValidEnvNamе(name)) {
+      console.error(`[secrets] skipping secret with invalid env name on dashboard ${dashboardId}`);
+      delete secrets[name];
+    }
+  }
+  approvedDomains = approvedDomains.filter(a => isValidEnvNamе(a.secretName));
+  const names = Object.keys(secrets);
+  const unset = previousNames.filter(name => !names.includes(name) && isValidEnvNamе(name))
+    .flatMap(name => [name, `${name}_BROKER`]);
+
+  // Nothing set, nothing to unset: no secret is configured for leftover
+  // approvals to authorize, and the next push that sets one replaces them.
+  // (Approvals alone are skipped for the same reason; older sandboxes reject
+  // an update with no variables in it, E79745.)
+  if (names.length || unset.length) {
+    await sandbox.updateEnv(sandboxSessionId, {
+      secrets: names.length ? secrets : undefined,
+      approvedDomains,
+      unset: unset.length ? unset : undefined,
+      applyNow: false,
+    }, sandboxMachineId || undefined);
+  }
+  return { names, approvedDomains: approvedDomains.length, unset: unset.length };
+}
+
+/**
+ * Reconcile the dashboard's secrets before starting a new terminal.
+ *
+ * Only the sandbox update is fail-closed: if unsetting previously applied
+ * names fails the error propagates and terminal startup aborts. Loading the
+ * owner's own secrets is best-effort (see pushDashbоardOwnerSecrеts).
+ */
+export async function applyDashboardOwnerSecrets(
+  env: Env,
+  sandbox: SandboxClient,
+  dashboardId: string,
+  sandboxSessionId: string,
+  sandboxMachineId: string
+): Promise<string[]> {
+  const ownerId = await dashboardSecretsOwner(env, dashboardId);
+  if (!ownerId) throw new Error('Dashboard owner not found');
+  const { names } = await pushDashbоardOwnerSecrеts(
+    env, sandbox, dashboardId, ownerId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: true });
+  return names;
+}
+
+/**
+ * Push the owner's secrets to the dashboard's *current* sandbox session and
+ * record what was applied. A `sessions` row can still point at a session a
+ * reprovision replaced (timeouts and 502/503s reprovision without killing the
+ * old one); pushing there and then rewriting the tracking left a deleted
+ * secret live in the replacement for good. Returns null when the sandbox is
+ * retired — the next terminal start reconciles its replacement.
+ *
+ * The fallback session is used only for dashboards that predate
+ * dashboard_sandboxes (no row at all).
+ */
+export async function pushOwnerSecretsToCurrentSandbox(
+  env: Env,
+  sandbox: SandboxClient,
+  dashboardId: string,
+  ownerId: string,
+  fallbackSessionId: string,
+  fallbackMachineId: string
+): Promise<{ names: string[]; approvedDomains: number; unset: number } | null> {
+  const current = await env.DB.prepare(`
+    SELECT sandbox_session_id, sandbox_machine_id FROM dashboard_sandboxes WHERE dashboard_id = ?
+  `).bind(dashboardId).first<{ sandbox_session_id: string; sandbox_machine_id: string | null }>();
+  if (current && !current.sandbox_session_id) return null;
+  const sandboxSessionId = current ? current.sandbox_session_id : fallbackSessionId;
+  const sandboxMachineId = current ? (current.sandbox_machine_id || '') : fallbackMachineId;
+
+  const pushed = await pushDashbоardOwnerSecrеts(
+    env, sandbox, dashboardId, ownerId, sandboxSessionId, sandboxMachineId, { bestEffortLoad: false });
+
+  // Track the new names only once the sandbox has acknowledged the unset, and
+  // only if it wasn't replaced meanwhile (its startup reconciles from the old names).
+  if (current) {
+    await env.DB.prepare(`
+      UPDATE dashboard_sandboxes SET applied_secret_names = ?
+      WHERE dashboard_id = ? AND sandbox_session_id = ?
+    `).bind(JSON.stringify(pushed.names), dashboardId, sandboxSessionId).run();
+  } else {
+    // A live sandbox that predates dashboard_sandboxes: record it as the
+    // dashboard's sandbox so later pushes (and their unsets) reach it. A blank
+    // row would read as retired, and every later delete would skip this live
+    // VM. Its dashboard tokens predate sbx_gen, so refresh binds them to this
+    // row's generation rather than rejecting them; and a provisioning claim
+    // racing this insert loses to it and reuses this session (changes === 0).
+    await env.DB.prepare(`
+      INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(dashboard_id) DO NOTHING
+    `).bind(dashboardId, sandboxSessionId, sandboxMachineId, JSON.stringify(pushed.names)).run();
+  }
+  return pushed;
+}
+
 export async function autoApplySecretsToSessions(
   env: Env,
   userId: string,
@@ -52,7 +224,7 @@ export async function autoApplySecretsToSessions(
       return;
     }
 
-    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+    const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
     // Process each session - get fresh secrets and apply
     // Use a Set to avoid processing same dashboard twice (for global secrets)
@@ -60,8 +232,6 @@ export async function autoApplySecretsToSessions(
 
     for (const session of sessions.results) {
       const sessionDashboardId = session.dashboard_id as string;
-      const sandboxSessionId = session.sandbox_session_id as string;
-      const sandboxMachineId = session.sandbox_machine_id as string;
 
       // Skip if we already processed this dashboard (can happen with global secrets)
       if (processedDashboards.has(sessionDashboardId)) {
@@ -69,53 +239,18 @@ export async function autoApplySecretsToSessions(
       }
       processedDashboards.add(sessionDashboardId);
 
+      // Only the owner's secrets go into a dashboard's VM: a member changing
+      // their own secrets must not push them into someone else's dashboard.
+      if ((await dashboardSecretsOwner(env, sessionDashboardId)) !== userId) {
+        continue;
+      }
+
       try {
-        // Get fresh secrets for this dashboard
-        const secrets = await getSecretsWithProtection(env, userId, sessionDashboardId);
-
-        // Get approved domains for custom secrets
-        const approvedDomains = await getApprovedDomainsForDashboard(env, userId, sessionDashboardId);
-
-        // Get previously applied secrets to compute unset list
-        const dashboardSandbox = await env.DB.prepare(`
-          SELECT applied_secret_names FROM dashboard_sandboxes WHERE dashboard_id = ?
-        `).bind(sessionDashboardId).first<{ applied_secret_names: string }>();
-
-        const previousNames: string[] = dashboardSandbox?.applied_secret_names
-          ? JSON.parse(dashboardSandbox.applied_secret_names)
-          : [];
-        const currentNames = Object.keys(secrets);
-
-        // Compute what to unset
-        const unset: string[] = [];
-        for (const name of previousNames) {
-          if (!currentNames.includes(name)) {
-            unset.push(name);
-            unset.push(`${name}_BROKER`);
-          }
-        }
-
-        // Apply to sandbox
-        await sandbox.updateEnv(
-          sandboxSessionId,
-          {
-            secrets,
-            approvedDomains: approvedDomains.length > 0 ? approvedDomains : undefined,
-            unset: unset.length > 0 ? unset : undefined,
-            applyNow: false,
-          },
-          sandboxMachineId || undefined
-        );
-
-        // Update tracking
-        await env.DB.prepare(`
-          INSERT INTO dashboard_sandboxes (dashboard_id, sandbox_session_id, sandbox_machine_id, applied_secret_names, created_at)
-          VALUES (?, ?, ?, ?, datetime('now'))
-          ON CONFLICT(dashboard_id) DO UPDATE SET applied_secret_names = excluded.applied_secret_names
-        `).bind(sessionDashboardId, sandboxSessionId, sandboxMachineId || '', JSON.stringify(currentNames)).run();
-
+        await pushOwnerSecretsToCurrentSandbox(
+          env, sandbox, sessionDashboardId, userId,
+          session.sandbox_session_id as string, (session.sandbox_machine_id as string) || '');
       } catch (error) {
-        console.error(`[secrets] Failed to apply to session ${sandboxSessionId} dashboardId=${sessionDashboardId}:`, error);
+        console.error(`[secrets] Failed to apply to dashboard sandbox dashboardId=${sessionDashboardId}:`, error);
         // Continue with other sessions
       }
     }
@@ -199,6 +334,12 @@ export async function createSecret(
 ): Promise<Response> {
   if (!data.name || !data.value) {
     return Response.json({ error: 'E79731: name and value are required' }, { status: 400 });
+  }
+  if (!isValidEnvNamе(data.name)) {
+    return Response.json(
+      { error: 'E79732: Name must be an environment variable name: A-Z, 0-9 and _, not starting with a digit' },
+      { status: 400 }
+    );
   }
 
   // Require encryption key - don't store plaintext secrets

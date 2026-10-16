@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: outlook-calendar-v2-scope-by-calendar-id
-console.log(`[outlook-calendar-client] REVISION: outlook-calendar-v2-scope-by-calendar-id loaded at ${new Date().toISOString()}`);
+// REVISION: outlook-calendar-v3-event-ops-default-calendar
+console.log(`[outlook-calendar-client] REVISION: outlook-calendar-v3-event-ops-default-calendar loaded at ${new Date().toISOString()}`);
 
 /**
  * Outlook Calendar API Client (Microsoft Graph)
@@ -174,7 +174,7 @@ async function getEvent(
 
   const basePath = calendarId
     ? `/me/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
-    : `/me/events/${encodeURIComponent(eventId)}`;
+    : `/me/calendar/events/${encodeURIComponent(eventId)}`; // default calendar, as the policy check assumes
 
   const response = await fetch(`${GRAPH_API_BASE}${basePath}`, {
     headers: {
@@ -363,7 +363,7 @@ async function updateEvent(
   const calendarId = (args.calendarId ?? args.calendar_id) as string | undefined;
   const basePath = calendarId
     ? `/me/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
-    : `/me/events/${encodeURIComponent(eventId)}`;
+    : `/me/calendar/events/${encodeURIComponent(eventId)}`; // default calendar, as the policy check assumes
 
   const response = await fetch(`${GRAPH_API_BASE}${basePath}`, {
     method: 'PATCH',
@@ -395,7 +395,7 @@ async function deleteEvent(
 
   const basePath = calendarId
     ? `/me/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
-    : `/me/events/${encodeURIComponent(eventId)}`;
+    : `/me/calendar/events/${encodeURIComponent(eventId)}`; // default calendar, as the policy check assumes
 
   const response = await fetch(`${GRAPH_API_BASE}${basePath}`, {
     method: 'DELETE',

@@ -1,16 +1,19 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: env-v3-unset-broker-base-urls
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/broker"
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/id"
@@ -45,6 +48,12 @@ type envUpdateResponse struct {
 
 var envNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
+const envRevision = "env-v3-unset-broker-base-urls"
+
+func init() {
+	log.Printf("[env] REVISION: %s loaded at %s", envRevision, time.Now().Format(time.RFC3339))
+}
+
 func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 	session := s.getSessiоnOrErrоr(w, r.PathValue("sessionId"))
 	if session == nil {
@@ -57,7 +66,8 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Set) == 0 && len(req.Secrets) == 0 && len(req.Unset) == 0 {
+	// An approvals-only update is valid: it replaces the session's approvals.
+	if len(req.Set) == 0 && len(req.Secrets) == 0 && len(req.Unset) == 0 && req.ApprovedDomains == nil {
 		http.Error(w, "E79745: No environment variables provided", http.StatusBadRequest)
 		return
 	}
@@ -191,7 +201,7 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	// Write to .env file
 	root := session.Wоrkspace().Root()
-	if err := updateDоtEnv(filepath.Join(root, ".env"), effectiveEnvVars, req.Unset); err != nil {
+	if err := updateDоtEnv(filepath.Join(root, ".env"), effectiveEnvVars, withBrokerEnvKeys(req.Unset, effectiveEnvVars)); err != nil {
 		http.Error(w, "E79747: Failed to update .env", http.StatusInternalServerError)
 		return
 	}
@@ -205,6 +215,33 @@ func (s *Server) handleSessionEnv(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(envUpdateResponse{Status: "ok"})
+}
+
+// withBrokerEnvKeys adds, for each unset built-in key, the base-URL variable
+// that pointed its harness at the broker (e.g. ANTHROPIC_BASE_URL). Left
+// behind, new PTYs would send requests to a broker route that no longer
+// exists. A base URL this same request sets (another secret, or the user's own
+// env var) is kept.
+func withBrokerEnvKeys(unset []string, set map[string]string) []string {
+	out := append([]string(nil), unset...)
+	seen := map[string]bool{}
+	for _, name := range unset {
+		seen[name] = true
+	}
+	for _, name := range unset {
+		for _, spec := range broker.GetAllProvidersByEnvKey(name) {
+			key := spec.BrokerEnvKey
+			if key == "" || seen[key] {
+				continue
+			}
+			if _, kept := set[key]; kept {
+				continue
+			}
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 // envQuote wraps a value in double quotes for .env file, escaping special chars.

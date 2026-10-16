@@ -1,6 +1,10 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: dashboard-token-v4-identifier-renames
+const MODULE_REVISION = 'dashboard-token-v4-identifier-renames';
+console.log(`[dashboard-token] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
+
 /**
  * Dashboard-scoped tokens for MCP proxy
  *
@@ -10,7 +14,7 @@
  *
  * Format: base64url(header).base64url(payload).base64url(signature)
  * - header: { alg: "HS256", typ: "JWT" }
- * - payload: { dashboard_id, session_id, aud: "mcp-ui", exp, iat }
+ * - payload: { dashboard_id, session_id, aud: "mcp-ui", exp, iat, sbx_gen }
  * - signature: HMAC-SHA256(header.payload, secret)
  */
 
@@ -20,6 +24,10 @@ export interface DashboardTokenClaims {
   aud: string; // "mcp-ui"
   exp: number; // Unix timestamp
   iat: number; // Unix timestamp
+  // The sandbox the token was minted for: its dashboard_sandboxes.created_at
+  // (ms). Carried through refreshes so a token outlives its VM only until the
+  // VM is retired or replaced (see refreshSandbоxDashboardToken).
+  sbx_gen?: number;
 }
 
 const ALGORITHM = 'HS256';
@@ -77,16 +85,26 @@ async function hmacVerify(data: string, signature: string, secret: string): Prom
   return result === 0;
 }
 
+/** A dashboard_sandboxes.created_at value as a token generation (ms). */
+export function sandboxGeneration(createdAt: string): number {
+  // Rows written by SQLite's datetime('now') have no zone marker; they're UTC.
+  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(createdAt) ? createdAt : `${createdAt.replace(' ', 'T')}Z`;
+  return Date.parse(iso);
+}
+
 /**
  * Create a dashboard-scoped token for MCP proxy
  * @param dashboardId - Required dashboard to scope the token to
- * @param secret - Signing secret (INTERNAL_API_TOKEN)
+ * @param secret - Signing secret (tokenSigningSecret(env) — PTY_TOKEN_SECRET)
  * @param sessionId - Optional session ID for auditing (not enforced)
+ * @param generation - sandboxGeneration(createdAt) of the dashboard_sandboxes
+ *   row the sandbox will be claimed with (it must be written with that same createdAt)
  */
 export async function createDashboardToken(
   dashboardId: string,
   secret: string,
-  sessionId?: string
+  sessionId?: string,
+  generation?: number
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -97,6 +115,7 @@ export async function createDashboardToken(
     exp: now + TOKEN_EXPIRY_SECONDS,
     iat: now,
     ...(sessionId && { session_id: sessionId }),
+    ...(generation !== undefined && { sbx_gen: generation }),
   };
 
   const headerB64 = base64UrlEncode(JSON.stringify(header));
@@ -110,10 +129,15 @@ export async function createDashboardToken(
 /**
  * Verify and decode a dashboard-scoped token
  * Returns the claims if valid, null if invalid
+ *
+ * expiredGraceSeconds: accept a correctly signed token up to this long past its
+ * expiry. Only the token refresh endpoint uses it (a suspended VM can wake after
+ * its token expired); every other caller gets strict expiry.
  */
 export async function verifyDashboardToken(
   token: string,
-  secret: string
+  secret: string,
+  expiredGraceSeconds = 0
 ): Promise<DashboardTokenClaims | null> {
   const parts = token.split('.');
   if (parts.length !== 3) {
@@ -155,7 +179,7 @@ export async function verifyDashboardToken(
 
     // Check expiry
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp < now) {
+    if (payload.exp + expiredGraceSeconds < now) {
       return null;
     }
 

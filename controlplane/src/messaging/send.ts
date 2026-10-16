@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: messaging-send-v6-teams-require-channel-context
-const MODULE_REVISION = 'messaging-send-v6-teams-require-channel-context';
+// REVISION: messaging-send-v9-error-codes
+const MODULE_REVISION = 'messaging-send-v9-error-codes';
 console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -19,7 +19,7 @@ console.log(`[messaging-send] REVISION: ${MODULE_REVISION} loaded at ${new Date(
 import type { Env, MessagingProvider } from '../types';
 import { executeWhatsAppAction } from '../integration-policies/api-clients/whatsapp';
 import { executeSlackAction } from '../integration-policies/api-clients/slack';
-import { executeDiscordAction } from '../integration-policies/api-clients/discord';
+import { executeDiscordAction, getDiscоrdChannelGuildId } from '../integration-policies/api-clients/discord';
 import { executeTeamsAction } from '../integration-policies/api-clients/teams';
 import { getAccessToken } from '../integration-policies/token-refresh';
 import { BridgeClient } from '../bridge/client';
@@ -74,7 +74,7 @@ export async function handleMessagingSend(
 
   if (!dashboardId || !itemId || !text?.trim()) {
     return Response.json(
-      { error: 'dashboardId, itemId, and text are required' },
+      { error: 'E79166: dashboardId, itemId, and text are required' },
       { status: 400 },
     );
   }
@@ -84,7 +84,12 @@ export async function handleMessagingSend(
     `SELECT role FROM dashboard_members WHERE dashboard_id = ? AND user_id = ?`
   ).bind(dashboardId, userId).first<{ role: string }>();
   if (!membership) {
-    return Response.json({ error: 'Not a member of this dashboard' }, { status: 403 });
+    return Response.json({ error: 'E79167: Not a member of this dashboard' }, { status: 403 });
+  }
+  // Sending posts with the subscription creator's account (their Slack/WhatsApp
+  // etc.), so viewers can't — same bar as editing the messaging block.
+  if (membership.role !== 'owner' && membership.role !== 'editor') {
+    return Response.json({ error: 'E79617: Viewers cannot send messages' }, { status: 403 });
   }
 
   // Find active subscriptions for this messaging block item
@@ -95,7 +100,7 @@ export async function handleMessagingSend(
 
   if (!subs.results?.length) {
     return Response.json(
-      { error: 'No active messaging subscriptions for this block' },
+      { error: 'E79168: No active messaging subscriptions for this block' },
       { status: 404 },
     );
   }
@@ -281,6 +286,24 @@ async function sendDiscord(
 
   if (!channelId) {
     throw new Error('No channel ID — no inbound messages received yet and no channel configured');
+  }
+
+  // The bot token is shared by every tenant, so the bot being able to post in
+  // a channel proves nothing: the channel must be in the guild this
+  // integration was connected to (same rule as gateway step 9c).
+  const meta = await env.DB.prepare(
+    `SELECT metadata FROM user_integrations WHERE id = ?`
+  ).bind(integrationId).first<{ metadata: string | null }>();
+  let guildId: string | undefined;
+  try {
+    guildId = meta?.metadata ? (JSON.parse(meta.metadata) as { guild_id?: string }).guild_id : undefined;
+  } catch { /* treated as no guild below */ }
+  if (!guildId) {
+    throw new Error('E79630: Discord integration has no connected server; reconnect Discord');
+  }
+  const channelGuildId = await getDiscоrdChannelGuildId(channelId, token);
+  if (channelGuildId !== guildId) {
+    throw new Error('E79631: Discord channel is not in the connected server');
   }
 
   // Send message to channel

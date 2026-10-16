@@ -10,11 +10,13 @@ import {
   listDashbоards,
   createDashbоard,
   upsertItem,
+  createEdge,
 } from './handler';
 import {
   createTestContext,
   seedUser,
   seedDashboard,
+  seedDashboardItem,
   createTestUser,
 } from '../../tests/helpers';
 import type { TestContext } from '../../tests/helpers';
@@ -152,6 +154,39 @@ describe('Dashboard Handlers', () => {
       const updated = await updateResponse.json() as { item: { content: string } };
 
       expect(updated.item.content).toBe('Keep this');
+    });
+  });
+
+  describe('createEdge()', () => {
+    // Seed directly: the D1 mock's multi-line re-select in upsertItem returns the first row.
+    async function makeNote(dashboardId: string) {
+      return (await seedDashboardItem(ctx.db, dashboardId, { type: 'terminal' })).id;
+    }
+
+    it('creates an edge between two items on the same dashboard', async () => {
+      const dashboard = await seedDashboard(ctx.db, testUser.id, { id: 'dash-edge-same' });
+      const a = await makeNote(dashboard.id);
+      const b = await makeNote(dashboard.id);
+      const res = await createEdge(ctx.env, dashboard.id, testUser.id, { sourceItemId: a, targetItemId: b });
+      expect(res.status).toBe(201);
+    });
+
+    it('rejects an edge whose target lives on another dashboard', async () => {
+      const mine = await seedDashboard(ctx.db, testUser.id, { id: 'dash-mine-1' });
+      const other = await seedDashboard(ctx.db, testUser.id, { id: 'dash-other-1' });
+      const source = await makeNote(mine.id);
+      const foreign = await makeNote(other.id);
+      const res = await createEdge(ctx.env, mine.id, testUser.id, { sourceItemId: source, targetItemId: foreign });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects an edge whose source lives on another dashboard', async () => {
+      const mine = await seedDashboard(ctx.db, testUser.id, { id: 'dash-mine-2' });
+      const other = await seedDashboard(ctx.db, testUser.id, { id: 'dash-other-2' });
+      const target = await makeNote(mine.id);
+      const foreign = await makeNote(other.id);
+      const res = await createEdge(ctx.env, mine.id, testUser.id, { sourceItemId: foreign, targetItemId: target });
+      expect(res.status).toBe(400);
     });
   });
 });

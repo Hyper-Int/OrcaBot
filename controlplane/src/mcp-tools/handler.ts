@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: mcp-tools-handler-v1-error-codes
 
 import type { Env, UserMcpTool } from '../types';
 
@@ -52,7 +53,7 @@ export async function createMcpTооl(
   const transport = data.transport || 'stdio';
   if (!validTransports.includes(transport)) {
     return Response.json(
-      { error: `transport must be one of: ${validTransports.join(', ')}` },
+      { error: `E79195: transport must be one of: ${validTransports.join(', ')}` },
       { status: 400 }
     );
   }

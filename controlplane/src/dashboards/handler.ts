@@ -5,7 +5,8 @@
  * Dashboard API Handlers
  */
 
-// REVISION: dashboards-v8-teardown-without-snapshot
+// REVISION: dashboards-v10-signed-sandbox-requests
+console.log(`[dashboards] REVISION: dashboards-v10-signed-sandbox-requests loaded at ${new Date().toISOString()}`);
 
 import type { Env, Dashboard, DashboardItem, DashboardEdge } from '../types';
 import { syncItemToLinked, syncEdgeToLinked } from '../links/handler';
@@ -381,7 +382,7 @@ export async function deleteDashbоard(
   // wedging it.
   if (sandboxRow?.sandbox_session_id && env.SANDBOX_URL) {
     try {
-      const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+      const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
       await sandbox.deleteSession(
         sandboxRow.sandbox_session_id,
         sandboxRow.sandbox_machine_id || undefined
@@ -631,6 +632,23 @@ export async function createEdge(
   const role = await getDashbоardRole(env, dashboardId, userId);
   if (!hasDashbоardRole(role, ['owner', 'editor'])) {
     return Response.json({ error: 'E79303: Not found or no edit access' }, { status: 404 });
+  }
+
+  // SECURITY: both endpoints must be items on THIS dashboard. Edge consumers
+  // (schedule executor, messaging delivery) act on the target item, so an edge
+  // into another dashboard's terminal would let a caller drive someone else's PTY.
+  if (!edge.sourceItemId || !edge.targetItemId) {
+    return Response.json({ error: 'E79390: sourceItemId and targetItemId are required' }, { status: 400 });
+  }
+  const itemOnDashboard = (itemId: string) => env.DB.prepare(
+    'SELECT id FROM dashboard_items WHERE id = ? AND dashboard_id = ?'
+  ).bind(itemId, dashboardId).first();
+  const [sourceItem, targetItem] = await Promise.all([
+    itemOnDashboard(edge.sourceItemId),
+    itemOnDashboard(edge.targetItemId),
+  ]);
+  if (!sourceItem || !targetItem) {
+    return Response.json({ error: 'E79391: Edge endpoints must belong to this dashboard' }, { status: 400 });
   }
 
   const existingEdge = await env.DB.prepare(`

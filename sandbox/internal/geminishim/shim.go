@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gemini-shim-v1-openrouter-bridge
+// REVISION: gemini-shim-v2-error-codes
 //
 // Package geminishim is a localhost translation proxy that lets the *official*
 // Google Gemini CLI talk to OpenRouter.
@@ -51,7 +51,7 @@ func truncate(s string, n int) string {
 	return s[:n] + "…(" + fmt.Sprintf("%d", len(s)) + "b)"
 }
 
-const shimRevision = "gemini-shim-v1-openrouter-bridge"
+const shimRevision = "gemini-shim-v2-error-codes"
 
 func init() {
 	log.Printf("[gemini-shim] REVISION: %s loaded at %s", shimRevision, time.Now().Format(time.RFC3339))
@@ -108,13 +108,13 @@ func (s *Shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, provider, model, method, ok := parsePath(r.URL.Path)
 	if !ok {
-		writeGeminiError(w, http.StatusBadRequest, "invalid shim path; expected /gv1/{session}/{provider}/{model}/v1.../models/{m}:{method}")
+		writeGeminiError(w, http.StatusBadRequest, "E79131: invalid shim path; expected /gv1/{session}/{provider}/{model}/v1.../models/{m}:{method}")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeGeminiError(w, http.StatusBadRequest, "failed to read request body")
+		writeGeminiError(w, http.StatusBadRequest, "E79132: failed to read request body")
 		return
 	}
 
@@ -126,9 +126,9 @@ func (s *Shim) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "countTokens":
 		handleCountTokens(w, body)
 	case "embedContent", "batchEmbedContents":
-		writeGeminiError(w, http.StatusNotImplemented, "embeddings are not supported by the OpenRouter bridge")
+		writeGeminiError(w, http.StatusNotImplemented, "E79133: embeddings are not supported by the OpenRouter bridge")
 	default:
-		writeGeminiError(w, http.StatusNotFound, "unsupported method: "+method)
+		writeGeminiError(w, http.StatusNotFound, "E79134: unsupported method: "+method)
 	}
 }
 
@@ -191,14 +191,14 @@ func (s *Shim) forwardChat(sessionID, provider string, oreqBody []byte) (*http.R
 func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, provider, model string, body []byte, stream bool) {
 	var greq genReq
 	if err := json.Unmarshal(body, &greq); err != nil {
-		writeGeminiError(w, http.StatusBadRequest, "invalid Gemini request: "+err.Error())
+		writeGeminiError(w, http.StatusBadRequest, "E79135: invalid Gemini request: "+err.Error())
 		return
 	}
 
 	oreq := geminiToOpenAI(greq, model, stream)
 	oreqBody, err := json.Marshal(oreq)
 	if err != nil {
-		writeGeminiError(w, http.StatusInternalServerError, "failed to encode upstream request")
+		writeGeminiError(w, http.StatusInternalServerError, "E79136: failed to encode upstream request")
 		return
 	}
 
@@ -210,7 +210,7 @@ func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, provider, model 
 
 	resp, err := s.forwardChat(sessionID, provider, oreqBody)
 	if err != nil {
-		writeGeminiError(w, http.StatusBadGateway, "broker request failed: "+err.Error())
+		writeGeminiError(w, http.StatusBadGateway, "E79137: broker request failed: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -219,7 +219,7 @@ func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, provider, model 
 		errBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[gemini-shim] <- upstream HTTP %d session=%s model=%s body=%s",
 			resp.StatusCode, sessionID, model, truncate(string(errBody), 2000))
-		writeGeminiError(w, resp.StatusCode, "openrouter error: "+strings.TrimSpace(string(errBody)))
+		writeGeminiError(w, resp.StatusCode, "E79138: openrouter error: "+strings.TrimSpace(string(errBody)))
 		return
 	}
 
@@ -232,13 +232,13 @@ func (s *Shim) handleGenerate(w http.ResponseWriter, sessionID, provider, model 
 	respBody, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(respBody, &oresp); err != nil {
 		log.Printf("[gemini-shim] <- unparseable response session=%s body=%s", sessionID, truncate(string(respBody), 2000))
-		writeGeminiError(w, http.StatusBadGateway, "failed to parse openrouter response")
+		writeGeminiError(w, http.StatusBadGateway, "E79139: failed to parse openrouter response")
 		return
 	}
 	// OpenRouter can return 200 with an error envelope (e.g. provider error).
 	if oresp.Error != nil {
 		log.Printf("[gemini-shim] <- upstream error envelope session=%s model=%s err=%s", sessionID, model, oresp.Error.String())
-		writeGeminiError(w, http.StatusBadGateway, "openrouter error: "+oresp.Error.String())
+		writeGeminiError(w, http.StatusBadGateway, "E79140: openrouter error: "+oresp.Error.String())
 		return
 	}
 	if debugEnabled() {

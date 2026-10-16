@@ -3,8 +3,8 @@
 
 "use client";
 
-// REVISION: terminal-block-v12-fullscreen-actions
-const TERMINAL_BLOCK_REVISION = "terminal-block-v12-fullscreen-actions";
+// REVISION: terminal-block-v13-no-connected-banner
+const TERMINAL_BLOCK_REVISION = "terminal-block-v13-no-connected-banner";
 
 console.log(`[TerminalBlock] REVISION: ${TERMINAL_BLOCK_REVISION} loaded at ${new Date().toISOString()}`);
 
@@ -2450,7 +2450,9 @@ export function TerminalBlock({
         terminalRef.current?.write("\x1b[2J\x1b[H"); // Clear screen
       }
       hasConnectedOnceRef.current = true;
-      terminalRef.current?.write("\x1b[32m$ Connected to sandbox\x1b[0m\r\n\r\n");
+      // No "Connected" banner: the replayed prompt arrives before this effect
+      // runs, so the banner landed mid-line after it. The prompt itself shows
+      // the connection is up.
 
       // Control is requested separately once connected.
     }

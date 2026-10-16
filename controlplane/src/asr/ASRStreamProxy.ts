@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: asr-stream-proxy-v2-auth-fix
+// REVISION: asr-stream-proxy-v3-error-codes
 
-const proxyRevision = "asr-stream-proxy-v2-auth-fix";
+const proxyRevision = "asr-stream-proxy-v3-error-codes";
 console.log(`[ASRStreamProxy] REVISION: ${proxyRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -20,12 +20,12 @@ export class ASRStreamProxy implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
-      return new Response('Expected WebSocket', { status: 426 });
+      return new Response('E79176: Expected WebSocket', { status: 426 });
     }
 
     const apiKey = request.headers.get('X-ASR-Api-Key');
     if (!apiKey) {
-      return new Response('Missing API key', { status: 401 });
+      return new Response('E79177: Missing API key', { status: 401 });
     }
 
     // Create the client-facing WebSocket pair

@@ -19,6 +19,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/orcabot-server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/browser-ctl ./cmd/browser-ctl
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/mcp-bridge ./cmd/mcp-bridge
+# REVISION: guest-timesync-v1-vsock-step
+# Desktop VM only: rc.local starts it (root) so the host can step the guest clock
+# over vsock after host sleep. Fly never starts it.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/orcabot-guest-timesync ./cmd/guest-timesync
 
 # =============================================================================
 # Stage 2: Sandbox runtime image
@@ -214,6 +218,27 @@ RUN for i in $(seq 0 99); do \
                 $(printf 'pty-%03d' $i); \
     done
 
+# Dedicated unprivileged user for the dashboard browser stack (Xvfb, x11vnc,
+# websockify, Chromium) — see internal/browser. Outside the pool UID range and
+# NOT in the sandbox group, so agents can't write its profile or home, and
+# iptables can block pool UIDs from its ports (6100-6299). Never run it as root:
+# root Chromium + an open DevTools port was a root escalation for any agent.
+RUN groupadd --system --gid 1990 orcabot-browser \
+    && useradd --system --uid 1990 --gid 1990 --create-home \
+               --home-dir /home/orcabot-browser --shell /usr/sbin/nologin orcabot-browser \
+    && chmod 700 /home/orcabot-browser \
+    && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+# REVISION: browser-vnc-user-v1-split
+# The display side of the browser stack (Xvfb, x11vnc, websockify) runs as a
+# second user, so Chromium (orcabot-browser) runs none of it: iptables rejects
+# every connection from orcabot-browser to 6100-6299, so a page in one
+# dashboard can't open another dashboard's noVNC/x11vnc/DevTools.
+RUN groupadd --system --gid 1991 orcabot-vnc \
+    && useradd --system --uid 1991 --gid 1991 --create-home \
+               --home-dir /home/orcabot-vnc --shell /usr/sbin/nologin orcabot-vnc \
+    && chmod 700 /home/orcabot-vnc
+
 # Set umask 0002 for all PTY shell sessions.
 # Without this, files created by pty-000 land at 0644/0755 (umask 0022) so
 # pty-001 can read them but not modify them — breaking the shared-workspace model.
@@ -238,6 +263,7 @@ ENV PATH="/home/sandbox/.local/bin:${PATH}"
 COPY --from=builder /build/orcabot-server /usr/local/bin/orcabot-server
 COPY --from=builder /build/browser-ctl /usr/local/bin/browser-ctl
 COPY --from=builder /build/mcp-bridge /usr/local/bin/mcp-bridge
+COPY --from=builder /build/orcabot-guest-timesync /usr/local/bin/orcabot-guest-timesync
 
 # uv (fast Python package manager) — baked in so benchmark harnesses
 # (e.g. slop-code-bench `uv sync`) can build a venv without a network install.
@@ -259,6 +285,15 @@ RUN echo "chromium-refresh ${CHROMIUM_CACHEBUST}" \
     && apt-get install -y --no-install-recommends --only-upgrade chromium \
     && rm -rf /var/lib/apt/lists/* \
     && (chromium.real --version 2>/dev/null || chromium --version)
+
+# REVISION: chromium-policies-v1-no-component-downloads
+# Managed Chromium policies (root-owned, so agents can't change them). Chromium 155
+# still fetches the on-device AI "Model Manifest" component from edgedl.me.gvt1.com
+# at startup despite --disable-component-update, which surfaced as an unexplained
+# egress approval prompt; only ComponentUpdatesEnabled=false stops it (verified with
+# a net-log probe). GenAILocalFoundationalModelSettings=1 also keeps a page calling
+# the on-device AI APIs from triggering the multi-GB model download.
+COPY docker/chromium-policies.json /etc/chromium/policies/managed/orcabot.json
 
 # Working directory
 WORKDIR /workspace

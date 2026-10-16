@@ -1,23 +1,28 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+// REVISION: browser-cdp-v4-navigate-http-only
 package browser
 
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const cdpRevision = "browser-cdp-v4-navigate-http-only"
+
+func init() {
+	log.Printf("[browser-cdp] REVISION: %s loaded at %s", cdpRevision, time.Now().Format(time.RFC3339))
+}
 
 // CDPClient provides Chrome DevTools Protocol access to control the browser
 type CDPClient struct {
@@ -59,7 +64,9 @@ func (c *CDPClient) connectToTarget(preferredTargetID string) error {
 	}
 
 	// Get list of targets to find a page target
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	// Both the target list and the websocket go through DialBrowser, so a
+	// listener squatting the debug port never sees our commands.
+	httpClient := newBrowserHTTPClient(10 * time.Second)
 	resp, err := httpClient.Get(fmt.Sprintf("http://127.0.0.1:%d/json/list", c.debugPort))
 	if err != nil {
 		return fmt.Errorf("failed to list targets: %w", err)
@@ -104,10 +111,7 @@ func (c *CDPClient) connectToTarget(preferredTargetID string) error {
 	}
 
 	// Connect via WebSocket
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-	}
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, _, err := browserWSDialer().Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to CDP: %w", err)
 	}
@@ -338,9 +342,9 @@ func (c *CDPClient) Type(selector string, text string) error {
 
 	// Clear existing content
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
-		"type":                "keyDown",
-		"key":                 "a",
-		"modifiers":           2, // Ctrl
+		"type":                  "keyDown",
+		"key":                   "a",
+		"modifiers":             2, // Ctrl
 		"windowsVirtualKeyCode": 65,
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
@@ -348,8 +352,8 @@ func (c *CDPClient) Type(selector string, text string) error {
 		"key":  "a",
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
-		"type":                "keyDown",
-		"key":                 "Backspace",
+		"type":                  "keyDown",
+		"key":                   "Backspace",
 		"windowsVirtualKeyCode": 8,
 	})
 	_, _ = c.call("Input.dispatchKeyEvent", map[string]interface{}{
@@ -488,8 +492,13 @@ func (c *CDPClient) WaitForSelector(selector string, timeout time.Duration) erro
 	return fmt.Errorf("timeout waiting for selector: %s", selector)
 }
 
-// Navigate navigates to a URL and waits for load
+// Navigate navigates to a URL and waits for load. Page.navigate loads any
+// scheme (file:// reads every profile in the browser user's home, chrome://
+// is browser-internal), so the URL must pass ValidateNavigationURL.
 func (c *CDPClient) Navigate(url string) error {
+	if err := ValidateNavigationURL(url); err != nil {
+		return err
+	}
 	_, err := c.call("Page.navigate", map[string]interface{}{
 		"url": url,
 	})
@@ -543,39 +552,19 @@ func (c *Controller) Screenshot(outputPath string) (string, error) {
 		return "", err
 	}
 
-	// Determine output path - always resolve within workspace
+	// Root writes this into the agent-writable workspace, so the write never
+	// follows a symlink at the target or any parent (writeWorkspaceFile).
 	if outputPath == "" {
-		outputPath = filepath.Join(c.workspace, fmt.Sprintf("screenshot-%d.png", time.Now().Unix()))
-	} else if filepath.IsAbs(outputPath) {
-		// Reject absolute paths to prevent writes outside workspace
-		return "", fmt.Errorf("absolute paths are not allowed; use a relative path")
-	} else {
-		outputPath = filepath.Join(c.workspace, outputPath)
+		outputPath = fmt.Sprintf("screenshot-%d.png", time.Now().Unix())
 	}
-
-	// Verify resolved path is within workspace (prevent ../ traversal)
-	resolved, err := filepath.Abs(outputPath)
+	path, err := writeWorkspaceFile(c.workspace, outputPath, data, 0o644)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
-	}
-	workspaceAbs, err := filepath.Abs(c.workspace)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve workspace: %w", err)
-	}
-	if !strings.HasPrefix(resolved, workspaceAbs+string(filepath.Separator)) && resolved != workspaceAbs {
-		return "", fmt.Errorf("path escapes workspace directory")
-	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		if errors.Is(err, errSymlinkInPath) {
+			log.Printf("[browser] SECURITY: screenshot path %q goes through a symlink — refused", outputPath)
+		}
 		return "", fmt.Errorf("failed to write screenshot: %w", err)
 	}
-
-	return outputPath, nil
+	return path, nil
 }
 
 // Click clicks an element
@@ -698,8 +687,13 @@ func (c *Controller) WaitForSelector(selector string, timeout time.Duration) err
 	return cdp.WaitForSelector(selector, timeout)
 }
 
-// Navigate navigates to a URL using CDP (alternative to OpenURL)
+// Navigate navigates to a URL using CDP (alternative to OpenURL). Agents
+// reach this through MCP and the HTTP API, so the URL is checked before
+// anything else (ValidateNavigationURL; CDPClient.Navigate checks again).
 func (c *Controller) Navigate(url string) error {
+	if err := ValidateNavigationURL(url); err != nil {
+		return err
+	}
 	if !c.running || c.debugPort == 0 {
 		return fmt.Errorf("browser not running")
 	}

@@ -1,4 +1,10 @@
+// REVISION: e2e-terminal-v2-wrapped-prompt
 import { type Page, expect } from "@playwright/test";
+
+const MODULE_REVISION = "e2e-terminal-v2-wrapped-prompt";
+console.log(
+  `[e2e-terminal] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`
+);
 
 /**
  * Add a terminal block to the current dashboard canvas.
@@ -58,8 +64,13 @@ export async function readTerminalText(page: Page): Promise<string> {
  * the old `content.trim().length > 0` check green-lit that stuck state, hiding
  * the flaky-first-connect bug. Requiring the `user@host:…[#$]` shape is what
  * makes the stuck state fail a test instead of passing it.
+ *
+ * The cwd is `/workspace/<dashboard-uuid>`, so a prompt is ~70 columns and can
+ * wrap onto a second row (desktop terminals run as `pty-NNN`, longer than
+ * `root`). readTerminalText joins rows with `\n`, so the `#`/`$` may sit on the
+ * next row: allow one continuation row of unbroken path characters before it.
  */
-export const SHELL_PROMPT_RE = /[\w.-]+@[\w.-]+:[^\n]*[#$]/;
+export const SHELL_PROMPT_RE = /[\w.-]+@[\w.-]+:[^\n]*(?:\n\S*)?[#$]/;
 
 /**
  * Wait for the terminal to connect and show a real shell prompt.

@@ -1,6 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: server-side-cron-v7-task-tracking
+// REVISION: server-side-cron-v10-pty-dashboard-token
 
 /**
  * Edge-Based Schedule Executor
@@ -15,14 +15,14 @@
  * The sandbox reports completion via POST /internal/schedule-executions/:id/pty-completed
  */
 
-const MODULE_REVISION = 'server-side-cron-v7-task-tracking';
+const MODULE_REVISION = 'server-side-cron-v10-pty-dashboard-token';
 console.log(`[executor] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 import type { Env, Schedule, ScheduleExecution, ScheduleExecutionTerminal } from '../types';
 import type { EnvWithDriveCache } from '../storage/drive-cache';
-import { ensureDashbоardSandbоx } from '../sessions/handler';
+import { ensureDashbоardSandbоx, mintCurrentSandboxDashboardToken } from '../sessions/handler';
 import { SandboxClient } from '../sandbox/client';
-import { createPtyToken } from '../auth/pty-token';
+import { createPtyToken, tokenSigningSecret } from '../auth/pty-token';
 import { createTaskInternal, updateTaskStatusInternal } from '../agent-state/handler';
 
 function generateId(): string {
@@ -50,10 +50,11 @@ export async function executeScheduleByEdges(
   const edges = await env.DB.prepare(`
     SELECT e.target_item_id, i.type
     FROM dashboard_edges e
-    INNER JOIN dashboard_items i ON e.target_item_id = i.id
+    INNER JOIN dashboard_items i ON e.target_item_id = i.id AND i.dashboard_id = e.dashboard_id
     WHERE e.source_item_id = ?
+      AND e.dashboard_id = ?
       AND i.type = 'terminal'
-  `).bind(itemId).all();
+  `).bind(itemId, dashboardId).all();
 
   const terminalItemIds = edges.results.map(e => e.target_item_id as string);
 
@@ -151,7 +152,7 @@ export async function executeScheduleByEdges(
   }
 
   const { sandboxSessionId, sandboxMachineId } = sandboxResult;
-  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN);
+  const sandbox = new SandboxClient(env.SANDBOX_URL, env.SANDBOX_INTERNAL_TOKEN, env.SANDBOX_AUTH_SIGNING_KEY);
 
   // 3. For each connected terminal, trigger execution
   for (let i = 0; i < terminals.length; i++) {
@@ -162,9 +163,9 @@ export async function executeScheduleByEdges(
       const activeSession = await env.DB.prepare(`
         SELECT id, pty_id, sandbox_session_id, sandbox_machine_id
         FROM sessions
-        WHERE item_id = ? AND status = 'active'
+        WHERE item_id = ? AND dashboard_id = ? AND status = 'active'
         ORDER BY created_at DESC LIMIT 1
-      `).bind(terminal.itemId).first();
+      `).bind(terminal.itemId, dashboardId).first();
 
       if (activeSession?.pty_id) {
         // Terminal has an active PTY — write command to it
@@ -205,7 +206,7 @@ export async function executeScheduleByEdges(
             sandboxSessionId,
             dashboardId,
             effectiveUserId,
-            env.INTERNAL_API_TOKEN
+            tokenSigningSecret(env)
           );
 
           terminal.ptyId = ptyId;
@@ -226,6 +227,7 @@ export async function executeScheduleByEdges(
               ptyId,
               integrationToken,
               executionId, // Set at creation time so callback is registered before process starts
+              dashboardToken: await mintCurrentSandboxDashboardToken(env, dashboardId, sandboxSessionId),
             }
           );
 

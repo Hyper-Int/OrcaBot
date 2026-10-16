@@ -1,3 +1,7 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v1-host-push
 //! macOS VM implementation using Apple Virtualization.framework.
 //!
 //! This implementation uses native macOS Virtualization.framework to boot
@@ -89,6 +93,19 @@ impl MacOSVM {
             .unwrap_or(false)
     }
 
+    /// Whether this vz-helper build accepts `--guest-time-sync-port`.
+    fn helper_supports_timesync(helper_path: &Path) -> bool {
+        Command::new(helper_path)
+            .arg("--help")
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout).contains("--guest-time-sync-port")
+                    || String::from_utf8_lossy(&o.stderr).contains("--guest-time-sync-port")
+            })
+            .unwrap_or(false)
+    }
+
     /// Start VM using native Virtualization.framework via Swift helper.
     ///
     /// This spawns a small Swift helper process that manages the VZ VM,
@@ -165,6 +182,24 @@ impl MacOSVM {
             "--reverse-port-forward",
             &format!("{}:{}", CONTROLPLANE_PORT, config.controlplane_host_port),
         ]);
+        // Guest clock sync: vz-helper pushes host UTC to the guest's root-only
+        // daemon on this vsock port after boot, on host wake and every 60s (the
+        // guest has no NTP and its clock stops while the Mac sleeps, which breaks
+        // every signed control-plane request). See vm/timesync.rs. Only passed
+        // when the helper knows the flag: a stale dev vz-helper would otherwise
+        // reject the unknown option and the VM would not boot at all.
+        if Self::helper_supports_timesync(&helper_path) {
+            cmd.args([
+                "--guest-time-sync-port",
+                &super::GUEST_TIMESYNC_VSOCK_PORT.to_string(),
+            ]);
+        } else {
+            eprintln!(
+                "[vm] WARNING: vz-helper at {} predates --guest-time-sync-port; guest \
+                 clock sync DISABLED (rebuild vz-helper: vz-helper/build.sh)",
+                helper_path.display()
+            );
+        }
 
         cmd.stdout(Stdio::inherit());
         cmd.stderr(Stdio::inherit());
@@ -190,6 +225,15 @@ impl MacOSVM {
             "[vm] native VZ backend: inbound vsock (sandbox :{}), reverse vsock \
              (guest→host control plane :{}) active.",
             config.sandbox_port, config.controlplane_host_port
+        );
+        eprintln!(
+            "[vm] REVISION: {} guest clock sync via vz-helper -> vsock:{} (at {})",
+            super::timesync::TIMESYNC_REVISION,
+            super::GUEST_TIMESYNC_VSOCK_PORT,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| format!("{}s", d.as_secs()))
+                .unwrap_or_default()
         );
 
         Ok(())

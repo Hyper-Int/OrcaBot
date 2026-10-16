@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: discord-client-v1-initial
-const MODULE_REVISION = 'discord-client-v1-initial';
+// REVISION: discord-client-v3-identifier-renames
+const MODULE_REVISION = 'discord-client-v3-identifier-renames';
 console.log(`[discord-client] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -13,6 +13,38 @@ console.log(`[discord-client] REVISION: ${MODULE_REVISION} loaded at ${new Date(
  */
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+/**
+ * Every Discord integration shares the platform bot token, which is in every
+ * customer's guild. The gateway must therefore pin each action to the guild
+ * stored on the caller's integration (gateway.ts step 9c):
+ *   - guild actions get guild_id forced to the stored guild;
+ *   - channel actions have their channel looked up and must belong to it.
+ * An action in none of these sets is denied, so a new action can't skip the check.
+ */
+export const DISCORD_GUILD_ACTIONS = new Set(['discord.list_channels']);
+export const DISCORD_CHANNEL_ACTIONS = new Set([
+  'discord.read_messages',
+  'discord.send_message',
+  'discord.reply_thread',
+  'discord.react',
+  'discord.edit_message',
+  'discord.delete_message',
+]);
+// Public user profile lookup; not tied to any guild's data.
+export const DISCORD_UNSCOPED_ACTIONS = new Set(['discord.get_user_info']);
+
+/**
+ * The guild a channel (or thread) belongs to, or null for a DM / group DM.
+ * Throws on any lookup failure so callers fail closed.
+ */
+export async function getDiscоrdChannelGuildId(channelId: string, accessToken: string): Promise<string | null> {
+  const data = await discordFetch(`/channels/${encodeURIComponent(channelId)}`, accessToken) as DiscordChannel;
+  if (!data || typeof data !== 'object' || data.id !== channelId) {
+    throw new Error('Discord channel lookup returned an unexpected response');
+  }
+  return typeof data.guild_id === 'string' && data.guild_id ? data.guild_id : null;
+}
 
 interface DiscordMessage {
   id: string;

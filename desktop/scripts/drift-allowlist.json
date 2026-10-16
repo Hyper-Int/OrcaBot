@@ -29,6 +29,7 @@
     "WHATSAPP_BUSINESS_PHONE": "External service — see WHATSAPP_ACCESS_TOKEN.",
     "WHATSAPP_PHONE_NUMBER_ID": "External service — see WHATSAPP_ACCESS_TOKEN.",
     "WHATSAPP_VERIFY_TOKEN": "External service — see WHATSAPP_ACCESS_TOKEN.",
+    "WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX": "Cloud-only — only read when provisioning Fly machines (sandboxInternalTokenEnv). The desktop VM is booted by main.rs and never receives INTERNAL_API_TOKEN.",
     "DISCORD_BOT_TOKEN": "External service — Discord interaction webhook needs a public URL.",
     "DISCORD_PUBLIC_KEY": "External service — see DISCORD_BOT_TOKEN.",
     "SLACK_SIGNING_SECRET": "External service — Slack events API needs a public URL.",

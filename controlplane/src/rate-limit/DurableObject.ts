@@ -1,5 +1,6 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: rate-limit-do-v1-error-codes
 
 /**
  * Rate Limit Counter Durable Object
@@ -73,7 +74,7 @@ export class RateLimitCounter implements DurableObject {
         return Response.json(result);
       } catch (e) {
         return Response.json(
-          { error: 'Invalid request body' },
+          { error: 'E79169: Invalid request body' },
           { status: 400 }
         );
       }

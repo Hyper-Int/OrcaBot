@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: gateway-v30-forward-as-send-category
-const MODULE_REVISION = 'gateway-v30-forward-as-send-category';
+// REVISION: gateway-v35-error-codes
+const MODULE_REVISION = 'gateway-v35-error-codes';
 console.log(`[integration-gateway] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -38,8 +38,9 @@ import type {
   OutlookPolicy,
   OutlookCalendarPolicy,
 } from '../types';
-import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
+import { verifyPtyToken, tokenSigningSecret, type PtyTokenClaims } from '../auth/pty-token';
 import { enforcePolicy, type EnforcementResult } from './handler';
+import { validateGatewayArgs, dropEmptyPathArgs, MESSAGING_TARGET_FIELD } from './arg-safety';
 import { getAccessToken } from './token-refresh';
 import { filterResponse, type FilterResult } from './response-filter';
 import { executeGmailAction } from './api-clients/gmail';
@@ -47,7 +48,13 @@ import { executeGitHubAction } from './api-clients/github';
 import { executeDriveAction } from './api-clients/drive';
 import { executeCalendarAction } from './api-clients/calendar';
 import { executeSlackAction } from './api-clients/slack';
-import { executeDiscordAction } from './api-clients/discord';
+import {
+  executeDiscordAction,
+  getDiscоrdChannelGuildId,
+  DISCORD_CHANNEL_ACTIONS,
+  DISCORD_GUILD_ACTIONS,
+  DISCORD_UNSCOPED_ACTIONS,
+} from './api-clients/discord';
 import { executeTelegramAction, type TelegramD1Context } from './api-clients/telegram';
 import { executeWhatsAppAction } from './api-clients/whatsapp';
 import { executeTeamsAction } from './api-clients/teams';
@@ -185,29 +192,21 @@ export function deriveEnforcementContext(action: string, args: Record<string, un
   //   Matrix: "room_id"
   //   Google Chat: "space" or "space_name"
   //   WhatsApp: "to" (recipient phone number)
-  if (typeof args.channel === 'string') {
-    ctx.channelId = args.channel;
-  } else if (typeof args.chat_id === 'string') {
-    ctx.channelId = args.chat_id;
-  } else if (typeof args.channel_id === 'string') {
-    ctx.channelId = args.channel_id;
-  } else if (typeof args.room_id === 'string') {
-    ctx.channelId = args.room_id;
-  } else if (typeof args.space === 'string') {
-    ctx.channelId = args.space;
-  } else if (typeof args.space_name === 'string') {
-    ctx.channelId = args.space_name;
-  } else if (typeof args.to === 'string') {
-    ctx.channelId = args.to;
+  // Only the field the provider's client actually sends to: checking another
+  // field (e.g. `channel` while Telegram sends to `chat_id`) is a bypass.
+  const targetField = MESSAGING_TARGET_FIELD[action.split('.')[0]];
+  if (targetField && typeof args[targetField] === 'string') {
+    ctx.channelId = args[targetField] as string;
   }
-  // Channel name from args (if provided); otherwise enforcement uses ID only
-  if (typeof args.channel_name === 'string') {
-    ctx.channelName = args.channel_name;
-  }
+  // The channel name is never taken from args: an LLM-supplied name would pass
+  // a name allowlist for any channel ID. The gateway resolves it from the ID.
 
-  // Extract messaging text for maxMessageLength enforcement
-  if (typeof args.text === 'string') {
-    ctx.messageText = args.text;
+  // Everything the clients send as message content (Discord falls back to
+  // `content`, Slack also sends `blocks`), for maxMessageLength enforcement.
+  const messageParts = [args.text, args.content].filter((v): v is string => typeof v === 'string');
+  if (args.blocks !== undefined) messageParts.push(JSON.stringify(args.blocks));
+  if (messageParts.length > 0) {
+    ctx.messageText = messageParts.join('\n');
   }
 
   // Extract thread ID for requireThreadReply enforcement.
@@ -410,7 +409,7 @@ async function checkRateLimit(
   if (limit === 0) {
     return {
       allowed: false,
-      reason: `Rate limit is 0 for ${category} (all ${category} blocked)`,
+      reason: `E79260: Rate limit is 0 for ${category} (all ${category} blocked)`,
     };
   }
 
@@ -428,20 +427,20 @@ async function checkRateLimit(
     if (!res.ok) {
       // Fail closed on error - deny requests when rate limiter is unavailable
       console.error(`[gateway] Rate limit check failed (failing closed): ${res.status}`);
-      return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
+      return { allowed: false, reason: 'E79261: Rate limiter unavailable - request denied for safety' };
     }
 
     const result = await res.json() as { allowed: boolean; remaining?: number };
     if (!result.allowed) {
       return {
         allowed: false,
-        reason: `Rate limit exceeded for ${category} (${limit}/${window})`,
+        reason: `E79262: Rate limit exceeded for ${category} (${limit}/${window})`,
       };
     }
   } catch (err) {
     // Fail closed on error - deny requests when rate limiter is unavailable
     console.error(`[gateway] Rate limit check error (failing closed):`, err);
-    return { allowed: false, reason: 'Rate limiter unavailable - request denied for safety' };
+    return { allowed: false, reason: 'E79263: Rate limiter unavailable - request denied for safety' };
   }
 
   return { allowed: true };
@@ -577,17 +576,17 @@ export async function handleGatewayExecute(
   const authHeader = request.headers.get('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Missing Authorization header' },
+      { error: 'AUTH_DENIED', reason: 'E79264: Missing Authorization header' },
       { status: 401 }
     );
   }
 
   const ptyToken = authHeader.slice(7);
-  const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+  const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
 
   if (!claims) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
+      { error: 'AUTH_DENIED', reason: 'E79265: Invalid or expired PTY token' },
       { status: 401 }
     );
   }
@@ -600,16 +599,19 @@ export async function handleGatewayExecute(
     body = await request.json() as GatewayExecuteRequest;
   } catch {
     return Response.json(
-      { error: 'INVALID_REQUEST', reason: 'Invalid JSON body' },
+      { error: 'INVALID_REQUEST', reason: 'E79266: Invalid JSON body' },
       { status: 400 }
     );
   }
 
   if (!body.action) {
     return Response.json(
-      { error: 'INVALID_REQUEST', reason: 'Missing action' },
+      { error: 'INVALID_REQUEST', reason: 'E79267: Missing action' },
       { status: 400 }
     );
+  }
+  if (!body.args || typeof body.args !== 'object' || Array.isArray(body.args)) {
+    body.args = {};
   }
 
   // 3. Load terminal_integration and active policy
@@ -636,7 +638,7 @@ export async function handleGatewayExecute(
 
   if (!ti) {
     return Response.json(
-      { error: 'NOT_ATTACHED', reason: `${provider} not attached to this terminal` },
+      { error: 'NOT_ATTACHED', reason: `E79268: ${provider} not attached to this terminal` },
       { status: 403 }
     );
   }
@@ -644,7 +646,7 @@ export async function handleGatewayExecute(
   // 4. Defense-in-depth: Verify terminal_integration matches token context
   if (ti.dashboard_id !== dashboardId || ti.user_id !== userId) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Dashboard mismatch' },
+      { error: 'AUTH_DENIED', reason: 'E79269: Dashboard mismatch' },
       { status: 403 }
     );
   }
@@ -652,7 +654,7 @@ export async function handleGatewayExecute(
   // 5. Verify policy exists
   if (!ti.active_policy_id || !ti.policy) {
     return Response.json(
-      { error: 'POLICY_DENIED', reason: 'No policy configured' },
+      { error: 'POLICY_DENIED', reason: 'E79270: No policy configured' },
       { status: 403 }
     );
   }
@@ -689,6 +691,29 @@ export async function handleGatewayExecute(
     );
   }
 
+  // 6b. Reject args that would mean one thing to enforcePolicy and another to the
+  // provider (path traversal in IDs, header injection, multi-address recipients).
+  dropEmptyPathArgs(provider, body.args);
+  const argError = validateGatewayArgs(provider, body.args);
+  if (argError) {
+    await logAuditEntry(env, {
+      terminalIntegrationId: ti.id,
+      terminalId,
+      dashboardId,
+      userId,
+      provider,
+      action: body.action,
+      policyId,
+      policyVersion,
+      decision: 'denied',
+      denialReason: argError,
+    });
+    return Response.json(
+      { allowed: false, decision: 'denied' as const, reason: argError, policyId, policyVersion },
+      { status: 403 }
+    );
+  }
+
   // 7. Derive enforcement context server-side from args (NEVER trust body.context)
   const derivedContext = deriveEnforcementContext(body.action, body.args);
 
@@ -705,6 +730,12 @@ export async function handleGatewayExecute(
             `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(replyMsgId)}?$select=from`,
             { headers: { Authorization: `Bearer ${token}` } },
           );
+          // The reply goes to the original sender, whatever `to` the LLM passed.
+          // Fail closed: with no sender to check, enforce against no recipient.
+          derivedContext.recipient = undefined;
+          derivedContext.recipients = undefined;
+          derivedContext.recipientDomain = undefined;
+          derivedContext.recipientDomains = undefined;
           if (msgResp.ok) {
             const msg = await msgResp.json() as { from?: { emailAddress?: { address?: string } } };
             const senderAddr = msg.from?.emailAddress?.address;
@@ -858,14 +889,14 @@ export async function handleGatewayExecute(
 
       if (!bridgeSub) {
         return Response.json(
-          { error: 'AUTH_DENIED', reason: 'No active bridge WhatsApp connection found' },
+          { error: 'AUTH_DENIED', reason: 'E79271: No active bridge WhatsApp connection found' },
           { status: 403 }
         );
       }
 
     if (!env.BRIDGE_URL || !env.BRIDGE_INTERNAL_TOKEN) {
       return Response.json(
-        { error: 'API_ERROR', reason: 'Bridge service not configured' },
+        { error: 'API_ERROR', reason: 'E79272: Bridge service not configured' },
         { status: 503 }
       );
     }
@@ -886,7 +917,7 @@ export async function handleGatewayExecute(
         }
         default:
           return Response.json(
-            { error: 'API_ERROR', reason: `Action ${body.action} is not supported for bridge WhatsApp connections` },
+            { error: 'API_ERROR', reason: `E79273: Action ${body.action} is not supported for bridge WhatsApp connections` },
             { status: 400 }
           );
       }
@@ -908,7 +939,7 @@ export async function handleGatewayExecute(
       });
 
       return Response.json(
-        { error: 'API_ERROR', reason: errorMessage },
+        { error: 'API_ERROR', reason: `E79284: ${errorMessage}` },
         { status: 502 }
       );
     }
@@ -939,9 +970,8 @@ export async function handleGatewayExecute(
     // WhatsApp can use platform-level credentials when no per-user integration exists
     if (provider === 'whatsapp' && env.WHATSAPP_ACCESS_TOKEN && env.WHATSAPP_PHONE_NUMBER_ID) {
       prefetchedAccessToken = env.WHATSAPP_ACCESS_TOKEN;
-      if (!body.args.phone_number_id) {
-        body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
-      }
+      // Always the platform number: the platform token can send from others.
+      body.args.phone_number_id = env.WHATSAPP_PHONE_NUMBER_ID;
       // Auto-fill recipient from hybrid subscription's linked phone when agent doesn't specify one
       if (!body.args.to) {
         const hybridSub = await env.DB.prepare(`
@@ -957,7 +987,7 @@ export async function handleGatewayExecute(
       }
     } else {
       return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth connection not found' },
+        { error: 'AUTH_DENIED', reason: 'E79274: OAuth connection not found' },
         { status: 403 }
       );
     }
@@ -966,7 +996,7 @@ export async function handleGatewayExecute(
   const accessToken = prefetchedAccessToken ?? await getAccessToken(env, ti.user_integration_id!, provider);
   if (!accessToken) {
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
+      { error: 'AUTH_DENIED', reason: 'E79275: OAuth token expired. Reconnect required.' },
       { status: 403 }
     );
   }
@@ -1009,14 +1039,18 @@ export async function handleGatewayExecute(
         return Response.json({
           allowed: false,
           decision: 'denied' as const,
-          reason: `Action denied: unable to verify file against policy`,
+          reason: `E79276: Action denied: unable to verify file against policy`,
           policyId,
           policyVersion,
         }, { status: 403 });
       }
 
+      // Fail closed unless this is the file's own metadata: the single-file filter
+      // only applies to objects with an `id`, so anything else would pass unchecked.
+      const isFileMetadata = !!metadata && typeof metadata === 'object' &&
+        (metadata as { id?: unknown }).id === fileId;
       const metadataFilter = filterResponse('google_drive', 'drive.get', metadata, policy);
-      if (metadataFilter.filtered && metadataFilter.data === null) {
+      if (!isFileMetadata || (metadataFilter.filtered && metadataFilter.data === null)) {
         await logAuditEntry(env, {
           terminalIntegrationId: ti.id,
           terminalId,
@@ -1034,7 +1068,7 @@ export async function handleGatewayExecute(
         return Response.json({
           allowed: false,
           decision: 'denied' as const,
-          reason: 'File filtered by policy (folder/filetype restriction)',
+          reason: 'E79277: File filtered by policy (folder/filetype restriction)',
           policyId,
           policyVersion,
         }, { status: 403 });
@@ -1042,31 +1076,84 @@ export async function handleGatewayExecute(
     }
   }
 
-  // 9c. Discord: inject guild_id from stored metadata so LLM doesn't need to know it
+  // 9c. Discord: every integration uses the shared platform bot, which is in every
+  // customer's guild, so the guild comes from the stored integration and every
+  // channel must belong to it. Anything unverifiable is denied (fail closed).
   if (provider === 'discord') {
+    const denyDiscord = async (reason: string, resourceId?: string) => {
+      await logAuditEntry(env, {
+        terminalIntegrationId: ti.id,
+        terminalId,
+        dashboardId,
+        userId,
+        provider,
+        action: body.action,
+        resourceId,
+        policyId,
+        policyVersion,
+        decision: 'denied',
+        denialReason: reason,
+      });
+      return Response.json(
+        { allowed: false, decision: 'denied' as const, reason, policyId, policyVersion },
+        { status: 403 }
+      );
+    };
+
+    let storedGuildId: string | null = null;
     const discordMeta = await env.DB.prepare(`
       SELECT metadata FROM user_integrations WHERE id = ?
     `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
     if (discordMeta?.metadata) {
       try {
-        const meta = JSON.parse(discordMeta.metadata) as { guild_id?: string };
-        if (meta.guild_id && !body.args.guild_id) {
-          body.args.guild_id = meta.guild_id;
-        }
-      } catch { /* ignore parse errors */ }
+        const meta = JSON.parse(discordMeta.metadata) as { guild_id?: unknown };
+        if (typeof meta.guild_id === 'string' && meta.guild_id) storedGuildId = meta.guild_id;
+      } catch { /* treated as no guild */ }
+    }
+    if (!storedGuildId) {
+      return denyDiscord('E79624: Discord integration has no verified server. Reconnect Discord.');
+    }
+    const llmGuildId = body.args.guild_id;
+    if (llmGuildId !== undefined && llmGuildId !== null && llmGuildId !== '' && llmGuildId !== storedGuildId) {
+      return denyDiscord('E79625: guild_id must be the connected Discord server');
+    }
+    body.args.guild_id = storedGuildId;
+
+    if (DISCORD_CHANNEL_ACTIONS.has(body.action)) {
+      const channel = body.args.channel;
+      if (typeof channel !== 'string' || !channel) {
+        return denyDiscord('E79626: channel is required');
+      }
+      let channelGuildId: string | null;
+      try {
+        channelGuildId = await getDiscоrdChannelGuildId(channel, accessToken);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.warn(`[gateway] Discord channel lookup failed for ${channel}: ${msg}`);
+        return denyDiscord('E79627: Unable to verify the Discord channel belongs to the connected server', channel);
+      }
+      if (channelGuildId !== storedGuildId) {
+        return denyDiscord('E79628: Discord channel is not in the connected server', channel);
+      }
+    } else if (!DISCORD_GUILD_ACTIONS.has(body.action) && !DISCORD_UNSCOPED_ACTIONS.has(body.action)) {
+      return denyDiscord(`E79629: Unsupported Discord action: ${body.action}`);
     }
   }
 
-  // 9d. WhatsApp Cloud API: inject phone_number_id from stored metadata so LLM doesn't need to know it
-  if (provider === 'whatsapp' && ti.user_integration_id && !body.args.phone_number_id) {
-    const waMeta = await env.DB.prepare(`
+  // 9d. WhatsApp Cloud API / Matrix: routing comes from the stored integration,
+  // never from the LLM. An LLM-supplied phone_number_id could send from another
+  // number on the account; an LLM-supplied homeserver would receive the token.
+  if ((provider === 'whatsapp' || provider === 'matrix') && ti.user_integration_id) {
+    const field = provider === 'whatsapp' ? 'phone_number_id' : 'homeserver';
+    delete body.args[field];
+    const storedMeta = await env.DB.prepare(`
       SELECT metadata FROM user_integrations WHERE id = ?
     `).bind(ti.user_integration_id).first<{ metadata: string | null }>();
-    if (waMeta?.metadata) {
+    if (storedMeta?.metadata) {
       try {
-        const meta = JSON.parse(waMeta.metadata) as { phone_number_id?: string };
-        if (meta.phone_number_id) {
-          body.args.phone_number_id = meta.phone_number_id;
+        const meta = JSON.parse(storedMeta.metadata) as Record<string, unknown>;
+        if (typeof meta[field] === 'string' && meta[field]) {
+          body.args[field] = meta[field];
         }
       } catch { /* ignore parse errors */ }
     }
@@ -1148,7 +1235,7 @@ export async function handleGatewayExecute(
     // Pass through provider API error messages (e.g. "Slack API error: not_in_channel")
     // These are public error codes that help the LLM and user diagnose the issue.
     return Response.json(
-      { error: 'API_ERROR', reason: errorMessage },
+      { error: 'API_ERROR', reason: `E79285: ${errorMessage}` },
       { status: 502 }
     );
   }
@@ -1213,18 +1300,18 @@ export async function handleListTerminalIntegrations(
   if (!authHeader?.startsWith('Bearer ')) {
     console.log(`[gateway] ListTerminalIntegrations: missing Authorization header`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Missing Authorization header' },
+      { error: 'AUTH_DENIED', reason: 'E79278: Missing Authorization header' },
       { status: 401 }
     );
   }
 
   const ptyToken = authHeader.slice(7);
-  const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
+  const claims = await verifyPtyToken(ptyToken, tokenSigningSecret(env));
 
   if (!claims) {
     console.log(`[gateway] ListTerminalIntegrations: invalid/expired PTY token`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
+      { error: 'AUTH_DENIED', reason: 'E79279: Invalid or expired PTY token' },
       { status: 401 }
     );
   }
@@ -1233,7 +1320,7 @@ export async function handleListTerminalIntegrations(
   if (claims.terminal_id !== ptyId) {
     console.log(`[gateway] ListTerminalIntegrations: PTY ID mismatch token=${claims.terminal_id} url=${ptyId}`);
     return Response.json(
-      { error: 'AUTH_DENIED', reason: 'PTY ID mismatch' },
+      { error: 'AUTH_DENIED', reason: 'E79280: PTY ID mismatch' },
       { status: 403 }
     );
   }
@@ -1264,7 +1351,7 @@ export async function handleListTerminalIntegrations(
  *
  * GET /internal/dashboards/:dashboardId/terminal-integrations
  *
- * Auth: X-Internal-Token (sandbox internal auth)
+ * Auth: X-Internal-Token (full trust) or X-Dashboard-Token scoped to :dashboardId
  *
  * Response:
  *   {
@@ -1280,14 +1367,10 @@ export async function handleBatchListTerminalIntegrations(
   env: Env,
   dashboardId: string
 ): Promise<Response> {
-  // Auth: require internal token
-  const internalToken = request.headers.get('X-Internal-Token');
-  if (!internalToken || internalToken !== env.INTERNAL_API_TOKEN) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or missing internal token' },
-      { status: 401 }
-    );
-  }
+  // Auth: internal token (full trust) or a dashboard token scoped to this dashboard
+  const { authorizeSandboxForDashboard } = await import('../auth/sandbox-auth');
+  const authError = await authorizeSandboxForDashboard(request, env, dashboardId);
+  if (authError) return authError;
 
   // Single query for all terminals in this dashboard
   const integrations = await env.DB.prepare(`

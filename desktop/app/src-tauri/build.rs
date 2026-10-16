@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 fn main() {
   // The packaged frontend is a REMOTE-origin webview (http://localhost:8788), and
   // Tauri v2's ACL rejects custom app commands from remote origins unless they're

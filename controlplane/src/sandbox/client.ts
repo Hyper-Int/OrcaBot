@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: sandbox-client-v3-no-per-session-egress
-const sandboxClientRevision = "sandbox-client-v3-no-per-session-egress";
+// REVISION: sandbox-client-v6-identifier-renames
+const sandboxClientRevision = "sandbox-client-v6-identifier-renames";
 console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new Date().toISOString()}`);
 
 /**
@@ -11,6 +11,8 @@ console.log(`[sandbox-client] REVISION: ${sandboxClientRevision} loaded at ${new
  * Communicates with the sandbox server (Go backend running on Fly.io or localhost).
  * This is the control plane's interface to the execution plane.
  */
+
+import { signSandbоxRequest } from './request-signing';
 
 // Default timeout for sandbox requests. Prevents indefinite hangs when Fly proxy
 // can't route to a machine (Fly-Replay loop to a destroyed machine = PR04 error).
@@ -28,24 +30,34 @@ export interface SandboxPty {
 export class SandboxClient {
   private baseUrl: string;
   private token: string;
+  private signingKey: string | undefined;
 
-  constructor(baseUrl: string, token?: string) {
+  /**
+   * @param token - legacy static SANDBOX_INTERNAL_TOKEN (sent while configured)
+   * @param signingKey - SANDBOX_AUTH_SIGNING_KEY; when set every request is signed per target machine
+   */
+  constructor(baseUrl: string, token?: string, signingKey?: string) {
     // Remove trailing slash
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.token = token || '';
-    if (!this.token) {
-      console.error(`[SandboxClient] WARNING: no auth token provided — all requests will be unauthenticated`);
+    this.signingKey = signingKey || undefined;
+    if (!this.token && !this.signingKey) {
+      console.error(`[SandboxClient] WARNING: no auth token or signing key provided — all requests will be unauthenticated`);
     } else {
       console.log(`[SandboxClient] initialized with token (len=${this.token.length}, prefix=${this.token.slice(0, 4)})`);
     }
   }
 
   /** Fetch with an AbortController timeout to prevent indefinite hangs. */
+  // Every request goes through here, so this is where it gets signed for its target
+  // machine (read from X-Sandbox-Machine-ID, which callers set beforehand).
   private async timedFetch(url: string, init?: RequestInit, timeoutMs = SANDBOX_FETCH_TIMEOUT_MS): Promise<Response> {
+    const headers = new Headers(init?.headers);
+    await signSandbоxRequest(this.signingKey, headers, init?.method || 'GET', url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      return await fetch(url, { ...init, signal: controller.signal });
+      return await fetch(url, { ...init, headers, signal: controller.signal });
     } finally {
       clearTimeout(timeoutId);
     }
@@ -224,6 +236,10 @@ export class SandboxClient {
       workingDir?: string;
       // Schedule execution ID — set at creation time so callback is in place before process starts
       executionId?: string;
+      // Fresh dashboard-scoped token for the sandbox's current generation. The VM
+      // only gets one at sandbox-session create; resending it with each PTY lets a
+      // VM whose token was refused (e.g. after PTY_TOKEN_SECRET rotation) recover.
+      dashboardToken?: string;
       // Per-terminal model selection (e.g. OpenRouter override) — sandbox injects per-harness env vars
       modelSelection?: {
         provider: 'default' | 'openrouter' | 'custom';
@@ -238,7 +254,8 @@ export class SandboxClient {
   ): Promise<SandboxPty> {
     const shouldSendBody = Boolean(
       creatorId || command || options?.ptyId || options?.integrationToken ||
-      options?.workingDir || options?.executionId || options?.modelSelection
+      options?.workingDir || options?.executionId || options?.modelSelection ||
+      options?.dashboardToken
     );
     const body = shouldSendBody
       ? JSON.stringify({
@@ -254,6 +271,8 @@ export class SandboxClient {
           execution_id: options?.executionId,
           // Model selection — sandbox translates to per-harness env vars (OPENAI_BASE_URL etc.)
           model_selection: options?.modelSelection,
+          // Same field name as POST /sessions (cpauth dashboard token)
+          mcp_token: options?.dashboardToken,
         })
       : undefined;
     const headers = new Headers(this.authHeaders());
@@ -276,10 +295,14 @@ export class SandboxClient {
     return res.json();
   }
 
-  async deletePty(sessionId: string, ptyId: string): Promise<void> {
+  async deletePty(sessionId: string, ptyId: string, machineId?: string): Promise<void> {
+    const headers = new Headers(this.authHeaders());
+    if (machineId) {
+      headers.set('X-Sandbox-Machine-ID', machineId);
+    }
     const res = await this.timedFetch(`${this.baseUrl}/sessions/${sessionId}/ptys/${ptyId}`, {
       method: 'DELETE',
-      headers: this.authHeaders(),
+      headers,
     });
     if (!res.ok && res.status !== 404) {
       throw new Error(`Failed to delete PTY: ${res.status}`);

@@ -1,8 +1,8 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: handler-v16-attach-orphan-cleanup
-console.log(`[integration-handler] REVISION: handler-v16-attach-orphan-cleanup loaded at ${new Date().toISOString()}`);
+// REVISION: handler-v19-error-codes
+console.log(`[integration-handler] REVISION: handler-v19-error-codes loaded at ${new Date().toISOString()}`);
 
 import type {
   Env,
@@ -29,7 +29,6 @@ import type {
 } from '../types';
 import { HIGH_RISK_CAPABILITIES } from '../types';
 import { verifyPtyToken, type PtyTokenClaims } from '../auth/pty-token';
-import { getAccessToken } from './token-refresh';
 
 // ============================================
 // Helper Functions
@@ -1404,7 +1403,10 @@ export async function enforcePolicy(
       'canSend', 'canReadHistory', 'canReact', 'canEditMessages', 'canDeleteMessages',
     ]);
 
-    if (msgPolicy.channelFilter && CHANNEL_TARGETED_CAPABILITIES.has(capability)) {
+    // Read actions that target one specific chat despite a non-targeted capability.
+    const CHANNEL_TARGETED_ACTIONS = new Set(['telegram.get_chat_info']);
+
+    if (msgPolicy.channelFilter && (CHANNEL_TARGETED_CAPABILITIES.has(capability) || CHANNEL_TARGETED_ACTIONS.has(action))) {
       // mode: 'all' = no channel restriction — skip filter entirely
       if (msgPolicy.channelFilter.mode === 'allowlist') {
         const { channelIds, channelNames } = msgPolicy.channelFilter;
@@ -1805,7 +1807,7 @@ export async function attachIntegration(
     const browserPolicy = providedPolicy as BrowserPolicy | undefined;
     if (!browserPolicy?.urlFilter?.patterns?.length) {
       return Response.json(
-        { error: 'Browser integration requires at least one URL pattern' },
+        { error: 'E79178: Browser integration requires at least one URL pattern' },
         { status: 400 }
       );
     }
@@ -1825,7 +1827,7 @@ export async function attachIntegration(
 
       if (!bridgeSub) {
         return Response.json(
-          { error: 'No WhatsApp connection found. Configure platform credentials or connect via QR code first.' },
+          { error: 'E79179: No WhatsApp connection found. Configure platform credentials or connect via QR code first.' },
           { status: 400 }
         );
       }
@@ -1834,7 +1836,7 @@ export async function attachIntegration(
     // Non-browser providers require userIntegrationId
     if (!userIntegrationId) {
       return Response.json(
-        { error: 'userIntegrationId is required for non-browser providers' },
+        { error: 'E79180: userIntegrationId is required for non-browser providers' },
         { status: 400 }
       );
     }
@@ -1848,7 +1850,7 @@ export async function attachIntegration(
 
     if (!userInt || userInt.user_id !== userId) {
       return Response.json(
-        { error: 'OAuth connection does not belong to user' },
+        { error: 'E79181: OAuth connection does not belong to user' },
         { status: 403 }
       );
     }
@@ -1877,7 +1879,7 @@ export async function attachIntegration(
       await env.DB.prepare(`DELETE FROM terminal_integrations WHERE id = ?`).bind(existing.id).run();
     } else {
       return Response.json(
-        { error: `${provider} is already attached to this terminal` },
+        { error: `E79182: ${provider} is already attached to this terminal` },
         { status: 409 }
       );
     }
@@ -1998,17 +2000,27 @@ export async function updateIntegrationPolicy(
 
   // Find existing terminal integration
   const existing = await env.DB.prepare(`
-    SELECT id, active_policy_id
+    SELECT id, active_policy_id, user_id
     FROM terminal_integrations
     WHERE terminal_id = ? AND dashboard_id = ? AND provider = ? AND deleted_at IS NULL
   `)
     .bind(terminalId, dashboardId, provider)
-    .first<{ id: string; active_policy_id: string | null }>();
+    .first<{ id: string; active_policy_id: string | null; user_id: string }>();
 
   if (!existing) {
     return Response.json(
-      { error: `${provider} is not attached to this terminal` },
+      { error: `E79183: ${provider} is not attached to this terminal` },
       { status: 404 }
+    );
+  }
+
+  // The policy guards the account of whoever attached the integration (the
+  // gateway uses their OAuth token), so only they may change it — not another
+  // editor, and not the dashboard owner.
+  if (existing.user_id !== userId) {
+    return Response.json(
+      { error: 'E79615: Only the member who attached this integration can change its policy' },
+      { status: 403 }
     );
   }
 
@@ -2017,7 +2029,7 @@ export async function updateIntegrationPolicy(
     const browserPolicy = policy as BrowserPolicy;
     if (!browserPolicy?.urlFilter?.patterns?.length) {
       return Response.json(
-        { error: 'Browser policy requires at least one URL pattern' },
+        { error: 'E79184: Browser policy requires at least one URL pattern' },
         { status: 400 }
       );
     }
@@ -2100,16 +2112,24 @@ export async function detachIntegration(
 
   // Find existing terminal integration
   const existing = await env.DB.prepare(`
-    SELECT id FROM terminal_integrations
+    SELECT id, user_id FROM terminal_integrations
     WHERE terminal_id = ? AND dashboard_id = ? AND provider = ? AND deleted_at IS NULL
   `)
     .bind(terminalId, dashboardId, provider)
-    .first<{ id: string }>();
+    .first<{ id: string; user_id: string }>();
 
   if (!existing) {
     return Response.json(
-      { error: `${provider} is not attached to this terminal` },
+      { error: `E79185: ${provider} is not attached to this terminal` },
       { status: 404 }
+    );
+  }
+
+  // Detaching only removes access, so the dashboard owner may also do it.
+  if (existing.user_id !== userId && access.role !== 'owner') {
+    return Response.json(
+      { error: 'E79616: Only the member who attached this integration, or the dashboard owner, can detach it' },
+      { status: 403 }
     );
   }
 
@@ -2161,7 +2181,7 @@ export async function getPolicyHistory(
 
   if (!ti) {
     return Response.json(
-      { error: `${provider} has never been attached to this terminal` },
+      { error: `E79186: ${provider} has never been attached to this terminal` },
       { status: 404 }
     );
   }
@@ -2278,278 +2298,6 @@ export async function getDashboardAuditLog(
 // ============================================
 // Internal Gateway Handlers (Sandbox → Control Plane)
 // ============================================
-
-/**
- * Validate a gateway request and return the active policy
- * Called by sandbox MCP server before executing integration tools
- */
-export async function validateGatewayRequest(
-  env: Env,
-  terminalId: string,
-  provider: IntegrationProvider,
-  dashboardId: string,
-  userId: string
-): Promise<Response> {
-  // Look up terminal_integration by (terminal_id, provider)
-  const ti = await env.DB.prepare(`
-    SELECT id, active_policy_id, user_integration_id, dashboard_id, user_id
-    FROM terminal_integrations
-    WHERE terminal_id = ? AND provider = ? AND deleted_at IS NULL
-  `)
-    .bind(terminalId, provider)
-    .first<{
-      id: string;
-      active_policy_id: string | null;
-      user_integration_id: string | null;
-      dashboard_id: string;
-      user_id: string;
-    }>();
-
-  if (!ti) {
-    return Response.json(
-      { error: 'NOT_ATTACHED', reason: `${provider} not attached to terminal` },
-      { status: 404 }
-    );
-  }
-
-  // Defense-in-depth: Verify terminal_integration belongs to same dashboard/user
-  if (ti.dashboard_id !== dashboardId || ti.user_id !== userId) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Terminal integration does not match token context' },
-      { status: 403 }
-    );
-  }
-
-  // Load active policy
-  if (!ti.active_policy_id) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'No policy configured for this integration' },
-      { status: 403 }
-    );
-  }
-
-  const policy = await env.DB.prepare(
-    `SELECT * FROM integration_policies WHERE id = ?`
-  )
-    .bind(ti.active_policy_id)
-    .first<Record<string, unknown>>();
-
-  if (!policy) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'Policy configuration error' },
-      { status: 500 }
-    );
-  }
-
-  // Defense-in-depth: Verify policy belongs to this terminal_integration
-  if (policy.terminal_integration_id !== ti.id) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'Policy configuration error' },
-      { status: 500 }
-    );
-  }
-
-  // Get OAuth token if needed (non-browser providers), with automatic refresh
-  let accessToken: string | null = null;
-  if (provider !== 'browser' && ti.user_integration_id) {
-    accessToken = await getAccessToken(env, ti.user_integration_id, provider);
-    if (!accessToken) {
-      return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
-        { status: 403 }
-      );
-    }
-  }
-
-  return Response.json({
-    terminalIntegrationId: ti.id,
-    policyId: policy.id,
-    policyVersion: policy.version,
-    policy: JSON.parse(policy.policy as string),
-    securityLevel: policy.security_level,
-    accessToken,
-  });
-}
-
-/**
- * Validate a gateway request using a PTY token
- * This is the secure entry point - terminal_id is extracted from the verified token
- *
- * Security: The terminal_id comes FROM the cryptographically verified token,
- * not from an untrusted header. This prevents a compromised sandbox from
- * impersonating other terminals.
- *
- * @param action - The action being performed (e.g., "gmail_search", "calendar_create_event")
- *                 Used for rate limiting based on action category
- */
-export async function validateGatewayWithToken(
-  env: Env,
-  ptyToken: string,
-  provider: IntegrationProvider,
-  action?: string,
-  context?: {
-    url?: string;
-    recipient?: string;
-    recipientDomain?: string;
-    sender?: string;
-    senderDomain?: string;
-    resourceId?: string;
-  }
-): Promise<Response> {
-  // 1. Verify PTY token signature and extract claims
-  const claims = await verifyPtyToken(ptyToken, env.INTERNAL_API_TOKEN);
-
-  if (!claims) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Invalid or expired PTY token' },
-      { status: 401 }
-    );
-  }
-
-  // 2. Extract terminal_id from verified token (not from untrusted source)
-  const terminalId = claims.terminal_id;
-  const dashboardId = claims.dashboard_id;
-  const userId = claims.user_id;
-
-  // 3. Look up terminal_integration and policy
-  const ti = await env.DB.prepare(`
-    SELECT id, active_policy_id, user_integration_id, dashboard_id, user_id
-    FROM terminal_integrations
-    WHERE terminal_id = ? AND provider = ? AND deleted_at IS NULL
-  `)
-    .bind(terminalId, provider)
-    .first<{
-      id: string;
-      active_policy_id: string | null;
-      user_integration_id: string | null;
-      dashboard_id: string;
-      user_id: string;
-    }>();
-
-  if (!ti) {
-    return Response.json(
-      { error: 'NOT_ATTACHED', reason: `${provider} not attached to terminal` },
-      { status: 404 }
-    );
-  }
-
-  // Defense-in-depth: Verify terminal_integration belongs to same dashboard/user
-  if (ti.dashboard_id !== dashboardId || ti.user_id !== userId) {
-    return Response.json(
-      { error: 'AUTH_DENIED', reason: 'Terminal integration does not match token context' },
-      { status: 403 }
-    );
-  }
-
-  // Load active policy
-  if (!ti.active_policy_id) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'No policy configured for this integration' },
-      { status: 403 }
-    );
-  }
-
-  const policyRow = await env.DB.prepare(
-    `SELECT * FROM integration_policies WHERE id = ?`
-  )
-    .bind(ti.active_policy_id)
-    .first<Record<string, unknown>>();
-
-  if (!policyRow) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'Policy configuration error' },
-      { status: 500 }
-    );
-  }
-
-  // Defense-in-depth: Verify policy belongs to this terminal_integration
-  if (policyRow.terminal_integration_id !== ti.id) {
-    return Response.json(
-      { error: 'POLICY_DENIED', reason: 'Policy configuration error' },
-      { status: 500 }
-    );
-  }
-
-  const policy = JSON.parse(policyRow.policy as string) as AnyPolicy;
-
-  // 4. Check rate limits if action is provided
-  if (action) {
-    const rateLimitResult = await checkRateLimit(env, ti.id, provider, action, policy);
-    if (!rateLimitResult.allowed) {
-      // Log rate limit denial
-      await logAuditEntryInternal(env, {
-        terminalIntegrationId: ti.id,
-        terminalId,
-        dashboardId,
-        userId,
-        provider,
-        action,
-        resourceId: context?.resourceId,
-        policyId: policyRow.id as string,
-        policyVersion: policyRow.version as number,
-        decision: 'denied',
-        denialReason: rateLimitResult.reason,
-      });
-
-      return Response.json(
-        { error: 'RATE_LIMITED', reason: rateLimitResult.reason },
-        { status: 429 }
-      );
-    }
-  }
-
-  // 5. Enforce policy for the specific action
-  if (action) {
-    const enforcement = await enforcePolicy(env, provider, action, policy, ti.id, context);
-
-    // Log the enforcement decision
-    await logAuditEntryInternal(env, {
-      terminalIntegrationId: ti.id,
-      terminalId,
-      dashboardId,
-      userId,
-      provider,
-      action,
-      resourceId: context?.resourceId,
-      policyId: policyRow.id as string,
-      policyVersion: policyRow.version as number,
-      decision: enforcement.decision,
-      denialReason: enforcement.reason,
-    });
-
-    if (!enforcement.allowed) {
-      return Response.json(
-        {
-          error: enforcement.decision === 'filtered' ? 'FILTERED' : 'POLICY_DENIED',
-          reason: enforcement.reason,
-          decision: enforcement.decision,
-        },
-        { status: 403 }
-      );
-    }
-  }
-
-  // 6. Get OAuth token if needed (non-browser providers), with automatic refresh
-  let accessToken: string | null = null;
-  if (provider !== 'browser' && ti.user_integration_id) {
-    accessToken = await getAccessToken(env, ti.user_integration_id, provider);
-    if (!accessToken) {
-      return Response.json(
-        { error: 'AUTH_DENIED', reason: 'OAuth token expired. Reconnect required.' },
-        { status: 403 }
-      );
-    }
-  }
-
-  return Response.json({
-    terminalIntegrationId: ti.id,
-    policyId: policyRow.id,
-    policyVersion: policyRow.version,
-    policy,
-    securityLevel: policyRow.security_level,
-    accessToken,
-  });
-}
 
 /**
  * Internal helper to log an audit entry (used by gateway functions)

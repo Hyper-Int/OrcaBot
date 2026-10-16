@@ -1,3 +1,7 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+// REVISION: guest-timesync-v1-host-push
 //! Linux VM implementation using QEMU/KVM.
 //!
 //! This implementation spawns a QEMU process with KVM acceleration.
@@ -8,6 +12,8 @@ use super::{VMConfig, VMError, VirtualMachine};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Linux VM using QEMU/KVM.
@@ -24,6 +30,11 @@ pub struct QemuVM {
     sandbox_url: String,
     /// Path to virtiofsd socket
     virtiofs_socket: Option<std::path::PathBuf>,
+    /// Guest CID of the vhost-vsock device (None when /dev/vhost-vsock is not
+    /// usable), used for the guest clock sync channel.
+    vsock_cid: Option<u32>,
+    /// Stops the guest clock sync thread.
+    timesync_stop: Option<Arc<AtomicBool>>,
 }
 
 impl QemuVM {
@@ -35,7 +46,31 @@ impl QemuVM {
             running: false,
             sandbox_url: "http://127.0.0.1:8080".to_string(),
             virtiofs_socket: None,
+            vsock_cid: None,
+            timesync_stop: None,
         }
+    }
+
+    /// A vhost-vsock device needs read/write access to /dev/vhost-vsock (often
+    /// root/kvm-group only). Without it the VM still boots, just without the
+    /// host→guest clock sync channel.
+    fn vhost_vsock_usable() -> bool {
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/vhost-vsock")
+            .is_ok()
+    }
+
+    /// Guest CIDs are host-global; pick one unlikely to collide with another VM
+    /// (0-2 and u32::MAX are reserved).
+    fn pick_guest_cid() -> u32 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64)
+            .unwrap_or(0);
+        let mix = (std::process::id() as u64).wrapping_mul(2_654_435_761) ^ nanos;
+        3 + (mix % (u32::MAX as u64 - 16)) as u32
     }
 
     /// Check if KVM is available.
@@ -149,6 +184,12 @@ impl QemuVM {
         ]);
         cmd.args(["-device", "virtio-net-pci,netdev=net0"]);
 
+        // vsock: host→guest clock sync channel (see vm/timesync.rs). Only the
+        // guest's root daemon listens; it accepts the host CID only.
+        if let Some(cid) = self.vsock_cid {
+            cmd.args(["-device", &format!("vhost-vsock-pci,guest-cid={}", cid)]);
+        }
+
         // VirtioFS for shared workspace (if virtiofsd is running)
         if let Some(ref socket_path) = self.virtiofs_socket {
             cmd.args([
@@ -219,6 +260,16 @@ impl VirtualMachine for QemuVM {
             eprintln!("Warning: virtiofsd not found, using 9p for shared filesystem");
         }
 
+        self.vsock_cid = if Self::vhost_vsock_usable() {
+            Some(Self::pick_guest_cid())
+        } else {
+            eprintln!(
+                "[vm] /dev/vhost-vsock not accessible: guest clock sync disabled \
+                 (guest clock may drift after host suspend)"
+            );
+            None
+        };
+
         // Build and start QEMU
         let mut cmd = self.build_qemu_command(config, use_kvm);
         cmd.stdout(Stdio::inherit());
@@ -233,10 +284,37 @@ impl VirtualMachine for QemuVM {
         self.running = true;
         self.sandbox_url = format!("http://127.0.0.1:{}", config.sandbox_port);
 
+        // Keep the guest wall clock in step with the host: after boot, after
+        // host suspend (wall-vs-monotonic jump) and every 60s.
+        if let Some(cid) = self.vsock_cid {
+            eprintln!(
+                "[vm] REVISION: {} guest clock sync -> vsock cid {} port {}",
+                super::timesync::TIMESYNC_REVISION,
+                cid,
+                super::GUEST_TIMESYNC_VSOCK_PORT
+            );
+            let stop = Arc::new(AtomicBool::new(false));
+            super::timesync::spawn_sync_thread(
+                move || {
+                    super::timesync::connect_vsock(
+                        cid,
+                        super::GUEST_TIMESYNC_VSOCK_PORT,
+                        Duration::from_secs(5),
+                    )
+                },
+                stop.clone(),
+            );
+            self.timesync_stop = Some(stop);
+        }
+
         Ok(())
     }
 
     fn stop(&mut self) -> Result<(), VMError> {
+        if let Some(stop) = self.timesync_stop.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+
         // Stop QEMU
         if let Some(ref mut child) = self.qemu_process {
             let _ = child.kill();

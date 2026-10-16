@@ -1,3 +1,7 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+// REVISION: releases-handler-v1-error-codes
+
 // Latest desktop release, proxied + cached from GitHub Releases.
 //
 // Public endpoint (no auth) that powers the on-site /download page, so users see
@@ -39,7 +43,7 @@ export async function getLatest(): Promise<Response> {
 
     if (!resp.ok) {
       return Response.json(
-        { error: `GitHub returned ${resp.status}` },
+        { error: `E79170: GitHub returned ${resp.status}` },
         { status: 502, headers: { 'Cache-Control': 'public, max-age=60' } }
       );
     }
@@ -79,7 +83,7 @@ export async function getLatest(): Promise<Response> {
     });
   } catch {
     return Response.json(
-      { error: 'Failed to fetch latest release' },
+      { error: 'E79171: Failed to fetch latest release' },
       { status: 502 }
     );
   }

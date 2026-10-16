@@ -1,3 +1,6 @@
+// Copyright 2026 Rob Macrae. All rights reserved.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Windows VM implementation using WSL2.
 //!
 //! This implementation manages a custom WSL2 distribution containing

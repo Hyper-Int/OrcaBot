@@ -85,7 +85,7 @@ npx wrangler dev
 ### Auth Flow
 - Frontend never talks directly to sandbox; all traffic goes through the control plane
 - Cloudflare control plane uses dev auth via headers/query params when `DEV_AUTH_ENABLED=true`
-- Internal sandbox auth uses `SANDBOX_INTERNAL_TOKEN` (do not reuse Cloudflare API keys)
+- Control plane → sandbox requests are **signed per machine** (Ed25519, `SANDBOX_AUTH_SIGNING_KEY` in the control plane; VMs get only `SANDBOX_AUTH_PUBLIC_KEY`). The legacy static `SANDBOX_INTERNAL_TOKEN` is accepted only while configured — do not reuse Cloudflare API keys. Desktop generates the key pair per boot and passes the public key on the VM's kernel command line; its VM holds no static token and no `INTERNAL_API_TOKEN`
 - **Personal access tokens (PATs)** authenticate the `orcabot` CLI / scripts against a remote control plane: prefix `orca_pat_`, sent as `Authorization: Bearer`, only the SHA-256 hash is stored (`api_tokens` table). Middleware is prefix-gated (no collision with PTY JWT bearers) and **method-gated** — a PAT cannot mint/list/revoke other PATs (`rejectPatAuth`). See `controlplane/CLAUDE.md`.
 
 ### Secrets Protection (Security-Critical)
@@ -108,6 +108,12 @@ Security invariants (non-negotiable):
 - Broker URLs include session ID: `/broker/{sessionID}/{provider}/...`
 - Approved domains keyed by `sessionID:secretName` — never just secret name
 - Empty `INTERNAL_API_TOKEN` = all PTY tokens rejected (fail-closed)
+- PTY + dashboard tokens are signed with `PTY_TOKEN_SECRET`, a control-plane-only secret — never `INTERNAL_API_TOKEN`, which every sandbox VM holds (root can read it from `/proc`). Without `PTY_TOKEN_SECRET` set the control plane falls back to `INTERNAL_API_TOKEN` and logs a SECURITY WARNING
+- Sandbox → control plane `/internal/*` calls authenticate with the VM's **dashboard-scoped token** (`X-Dashboard-Token`, `sandbox/internal/cpauth`), and every VM-reachable route checks the resource belongs to that dashboard (`controlplane/src/auth/sandbox-auth.ts`). `X-Internal-Token` is full trust for control-plane-side callers only; with `WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX=true` new VMs never receive `INTERNAL_API_TOKEN`. New VM-called routes must use `authorizeSandboxForDashboard`, never `requireInternalAuth`
+- Every control plane → sandbox request goes through `sandboxFetch` / `sandboxHeaders` / `SandboxClient` so it carries `X-Sandbox-Auth`: an Ed25519 signature over target machine (`FLY_MACHINE_ID`), method and path+query, valid 30s plus the VM's 30s skew allowance (60s replay window at most), plus `fly-force-instance-id` so no other VM is the first hop. Never call a sandbox with a hand-built `fetch`. A bad signature never falls back to the static token
+- The dashboard browser runs unprivileged, never root: Chromium as `orcabot-browser`, Xvfb/x11vnc/websockify as `orcabot-vnc`, on loopback ports 6100-6299 that pool UIDs **and `orcabot-browser`** (page JS) are blocked from, so one dashboard's page can't reach another's VNC/DevTools; the X display requires its auth cookie. See `sandbox/CLAUDE.md` (Browser Block)
+- A dashboard VM only ever receives its **owner's** secrets (`dashboardSecretsOwner`, `controlplane/src/secrets/handler.ts`): one VM is shared by every member's terminals, so pushing whoever acted last would put their keys behind every terminal's broker URL
+- Pool UIDs (2000-2099) are egress default-deny at the kernel: only loopback (incl. the 80/443 REDIRECT), established replies, DNS to resolv.conf nameservers, and `EGRESS_EXTRA_TCP_PORTS` (opt-in, e.g. `22`) are allowed
 - Localhost MCP/event endpoints require valid `X-MCP-Secret` (no fail-open)
 - Egress proxy fail-closed: 60s timeout = deny; proxy crash = connections fail
 - Localhost always bypasses egress proxy (NO_PROXY + server-side check)
