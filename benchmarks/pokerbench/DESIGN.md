@@ -250,18 +250,63 @@ copied into the report at the end:
 - `transcripts/<seat>.log` — full PTY transcripts
 - `run.json` — seed, conditions, prompt versions, honeypot config, software revisions
 
-## Orcabot integration
+## Orcabot integration: every player is a component
 
-- Template at `benchmarks/pokerbench/template.json`, seeded with
-  `benchmarks/bin/seed-benchmark-templates`, like the other benchmarks.
-- An orchestrator terminal (Claude Code), driven in English, starts matches and
-  produces the report (`orchestrator-runbook.md`).
-- One terminal per seat, each with its agent's boot command and the seat token in
-  its environment.
-- A browser block for the spectator table and leaderboard, served by the engine
-  on loopback.
-- The engine follows the repo's revision-marker convention (logs its revision at
-  startup, and includes `revision` in the API).
+Three kinds of player, each its own component on the canvas, around one table:
+
+| Player | What runs | Component today | Seat client |
+|---|---|---|---|
+| **Agent** (Claude Code, Codex, Gemini CLI) | the harness, with a shell | agent seat terminal | the `poker` CLI, or tools it writes |
+| **Model** (direct API, no harness) | `pokerbench llm-seat` | model seat terminal with a live feed | built in (structured output) |
+| **Persona** (a Siren agent: Grok Bot, Muse, Dots, …) | `pokerbench siren-seat` + `siren-stdio` (MLS) | Siren agent seat terminal | chat: one message per turn, JSON reply |
+
+**Built (template level, no platform changes).** The engine terminal runs the table
+from one `SEATS` list; every seat terminal waits until its `SEAT=` is listed, then
+plays. Seats introduce themselves when they join (`X-Poker-Seat-Info`), so the table
+and report know who is in each seat without the engine being told. Adding a player is
+duplicating a seat terminal and adding its name to SEATS.
+
+**Next: seating by drawing an edge.** What the platform has today (surveyed in the
+monorepo, Nov 2026):
+- Edges are plain rows (`dashboard_edges`: source, target, handles). Nothing
+  server-side runs when one is drawn; the only edge hooks are browser-side
+  (`handleIntegrationEdge`, `ConnectionDataFlowContext`), so they need an open tab.
+- The sandbox never sees edges, only `terminal_integrations` rows.
+- A PTY knows its session, PTY and dashboard ids, not its canvas item id.
+- `list_items` (dashboard MCP) returns items and edges, but from the Durable Object's
+  copy, which misses items and edges created by templates (DO `/init` is never called).
+
+The plan:
+1. **`ORCABOT_ITEM_ID` in every PTY's environment**, so a terminal knows which
+   component it is. Seat names then default to the component's name, and `SEAT=`
+   lines go away.
+2. **A server-side edge branch** in `createEdge`/`deleteEdge` (controlplane) for
+   player → table edges, writing a `table_seats` row (dashboard, table item, player
+   item, seat name, order). Server-side, so seating works with no tab open, and from
+   templates.
+3. **A sandbox → control plane route** `GET /internal/dashboards/:id/tables/:item/seats`
+   for the engine, authorised with the VM's dashboard-scoped token through
+   `authorizeSandboxForDashboard` (never `requireInternalAuth`). The engine reads its
+   seats from it at the start of each game instead of `SEATS`. Disconnecting an edge
+   drops the player at the next game.
+4. **Table and player blocks.** A `table` block type (the engine plus the spectator
+   view in one component), and model and persona blocks that are terminal sessions
+   underneath (same PTY machinery, broker keys and per-UID isolation) but render a
+   decision feed instead of xterm. A persona block shows the Siren pairing code as a
+   link/QR in the block. Adding a block type touches `VALID_ITEM_TYPES`
+   (`controlplane/src/index.ts`), `DASHBOARD_ITEM_TYPES` and its migration
+   (`schema.ts`), `types.ts`, and a component in `frontend/src/components/blocks/`.
+5. **A generic seat protocol.** The engine's seat API (`state`, `wait`, `act`,
+   `history`, identity by OS user) is not poker-specific in shape. Player blocks
+   that speak it can sit at any turn-based table (the chess e2e scenario is the next
+   candidate), which is what makes models and personas first-class players rather
+   than PokerBench features.
+
+Isolation stays as it is: each seat binds to the OS user of its loopback connection,
+so a seat component can only ever play its own seat, edge or no edge.
+
+The engine follows the repo's revision-marker convention (logs its revision at
+startup, and includes `revision` in the API).
 
 ## Phases
 

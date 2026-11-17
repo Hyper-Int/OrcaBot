@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v4-live-feed
+# REVISION: pokerbench-llm-v5-provider-hooks
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -37,7 +37,7 @@ from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v4-live-feed"
+LLM_REVISION = "pokerbench-llm-v5-provider-hooks"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -289,7 +289,10 @@ def feed_decision(entry: dict) -> str:
         return f"   !  try {entry['attempt'] + 1} failed ({entry.get('latency_s')}s): {entry['error']}"[:300]
     act = entry["action"] + (f" {entry['amount']}" if entry.get("amount") and entry["action"] in ("bet", "raise") else "")
     u = entry.get("usage") or {}
-    cost = f"{entry.get('latency_s')}s, {u.get('input', '?')} in / {u.get('output', '?')} out"
+    if "chars_in" in u:  # a chat seat (Siren): message sizes, not tokens
+        cost = f"{entry.get('latency_s')}s, sent {u.get('chars_out')} chars / got {u['chars_in']}"
+    else:
+        cost = f"{entry.get('latency_s')}s, {u.get('input', '?')} in / {u.get('output', '?')} out"
     rejected = f"  REJECTED: {entry['rejected']}" if entry.get("rejected") else ""
     return f"   -> {act}  ({cost}){rejected}\n      \"{entry.get('reason', '')}\""
 
@@ -319,6 +322,8 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
             say(feed_situation(view))
             history = client.history(200)["hands"]
             system, blocks = build_request(view, history, notes)
+            if hasattr(provider, "system_for"):  # e.g. Siren agents get a chat intro instead
+                system = provider.system_for(view, system)
             error = None
             acted = False
             for attempt in range(max_retries + 1):

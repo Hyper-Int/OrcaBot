@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v5-model-seat-feed
+# REVISION: pokerbench-main-v6-siren-seat
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -31,7 +31,7 @@ from .engine import ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v5-model-seat-feed"
+MAIN_REVISION = "pokerbench-main-v6-siren-seat"
 
 
 # Experiment conditions (DESIGN.md, phase 5). Each is an agent prompt plus the
@@ -175,6 +175,27 @@ def cmd_llm_seat(args) -> int:
     return 0
 
 
+def cmd_siren_seat(args) -> int:
+    """A Siren agent plays a seat by chat, through a linked device of its owner."""
+    from .llm import play as play_llm
+    from .siren import SirenProvider
+
+    token = Path(args.token_file).read_text().strip() if args.token_file else None
+    provider = SirenProvider(args.agent, bin=args.siren_bin, state=args.state, server=args.server,
+                             device=args.device, phone=args.dev_phone, reply_timeout=args.reply_timeout,
+                             say=lambda line: print(line, flush=True))
+    info = os.environ.get("POKER_SEAT_INFO") or args.label or f"siren/{args.agent.rsplit(':', 1)[-1]} (Siren)"
+    client = Client(url=args.url, token=token, seat=args.seat, info=info)
+    feed = None if args.quiet else (lambda line: print(line, flush=True))
+    try:
+        final = play_llm(client, provider, max_retries=args.max_retries,
+                         log_path=Path(args.log) if args.log else None, feed=feed)
+    finally:
+        provider.close()
+    print(json.dumps(final["score"]))
+    return 0
+
+
 def cmd_audit_files(args) -> int:
     from .fsaudit import DEFAULT_ROOTS, scan, write
 
@@ -289,6 +310,23 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--strategies", default="tight,random")
     d.add_argument("--run-dir")
     d.set_defaults(fn=cmd_demo)
+
+    ss = sub.add_parser("siren-seat", help="a Siren agent (Grok Bot, Muse, ...) plays a seat by chat")
+    ss.add_argument("--agent", required=True, help="the agent's Siren identity, e.g. +447700900001/agent:grok")
+    ss.add_argument("--state", required=True, help="siren-stdio state dir (its login and chat keys)")
+    ss.add_argument("--siren-bin", default="siren-stdio", help="path to siren-stdio (Siren repo, mls/tools)")
+    ss.add_argument("--server", help="Siren server (default: siren-stdio's, the live hub)")
+    ss.add_argument("--device", default="pokerbench", help="linked-device name the owner approves")
+    ss.add_argument("--dev-phone", help="local dev servers only: register this test number instead of pairing")
+    ss.add_argument("--reply-timeout", type=float, default=150.0, help="seconds to wait for the agent's reply")
+    ss.add_argument("--label", help="how the seat introduces itself (default siren/<agent name> (Siren))")
+    ss.add_argument("--max-retries", type=int, default=1, help="extra tries after an unusable reply")
+    ss.add_argument("--url", help="engine URL (default POKER_URL)")
+    ss.add_argument("--seat", help="seat to claim (default POKER_SEAT)")
+    ss.add_argument("--token-file")
+    ss.add_argument("--log", help="append one JSON line per turn (latency, reply, action)")
+    ss.add_argument("--quiet", action="store_true", help="no per-decision feed on stdout")
+    ss.set_defaults(fn=cmd_siren_seat)
 
     pr = sub.add_parser("prompt", help="print a versioned agent prompt")
     pr.add_argument("name", nargs="?", default="neutral-v2")
