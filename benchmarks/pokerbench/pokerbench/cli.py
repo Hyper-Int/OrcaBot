@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v5-full-ring
+# REVISION: pokerbench-cli-v6-seat-info
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v5-full-ring"
+CLI_REVISION = "pokerbench-cli-v6-seat-info"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -184,10 +184,12 @@ def _token() -> str | None:
 
 class Client:
     def __init__(self, url: str | None = None, token: str | None = None, timeout: float = 70.0,
-                 seat: str | None = None):
+                 seat: str | None = None, info: str | None = None):
         self.url = (url or os.environ.get("POKER_URL") or DEFAULT_URL).rstrip("/")
         self.token = token if token is not None else _token()
         self.seat = seat if seat is not None else (os.environ.get("POKER_SEAT") or None)
+        # Who is playing this seat, e.g. "anthropic/claude-code": self-reported, first one wins.
+        self.info = info if info is not None else (os.environ.get("POKER_SEAT_INFO") or None)
         self.timeout = timeout
 
     def _req(self, method: str, path: str, body: dict | None = None) -> dict:
@@ -200,6 +202,8 @@ class Client:
             req.add_header("Authorization", f"Bearer {self.token}")
         if self.seat:
             req.add_header("X-Poker-Seat", self.seat)
+        if self.info:
+            req.add_header("X-Poker-Seat-Info", self.info)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read() or b"{}")

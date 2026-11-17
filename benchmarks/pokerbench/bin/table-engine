@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v1-config-block
+# REVISION: pokerbench-table-engine-v2-seat-components
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment:
@@ -14,14 +14,15 @@
 #   RIG_SEAT     losing only: the seat dealt coolers
 #   HONEYPOTS    off | hidden | obvious
 #   SEED, TURN_TIMEOUT
-#   AGENTS       agent seats, space-separated; each needs a seat terminal with that SEAT=
-#   MODELS       model seats played from here through the provider API, space-separated
-#                name=provider:model[:effort]   provider: anthropic | openai | gemini
-#   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV
+#   SEATS        every seat at the table, space-separated. Each is a seat terminal on
+#                the canvas with the same SEAT=: an agent (Claude Code, Codex, ...) or a
+#                model played through its provider's API. Seats report who they are.
+#   PORT, PRIV (engine-only dir), PUB (read-only to seats), VENV (in PUB: model
+#   seats run the API player from it)
 #
 # Seats find the engine through $PUB/engine.env, which also lists who is seated.
 set -u
-REVISION=pokerbench-table-engine-v1-config-block
+REVISION=pokerbench-table-engine-v2-seat-components
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench/pokerbench"
@@ -30,27 +31,9 @@ die() { echo "Config error: $*"; echo "Edit the settings at the top of this term
 case "$FORMAT" in tournament|cash) ;; *) die "FORMAT must be tournament or cash (got '$FORMAT')";; esac
 case "$HONEYPOTS" in off|hidden|obvious) ;; *) die "HONEYPOTS must be off, hidden or obvious";; esac
 
-# Seat names and report labels ("provider/model": the collusion screen groups by provider).
-SEATS=(); INFO=(); MODEL_SEATS=()
-for a in $AGENTS; do
-  case "$a" in
-    claude*) label="anthropic/claude-code";;
-    codex*) label="openai/codex";;
-    gemini*) label="google/gemini-cli";;
-    *) label="agent/$a";;
-  esac
-  SEATS+=("$a"); INFO+=("$a=$label")
-done
-for m in $MODELS; do
-  name="${m%%=*}"; spec="${m#*=}"
-  [ "$name" != "$m" ] || die "model seat '$m' should look like name=provider:model[:effort]"
-  IFS=: read -r provider model effort <<<"$spec"
-  case "$provider" in anthropic|openai) vendor=$provider;; gemini) vendor=google;; *) die "unknown provider '$provider' in '$m'";; esac
-  [ -n "$model" ] || die "no model in '$m'"
-  SEATS+=("$name"); INFO+=("$name=$vendor/$model"); MODEL_SEATS+=("$name|$provider|$model|${effort:-}")
-done
+SEATS_LIST="${SEATS:-}"; unset SEATS; read -r -a SEATS <<<"$SEATS_LIST"
 N=${#SEATS[@]}
-[ "$N" -ge 2 ] && [ "$N" -le 10 ] || die "a table needs 2 to 10 seats (AGENTS + MODELS); got $N"
+[ "$N" -ge 2 ] && [ "$N" -le 10 ] || die "a table needs 2 to 10 SEATS; got $N"
 for s in "${SEATS[@]}"; do [[ "$s" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "seat name '$s': use lowercase letters, digits, . _ -"; done
 DUP=$(printf '%s\n' "${SEATS[@]}" | sort | uniq -d | head -1); [ -z "$DUP" ] || die "seat '$DUP' appears twice"
 join() { local IFS="$1"; shift; echo "$*"; }
@@ -66,17 +49,24 @@ rm -rf "$PRIV/tokens"
 { printf 'POKER_URL=http://127.0.0.1:%s\n' "$PORT"
   printf 'POKER_TOKENS_DIR=%s\n' "$PRIV/tokens"
   printf 'POKER_GAME=%s\n' "$GAME"
-  printf 'POKER_AGENTS="%s"\n' "$AGENTS"; } > "$PUB/engine.env"
+  printf 'POKER_SEATS="%s"\n' "${SEATS[*]}"
+  printf 'POKER_PB=%s\n' "$PB"; } > "$PUB/engine.env"
 chmod 644 "$PUB/engine.env"
 
-ARGS=(--seats "$(join , "${SEATS[@]}")" --seat-info "$(join , "${INFO[@]}")" --format "$FORMAT"
+# Results: the engine's own directory, plus seats/ where seats may drop their own logs
+# (model seats copy their call logs there once the game is over). Sticky, so a seat
+# can't replace another's file.
+OUT="/workspace/pokerbench-results/$GAME"
+mkdir -p "$OUT/seats" && chmod 755 "$OUT" && chmod 1777 "$OUT/seats"
+
+ARGS=(--seats "$(join , "${SEATS[@]}")" --format "$FORMAT"
       --condition "$CONDITION" --honeypots "$HONEYPOTS" --seed "$SEED" --turn-timeout "$TURN_TIMEOUT"
       --port "$PORT" --run-dir "$RUN" --tokens-dir "$PRIV/tokens" --exit-when-done)
 if [ "$FORMAT" = tournament ]; then ARGS+=(--hands "$HANDS" --level-hands "$LEVEL_HANDS"); else ARGS+=(--deals "$HANDS"); fi
 [ -n "${RIG_SEAT:-}" ] && ARGS+=(--rig-seat "$RIG_SEAT")
 
 echo "== PokerBench: $N seats, $FORMAT, $HANDS hands, condition $CONDITION, honeypots $HONEYPOTS =="
-echo "   agents: ${AGENTS:-none}"; echo "   models: ${MODELS:-none}"
+echo "   seats: ${SEATS[*]}"
 "$PB" serve "${ARGS[@]}" &
 ENGINE=$!
 until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
@@ -84,22 +74,9 @@ until curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health"; do
   sleep 1
 done
 
-# Model seats play from here: no shell, only the seat API, so they need no OS user of their own.
-PIDS=()
-for ms in ${MODEL_SEATS[@]+"${MODEL_SEATS[@]}"}; do
-  IFS='|' read -r name provider model effort <<<"$ms"
-  until [ -s "$PRIV/tokens/$name.token" ]; do sleep 1; done
-  "$PB" llm-seat --provider "$provider" --model "$model" ${effort:+--effort "$effort"} \
-    --seat "$name" --token-file "$PRIV/tokens/$name.token" --url "http://127.0.0.1:$PORT" \
-    --log "$RUN/$name.calls.jsonl" < /dev/null >> "$RUN/$name.llm.log" 2>&1 &
-  PIDS+=($!)
-  echo "   model seat $name: $provider $model${effort:+ ($effort)} (log: $RUN/$name.llm.log)"
-done
-echo "Spectate at http://localhost:$PORT/ . Agent seats start in their own terminals."
+echo "Spectate at http://localhost:$PORT/ . Each seat starts in its own terminal."
 
 wait $ENGINE
-for p in ${PIDS[@]+"${PIDS[@]}"}; do kill "$p" 2>/dev/null; done
-OUT="/workspace/pokerbench-results/$GAME"
-mkdir -p "$OUT" && cp -R "$RUN"/. "$OUT"/ && chmod -R a+rX "$OUT"
+cp -R "$RUN"/. "$OUT"/ && chmod -R a+rX "$OUT"
 echo; cat "$OUT/report.md" 2>/dev/null
 echo "Results: $OUT"
