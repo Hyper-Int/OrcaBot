@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v4-llm-seat-prompt-v2
+# REVISION: pokerbench-main-v5-model-seat-feed
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import logging
 import sys
 import tempfile
@@ -30,7 +31,7 @@ from .engine import ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v4-llm-seat-prompt-v2"
+MAIN_REVISION = "pokerbench-main-v5-model-seat-feed"
 
 
 # Experiment conditions (DESIGN.md, phase 5). Each is an agent prompt plus the
@@ -162,11 +163,14 @@ def cmd_llm_seat(args) -> int:
         logging.getLogger(noisy).setLevel(logging.WARNING)  # one INFO line per HTTP request otherwise
 
     token = Path(args.token_file).read_text().strip() if args.token_file else None
-    client = Client(url=args.url, token=token, seat=args.seat)
     provider = make_provider(args.provider, args.model, args.effort, args.max_tokens)
+    vendor = "google" if provider.name == "gemini" else provider.name
+    info = os.environ.get("POKER_SEAT_INFO") or f"{vendor}/{provider.model} (API)"
+    client = Client(url=args.url, token=token, seat=args.seat, info=info)
     print(f"llm-seat: {provider.name} {provider.model} (effort {provider.effort or 'default'})", flush=True)
+    feed = None if args.quiet else (lambda line: print(line, flush=True))
     final = play_llm(client, provider, max_retries=args.max_retries,
-                     log_path=Path(args.log) if args.log else None)
+                     log_path=Path(args.log) if args.log else None, feed=feed)
     print(json.dumps(final["score"]))
     return 0
 
@@ -270,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     ls.add_argument("--seat", help="seat to claim (default POKER_SEAT)")
     ls.add_argument("--token-file")
     ls.add_argument("--log", help="append one JSON line per model call (latency, tokens, answer)")
+    ls.add_argument("--quiet", action="store_true", help="no per-decision feed on stdout")
     ls.set_defaults(fn=cmd_llm_seat)
 
     r = sub.add_parser("report", help="summarise a run directory")

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v5-full-ring
+# REVISION: pokerbench-engine-v6-seat-info
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import logging
 import os
 import random
@@ -48,7 +49,7 @@ from pokerkit import Automation, Card, Deck, HandHistory, Mode, NoLimitTexasHold
 from . import REVISION as PACKAGE_REVISION
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v5-full-ring"
+ENGINE_REVISION = "pokerbench-engine-v6-seat-info"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -561,6 +562,9 @@ class Match:
         self.cond = threading.Condition()
         self.version = 0
         self.joined: set[str] = set()
+        # Labels seats report about themselves (X-Poker-Seat-Info), e.g. "anthropic/claude-opus-5-5 (API)".
+        # Used where --seat-info gives none. Self-reported: a seat can mislabel itself.
+        self.reported_info: dict[str, str] = {}
         self.final_seen: set[str] = set()  # seats that have been shown the final result
         # OS user each seat is bound to (first request wins); None where unknown.
         self.seat_uids: dict[str, int | None] = {}
@@ -596,7 +600,11 @@ class Match:
             "status": self.status,
             "finish_reason": self.finish_reason,
             "isolation": self._isolation(),
+            "reported_seat_info": dict(self.reported_info),
         }
+
+    def labels(self) -> dict[str, str]:
+        return {**self.reported_info, **dict(self.cfg.seat_info)}
 
     def _bump(self) -> None:
         self.version += 1
@@ -679,8 +687,14 @@ class Match:
         return result
 
     # -- seat API -------------------------------------------------------------
-    def join(self, seat: str) -> None:
+    def join(self, seat: str, info: str | None = None) -> None:
         with self.cond:
+            if info and seat not in self.reported_info:
+                label = re.sub(r"[^\w./:() +-]", "", info)[:80].strip()
+                if label:
+                    self.reported_info[seat] = label
+                    self.log.append("events.jsonl", {"ts": iso_now(), "type": "seat_info", "seat": seat,
+                                                     "label": label})
             if seat in self.joined:
                 return
             self.joined.add(seat)
@@ -981,6 +995,7 @@ class Match:
                 "revision": ENGINE_REVISION,
                 "status": self.status,
                 "seats": list(self.cfg.seats),
+                "labels": self.labels(),
                 "joined": sorted(self.joined),
                 "hand": self.hand.number if self.hand else None,
                 "hands_total": len(self.plans),

@@ -166,7 +166,7 @@ benchmarks/pokerbench/bin/build-template          # only after editing the gener
 benchmarks/bin/seed-benchmark-templates pokerbench
 ```
 
-The dashboard has:
+The dashboard has one component per player:
 - an **engine** terminal. Its boot command starts with the table settings:
 
   ```
@@ -178,23 +178,29 @@ The dashboard has:
   HONEYPOTS=obvious     # off | hidden | obvious
   SEED=0
   TURN_TIMEOUT=180      # seconds per decision
-  AGENTS="claude-code codex gemini-cli"
-  MODELS=""             # e.g. "opus=anthropic:claude-opus-5-5 gpt=openai:gpt-5.5 flash=gemini:gemini-3.8-flash"
+  SEATS="claude-code codex gemini-cli sonnet"
   REF=main              # branch or tag to install
   ```
 
-  Edit them (terminal settings, or ask Orcabot chat), then restart the engine and the
-  seat terminals. The rest of the boot command installs PokerBench from this repo
-  (reinstalling when REF's commit changes) and runs [`bin/table-engine`](bin/table-engine),
-  which is versioned with the code, so most changes need no reseeding. The engine
-  plays the MODELS seats itself through each provider's API (`llm-seat`).
-- a **spectator** browser block;
-- one **seat** terminal per agent (Claude Code, Codex, Gemini CLI). Each waits until
-  the engine lists its `SEAT=` in AGENTS, then starts its agent with the prompt the
-  engine rendered for this table size, format and condition. `MODEL=""` at the top
-  picks the agent's model. A seat not in AGENTS just waits, so dropping an agent is
-  an edit to AGENTS; seating a second copy of an agent is a duplicated seat terminal
-  with a new `SEAT=` added to AGENTS.
+  Edit them (terminal settings, or ask Orcabot chat), then restart the engine. The
+  rest of the boot command installs PokerBench from this repo (reinstalling when REF's
+  commit changes) and runs [`bin/table-engine`](bin/table-engine), which is versioned
+  with the code, so most changes need no reseeding.
+- **agent seat** terminals (Claude Code, Codex, Gemini CLI). Each waits until the
+  engine lists its `SEAT=` in SEATS, then starts its agent with the prompt the engine
+  rendered for this table size, format and condition. `MODEL=""` picks the model.
+- **model seat** terminals: a model played straight through its provider's API
+  (`pokerbench llm-seat`), set by `SEAT`, `PROVIDER`, `MODEL`, `EFFORT`. The terminal
+  shows a live feed: each situation, then the model's action, reason, latency and
+  tokens. Its call log stays in the seat's home until the game ends, then goes to
+  `results/<game>/seats/`, so no other seat can read its reasoning mid-game.
+- a **spectator** browser block, which shows who plays each seat.
+
+Adding a player is duplicating a seat terminal, giving it a new `SEAT=` and adding the
+name to SEATS; a seat not in SEATS just waits. Seats introduce themselves when they
+join (`POKER_SEAT_INFO`, e.g. `anthropic/claude-code (claude-sonnet-5-5)`); the
+spectator page and report show it, and the collusion screen groups seats by the
+provider in it. It is self-reported, so `--seat-info` on the engine overrides it.
 
 The agents' and models' provider keys come from the usual Orcabot secrets: the SDKs
 and CLIs send requests to the local secrets broker (`*_BASE_URL`), which adds the key.

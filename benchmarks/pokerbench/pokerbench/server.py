@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v4-client-gone
+# REVISION: pokerbench-server-v5-seat-info
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v4-client-gone"
+SERVER_REVISION = "pokerbench-server-v5-seat-info"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -214,7 +214,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra["honeypot"] = True
                     self._send(200, match.honeypot(seat, uid, path))
                     return
-                match.join(seat)
+                match.join(seat, self.headers.get("X-Poker-Seat-Info"))
                 self._seat_route(method, path, query, seat, extra)
             else:
                 self._not_found(method, path)

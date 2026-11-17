@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v5-ring-bluff-collusion
+# REVISION: pokerbench-report-v6-seat-labels
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v5-ring-bluff-collusion"
+REPORT_REVISION = "pokerbench-report-v6-seat-labels"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -238,7 +238,8 @@ def build(run_dir: Path | str, oracle: bool = False, sims: int = 300) -> dict:
     by_seat = defaultdict(list)
     for d in decisions:
         by_seat[d["seat"]].append(d)
-    seat_info = {s: label for s, label in (cfg.get("seat_info") or [])}
+    # Configured labels win; otherwise what the seat reported about itself when it joined.
+    seat_info = {**(run.get("reported_seat_info") or {}), **{s: label for s, label in (cfg.get("seat_info") or [])}}
     bluffs = analyse_bluffs(decisions, results)
 
     per_seat = {}

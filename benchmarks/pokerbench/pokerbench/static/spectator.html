@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v3-full-ring -->
+<!-- REVISION: pokerbench-spectator-v4-seat-labels -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -128,6 +128,7 @@ function render(s) {
       : (s.joined.includes(seat) ? "joined" : "not joined");
     return `<div class="seat ${acting ? "acting" : ""}">
       <div class="name">${esc(seat)}${acting && live.seconds_left != null ? ` · ${Math.ceil(live.seconds_left)}s` : ""}</div>
+      ${s.labels && s.labels[seat] ? `<div class="meta">${esc(s.labels[seat])}</div>` : ""}
       <div class="cards" style="margin:6px 0">${info && info.status !== "folded" ? card(null) + card(null) : ""}</div>
       <div class="meta">${meta}</div>
     </div>`;

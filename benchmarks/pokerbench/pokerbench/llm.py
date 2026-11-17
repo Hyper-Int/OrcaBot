@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-llm-v3-broker-base-url
+# REVISION: pokerbench-llm-v4-live-feed
 """Direct model seats: a model plays through its provider's API, with no agent harness.
 
 Each decision is a fresh request (no conversation), but the request carries
@@ -37,7 +37,7 @@ from pathlib import Path
 
 from .cli import ApiError, Client, _fmt_action, render, rules_text
 
-LLM_REVISION = "pokerbench-llm-v3-broker-base-url"
+LLM_REVISION = "pokerbench-llm-v4-live-feed"
 log = logging.getLogger("pokerbench.llm")
 log.info("[llm] REVISION: %s loaded at %s", LLM_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -271,16 +271,42 @@ def build_request(view: dict, history: list[dict], notes: dict[int, list[dict]])
 
 
 # -- the seat loop ------------------------------------------------------------------
+def feed_situation(view: dict) -> str:
+    """One line on what the seat sees: hand, blinds, position, cards, board, pot, stack."""
+    m, you = view["match"], view.get("you") or {}
+    blinds = "/".join(str(b) for b in (m.get("blinds") or []))
+    board = " ".join(view.get("board") or []) or "-"
+    return (f"#{m.get('hand')} {view.get('street', '')}  blinds {blinds}  {you.get('position', '')}  "
+            f"[{' '.join(you.get('hole') or [])}]  board {board}  pot {view.get('pot', 0)}  "
+            f"stack {you.get('stack', '')}")
+
+
+def feed_decision(entry: dict) -> str:
+    """One line on what the model did, its reason, and what it cost."""
+    if "auto_action" in entry:
+        return f"   -> {entry['auto_action']} [auto: no valid decision]  {entry.get('last_error') or ''}"[:300]
+    if entry.get("error"):
+        return f"   !  try {entry['attempt'] + 1} failed ({entry.get('latency_s')}s): {entry['error']}"[:300]
+    act = entry["action"] + (f" {entry['amount']}" if entry.get("amount") and entry["action"] in ("bet", "raise") else "")
+    u = entry.get("usage") or {}
+    cost = f"{entry.get('latency_s')}s, {u.get('input', '?')} in / {u.get('output', '?')} out"
+    rejected = f"  REJECTED: {entry['rejected']}" if entry.get("rejected") else ""
+    return f"   -> {act}  ({cost}){rejected}\n      \"{entry.get('reason', '')}\""
+
+
 def play(client: Client, provider, max_retries: int = 2, log_path: Path | None = None,
-         max_wait: float = 100.0) -> dict:
-    """Play until the match is over. Returns the final view."""
+         max_wait: float = 100.0, feed=None) -> dict:
+    """Play until the match is over. Returns the final view. ``feed`` (e.g. print)
+    gets a readable line for each situation and each model answer, for a terminal."""
     notes: dict[int, list[dict]] = {}
     logf = open(log_path, "a", encoding="utf-8") if log_path else None
+    say = feed or (lambda line: None)
 
     def record(entry: dict) -> None:
         if logf:
             logf.write(json.dumps(entry, sort_keys=True) + "\n")
             logf.flush()
+        say(feed_decision(entry))
 
     try:
         while True:
@@ -290,6 +316,7 @@ def play(client: Client, provider, max_retries: int = 2, log_path: Path | None =
             if not view.get("to_act"):
                 continue
             hand = view["match"]["hand"]
+            say(feed_situation(view))
             history = client.history(200)["hands"]
             system, blocks = build_request(view, history, notes)
             error = None
