@@ -45,11 +45,48 @@ const OUT_AUDIO = "public/benchmarks/tts";
  *  the methodology instead. */
 const DROP_COLUMNS = new Set(["Frame rate", "Passed", "Libs", "Lead-in", "WER med", "Avg audio"]);
 
+/** Columns the page re-colours itself, keyed by the export's own header name, and
+ *  the displayed value at or below which a cell is green.
+ *
+ *  The export tones word error on the unrounded rate while the column prints whole
+ *  percents, so its threshold lands inside a displayed band: three rows all read
+ *  "8%" and only the first was green, because 7.70 was under the cutoff and 8.03
+ *  and 8.23 were over it. Two cells showing the same number in different colours
+ *  reads as a rendering fault, not as a distinction, and no reader can recover the
+ *  third decimal that justifies it.
+ *
+ *  So the threshold is applied to what is actually on the page. Identical text is
+ *  then guaranteed identical colour, whatever the export's own rounding does next.
+ *
+ *  warn and bad are left exactly where the export put them. They mark the 24%-and-
+ *  worse rows, which are not in question, and re-deriving them here would mean
+ *  owning a second threshold to keep in step with the first. */
+const GREEN_AT_OR_BELOW = { "WER base": 6 };
+
+/** The tone a cell should carry: the export's, unless this column is re-coloured. */
+function retone(header, cell) {
+  const limit = GREEN_AT_OR_BELOW[header];
+  if (limit === undefined) return cell.tone;
+  if (cell.tone === "warn" || cell.tone === "bad") return cell.tone;
+  const shown = Number(String(cell.v).replace("%", "").trim());
+  // A cell that is not a number at all - "·" for unmeasured - keeps whatever it
+  // had rather than being silently promoted to green by a NaN comparison.
+  if (!Number.isFinite(shown)) return cell.tone;
+  return shown <= limit ? "good" : "";
+}
+
 /** Configurations the comparison does not show. The NeuTTS-2E CPU builds are
  *  the same weights as the rows that remain, run on a slower path: they tripled
  *  the size of the NeuTTS band while saying nothing about the model, only about
  *  the hardware it was pointed at. Their measurements stay in the raw export. */
-const DROP_ROWS = new Set(["nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu"]);
+const DROP_ROWS = new Set([
+  "nt-2e-fp32-cpu", "nt-2e-q4-cpu", "nt-2e-q8-cpu",
+  // NVIDIA's own Magpie supersedes it: same vendor, an autoregressive model with a
+  // published quantisation ladder against a 2023 FastPitch checkpoint that only
+  // reached the table by speaking an AI disclosure the harness had to strip. Kept
+  // in the raw export, where the measurement still stands.
+  "fastpitch",
+]);
 
 /** Shorter headers where the export's are longer than they need to be.
  *  Only one word error rate is shown, so it does not need qualifying: base.en
@@ -61,9 +98,12 @@ const RENAME_COLUMNS = {
   // "Peak" is the only kind of RSS reported here, so it says nothing the column
   // does not already imply.
   "Peak RSS": "RSS",
-  // x-bar: it is a mean, and "Avg" spent five characters saying so in a column
-  // whose values are four wide.
-  "Avg synth": "x\u0304 synth",
+  // x-bar t: a mean of a time. "Avg synth" spent ten characters on a column whose
+  // values are four wide, and "synth" named the operation rather than the
+  // quantity - what is being reported is seconds, and the header now says so in
+  // the notation the rest of the page already uses for a mean. The table renders
+  // the t italic, as a variable.
+  "Avg synth": "x\u0304 t",
 };
 
 /** Where each project states its own licence: its LICENSE file, or the model
@@ -116,7 +156,28 @@ const LICENCE_PROOF_URLS = {
   // weights carry, which is what this column states. Supertonic is the standing
   // reminder that the two can differ.
   "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+  // Both quantizations are the same weights off the same card, so they cite it.
   "orpheus-q4": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
+  "orpheus-q8": "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft",
+  "indextts": "https://huggingface.co/IndexTeam/Index-TTS",
+  "kani-tts": "https://huggingface.co/nineninesix/kani-tts-370m",
+  "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
+  "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
+  "dots-soar-acpp": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
+  // Six quantisations of one checkpoint, so one card evidences all of them. It
+  // declares nvidia-open-model-license, which is what the Licence column prints.
+  "magpie-f32": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-f16": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q8_0": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q6_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q5_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q4_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  // Kyutai splits these: the code is MIT on GitHub, the weights CC-BY-4.0 on the
+  // card. This column states the weights licence, so the card is the proof.
+  "pocket-tts": "https://huggingface.co/kyutai/pocket-tts",
+  // The bare openbmb/VoxCPM path 401s; the 0.5B card is the one that exists, and
+  // it matches the 0.5B this row measures.
+  "voxcpm2-tts": "https://huggingface.co/openbmb/VoxCPM-0.5B",
   "speecht5": "https://huggingface.co/microsoft/speecht5_tts/blob/main/README.md",
   "styletts2": "https://github.com/yl4579/StyleTTS2/blob/main/LICENSE",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts/blob/main/LICENSE",
@@ -165,6 +226,20 @@ const MODEL_URLS = {
   // family repository the base model uses.
   "qwen3-tts-vd": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
   "orpheus-q4": "https://github.com/canopyai/Orpheus-TTS",
+  "orpheus-q8": "https://github.com/canopyai/Orpheus-TTS",
+  "indextts": "https://github.com/index-tts/index-tts",
+  "kani-tts": "https://github.com/nineninesix-ai/kani-tts",
+  "fish-s2-pro": "https://huggingface.co/fishaudio/s2-pro",
+  "dots-tts-mf": "https://github.com/studio-dots-ai/dots.tts",
+  "dots-soar-acpp": "https://github.com/studio-dots-ai/dots.tts",
+  "magpie-f32": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-f16": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q8_0": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q6_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q5_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "magpie-q4_k": "https://huggingface.co/nvidia/magpie_tts_multilingual_357m",
+  "pocket-tts": "https://github.com/kyutai-labs/pocket-tts",
+  "voxcpm2-tts": "https://github.com/OpenBMB/VoxCPM",
   "omnivoice": "https://github.com/k2-fsa/OmniVoice",
   "bananamind-tts": "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2",
   "dots-tts": "https://github.com/studio-dots-ai/dots.tts",
@@ -228,10 +303,14 @@ const CELL_OVERRIDES = {
 const REWRITE = {
   // "stoch-ff" was the widest value in a column of six-character codes.
   Class: (v) => (v === "stoch-ff" ? "st-ff" : v),
-  // Replacement is a function, not a string: "$5m" as a string literal is a
-  // capture-group reference to any future group 5 in that pattern, and would
-  // silently start substituting instead of printing.
-  Licence: (v) => v.replace(/under \$5M/i, () => "<$5M"),
+  // Any "under $NM", not just the NeuTTS $5M this started as: kani-tts arrived
+  // under LFM1.0 with a $10M ceiling and would otherwise have rendered "under
+  // $10M" beside NeuTTS's "<$5M", two spellings of one idea in one column.
+  //
+  // Replacement is a function, not a string: "<$" followed by a digit reads as a
+  // capture-group reference in a string literal, so "$5M" would silently
+  // substitute group 5 instead of printing a dollar sign.
+  Licence: (v) => v.replace(/under \$(\d+)M/gi, (_, m) => `<$${m}M`),
 };
 
 /** Each vendor's own capitalisation. The export uses lowercase run ids; showing
@@ -267,6 +346,20 @@ const DISPLAY = {
   "qwen3-tts": "Qwen3-TTS",
   "qwen3-tts-vd": "Qwen3-TTS VoiceDesign",
   "orpheus-q4": "Orpheus 3B Q4",
+  "orpheus-q8": "Orpheus 3B Q8",
+  "indextts": "IndexTTS",
+  "kani-tts": "Kani TTS",
+  "fish-s2-pro": "Fish Audio S2 Pro",
+  "dots-tts-mf": "Dots-TTS MeanFlow",
+  "dots-soar-acpp": "Dots-TTS SOAR q8",
+  "magpie-f32": "Magpie TTS F32",
+  "magpie-f16": "Magpie TTS F16",
+  "magpie-q8_0": "Magpie TTS Q8_0",
+  "magpie-q6_k": "Magpie TTS Q6_K",
+  "magpie-q5_k": "Magpie TTS Q5_K",
+  "magpie-q4_k": "Magpie TTS Q4_K",
+  "pocket-tts": "Pocket TTS",
+  "voxcpm2-tts": "VoxCPM 0.5B",
   "speecht5": "SpeechT5",
   "styletts2": "StyleTTS2",
   "vibevoice": "VibeVoice",
@@ -413,11 +506,12 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
       const withOverride = override
         ? { ...cell, v: override.v, sort: override.sort ?? override.v }
         : cell;
+      // After the override, so a corrected value is coloured on what it now says.
+      const toned = { ...withOverride, tone: retone(headers[i], withOverride) };
       if (headers[i] === "Licence" && LICENCE_PROOF_URLS[config]) {
-        return { ...withOverride, href: LICENCE_PROOF_URLS[config] };
+        return { ...toned, href: LICENCE_PROOF_URLS[config] };
       }
-      if (override) return withOverride;
-      return cell;
+      return toned;
     })
     .filter((_, i) => keep[i]);
   cells[0] = { ...cells[0], v: display, ...(MODEL_URLS[config] ? { href: MODEL_URLS[config] } : {}) };
@@ -435,7 +529,45 @@ const rows = rawRows.map(([, rowAttrs, inner]) => {
 
 const rtfCol = columns.indexOf("RTF");
 const rtfOf = (r) => Number(r.cells[rtfCol].sort);
+/** Where "keeps up with its own speech" is drawn.
+ *
+ *  Back to a round 2 after a spell at 2.05. That two-hundredth shift existed
+ *  because Magpie's quantisations landed at 2.01x and 2.02x, splitting a ladder
+ *  the table reports as indistinguishable. Re-measuring every autoregressive row
+ *  over at least three passes moved them to 1.53-1.81x, so nothing sits in the
+ *  gap any more and the round number is honest again: 1.99x on one side,
+ *  2.21x on the other, with 0.22 between them.
+ *
+ *  Worth knowing that the cutoff no longer controls whether the boundary rule is
+ *  drawn under the default sort. RTF is compute per second of audio and the sort
+ *  is compute per phrase, and with audio durations this varied the two orderings
+ *  interleave at every cutoff between 1.8 and 2.5 - magpie-f32 and chatterbox
+ *  each sit on the wrong side of their neighbours. The rule is drawn when sorting
+ *  by RTF, where the groups are contiguous by construction, and left out
+ *  otherwise. */
 const RTF_CUTOFF = 2;
+
+/** Where the same line falls when the table is sorted by compute per phrase.
+ *
+ *  The boundary rule is cut on whatever the reader is sorting by, so it needs a
+ *  limit in each measure. Cutting on real-time factor while sorting by per-phrase
+ *  compute is what left the two orderings interleaved and the rule undrawn: the
+ *  two disagree because RTF is compute per second of *audio* and engines differ
+ *  in how long they speak.
+ *
+ *  7s classifies the table the same way 2x does but for a single row - Magpie's
+ *  full-precision build, quick per phrase at 3.79s and slow per second at 2.31x.
+ *  That agreement is what the number is chosen for, and it is why 7 is preferred
+ *  to 6.5: at 6.5 Kani also disagreed, fast per second of audio at 1.50x and slow
+ *  per phrase at 6.86s, so the two measures split over two rows instead of one.
+ *
+ *  The cost is a tight boundary. 7s sits in a 0.17s gap, between Kani at 6.86s
+ *  and Chatterbox Q8 at 7.03s, where 6.5s had 0.59s of clear air. That pair is
+ *  closer than three passes resolve, so the line runs between two rows this
+ *  benchmark cannot actually order - stated plainly in the methodology rather
+ *  than presented as a clean split. 7.5 is not a way out: it pulls Q8 inside at
+ *  2.21x and buys a fresh disagreement for the one it removes. */
+const SYNTH_CUTOFF = 7;
 
 const run = {
   benchmark: "open-weight-tts",
@@ -446,6 +578,7 @@ const run = {
   // Kept as data rather than hardcoded in the component: it drives the
   // real-time filter, and where the line sits is an editorial choice.
   rtfCutoff: RTF_CUTOFF,
+  synthCutoff: SYNTH_CUTOFF,
   caption:
     "Sorted by compute per phrase, fastest first. Every configuration measured is listed, " +
     "including the ones far too slow to keep up with their own speech; the filter above hides " +

@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-preference-chart-v2-human-axis
+// REVISION: tts-preference-chart-v3-log-x
 // What compute actually buys, plotted against what it costs: reader preference
 // on the y-axis, compute per phrase on the x.
 //
@@ -23,7 +23,7 @@
 // measured, and asserting the finding before the data is in would be inventing
 // it. Sharpen the title once the shape is known.
 //
-// x is Avg synth (compute per phrase), NOT the conventional RTF. RTF is compute
+// x is x̄ t (mean compute per phrase), NOT the conventional RTF. RTF is compute
 // per second of *audio*, so it flatters any engine that pads with silence.
 // Every engine here speaks the same 84 phrases, so per-phrase compute compares
 // directly and cannot be gamed.
@@ -40,7 +40,7 @@ import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-preference-chart-v2-human-axis";
+const MODULE_REVISION = "tts-preference-chart-v3-log-x";
 if (typeof window !== "undefined") {
   console.log(`[tts-preference-chart] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -85,7 +85,7 @@ const ENGINES: Engine[] = (
     name: r.display,
     cls,
     color: CLASSES.find((c) => c.id === cls)?.color ?? INK.muted,
-    synth: Number(r.cells[col("x̄ synth")].sort),
+    synth: Number(r.cells[col("x̄ t")].sort),
     disk: Number(r.cells[col("Disk")].sort),
     rtf: Number(r.cells[col("RTF")].sort),
   };
@@ -96,16 +96,32 @@ const M = { top: 18, right: 26, bottom: 56, left: 58 };
 const PW = W - M.left - M.right;
 const PH = H - M.top - M.bottom;
 
-const X_MAX = 6.8;   // Chatterbox Q4 at 6.39 is the slowest that survives the filter
 const Y_MAX = 100;   // ratings are already scaled 0-100 server-side
-const sx = (v: number) => M.left + (v / X_MAX) * PW;
 const sy = (v: number) => M.top + PH - (v / Y_MAX) * PH;
+
+/** Compute per phrase spans two and a half decades - 0.12s to 51s - so the x-axis
+ *  is logarithmic, the same as the word-error chart above it. A linear axis here
+ *  was not merely cramped: it was pinned at 6.8s, which is roughly where the
+ *  engines that keep up with real time end, and every slower engine was drawn
+ *  outside the plot. Ten of thirty rated engines rendered off-canvas, silently,
+ *  while the accessible label still counted them.
+ *
+ *  The bound derives from the data for the same reason the sibling chart's does:
+ *  a fixed one goes stale the moment an export moves a configuration past it, and
+ *  the failure is a marker that simply is not there. */
+const X_MIN = 0.1;
+const xScale = (xMax: number) => {
+  const lo = Math.log10(X_MIN);
+  const span = Math.log10(xMax) - lo;
+  return (v: number) => M.left + ((Math.log10(v) - lo) / span) * PW;
+};
 
 const DISK = { min: Math.min(...ENGINES.map((e) => e.disk)), max: Math.max(...ENGINES.map((e) => e.disk)) };
 /** Area-proportional, floored at 5px radius so the smallest is still a target. */
 const radius = (disk: number) => 5 + 7 * Math.sqrt((disk - DISK.min) / (DISK.max - DISK.min));
 
-const X_TICKS = [0, 1, 2, 3, 4, 5, 6];
+// Decade and half-decade ticks, keeping only those the axis actually spans.
+const TICK_CANDIDATES = [0.1, 0.3, 1, 3, 10, 30, 100, 300];
 const Y_TICKS = [0, 25, 50, 75, 100];
 
 interface Point extends Engine { rating: number }
@@ -126,6 +142,16 @@ export function TtsPreferenceChart() {
       }),
     [ratings]
   );
+
+  // Scaled to the engines actually plotted, so nothing can fall off the right-hand
+  // end. Computed before the early return below because hooks cannot be conditional.
+  const { sx, X_TICKS } = React.useMemo(() => {
+    const xMax = points.length ? Math.max(...points.map((p) => p.synth)) * 1.18 : 1;
+    return {
+      sx: xScale(xMax),
+      X_TICKS: TICK_CANDIDATES.filter((t) => t >= X_MIN && t <= xMax),
+    };
+  }, [points]);
 
   // Nothing to say yet, so say nothing. An empty axis box would read as a bug,
   // and a placeholder would be a promise the page cannot keep on its own.
@@ -205,7 +231,7 @@ export function TtsPreferenceChart() {
             </text>
           ))}
           <text x={M.left + PW / 2} y={H - 12} textAnchor="middle" fontSize={12} fill={INK.secondary}>
-            Compute per phrase (seconds, Apple M2)
+            Compute per phrase, log scale (seconds, Apple M2)
           </text>
           <text
             transform={`rotate(-90 14 ${M.top + PH / 2})`}
@@ -218,7 +244,10 @@ export function TtsPreferenceChart() {
             const lit = isLit(p);
             const hot = hover?.config === p.config;
             const r = radius(p.disk);
-            const right = p.synth > X_MAX * 0.75;
+            // Position, not value: on a log axis a fraction of the maximum sits far
+            // to the right of the same fraction across, so a value-based test flips
+            // almost nothing.
+            const right = sx(p.synth) > M.left + PW * 0.72;
             // Labels sit above the marker, except near the ceiling where that
             // puts them through the top border. The best-rated engine is by
             // definition up there, so this is the common case, not an edge one.
@@ -256,7 +285,7 @@ export function TtsPreferenceChart() {
               position: "absolute", pointerEvents: "none",
               left: `${(sx(hover.synth) / W) * 100}%`,
               top: `${(sy(hover.rating) / H) * 100}%`,
-              transform: `translate(${hover.synth > X_MAX * 0.6 ? "-105%" : "12px"}, -110%)`,
+              transform: `translate(${sx(hover.synth) > M.left + PW * 0.62 ? "-105%" : "12px"}, -110%)`,
               background: "#0b1a2e", border: `1px solid ${hover.color}`, borderRadius: 6,
               padding: "0.45rem 0.6rem", fontSize: "0.76rem", color: INK.secondary, whiteSpace: "nowrap",
               boxShadow: "0 6px 18px rgba(0,0,0,0.45)",

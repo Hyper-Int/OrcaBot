@@ -1,0 +1,40 @@
+{
+  "_comment": "Importable Orcabot dashboard template. Unlike the other benchmark templates this one needs no orchestrator, no agent and no API key: the terminal's boot command runs the whole benchmark and serves its report on localhost, and the browser block is pointed at that server. Seed with bin/seed-benchmark-templates.",
+  "name": "TTS Benchmark Runner",
+  "description": "Run the open-weight TTS benchmark and read its report",
+  "category": "coding",
+  "items": [
+    {
+      "placeholderId": "runner",
+      "type": "terminal",
+      "content": "{\"name\": \"TTS benchmark\", \"agentic\": false, \"bootCommand\": \"PORT=8099\\n# talkito refuses to fetch model weights when it cannot ask a human. The picker\\n# below is interactive, but the download prompt would land in the middle of a\\n# sweep the reader has walked away from, so it is answered in advance.\\nexport TALKITO_AUTO_APPROVE_DOWNLOADS=1\\nROOT=/workspace/talkito\\nBENCH=$ROOT/benchmark\\nSERVE=/workspace/tts-report\\necho \\\"== Orcabot: talkito TTS benchmark ==\\\"\\n\\n# Serve a placeholder first, so the browser block has something at a stable URL from\\n# the first second rather than an error until the run finishes.\\nmkdir -p \\\"$SERVE\\\"\\n[ -f \\\"$SERVE/index.html\\\" ] || printf '%s' '<!doctype html><meta http-equiv=\\\"refresh\\\" content=\\\"10\\\"><title>TTS benchmark</title><body style=\\\"font:15px/1.6 system-ui;padding:2rem;max-width:34rem\\\"><h2>Waiting for a run...</h2><p>Pick engines in the terminal. This page reloads every 10 seconds and the report replaces it when the run finishes.</p></body>' > \\\"$SERVE/index.html\\\"\\ncurl -sf -o /dev/null --max-time 2 \\\"http://127.0.0.1:$PORT/\\\" || ( cd \\\"$SERVE\\\" && nohup python3 -m http.server \\\"$PORT\\\" >/workspace/.tts-serve.log 2>&1 & )\\n\\n# talkito's .gitmodules uses git@github.com: URLs and the sandbox has no SSH key,\\n# so --recurse-submodules fails; both repos are cloned over HTTPS instead.\\n# The harness ships inside talkito-benchmark, so tests-repo is not needed -- but\\n# tools/paths.py still wants a talkito CHECKOUT (it looks for talkito/tts.py, not\\n# the installed package), and benchmark/ inside talkito/ is the layout it resolves.\\n[ -d \\\"$ROOT/.git\\\" ]  || git clone --depth 1 https://github.com/robdmac/talkito.git \\\"$ROOT\\\"\\n[ -d \\\"$BENCH/.git\\\" ] || git clone --depth 1 https://github.com/robdmac/talkito-benchmark.git \\\"$BENCH\\\"\\n\\n# piper needs no torch at all, and faster-whisper scores on CPU through CTranslate2,\\n# so the cheapest arm installs in seconds. Heavier engines pull their own weights on\\n# first use and the picker warns what each has cost before.\\npython3 -c 'import piper'          2>/dev/null || pip3 install --break-system-packages -q piper-tts\\npython3 -c 'import faster_whisper' 2>/dev/null || pip3 install --break-system-packages -q faster-whisper\\n\\ncd \\\"$BENCH\\\" || exec bash\\ncat <<'BANNER'\\n\\n  Everything is selected by default and a full sweep is around eleven hours.\\n  Press n to clear, then space to pick a few. piper alone takes about three minutes.\\n\\nBANNER\\n# No --only: this is the interactive picker, and a terminal block is a real PTY, so\\n# the arrow-key menu works exactly as it does on a laptop.\\npython3 tools/benchmark.py\\nrc=$?\\n\\n# No listening clips: make_samples.py exists to embed one per engine, but audio does\\n# not reach the reader through the browser block, and it is the only reason this\\n# needed ffmpeg -- which in turn was the only reason the sandbox ran apt-get, which\\n# reaches deb.nodesource.com through a leftover apt source and trips egress approval.\\n# Dropping playback drops all three.\\n\\nif [ -f tts-benchmark.html ]; then\\n  # page_template.html declares utf-8 upstream, so this normally just copies. The\\n  # fallback stays because the failure it guards is silent and total: python3 -m\\n  # http.server sends \\\"text/html\\\" with no charset, and a page that also declares\\n  # none is read as the browser's locale default, turning every em dash into\\n  # mojibake. It writes to the published copy rather than the source, so the export\\n  # zip stays byte-identical to what the tools wrote, and never doubles the tag.\\n  if grep -qi '<meta[^>]*charset' tts-benchmark.html; then\\n    cp -f tts-benchmark.html \\\"$SERVE/index.html\\\"\\n  else\\n    { printf '%s\\\\n' '<meta charset=\\\"utf-8\\\">'; cat tts-benchmark.html; } > \\\"$SERVE/index.html\\\"\\n  fi\\n  echo \\\"report published -> http://localhost:$PORT/\\\"\\nelse\\n  echo \\\"no tts-benchmark.html was produced; measurements (if any) are under $BENCH/tools/\\\"\\nfi\\necho \\\"[tts benchmark done rc=$rc]\\\"\\nexec bash\", \"subagentIds\": [], \"skillIds\": [], \"mcpToolIds\": []}",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "size": {
+        "width": 560,
+        "height": 560
+      }
+    },
+    {
+      "placeholderId": "report",
+      "type": "browser",
+      "content": "http://localhost:8099/",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "size": {
+        "width": 900,
+        "height": 620
+      }
+    }
+  ],
+  "edges": [],
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { findAvailableSpace, PLACEMENT_GAP, type PlacedRect } from "./placement";
+import { findAvailableSpace, frameToFit, PLACEMENT_GAP, type PlacedRect } from "./placement";
 
 // A 1200x800 container at zoom 1 with no sidebar => viewport is flow (0,0)-(1200,800).
 const VIEW = { x: 0, y: 0, zoom: 1 };
@@ -115,5 +115,98 @@ describe("SlopCodeBench dashboard sequence", () => {
         ).toBe(false);
       }
     }
+  });
+});
+
+describe("frameToFit", () => {
+  const rect = (x: number, y: number, width = 100, height = 100): PlacedRect => ({
+    position: { x, y },
+    size: { width, height },
+  });
+  /** Where a block lands on screen, given the framing. Mirrors ReactFlow's
+   *  setCenter: the centre is placed at the middle of the container. */
+  const project = (
+    r: PlacedRect,
+    f: { centerX: number; centerY: number; zoom: number },
+    cw: number,
+    ch: number,
+  ) => ({
+    left: (r.position.x - f.centerX) * f.zoom + cw / 2,
+    top: (r.position.y - f.centerY) * f.zoom + ch / 2,
+    right: (r.position.x + r.size.width - f.centerX) * f.zoom + cw / 2,
+    bottom: (r.position.y + r.size.height - f.centerY) * f.zoom + ch / 2,
+  });
+
+  it("returns null when there is nothing to frame", () => {
+    expect(frameToFit([], 1440, 900, 200)).toBeNull();
+  });
+
+  it("returns null before the container has been measured", () => {
+    // A zero-height container means the layout has not settled; framing against it
+    // would compute a zoom from nothing and lock it in.
+    expect(frameToFit([rect(0, 0)], 1440, 0, 200)).toBeNull();
+    expect(frameToFit([rect(0, 0)], 150, 900, 200)).toBeNull();
+  });
+
+  it("brings a block at the origin fully into view", () => {
+    // The case every hand-written template hits: viewport {0,0,zoom:1} leaves a
+    // block at the origin under the header and behind the sidebar.
+    const items = [rect(0, 0, 560, 560), rect(600, 0, 900, 620)];
+    const cw = 1440, ch = 900, inset = 200;
+    const f = frameToFit(items, cw, ch, inset)!;
+    for (const r of items) {
+      const p = project(r, f, cw, ch);
+      expect(p.left).toBeGreaterThanOrEqual(inset);
+      expect(p.top).toBeGreaterThanOrEqual(0);
+      expect(p.right).toBeLessThanOrEqual(cw);
+      expect(p.bottom).toBeLessThanOrEqual(ch);
+    }
+  });
+
+  it("clears the sidebar rather than centring under it", () => {
+    const items = [rect(0, 0, 560, 560), rect(600, 0, 900, 620)];
+    const wide = frameToFit(items, 1440, 900, 0)!;
+    const inset = frameToFit(items, 1440, 900, 200)!;
+    // A wider occlusion moves the centre LEFT in flow coordinates, which is what
+    // pushes the content right on screen, clear of the sidebar.
+    expect(inset.centerX).toBeLessThan(wide.centerX);
+  });
+
+  it("never magnifies a small dashboard", () => {
+    // One little block on a big screen should sit at 1:1, not be blown up.
+    const f = frameToFit([rect(0, 0, 200, 150)], 1920, 1080, 200)!;
+    expect(f.zoom).toBe(1);
+  });
+
+  it("zooms out far enough for a sprawling canvas", () => {
+    const items = [rect(0, 0, 400, 300), rect(4000, 2500, 400, 300)];
+    const cw = 1440, ch = 900, inset = 200;
+    const f = frameToFit(items, cw, ch, inset)!;
+    expect(f.zoom).toBeLessThan(1);
+    for (const r of items) {
+      const p = project(r, f, cw, ch);
+      expect(p.left).toBeGreaterThanOrEqual(inset - 1);
+      expect(p.right).toBeLessThanOrEqual(cw + 1);
+      expect(p.top).toBeGreaterThanOrEqual(-1);
+      expect(p.bottom).toBeLessThanOrEqual(ch + 1);
+    }
+  });
+
+  it("handles negative coordinates", () => {
+    // Exported templates carry blocks at negative x and y; nothing may assume the
+    // canvas starts at the origin.
+    const items = [rect(-64, -208, 400, 300), rect(1200, 240, 400, 300)];
+    const cw = 1440, ch = 900, inset = 200;
+    const f = frameToFit(items, cw, ch, inset)!;
+    for (const r of items) {
+      const p = project(r, f, cw, ch);
+      expect(p.left).toBeGreaterThanOrEqual(inset - 1);
+      expect(p.right).toBeLessThanOrEqual(cw + 1);
+    }
+  });
+
+  it("never returns a degenerate zoom", () => {
+    const f = frameToFit([rect(0, 0, 500000, 500000)], 1440, 900, 200)!;
+    expect(f.zoom).toBeGreaterThanOrEqual(0.1);
   });
 });

@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-results-table-v7-min-three
+// REVISION: tts-results-table-v12-vendor-logos
 // The open-weight TTS comparison: every configuration that keeps pace with real
 // time, and every row playable so the reader can hear the engine that produced
 // the numbers.
@@ -15,13 +15,15 @@
 // server-side with Bradley-Terry. It is live, so it changes under the reader.
 
 import * as React from "react";
+
+import { ICON_BASE, vendorForUrl } from "./ttsVendors";
 import run from "@/data/benchmarks/open-weight-tts/2026-08.json";
 import { TtsPreferenceDialog } from "./TtsPreferenceDialog";
 import { useSamplePlayer } from "./useSamplePlayer";
 import { useClassFilter } from "./useClassFilter";
 import { useTtsScores } from "./useTtsScores";
 
-const MODULE_REVISION = "tts-results-table-v7-min-three";
+const MODULE_REVISION = "tts-results-table-v12-vendor-logos";
 if (typeof window !== "undefined") {
   console.log(`[tts-results-table] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
@@ -40,12 +42,61 @@ const AUDIO_BASE = "/benchmarks/tts/";
 const RTF_COL = run.columns.indexOf("RTF");
 if (RTF_COL < 0) throw new Error(`[tts] no "RTF" column in run ${run.run}: have ${run.columns.join(", ")}`);
 const RTF_CUTOFF = run.rtfCutoff;
+const SYNTH_CUTOFF = run.synthCutoff;
 const rtfOf = (r: Row) => Number(r.cells[RTF_COL].sort);
 
-/** The Human column is spliced in here, right after the engine name, so the
- *  live number is visible without scrolling the table sideways. */
-const HUMAN_COL = 1;
-const COLUMNS: string[] = [run.columns[0], "Human", ...run.columns.slice(1)];
+const RSS_COL = run.columns.indexOf("RSS");
+if (RSS_COL < 0) throw new Error(`[tts] no "RSS" column in run ${run.run}: have ${run.columns.join(", ")}`);
+const rssOf = (r: Row) => Number(r.cells[RSS_COL].sort);
+
+/** Stops for the memory filter, in MB, with no limit as the last one.
+ *
+ *  Spaced by ratio rather than evenly. Peak RSS runs 246 MB to 8.6 GB, but
+ *  twenty of the forty-six engines fit inside a gigabyte and only three sit above
+ *  four, so an even track would spend most of its length separating the handful
+ *  of largest models and almost none of it where the reader is actually choosing.
+ *
+ *  A slider rather than a box to type in: the question this answers is "what fits
+ *  on the machine I have", which is a budget being felt out against the count, not
+ *  a number known in advance. It starts at no limit so the table is unfiltered
+ *  until someone asks for less. */
+const RSS_STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, Infinity];
+const fmtMB = (mb: number) =>
+  mb === Infinity ? "any" : mb >= 1024 ? `${Math.round((mb / 1024) * 10) / 10} GB` : `${mb} MB`;
+
+/** The logo column's key. Empty on purpose - it is the column's visible title,
+ *  and there is none - but it still has to be unique among COLUMNS, because the
+ *  headers are keyed by it and every lookup in this file is COLUMNS.indexOf. */
+const LOGO_HEAD = "​";
+
+/** Headers that are not plain text. The mean of a time is written the way the
+ *  rest of the page writes it, with the variable italic. */
+const HEADER_LABEL: Record<string, React.ReactNode> = {
+  "x̄ t": (
+    <>
+      x&#772; <i>t</i>
+    </>
+  ),
+};
+
+/** Two columns are spliced in client-side, both right after the engine name.
+ *
+ *  The logo says whose model a row is without spending a column on the name -
+ *  that information was previously only in the chip row above the table, which
+ *  does not tell you which chip goes with which row. It carries no data, so it
+ *  has no title and does not sort; the name is on the image for anyone who
+ *  cannot see it.
+ *
+ *  Human sits next to it so the live number is visible without scrolling the
+ *  table sideways. */
+/** Headers that do not sort: Notes is an icon, and the logo carries no value
+ *  to order by. Both keep a plain <th> with no button, so there is nothing to
+ *  tab onto that does nothing when activated. */
+const inertHeader = (i: number) => i === NOTES_COL || i === LOGO_COL;
+
+const LOGO_COL = 1;
+const HUMAN_COL = 2;
+const COLUMNS: string[] = [run.columns[0], LOGO_HEAD, "Human", ...run.columns.slice(1)];
 
 /** Notes became an icon: as text it was the widest column in the table and the
  *  only one that wrapped, which set the height of every row for a sentence most
@@ -97,20 +148,44 @@ const LICENCE_COL = COLUMNS.indexOf("Licence");
  *  of a column that is otherwise four characters wide. */
 const LICENCE_MAX = 92;
 
-/** RTF index in the *rendered* columns, which is one further along than in the
- *  run data because Human is spliced in ahead of it. Reading the un-spliced
- *  index here would test the wrong column entirely. */
-const RTF_COL_RENDERED = COLUMNS.indexOf("RTF");
+/** Visually hidden but read aloud - the logo column has no visible title and a
+ *  bare <th> would leave its cells unlabelled in a screen reader's table mode. */
+const SR_ONLY: React.CSSProperties = {
+  position: "absolute", width: 1, height: 1, padding: 0, margin: -1,
+  overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+};
+
 /** The two orderings where "can it keep up" is the axis, and so the only two
  *  where a line drawn at the cutoff means anything. Under any other sort the
  *  fast and slow engines interleave and the boundary is not a place. */
-const BOUNDARY_SORTS = new Set(["RTF", "x\u0304 synth"]);
+/** How the real-time boundary is cut, per sort column.
+ *
+ *  The line is cut on whatever the reader is sorting by, which is what makes the
+ *  two groups contiguous: sorting by a measure and splitting on that same measure
+ *  can only cross once. Cutting on RTF while sorting by compute per phrase was
+ *  what left three crossings and no rule at all, because RTF is compute per
+ *  second of *audio* and engines differ in how long they speak.
+ *
+ *  The two limits classify the table identically but for one row, so the reader
+ *  is not shown a different population depending on which header they clicked. */
+const BOUNDARY_BY_SORT: Record<string, { col: number; limit: number; over: string }> = {
+  RTF: {
+    col: COLUMNS.indexOf("RTF"),
+    limit: RTF_CUTOFF,
+    over: `slower than real time, over ${RTF_CUTOFF}\u00d7`,
+  },
+  "x\u0304 t": {
+    col: COLUMNS.indexOf("x\u0304 t"),
+    limit: SYNTH_CUTOFF,
+    over: `over ${SYNTH_CUTOFF}s of compute a phrase`,
+  },
+};
 
 /** Opening sort: compute per phrase, cheapest first. Word error was the old
  *  default, but it saturates once speech is intelligible and two engines have no
  *  score under the stronger transcriber, so it is a poor way to meet the table.
  *  Cost per phrase is the axis every reader is actually shopping on. */
-const DEFAULT_SORT = { col: COLUMNS.indexOf("x̄ synth"), dir: "asc" as const };
+const DEFAULT_SORT = { col: COLUMNS.indexOf("x̄ t"), dir: "asc" as const };
 
 /** The table's natural width, with Notes an icon, Avg audio gone and the cell
  *  padding trimmed. Past this the columns just stretch, so the breakout stops
@@ -162,6 +237,8 @@ export function TtsResultsTable() {
 
   const [sort, setSort] = React.useState<{ col: number; dir: "asc" | "desc" } | null>(DEFAULT_SORT);
   const [realtimeOnly, setRealtimeOnly] = React.useState(false);
+  const [rssStep, setRssStep] = React.useState(RSS_STEPS.length - 1);
+  const rssLimit = RSS_STEPS[rssStep];
   // Shared with the charts: one class selection governs the whole page, so
   // filtering to ar-lm in the table narrows the plot below it too.
   const { active: classFilter, toggle: toggleClass, clear: clearClasses, shows: classShows } = useClassFilter();
@@ -212,6 +289,7 @@ export function TtsResultsTable() {
     const visible = ROWS.filter(
       (r) =>
         (!realtimeOnly || rtfOf(r) <= RTF_CUTOFF) &&
+        rssOf(r) <= rssLimit &&
         classShows(classOf(r))
     );
     const withHuman = visible.map((r) => {
@@ -223,7 +301,15 @@ export function TtsResultsTable() {
           // twenty either way is a precision the ballots cannot support, and a
           // decimal reads as one. Sorting still uses the full value.
           : { v: String(Math.round(rating)), sort: String(rating), tone: "", align: "" };
-      return { ...r, cells: [r.cells[0], human, ...r.cells.slice(1)] };
+      // The logo is derived from the row's own model link, so it cannot point
+      // at a different vendor than the name does. sort is the vendor name,
+      // which is unused today - the column does not sort - but keeps the cell
+      // the same shape as every other one.
+      const vendor = vendorForUrl(r.cells[0].href);
+      const logo: Cell = {
+        v: vendor?.icon ?? "", sort: vendor?.name ?? "", tone: "", align: "left",
+      };
+      return { ...r, cells: [r.cells[0], logo, human, ...r.cells.slice(1)] };
     });
     if (!sort) return withHuman;
     return [...withHuman].sort((a, b) => {
@@ -237,7 +323,7 @@ export function TtsResultsTable() {
         typeof ka === "number" && typeof kb === "number" ? ka - kb : String(ka).localeCompare(String(kb));
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [classShows, ratings, realtimeOnly, sort]);
+  }, [classShows, ratings, realtimeOnly, rssLimit, sort]);
 
   // asc -> desc -> back to the default, never to "unsorted". Unsorted rendered
   // the export's own row order, which is neither the default the reader arrived
@@ -321,21 +407,48 @@ export function TtsResultsTable() {
    *  not, or null where no rule belongs. Only shown when everything is listed -
    *  with the filter on there is nothing on the far side to divide from - and
    *  only under a sort where the two groups are actually contiguous. */
+  /** The single index the rule belongs after, or null when the ordering does not
+   *  actually separate the two groups.
+   *
+   *  Contiguity used to be safe to assume from the sort column alone. Sorting by
+   *  RTF separates them by construction, and sorting by compute per phrase did
+   *  too, because the two agreed on order. Magpie's quantisations ended that:
+   *  RTF is compute per second of audio, so builds that differ in how long they
+   *  speak can order one way per phrase and the other way per second. Under the
+   *  default sort the cutoff is now crossed three times, and a rule drawn at
+   *  every crossing rendered the same band three times in one table, each one
+   *  claiming everything below it was slower.
+   *
+   *  So it is counted rather than assumed, which is what the comment above
+   *  BOUNDARY_SORTS always said the rule was. Exactly one crossing means the
+   *  groups are contiguous and the line is a place; more than one means they
+   *  interleave and there is no line to draw. */
+  const boundaryIndex = React.useMemo(() => {
+    const b = sort ? BOUNDARY_BY_SORT[COLUMNS[sort.col]] : undefined;
+    if (realtimeOnly || !b) return null;
+    const keepsUp = (r: (typeof rows)[number]) => Number(r.cells[b.col].sort) <= b.limit;
+    let only: number | null = null;
+    for (let i = 0; i + 1 < rows.length; i++) {
+      if (keepsUp(rows[i]) === keepsUp(rows[i + 1])) continue;
+      if (only !== null) return null;
+      only = i;
+    }
+    return only;
+  }, [realtimeOnly, sort, rows]);
+
   const boundaryAfter = (i: number): string | null => {
-    if (realtimeOnly || !sort || !BOUNDARY_SORTS.has(COLUMNS[sort.col])) return null;
+    if (boundaryIndex === null || i !== boundaryIndex) return null;
     const next = rows[i + 1];
     if (!next) return null;
-    const here = Number(rows[i].cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
-    const there = Number(next.cells[RTF_COL_RENDERED].sort) <= RTF_CUTOFF;
-    if (here === there) return null;
+    const b = sort ? BOUNDARY_BY_SORT[COLUMNS[sort.col]] : undefined;
+    if (!b) return null;
+    const here = Number(rows[i].cells[b.col].sort) <= b.limit;
     // Which side is which depends on the sort direction, so say it rather than
     // leaving the reader to infer it from a bare line.
     // The subject stays put and the direction flips. Naming whichever group
     // happens to be underneath instead means the sentence changes meaning as
     // well as direction, and the reader has to re-read it after every sort.
-    return here
-      ? `below: slower than real time, over ${RTF_CUTOFF}\u00d7`
-      : `above: slower than real time, over ${RTF_CUTOFF}\u00d7`;
+    return `${here ? "below" : "above"}: ${b.over}`;
   };
 
   const th: React.CSSProperties = {
@@ -431,15 +544,46 @@ export function TtsResultsTable() {
               );
             })}
           </span>
+          {/* Memory budget. The value is shown as a size rather than a step index,
+              and carried on aria-valuetext for the same reason: "8" tells a reader
+              nothing, and the count beside it only says how many survived, not what
+              they survived. minWidth holds the label steady so the row does not
+              shuffle sideways while the handle is being dragged. */}
+          <label style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", color: INK.muted }}>
+            <span>Memory</span>
+            <input
+              type="range"
+              min={0}
+              max={RSS_STEPS.length - 1}
+              step={1}
+              value={rssStep}
+              onChange={(e) => setRssStep(Number(e.target.value))}
+              aria-label="Maximum peak memory"
+              aria-valuetext={rssLimit === Infinity ? "any" : `under ${fmtMB(rssLimit)}`}
+              // The table's own border colour, not the accent. In accent orange the
+              // filled track read as a warning or a live state, which a budget the
+              // reader is simply choosing is not; this makes it part of the table's
+              // furniture instead.
+              style={{ width: 132, accentColor: AXIS, cursor: "pointer" }}
+            />
+            <span
+              style={{
+                color: rssLimit === Infinity ? INK.muted : INK.primary,
+                minWidth: "5.2rem", fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {rssLimit === Infinity ? "any" : `under ${fmtMB(rssLimit)}`}
+            </span>
+          </label>
           <span style={{ color: INK.muted }} aria-live="polite">
             {rows.length === ROWS.length
               ? `${ROWS.length} configurations`
               : `${rows.length} of ${ROWS.length} configurations`}
           </span>
-          {(realtimeOnly || classFilter.size > 0) && (
+          {(realtimeOnly || classFilter.size > 0 || rssLimit !== Infinity) && (
             <button
               type="button"
-              onClick={() => { setRealtimeOnly(false); clearClasses(); }}
+              onClick={() => { setRealtimeOnly(false); clearClasses(); setRssStep(RSS_STEPS.length - 1); }}
               style={{
                 font: "inherit", color: INK.muted, background: "none", border: "none",
                 padding: 0, textDecoration: "underline", cursor: "pointer",
@@ -481,24 +625,26 @@ export function TtsResultsTable() {
                     <th key={c} style={th} aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : "none"}>
                       <button
                         type="button"
-                        onClick={() => (i === NOTES_COL ? undefined : onHeader(i))}
-                        disabled={i === NOTES_COL}
+                        onClick={() => (inertHeader(i) ? undefined : onHeader(i))}
+                        disabled={inertHeader(i)}
                         title={
-                          i === NOTES_COL
-                            ? "Hover or tap a row's note icon"
-                            : i === HUMAN_COL
-                              ? humanHelp
-                              : "Sort by this column"
+                          i === LOGO_COL
+                            ? "Who published the model"
+                            : i === NOTES_COL
+                              ? "Hover or tap a row's note icon"
+                              : i === HUMAN_COL
+                                ? humanHelp
+                                : "Sort by this column"
                         }
                         style={{
                           font: "inherit", color: active ? INK.primary : INK.muted, background: "none",
                           border: "none", padding: "0.5rem 0.45rem", width: "100%", textAlign: i === 0 ? "left" : "right",
-                          cursor: i === NOTES_COL ? "default" : "pointer",
+                          cursor: inertHeader(i) ? "default" : "pointer",
                           fontWeight: 600, whiteSpace: "nowrap",
                         }}
                       >
-                        {c}
-                        {i !== NOTES_COL && (
+                        {i === LOGO_COL ? <span style={SR_ONLY}>Vendor</span> : HEADER_LABEL[c] ?? c}
+                        {!inertHeader(i) && (
                           <span aria-hidden="true" style={{ opacity: active ? 0.95 : 0.3, marginLeft: "0.25rem" }}>
                             {active ? (sort!.dir === "asc" ? "▲" : "▼") : "⇅"}
                           </span>
@@ -521,7 +667,9 @@ export function TtsResultsTable() {
                         style={{
                           padding: "0.35rem 0.45rem",
                           textAlign:
-                            ci === NOTES_COL ? "center" : ci === 0 || c.align === "left" ? "left" : "right",
+                            ci === NOTES_COL || ci === LOGO_COL
+                              ? "center"
+                              : ci === 0 || c.align === "left" ? "left" : "right",
                           color:
                             ci === HUMAN_COL
                               ? c.sort ? INK.primary : INK.muted
@@ -530,7 +678,21 @@ export function TtsResultsTable() {
                           fontWeight: ci === HUMAN_COL && c.sort ? 600 : undefined,
                         }}
                       >
-                        {ci === NOTES_COL ? (
+                        {ci === LOGO_COL ? (
+                          c.v ? (
+                            <img
+                              src={ICON_BASE + c.v}
+                              alt={c.sort}
+                              title={c.sort}
+                              width={16}
+                              height={16}
+                              style={{
+                                width: 16, height: 16, margin: 0, display: "block",
+                                objectFit: "contain", borderRadius: 3,
+                              }}
+                            />
+                          ) : null
+                        ) : ci === NOTES_COL ? (
                           c.v.trim() ? (
                             <button
                               type="button"

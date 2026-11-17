@@ -1,14 +1,22 @@
 ---
 title: Testing open-weight Text To Speech models
-date: 2026-08-17
+date: 2026-08-22
 description: Every open-weight TTS engine that can run on a consumer laptop, tested for WER using Whisper.
 author: Rob Macrae
+ogImage: /benchmarks/og-open-weight-tts.png
 toc: false
 ---
 
 We tested all the open weight TTS models against the same corpus, using Whisper medium to transcribe back to text.
 
 Every row can be played, so you can hear what a word error rate actually sounds like.
+
+**You can run this yourself.** The harness, the corpus and the scoring are open, and
+[talkito-benchmark](https://github.com/robdmac/talkito-benchmark) regenerates every number on this
+page from nothing. A single engine takes minutes
+(`python3 tools/benchmark.py --only piper`); the full sweep is around eleven hours, most of it
+spent downloading weights on the first run. In Orcabot, the **TTS Benchmark Runner** template
+does the whole thing in one terminal and shows the report in the built-in browser.
 
 ```chart
 tts-vendors
@@ -37,13 +45,13 @@ face value.
 
 - **RTF** is compute seconds per second of audio, the conventional measure. It **flatters
   any engine that emits excess silence**, because padding inflates the denominator. Prefer
-  **x̄ synth**, which is compute per phrase: every engine speaks the same corpus, so it
+  **x̄ _t_**, the mean compute per phrase: every engine speaks the same corpus, so it
   compares directly and cannot be gamed by padding.
 - **WER** is the round-trip word error rate, scored by Whisper `base.en`. The stronger
-  `medium.en` was run too, but it did not finish for twenty-one of the thirty-six
+  `medium.en` was run too, but it did not finish for thirty-four of the forty-nine
   configurations, so `base.en` is the one recogniser that covers the whole table. Being the
   weaker model it hallucinates words onto trailing silence, which understates good engines
-  more than bad ones — so the true spread between engines is **wider** than this column
+  more than bad ones, so the true spread between engines is **wider** than this column
   shows, not narrower.
 - **PESQ** is a no-reference perceptual quality estimate from torchaudio's SQUIM, scored on
   the sample in the first column. It is a second axis word error cannot see, because word
@@ -64,15 +72,27 @@ face value.
 
 **Machine.** Apple M2, macOS. One machine, one English corpus, one recogniser family.
 
-**Nothing is filtered out.** Every configuration compared is listed, including the twelve
+**Nothing is filtered out.** Every configuration compared is listed, including the seventeen
 that cannot keep up with their own speech, because "how far off is it" is a real question
 and a table that quietly omits the answer cannot be checked. The **Real time only** control
-above the table hides anything above 2x for readers who only care about what can be spoken
-live, and sorting by RTF or compute per phrase draws a line at the cutoff so the two groups
-are visible at once.
+above the table hides anything above 2x for readers who only care about what can be
+spoken live, and sorting by either speed column draws a line at the cutoff so the two groups
+are visible at once. The line is cut on whichever column you sorted by, because the two do
+not agree: real-time factor is compute per second of *audio* and engines differ in how long
+they speak, so cutting one while sorting by the other leaves the groups interleaved and the
+line with nowhere honest to go.
 
-The line falls at 2x exactly. Nothing sits awkwardly against it: the slowest engine that
-keeps up is OmniVoice at 1.51x, and the fastest that does not is Chatterbox Q4 at 2.03x.
+The line falls at 2x real time, or 7 seconds of compute a phrase. Nothing sits awkwardly
+against the real-time line: 1.99x against 2.21x. The compute line is tighter — Kani at 6.86s
+against Chatterbox Q8 at 7.03s — and 0.17s is well inside what three passes can resolve, so
+read those two as sharing a position rather than falling either side of a line. Each number
+is picked so the two measures classify the table the same way: they now agree about every
+configuration but one, Magpie's full-precision build, which is quick per phrase at 3.79s and
+slow per second of audio at 2.31x. It briefly sat at 2.05x, because Magpie's quantisations
+landed at 2.01x and 2.02x and splitting a ladder this table reports as indistinguishable is
+not a distinction the data can carry. Measuring every
+autoregressive configuration over at least three passes moved them to between 1.53x and
+1.81x, so the round number is honest again.
 
 **Corpus.** 84 phrases, spoken identically by every configuration, spanning core, edge and
 long-form categories.
@@ -85,7 +105,14 @@ scored on **trimmed** audio: scoring untrimmed rewards models that pad with sile
 to 0.78, because silence pulls the estimate toward the ceiling and only mediocre audio has
 room to rise.
 
-**Passes.** Autoregressive engines are averaged over two passes, feed-forward over one.
+**Passes.** Autoregressive engines are averaged over at least three passes, feed-forward
+engines over one. Sampling is what makes the difference: a deterministic forward pass gives
+the same audio every run, so a second one measures nothing, while an autoregressive model
+draws tokens and lands somewhere new each time. One run of those was not enough to separate
+six Magpie quantisations of a single checkpoint, and it was not enough to place them against
+the real-time line either; a few configurations that still moved between runs were given
+four passes or five. Chatterbox Turbo is the plainest illustration: one pass put it
+joint-best on word error at 4%, and three put it at 5%, behind three other engines.
 Differences under roughly two points are not resolvable at this sample size.
 
 ### Limitations

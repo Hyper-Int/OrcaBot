@@ -3,7 +3,7 @@
 
 "use client";
 
-// REVISION: tts-vendor-list-v6-two-rows
+// REVISION: tts-vendor-list-v12-shared-vendors
 // The organisations whose models are in the table, as linked chips.
 //
 // This was a scrolling marquee, matching the splash page. It is now static
@@ -13,50 +13,20 @@
 // seamless loop - so there is no hidden copy to keep out of the accessibility
 // tree, and no motion to suppress for readers who have asked for less of it.
 //
-// The logos are each organisation's own avatar, taken from their GitHub
-// organisation page. That is deliberate over pulling logo files off marketing
-// sites: it is one consistent source, it is the image the organisation itself
-// publishes to identify its account, and it stays a fair, factual reference to
-// whose model is being measured. It implies no endorsement; these are the
-// authors of the models tested, not partners.
+// Where the logos come from, and why, is documented in ttsVendors.
 
 import * as React from "react";
 
-const MODULE_REVISION = "tts-vendor-list-v6-two-rows";
+import { ICON_BASE, VENDORS } from "./ttsVendors";
+
+const MODULE_REVISION = "tts-vendor-list-v12-shared-vendors";
 if (typeof window !== "undefined") {
   console.log(`[tts-vendor-list] REVISION: ${MODULE_REVISION} loaded at ${new Date().toISOString()}`);
 }
 
-interface Vendor { name: string; icon: string; url: string }
-
-/** Alphabetical, sorted at load rather than by hand so a new entry cannot be
- *  dropped in the wrong place. localeCompare so case does not split the list -
- *  "dots.tts" and "hexgrad" belong among the capitalised names, not after them. */
-const VENDORS: Vendor[] = [
-  { name: "Resemble AI", icon: "resemble-ai.png", url: "https://github.com/resemble-ai/chatterbox" },
-  { name: "Neuphonic", icon: "neuphonic.png", url: "https://huggingface.co/neuphonic/neutts-2e" },
-  { name: "Microsoft", icon: "microsoft.png", url: "https://github.com/microsoft/VibeVoice" },
-  { name: "Qwen", icon: "QwenLM.png", url: "https://github.com/QwenLM/Qwen3-TTS" },
-  { name: "Hume AI", icon: "HumeAI.png", url: "https://huggingface.co/HumeAI/tada-3b-ml" },
-  { name: "k2-fsa", icon: "k2-fsa.png", url: "https://github.com/k2-fsa/OmniVoice" },
-  { name: "Rhasspy", icon: "rhasspy.png", url: "https://github.com/rhasspy/piper" },
-  { name: "hexgrad", icon: "hexgrad.png", url: "https://huggingface.co/hexgrad/Kokoro-82M" },
-  { name: "Suno", icon: "suno-ai.jpg", url: "https://github.com/suno-ai/bark" },
-  { name: "Meta", icon: "facebookresearch.png", url: "https://huggingface.co/facebook/mms-tts" },
-  { name: "Banaxi-Tech", icon: "Banaxi-Tech.png", url: "https://huggingface.co/Banaxi-Tech/BananaMind-TTS-V2" },
-  { name: "Coqui", icon: "coqui-ai.png", url: "https://huggingface.co/coqui/XTTS-v2" },
-  { name: "MyShell", icon: "myshell-ai.png", url: "https://github.com/myshell-ai/MeloTTS" },
-  { name: "KittenML", icon: "KittenML.png", url: "https://github.com/KittenML/KittenTTS" },
-  { name: "Sesame", icon: "SesameAILabs.png", url: "https://github.com/SesameAILabs/csm" },
-  { name: "Zyphra", icon: "Zyphra.png", url: "https://github.com/Zyphra/Zonos" },
-  { name: "NVIDIA", icon: "NVIDIA.png", url: "https://github.com/NVIDIA-NeMo/Speech" },
-  { name: "dots.tts", icon: "studio-dots-ai.png", url: "https://github.com/studio-dots-ai/dots.tts" },
-  { name: "SWivid", icon: "SWivid.jpg", url: "https://github.com/SWivid/F5-TTS" },
-  { name: "Supertone", icon: "supertone-inc.png", url: "https://github.com/supertone-inc/supertonic" },
-  { name: "Canopy Labs", icon: "canopyai.png", url: "https://github.com/canopyai/Orpheus-TTS" },
-].sort((a, b) => a.name.localeCompare(b.name, "en"));
-
-const ICON_BASE = "/icons/tts/";
+// The list and the logos now live in ttsVendors, shared with the results
+// table's logo column so one vendor cannot be added to the chips and missed in
+// the rows.
 
 // Selectors are deliberately over-specific. This renders inside .legal-content,
 // whose "a" rule paints every link accent blue and underlines it, and whose
@@ -64,27 +34,33 @@ const ICON_BASE = "/icons/tts/";
 // inflated these chips from 36px tall to 92px. Both need beating on specificity.
 const CSS = `
 .tts-vendors-figure ul.tts-vendors {
-  display: flex; flex-wrap: wrap; gap: 5px;
+  display: flex; flex-wrap: wrap; gap: 8px;
   margin: 0; padding: 0; list-style: none;
 }
 .tts-vendors-figure ul.tts-vendors > li { margin: 0; padding: 0; list-style: none; }
 .tts-vendors a.tts-vendor-chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  /* Horizontal padding only, twice now: each new vendor costs a chip, and the
-     prose column this sits in is a fixed 1104px, so the row count is set purely
-     by chip width. Trimming the sides keeps the height at 32px and the logos at
-     16px - shrinking either would be visible, where two pixels of padding is
-     not. Twenty-one chips currently fit 11 + 10 with about 30px to spare, so
-     the next vendor after that needs another pass rather than another trim. */
-  padding: 7px 9px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
-  font-size: 0.78rem; font-weight: 500; line-height: 1;
+  display: inline-flex; align-items: center; gap: 9px;
+  /* Sized for three rows, not squeezed into two. The prose column is a fixed
+     1104px, so row count is set purely by chip width, and this was trimmed twice
+     to hold twenty-one chips at 11 + 10. Twenty-five will not fit two rows at any
+     readable size - the only sizing that managed it was 0.70rem with 5px padding,
+     which shrinks every chip to tidy one row's wrapping.
+     So the constraint is dropped and the space used instead: twenty-seven wrap
+     9 + 9 + 9 with 82px spare on the last row. The horizontal padding is 13px
+     rather than 14 for exactly that reason - at 14 the set spilled 8 + 9 + 9 + 1,
+     stranding one chip alone on a fourth row, and one pixel either side of each
+     chip is the whole difference. The label carries the width, so the font is
+     untouched at 0.85rem and shrinking the logos would buy no row at all.
+     Measured in-page rather than guessed; re-measure when a vendor is added. */
+  padding: 9px 13px; border: 1px solid var(--border, #2a4570); border-radius: 40px;
+  font-size: 0.85rem; font-weight: 500; line-height: 1;
   color: var(--foreground, #e8edf5);
   text-decoration: none; white-space: nowrap; background: var(--background-elevated, #0d1526);
 }
 .tts-vendors a.tts-vendor-chip:hover,
 .tts-vendors a.tts-vendor-chip:focus-visible { border-color: #d95926; opacity: 1; }
 .tts-vendors a.tts-vendor-chip img {
-  width: 16px; height: 16px; margin: 0; display: inline-block;
+  width: 18px; height: 18px; margin: 0; display: inline-block;
   object-fit: contain; border-radius: 4px; flex-shrink: 0;
 }
 `;

@@ -134,3 +134,61 @@ export function findAvailableSpace(
   }
   return { x: snap(bestPos.x), y: snap(bestPos.y) };
 }
+
+/**
+ * Frame a set of blocks so every one of them is visible.
+ *
+ * Returns the centre and zoom to hand to ReactFlow's `setCenter`, or null when
+ * there is nothing to frame or the container has no usable area yet.
+ *
+ * Two things this has to get right that a plain `fitView` does not:
+ *
+ * - The workspace sidebar **overlays** the canvas rather than shrinking it, so
+ *   ReactFlow's own padding cannot account for it. The usable width is reduced by
+ *   the inset, and the centre moves LEFT by half of it in flow coordinates, which
+ *   is what pushes the content right on screen: `setCenter` puts the given point at
+ *   the container midpoint, so screen x is `(p - centerX) * zoom + width / 2` and a
+ *   smaller centre moves everything right. Adding the inset instead buries the
+ *   content further under the sidebar - which is what the tests below caught.
+ * - It never magnifies. Zoom is capped at 1, because two blocks blown up to fill a
+ *   wide screen reads as broken, and zooming in is the one direction a reader can
+ *   trivially do for themselves.
+ *
+ * @param sidebarInset  Pixels of the left edge occluded by the workspace sidebar.
+ */
+export function frameToFit(
+  items: PlacedRect[],
+  containerWidth: number,
+  containerHeight: number,
+  sidebarInset: number,
+  margin = 48,
+): { centerX: number; centerY: number; zoom: number } | null {
+  if (items.length === 0) return null;
+  const usableWidth = containerWidth - sidebarInset;
+  if (usableWidth <= 0 || containerHeight <= 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const item of items) {
+    minX = Math.min(minX, item.position.x);
+    minY = Math.min(minY, item.position.y);
+    maxX = Math.max(maxX, item.position.x + item.size.width);
+    maxY = Math.max(maxY, item.position.y + item.size.height);
+  }
+  if (!Number.isFinite(minX)) return null;
+
+  const boundsWidth = maxX - minX + margin * 2;
+  const boundsHeight = maxY - minY + margin * 2;
+  const zoom = Math.max(
+    0.1,
+    Math.min(1, usableWidth / boundsWidth, containerHeight / boundsHeight),
+  );
+
+  return {
+    centerX: (minX + maxX) / 2 - sidebarInset / 2 / zoom,
+    centerY: (minY + maxY) / 2,
+    zoom,
+  };
+}
