@@ -1,0 +1,184 @@
+<!doctype html>
+<!-- Copyright 2026 Rob Macrae. All rights reserved. -->
+<!-- REVISION: pokerbench-spectator-v3-full-ring -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PokerBench</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
+    --felt: #1f6b4a; --felt-ink: #f3f7f4; --accent: #c8841a; --red: #c0392b; --black: #1d1d1b;
+    --card: #ffffff; --good: #1f7a4d; --bad: #b3362b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a94; --line: #2e2d2a;
+      --felt: #174d37; --felt-ink: #e8f1ec; --accent: #e3a43c; --red: #e0675a; --black: #1d1d1b;
+      --card: #f4f3ef; --good: #4cc38a; --bad: #e0675a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  .table { background: var(--felt); color: var(--felt-ink); border-radius: 14px; padding: 16px;
+           display: grid; gap: 14px; }
+  .seats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .seat { border: 1px solid rgba(255,255,255,.18); border-radius: 10px; padding: 10px 12px; }
+  .seat.acting { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .seat .name { font-weight: 600; font-size: 15px; }
+  .seat .meta { opacity: .85; font-size: 12.5px; }
+  .center { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; min-height: 74px; }
+  .cards { display: flex; gap: 6px; }
+  .c { width: 40px; height: 56px; border-radius: 6px; background: var(--card); color: var(--black);
+       display: flex; flex-direction: column; align-items: center; justify-content: center;
+       font-weight: 700; font-size: 16px; line-height: 1; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  .c.red { color: var(--red); }
+  .c.back { background: repeating-linear-gradient(45deg, #2b5c8a 0 6px, #24507a 6px 12px); }
+  .c small { font-size: 15px; }
+  .pot { font-size: 15px; font-weight: 600; }
+  .log { font-size: 12.5px; opacity: .92; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .scroll { overflow-x: auto; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
+  .badge.ok { color: var(--good); border-color: var(--good); }
+  .badge.warn { color: var(--bad); border-color: var(--bad); }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } .seats { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PokerBench</h1>
+    <span id="status" class="muted">connecting…</span>
+    <span id="isolation" class="badge" hidden></span>
+  </header>
+
+  <section class="table" aria-label="Live table">
+    <div class="seats" id="seats"></div>
+    <div class="center">
+      <div class="cards" id="board"></div>
+      <div class="pot" id="pot"></div>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel scroll">
+      <h2>Leaderboard</h2>
+      <table id="leaderboard"></table>
+    </section>
+    <section class="panel">
+      <h2>Last hand</h2>
+      <div id="last" class="muted">No hands finished yet.</div>
+    </section>
+  </div>
+
+  <section class="panel scroll">
+    <h2>Recent hands</h2>
+    <table id="recent"></table>
+  </section>
+</main>
+<script>
+const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
+const el = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const signed = (n) => `<span class="${n > 0 ? "pos" : n < 0 ? "neg" : ""}">${n > 0 ? "+" : ""}${n}</span>`;
+
+function card(code) {
+  if (!code) return `<div class="c back" aria-label="hidden card"></div>`;
+  const rank = code[0] === "T" ? "10" : code[0];
+  const suit = code[1];
+  const red = suit === "h" || suit === "d";
+  return `<div class="c ${red ? "red" : ""}" aria-label="${esc(code)}">${esc(rank)}<small>${SUITS[suit] || esc(suit)}</small></div>`;
+}
+
+function fmtAction(a) {
+  if (a.action === "bet" || a.action === "raise") return `${esc(a.seat)} ${a.action} to ${a.to}${a.allin ? " (all-in)" : ""}`;
+  if (a.action === "call") return `${esc(a.seat)} call ${a.amount}`;
+  return `${esc(a.seat)} ${a.action}`;
+}
+
+function render(s) {
+  const live = s.live;
+  el("status").textContent = s.status === "running"
+    ? `hand ${s.hand} of ${s.hands_total}`
+    : s.status === "finished" ? `finished · ${s.hands_total} hands`
+    : `waiting for players (${s.joined.length}/${s.seats.length} joined)`;
+
+  el("seats").innerHTML = s.seats.map((seat) => {
+    const info = live ? live.seats[seat] : null;
+    const acting = live && live.actor === seat;
+    const chips = s.tournament ? s.tournament.chips[seat] : null;
+    const out = s.tournament && chips === 0;
+    const meta = out ? "eliminated"
+      : info ? `${esc(info.position)} · stack ${info.stack} · bet ${info.bet}${info.status && info.status !== "in" ? ` · ${esc(info.status)}` : ""}`
+      : (s.joined.includes(seat) ? "joined" : "not joined");
+    return `<div class="seat ${acting ? "acting" : ""}">
+      <div class="name">${esc(seat)}${acting && live.seconds_left != null ? ` · ${Math.ceil(live.seconds_left)}s` : ""}</div>
+      <div class="cards" style="margin:6px 0">${info && info.status !== "folded" ? card(null) + card(null) : ""}</div>
+      <div class="meta">${meta}</div>
+    </div>`;
+  }).join("");
+
+  el("board").innerHTML = live ? live.board.map(card).join("") : "";
+  el("pot").textContent = live ? `Pot ${live.pot} · ${live.street}` : "";
+  el("log").innerHTML = live && live.actions.length
+    ? live.actions.map((a) => `[${a.street}] ${fmtAction(a)}`).join(" · ")
+    : "";
+
+  const iso = s.isolation, badge = el("isolation");
+  if (iso && s.joined.length === s.seats.length) {
+    badge.hidden = false;
+    badge.className = `badge ${iso.enforced ? "ok" : "warn"}`;
+    badge.textContent = iso.enforced ? "seat isolation enforced" : "seat isolation NOT enforced";
+    badge.title = iso.enforced ? `engine uid ${iso.engine_uid}` : iso.problems.join("; ");
+  }
+
+  const lb = s.leaderboard;
+  el("leaderboard").innerHTML = `<tr><th>Seat</th><th>Net</th><th>bb/100</th><th>Dup bb/100 ± CI</th><th>Timeouts</th><th>Invalid</th></tr>` +
+    lb.map((r) => `<tr><td>${esc(r.seat)}</td><td>${signed(r.net_chips)}</td><td>${r.bb_per_100 ?? "–"}</td>
+      <td>${r.dup_bb_per_100 ?? "–"}${r.dup_ci95 != null ? ` ± ${r.dup_ci95}` : ""}</td>
+      <td>${s.counters[r.seat].timeouts}</td><td>${s.counters[r.seat].invalid}</td></tr>`).join("");
+
+  const h = s.last_hand;
+  if (h) {
+    el("last").innerHTML = `<div style="margin-bottom:6px">Hand ${h.hand} (deal ${h.deal}${h.mirror ? ", mirror" : ""}) · ${h.showdown ? "showdown" : "no showdown"}</div>` +
+      h.players.map((seat) => `<div style="display:flex;align-items:center;gap:10px;margin:4px 0">
+        <div class="cards">${(h.hole[seat] || [null, null]).map(card).join("")}</div>
+        <div><b>${esc(seat)}</b> ${signed(h.net[seat])}<div class="muted" style="font-size:12px">${esc(h.positions[seat])}</div></div></div>`).join("") +
+      `<div class="cards" style="margin:6px 0">${h.board.map(card).join("")}</div>` +
+      `<div class="muted" style="font-size:12.5px">${h.actions.map((a) => `[${a.street}] ${fmtAction(a)}`).join(" · ")}</div>`;
+  }
+
+  el("recent").innerHTML = `<tr><th>Hand</th><th>Deal</th>${s.seats.map((x) => `<th>${esc(x)}</th>`).join("")}<th>Showdown</th></tr>` +
+    s.recent.slice().reverse().map((r) => `<tr><td>${r.hand}</td><td>${r.deal}${r.mirror ? "′" : ""}</td>
+      ${s.seats.map((x) => `<td>${r.net[x] == null ? "–" : signed(r.net[x])}</td>`).join("")}<td>${r.showdown ? "yes" : "–"}</td></tr>`).join("");
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/api/spectate", { cache: "no-store" });
+    if (res.ok) render(await res.json());
+    else el("status").textContent = `engine error ${res.status}`;
+  } catch {
+    el("status").textContent = "engine unreachable — retrying";
+  }
+  setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>
