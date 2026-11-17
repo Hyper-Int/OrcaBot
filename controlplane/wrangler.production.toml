@@ -23,6 +23,10 @@ routes = [
 # Deployment environment
 ENVIRONMENT = "production"
 
+# Sandbox auth - new VMs never receive INTERNAL_API_TOKEN; they call /internal/*
+# with their dashboard-scoped token (X-Dashboard-Token) only.
+WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX = "true"
+
 # Authentication - Dev auth DISABLED, CF Access required
 DEV_AUTH_ENABLED = "false"
 

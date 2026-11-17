@@ -25,6 +25,10 @@ routes = [
 # Deployment environment
 ENVIRONMENT = "production"
 
+# Sandbox auth - new VMs never receive INTERNAL_API_TOKEN; they call /internal/*
+# with their dashboard-scoped token (X-Dashboard-Token) only.
+WITHHOLD_INTERNAL_TOKEN_FROM_SANDBOX = "true"
+
 # Authentication - Dev auth DISABLED (public URL, header-based auth would be insecure)
 DEV_AUTH_ENABLED = "false"
 
@@ -35,8 +39,12 @@ AUTH_LOGIN_RESTRICTED = "true"
 # CORS - Only allow the dev frontend
 ALLOWED_ORIGINS = "https://dev.orcabot.com"
 
-# Egress proxy - enabled globally on sandbox machines
-EGRESS_PROXY_ENABLED = "true"
+# Egress proxy - DISABLED. Fly's kernel rejects the iptables owner match the
+# sandbox's egress isolation needs ("Extension owner revision 0 not supported"),
+# so a VM started with EGRESS_PROXY_ENABLED=true refuses every PTY (E79770).
+# Dev shares the warm pool with prod (same D1), so prod dashboards could be
+# handed those VMs. Re-enable once egress isolation works on Fly.
+# EGRESS_PROXY_ENABLED = "true"
 
 # Fly.io per-dashboard machine provisioning
 FLY_APP_NAME = "orcabot-sandbox"
