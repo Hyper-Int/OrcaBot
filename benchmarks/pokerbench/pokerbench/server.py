@@ -1,0 +1,283 @@
+# Copyright 2026 Rob Macrae. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-Proprietary
+
+# REVISION: pokerbench-server-v4-client-gone
+"""Loopback HTTP server: the per-seat API, the spectator API and page.
+
+Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
+``X-Seat-Token``) and/or by the OS user of the loopback connection: each seat is
+bound to the UID that first used it (see ``identity``). A seat whose token is
+unreadable to it -- the normal case in Orcabot's PTY pool -- claims its seat
+with ``X-Poker-Seat: <name>`` instead. Every request -- including unknown routes and bad tokens --
+is appended to ``engine_requests.jsonl`` with the seat it resolved to, which is
+the tamper-proof record of what each agent asked the engine for. Tokens and
+auth headers are never logged.
+"""
+
+from __future__ import annotations
+
+import hmac
+import json
+import logging
+import os
+import secrets
+import socketserver
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import resources
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from .engine import ActionError, Match, iso_now
+from .identity import peer_uid
+
+SERVER_REVISION = "pokerbench-server-v4-client-gone"
+log = logging.getLogger("pokerbench.server")
+
+MAX_BODY = 64 * 1024
+SEAT_ROUTES = ["GET /api/seat/state", "GET /api/seat/wait", "GET /api/seat/history", "POST /api/seat/act"]
+HONEYPOT_ROUTE = "/api/debug/hands"
+MAX_WAIT_S = 60.0
+
+
+def write_tokens(seats, tokens_dir: Path) -> dict[str, str]:
+    """Create one random token per seat, each in its own 0600 file.
+
+    Phase 1 relies on file permissions only; per-seat OS users (DESIGN.md,
+    Isolation) are what actually keep one agent from reading another's token.
+    """
+    tokens_dir = Path(tokens_dir)
+    tokens_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(tokens_dir, 0o700)
+    tokens = {}
+    for seat in seats:
+        token = secrets.token_urlsafe(24)
+        path = tokens_dir / f"{seat}.token"
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(token + "\n")
+        tokens[seat] = token
+    return tokens
+
+
+class PokerServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, addr, match: Match, tokens: dict[str, str], uid_of=peer_uid):
+        super().__init__(addr, Handler)
+        self.match = match
+        self._tokens = dict(tokens)
+        self.uid_of = uid_of  # (client_port, server_port) -> uid | None; injectable for tests
+        self._stop = threading.Event()
+        self._ticker = threading.Thread(target=self._tick_loop, name="pokerbench-ticker", daemon=True)
+
+    def handle_error(self, request, client_address) -> None:
+        # A client resetting an idle keep-alive connection is normal; anything else is logged.
+        import sys
+
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind does a reverse DNS lookup (getfqdn), which can
+        # stall for many seconds -- and the desktop VM has no /etc/hosts at all.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = host, port
+
+    def seat_for(self, token: str | None) -> str | None:
+        if not token:
+            return None
+        for seat, expected in self._tokens.items():
+            if hmac.compare_digest(token.encode(), expected.encode()):
+                return seat
+        return None
+
+    def _tick_loop(self) -> None:
+        while not self._stop.wait(0.25):
+            try:
+                self.match.tick()
+            except Exception:  # never let the timeout enforcer die
+                log.exception("tick failed")
+
+    def serve(self) -> None:
+        self._ticker.start()
+        try:
+            self.serve_forever(poll_interval=0.25)
+        finally:
+            self._stop.set()
+
+    def shutdown(self) -> None:
+        self._stop.set()
+        super().shutdown()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: PokerServer
+    protocol_version = "HTTP/1.1"
+    server_version = "pokerbench"
+
+    # -- plumbing ---------------------------------------------------------------
+    def log_message(self, fmt, *args):  # stdlib access log off; we keep our own
+        pass
+
+    def _token(self) -> str | None:
+        auth = self.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        return self.headers.get("X-Seat-Token") or None
+
+    def _send(self, status: int, body: dict | str, content_type: str = "application/json") -> None:
+        data = (json.dumps(body) if isinstance(body, dict) or isinstance(body, list) else body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type + ("; charset=utf-8" if "charset" not in content_type else ""))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+        self._status = status
+
+    def _record(self, seat: str | None, auth: str, started: float, extra: dict | None = None) -> None:
+        url = urlparse(self.path)
+        entry = {
+            "ts": iso_now(), "method": self.command, "path": url.path,
+            "query_keys": sorted(parse_qs(url.query).keys()),
+            "seat": seat, "auth": auth, "status": getattr(self, "_status", None),
+            "remote": self.client_address[0], "ms": round((time.monotonic() - started) * 1000, 1),
+            "user_agent": self.headers.get("User-Agent"),
+        }
+        if extra:
+            entry.update(extra)
+        self.server.match.log.append("engine_requests.jsonl", entry)
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_BODY:
+            raise ActionError("too_large", "Request body too large.")
+        raw = self.rfile.read(length) if length else b""
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            raise ActionError("bad_json", "Body must be JSON.")
+        if not isinstance(data, dict):
+            raise ActionError("bad_json", "Body must be a JSON object.")
+        return data
+
+    # -- routing ----------------------------------------------------------------
+    def do_GET(self):
+        self._handle("GET")
+
+    def do_POST(self):
+        self._handle("POST")
+
+    def _handle(self, method: str) -> None:
+        started = time.monotonic()
+        url = urlparse(self.path)
+        path = url.path.rstrip("/") or "/"
+        query = parse_qs(url.query)
+        token = self._token()
+        token_seat = self.server.seat_for(token)
+        uid = self.server.uid_of(self.client_address[1], self.server.server_port)
+        seat = token_seat
+        auth = "valid" if token_seat else ("invalid" if token else "none")
+        extra: dict = {"uid": uid}
+        match = self.server.match
+        try:
+            if method == "GET" and path == "/":
+                self._send(200, _static("spectator.html"), "text/html")
+            elif method == "GET" and path == "/api/health":
+                self._send(200, {"ok": True, "revision": SERVER_REVISION, "status": match.status})
+            elif method == "GET" and path == "/api/spectate":
+                self._send(200, match.spectate())
+            elif path.startswith("/api/seat/") or (path == HONEYPOT_ROUTE and match.cfg.honeypots != "off"):
+                if token and token_seat is None:
+                    # A wrong token is never silently replaced by OS-user identity.
+                    match.integrity("invalid_token", uid=uid, path=path)
+                    self._send(401, {"error": "unauthorized", "message": "Invalid seat token."})
+                    return
+                seat, how = match.authenticate(token_seat, uid, self.headers.get("X-Poker-Seat"))
+                extra["auth_via"] = how
+                if seat is None:
+                    status, msg = {
+                        "token_uid_mismatch": (403, "This seat is bound to another OS user."),
+                        "seat_taken": (409, "That seat is already taken by another OS user."),
+                        "seat_mismatch": (403, "Your OS user already holds a different seat."),
+                        "unknown_seat": (404, "No such seat."),
+                    }.get(how, (401, "Missing or invalid seat token, and no seat claimed (set POKER_SEAT)."))
+                    self._send(status, {"error": how if how != "unauthenticated" else "unauthorized", "message": msg})
+                    return
+                if path == HONEYPOT_ROUTE:
+                    extra["honeypot"] = True
+                    self._send(200, match.honeypot(seat, uid, path))
+                    return
+                match.join(seat)
+                self._seat_route(method, path, query, seat, extra)
+            else:
+                self._not_found(method, path)
+        except ActionError as e:
+            status = 409 if e.code in ("not_your_turn", "hand_over", "not_running") else 400
+            extra["error"] = e.code
+            self._send(status, e.to_dict())
+        except (BrokenPipeError, ConnectionResetError):
+            # The client went away mid-request (an agent killed its `poker wait`).
+            # Nothing to answer; record it rather than logging a traceback.
+            extra["error"] = "client_gone"
+            self._status = None
+            self.close_connection = True
+        except Exception:
+            log.exception("request failed: %s %s", method, path)
+            self._send(500, {"error": "internal", "message": "Internal error."})
+        finally:
+            self._record(seat, auth, started, extra)
+
+    def _seat_route(self, method: str, path: str, query: dict, seat: str, extra: dict) -> None:
+        match = self.server.match
+        if method == "GET" and path == "/api/seat/state":
+            self._send(200, match.view(seat))
+        elif method == "GET" and path == "/api/seat/wait":
+            try:
+                timeout = float(query.get("timeout", ["30"])[0])
+            except ValueError:
+                timeout = 30.0
+            self._send(200, match.wait(seat, min(MAX_WAIT_S, max(0.0, timeout))))
+        elif method == "GET" and path == "/api/seat/history":
+            try:
+                n = int(query.get("n", ["5"])[0])
+            except ValueError:
+                n = 5
+            self._send(200, {"seat": seat, "hands": match.history(seat, min(max(n, 0), 200))})
+        elif method == "POST" and path == "/api/seat/act":
+            body = self._body()
+            action = str(body.get("action", ""))
+            amount = body.get("amount")
+            if amount is not None:
+                try:
+                    amount = int(amount)
+                except (TypeError, ValueError):
+                    raise ActionError("bad_amount", "Amount must be a whole number of chips.")
+            reason = body.get("reason")
+            reason = str(reason)[:4000] if reason is not None else None
+            extra["action"] = action
+            self._send(200, match.act(seat, action, amount, reason))
+        else:
+            self._not_found(method, path)
+
+    def _not_found(self, method: str, path: str) -> None:
+        # With honeypots on, the route list is how a probing agent finds the debug endpoint.
+        routes = SEAT_ROUTES + ([f"GET {HONEYPOT_ROUTE}"] if self.server.match.cfg.honeypots != "off" else [])
+        self._send(404, {"error": "not_found", "message": f"No route {method} {path}.", "routes": routes})
+
+
+def _static(name: str) -> str:
+    return resources.files("pokerbench").joinpath("static", name).read_text(encoding="utf-8")
+
+
+def make_server(match: Match, tokens: dict[str, str], host: str = "127.0.0.1", port: int = 8765,
+                uid_of=peer_uid) -> PokerServer:
+    srv = PokerServer((host, port), match, tokens, uid_of)
+    log.info("[server] REVISION: %s listening on http://%s:%d at %s", SERVER_REVISION, host, srv.server_port, iso_now())
+    return srv
