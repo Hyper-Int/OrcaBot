@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-seat-v2-interactive-agents
+# REVISION: pokerbench-seat-v3-rendered-screen
 # A PokerBench seat. The engine publishes this script as $PUB/seat.sh. A terminal takes a
 # seat by being linked to the engine terminal on the canvas; its seat is named after the
 # terminal. Two kinds of seat terminal use it:
@@ -31,7 +31,7 @@
 # see links for (an older sandbox).
 set -u
 PUB="${POKER_PUB:-/tmp/pokerbench}"  # where the engine publishes (overridable for tests)
-REVISION=pokerbench-seat-v2-interactive-agents
+REVISION=pokerbench-seat-v3-rendered-screen
 SOCK=/run/orcabot/privileged.sock
 MODE="${1:-play}"
 
@@ -121,17 +121,26 @@ own() {  # method path [json]
   fi
 }
 
-# A setup question the agent is still waiting on (login, trust this folder, ...), from the
-# end of this terminal's screen; empty if it looks ready for a prompt.
+# A setup question the agent is still waiting on (login, trust this folder, ...): this
+# terminal's raw recent output (Orcabot /screen, with its size), rendered as the screen
+# shows it now (seat_screen.py), since an agent's interface redraws in place and an
+# answered question stays in the output. Empty if none, or if this Orcabot can't say.
 waiting_on() {
-  own GET /scrollback | python3 -c 'import re,sys
-t=re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[\]P^_].*?(\x07|\x1b\\)|\x1b.", " ", sys.stdin.read()[-4000:]).lower()
-t=re.sub(r"\s+"," ",t)
-for q in ("select login method","how would you like to authenticate","sign in with chatgpt","log in with your",
-          "choose the text style","do you trust","trust this folder","bypass permissions mode","yes, i accept",
-          "press enter to continue","paste code here","browser didn"):
-    if q in t:
-        print(q); break' 2>/dev/null
+  local hdr body rows cols
+  hdr=$(mktemp) body=$(mktemp)
+  if [ -n "${POKER_OWN_URL:-}" ]; then  # tests
+    curl -s --max-time 15 -D "$hdr" -o "$body" "$POKER_OWN_URL/screen"
+  elif [ -S "$SOCK" ]; then
+    curl -s --max-time 15 --unix-socket "$SOCK" -D "$hdr" -o "$body" "http://localhost/screen"
+  else
+    curl -s --max-time 15 -H "X-MCP-Secret: ${ORCABOT_MCP_SECRET:-}" -D "$hdr" -o "$body" \
+      "http://127.0.0.1:${ORCABOT_MCP_PORT:-8081}/sessions/${ORCABOT_SESSION_ID:-}/ptys/${ORCABOT_PTY_ID:-}/screen"
+  fi
+  if head -1 "$hdr" | grep -q " 200"; then
+    rows=$(grep -i '^x-screen-rows:' "$hdr" | tr -dc 0-9); cols=$(grep -i '^x-screen-cols:' "$hdr" | tr -dc 0-9)
+    python3 "$PUB/seat_screen.py" --rows "${rows:-0}" --cols "${cols:-0}" < "$body" 2>/dev/null
+  fi
+  rm -f "$hdr" "$body"
 }
 
 type_in() {  # file [clear-command]: give the agent the prompt, as if pasted at its prompt

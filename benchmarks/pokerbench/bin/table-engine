@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v8-linked-seats
+# REVISION: pokerbench-table-engine-v9-seat-screen
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -28,7 +28,7 @@
 # and run $PUB/seat.sh (bin/seat).
 set -u
 START="${START:-manual}"
-REVISION=pokerbench-table-engine-v8-linked-seats
+REVISION=pokerbench-table-engine-v9-seat-screen
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -49,8 +49,9 @@ mkdir -p "$PUB/bin" && chmod 755 "$PUB" "$PUB/bin"
 cp "$SRC/pokerbench/cli.py" "$PUB/poker_cli.py"
 printf '#!/bin/sh\nexec python3 %s/poker_cli.py "$@"\n' "$PUB" > "$PUB/bin/poker"
 cp "$SRC/bin/seat" "$PUB/seat.sh"
+cp "$SRC/pokerbench/screen.py" "$PUB/seat_screen.py"
 "$PB" prompt --condition "$CONDITION" --players 2 --format "$FORMAT" > "$PUB/prompt.txt" || die "unknown CONDITION '$CONDITION'"
-chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/prompt.txt"
+chmod 755 "$PUB/bin/poker"; chmod 644 "$PUB/poker_cli.py" "$PUB/seat.sh" "$PUB/seat_screen.py" "$PUB/prompt.txt"
 GAME="$(date -u +%Y%m%d-%H%M%S)"; RUN="$PRIV/runs/$GAME"
 rm -rf "$PRIV/tokens" "$PRIV/control.token" "$PUB/seats.json" "$PUB/engine.env"  # the host writes them
 
