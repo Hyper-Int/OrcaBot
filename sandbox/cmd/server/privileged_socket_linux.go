@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: privileged-socket-v13-agent-link
+// REVISION: privileged-socket-v14-terminal-links
 
 //go:build linux
 
@@ -22,7 +22,7 @@ import (
 	"github.com/Hyper-Int/OrcaBot/sandbox/internal/pty"
 )
 
-const privilegedSocketRevision = "privileged-socket-v13-agent-link"
+const privilegedSocketRevision = "privileged-socket-v14-terminal-links"
 
 func init() {
 	log.Printf("[privileged-socket] REVISION: %s loaded at %s", privilegedSocketRevision, time.Now().Format(time.RFC3339))
@@ -240,6 +240,13 @@ func (ps *PrivilegedSocket) handleConn(conn net.Conn) {
 	})
 	mux.HandleFunc("/agents/", func(w http.ResponseWriter, r *http.Request) {
 		ps.server.handleAgentsForPTY(w, r, session, entry.PTYID, strings.TrimPrefix(r.URL.Path, "/agents/"))
+	})
+
+	// /links → the terminals this PTY's terminal is linked to by edges (canvas links),
+	// with each one's pool UID. PTY identity from SO_PEERCRED only.
+	// REVISION: privileged-socket-v14-terminal-links
+	mux.HandleFunc("/links", func(w http.ResponseWriter, r *http.Request) {
+		ps.server.handleLinksForPTY(w, r, session, entry.PTYID)
 	})
 
 	// /tools-changed → broadcast tools_changed event.

@@ -43,6 +43,7 @@ import * as agentState from './agent-state/handler';
 import * as chat from './chat/handler';
 import * as egress from './egress/handler';
 import * as agents from './agents/handler';
+import { handleInternalTerminalLinks } from './terminals/links';
 import * as analytics from './analytics/handler';
 import * as googleAuth from './auth/google';
 import * as authLogout from './auth/logout';
@@ -3440,6 +3441,14 @@ async function handleRequest(request: Request, env: EnvWithBindings, ctx: Pick<E
     const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
     if (authError) return authError;
     return agents.handleInternalTerminalAgents(env, segments[2], segments[4]);
+  }
+  // GET  /internal/dashboards/:id/terminals/:ptyId/links     - terminals a terminal is linked to by edges
+  //   (e.g. the players linked to a game engine). REVISION: terminal-links-v1
+  if (segments[0] === 'internal' && segments[1] === 'dashboards' && segments.length === 6 && segments[3] === 'terminals'
+      && segments[5] === 'links' && method === 'GET') {
+    const authError = await authorizeSandboxForDashboard(request, env, segments[2]);
+    if (authError) return authError;
+    return handleInternalTerminalLinks(env, segments[2], segments[4]);
   }
 
   // GET /internal/dashboards/:id/egress/allowlist - Sandbox loads persisted egress allowlist on startup

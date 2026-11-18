@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: agent-link-v2-status-detail
+// REVISION: agent-link-v3-terminal-links
 
 package agentlink
 
@@ -84,4 +84,21 @@ func (c *CPClient) TerminalAgents(ctx context.Context, dashboardID, ptyID string
 	err := c.do(ctx, dashboardID, http.MethodGet,
 		"/internal/dashboards/"+url.PathEscape(dashboardID)+"/terminals/"+url.PathEscape(ptyID)+"/agents", nil, &out)
 	return out.Agents, err
+}
+
+// LinkedTerminal is a terminal linked to another on the canvas (an edge either way).
+type LinkedTerminal struct {
+	ItemID string `json:"itemId"`
+	Name   string `json:"name"`
+	PTYID  string `json:"ptyId"`
+}
+
+// TerminalLinks: the terminals the terminal running ptyID is linked to by edges.
+func (c *CPClient) TerminalLinks(ctx context.Context, dashboardID, ptyID string) ([]LinkedTerminal, error) {
+	var out struct {
+		Terminals []LinkedTerminal `json:"terminals"`
+	}
+	err := c.do(ctx, dashboardID, http.MethodGet,
+		"/internal/dashboards/"+url.PathEscape(dashboardID)+"/terminals/"+url.PathEscape(ptyID)+"/links", nil, &out)
+	return out.Terminals, err
 }

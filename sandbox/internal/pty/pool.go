@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const poolRevision = "pty-pool-v4-error-codes"
+const poolRevision = "pty-pool-v5-uid-for-pty"
 
 func init() {
 	log.Printf("[pty-pool] REVISION: %s loaded at %s", poolRevision, time.Now().Format(time.RFC3339))
@@ -195,6 +195,23 @@ func (p *Pool) Lookup(uid int) (*SlotEntry, bool) {
 	entry, ok := p.registry[uid]
 	p.mu.RUnlock()
 	return entry, ok
+}
+
+// UIDForPTY returns the pool UID a PTY runs as, or false if it isn't a pool PTY.
+// Used to tell a terminal which OS user a terminal linked to it runs as (canvas links),
+// so a program coordinating them (a game engine) can bind each to its own user.
+func (p *Pool) UIDForPTY(ptyID string) (int, bool) {
+	if ptyID == "" {
+		return 0, false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for uid, entry := range p.registry {
+		if entry.PTYID == ptyID {
+			return uid, true
+		}
+	}
+	return 0, false
 }
 
 // Release begins teardown of a slot after the PTY exits.
