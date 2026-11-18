@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v7-table-settings -->
+<!-- REVISION: pokerbench-spectator-v8-settings-button -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -48,6 +48,11 @@
           box-shadow: 0 .4cqw 0 #a87a1c, 0 .8cqw 2cqw rgba(0,0,0,.4); }
   .big:disabled { filter: grayscale(.8) brightness(.7); cursor: default; }
   .big:not(:disabled):hover { filter: brightness(1.06); }
+  .actions { display: flex; gap: 1.2cqw; align-items: center; justify-content: center; flex-wrap: wrap; }
+  .big.ghost { background: rgba(0,0,0,.22); color: var(--gold); box-shadow: inset 0 0 0 .18cqw var(--gold);
+               font-size: 1.35cqw; padding: .8cqw 2.2cqw; }
+  .summary { font-size: 1.1cqw; color: rgba(255,255,255,.75); }
+  @media (max-width: 560px) { .big { font-size: 13px; padding: 7px 18px; } .big.ghost { font-size: 12px; } .summary, .message small { font-size: 11px; } }
   .paused-tag { font-weight: 800; letter-spacing: .3em; font-size: 1.5cqw; color: var(--gold); }
   .ctl { font: inherit; font-size: 12.5px; font-weight: 700; padding: 4px 14px; border-radius: 999px; cursor: pointer;
          border: 1px solid color-mix(in srgb, var(--gold) 60%, transparent); background: transparent; color: var(--gold); }
@@ -121,8 +126,14 @@
   @media (max-width: 560px) { .stage { min-height: 0; aspect-ratio: 4 / 3.4; } }
 
   /* game settings (the lobby) */
-  .setup-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-  .setup-head h2 { margin: 0; }
+  .setup-dialog { width: min(820px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 0;
+                  background: var(--room2); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+                  box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+  .setup-dialog .setup { padding: 16px 18px 18px; }
+  .setup-dialog::backdrop { background: rgba(4, 8, 6, .65); }
+  .setup-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .setup-head h2 { margin: 0; font-size: 15px; letter-spacing: .02em; }
+  .setup-head .spacer { flex: 1; }
   .setup-head .note { font-size: 12.5px; color: var(--muted); }
   .setup-head .note.err { color: var(--bad); }
   .setup-head .note.ok { color: var(--good); }
@@ -165,8 +176,10 @@
     <div class="center" id="center"></div>
   </section>
 
-  <section class="panel setup" id="setup" hidden aria-labelledby="setup-title">
-    <div class="setup-head"><h2 id="setup-title">Game settings</h2><span id="setup-note" class="note"></span></div>
+  <dialog class="setup-dialog" id="setup-dialog" aria-labelledby="setup-title">
+  <section class="setup" id="setup">
+    <div class="setup-head"><h2 id="setup-title">Game settings</h2><span id="setup-note" class="note"></span>
+      <span class="spacer"></span><button type="button" class="ctl" id="setup-done">Done</button></div>
     <div class="fields">
       <div class="field">
         <span class="flabel" id="format-label">Format</span>
@@ -214,6 +227,7 @@
       </label>
     </div>
   </section>
+  </dialog>
 
   <div class="panels">
     <section class="panel">
@@ -231,8 +245,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v7-table-settings
-console.log(`[spectator] REVISION: pokerbench-spectator-v7-table-settings loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v8-settings-button
+console.log(`[spectator] REVISION: pokerbench-spectator-v8-settings-button loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -380,8 +394,12 @@ function render() {
     if (s.start === "manual") {
       const rigWait = needsRigSeat(s);
       center = `<div class="message">${ready >= 2 ? `${ready} players are ready.` : ready === 1 ? "1 player is ready. A game needs at least 2." : "Waiting for players to sit down."}
-        <small>${rigWait && ready >= 2 ? esc(rigWait) : `Seats appear as their terminals and Agent blocks check in.${settings ? " Set up the game below, then" : ""} Start begins the game with the players who are ready.`}</small></div>
-        <button class="big" data-action="start" ${ready >= 2 && !busy && !rigWait ? "" : "disabled"}>${busy ? "STARTING…" : "START"}</button>`;
+        <small>${rigWait && ready >= 2 ? esc(rigWait) : `Seats appear as their terminals and Agent blocks check in. ${settings ? "Settings sets up the game; " : ""}Start begins it with the players who are ready.`}</small></div>
+        <div class="actions">
+          ${settings && settings.editable ? `<button class="big ghost" data-open="settings">⚙ SETTINGS</button>` : ""}
+          <button class="big" data-action="start" ${ready >= 2 && !busy && !rigWait ? "" : "disabled"}>${busy ? "STARTING…" : "START"}</button>
+        </div>
+        ${settings ? `<div class="summary">${esc(summaryText(settings))}</div>` : ""}`;
     } else {
       center = `<div class="message">Waiting for every seat to be ready.<small>The game starts by itself once all ${n} have checked in.</small></div>`;
     }
@@ -410,6 +428,7 @@ function render() {
   if (controlError) center += `<div class="error">${esc(controlError)}</div>`;
   el("center").innerHTML = center;
   el("center").querySelectorAll("[data-action]").forEach((b) => { b.onclick = () => control(b.dataset.action); });
+  el("center").querySelectorAll("[data-open=settings]").forEach((b) => { b.onclick = openSettings; });
   el("stage").classList.toggle("is-paused", Boolean(s.paused && s.status === "running"));
 
   // Pause / Resume in the header while the game runs.
@@ -475,15 +494,33 @@ const HONEYPOT_TEXT = {
 };
 const settingInputs = () => document.querySelectorAll("#setup [data-key]");
 
+// One line under Start: what the game will be.
+function summaryText(v) {
+  const t = v.format === "tournament";
+  return [t ? "Tournament" : "Cash game", `${num(v.hands)} ${t ? "hands max" : v.duplicate ? "deals" : "hands"}`,
+          (CONDITION_TEXT[v.condition] || [v.condition])[0], `honeypot ${v.honeypots}`,
+          `${v.turn_timeout}s a move`].join(" · ");
+}
+
+function openSettings() {
+  const dialog = el("setup-dialog");
+  renderSettings(true);
+  if (!dialog.open) dialog.showModal();
+}
+
 // Under a rigging condition, Start waits for its seat. Returns why, or "".
 function needsRigSeat(s) {
   if (!settings || !(settings.choices.rig_condition || []).includes(settings.condition)) return "";
-  if (!settings.rig_seat) return "Pick the seat dealt the coolers (the Losing condition) below before you start.";
+  if (!settings.rig_seat) return "Pick the seat dealt the coolers (the Losing condition) in Settings before you start.";
   if (!s.joined.includes(settings.rig_seat)) return `The seat dealt the coolers (${settings.rig_seat}) isn't ready yet.`;
   return "";
 }
 
 function setupForm() {
+  const dialog = el("setup-dialog");
+  el("setup-done").onclick = () => dialog.close();
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });  // the backdrop
+  dialog.addEventListener("close", () => { if (state) render(); });
   settingInputs().forEach((input) => {
     if (input.classList.contains("seg")) {
       input.querySelectorAll("button").forEach((b) => { b.onclick = () => change(input.dataset.key, b.dataset.v); });
@@ -527,9 +564,10 @@ async function loadSettings() {
 
 // Fill the form from the engine's settings, leaving alone a field being edited.
 function renderSettings(force) {
-  const s = state, panel = el("setup");
+  const s = state, panel = el("setup"), dialog = el("setup-dialog");
   const lobby = s && s.status === "waiting_for_players";
-  panel.hidden = !settings || !lobby || s.start !== "manual";
+  const canSet = Boolean(settings && lobby && s.start === "manual");
+  if (!canSet && dialog.open) dialog.close();  // the game started (maybe from another tab)
   // Once started, the header says what is being played.
   const game = el("game");
   game.hidden = !settings || lobby || !s;
@@ -538,7 +576,7 @@ function renderSettings(force) {
                         (CONDITION_TEXT[settings.condition] || [settings.condition])[0].toLowerCase(),
                         `honeypot ${settings.honeypots}`].join(" · ");
   }
-  if (panel.hidden) return;
+  if (!canSet) return;
   const v = settings, lim = v.limits || {};
   panel.classList.toggle("locked", !v.editable);
   const condSel = document.querySelector('#setup select[data-key="condition"]');
