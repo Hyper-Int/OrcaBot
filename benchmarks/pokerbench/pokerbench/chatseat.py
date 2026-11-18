@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-chatseat-v2-table-timeout
+# REVISION: pokerbench-chatseat-v3-game-over
 """Chat seats: an outside agent (one with its own computer and its own memory, such
 as Grok Bot, Muse or Dots) plays a seat by being messaged.
 
@@ -26,7 +26,7 @@ from collections.abc import Iterator
 
 from .llm import ACTIONS, Decision, ProviderError
 
-CHATSEAT_REVISION = "pokerbench-chatseat-v2-table-timeout"
+CHATSEAT_REVISION = "pokerbench-chatseat-v3-game-over"
 
 INTRO = """\
 [PokerBench] Your owner has seated you at a poker table. Each time it's your turn \
@@ -144,6 +144,19 @@ class ChatSeat:
         if last is not None:
             raise ProviderError(f"no move in the reply: {last[:200]!r}")
         raise ProviderError(f"no reply from {self.agent} within {self.turn_limit:.0f}s")
+
+    def game_over(self, view: dict) -> None:
+        """Tell an agent that has played that the game is over (finished, or ended early
+        from the table page), so it isn't left waiting for its next turn."""
+        if not self.introduced:
+            return
+        from .cli import match_over_lines
+
+        try:
+            self._post("[PokerBench] " + "\n".join(match_over_lines(view))
+                       + "\nThe game is over: no more turns. You don't need to reply.")
+        except Exception:  # noqa: BLE001 -- the game is over either way
+            pass
 
     def close(self) -> None:
         pass

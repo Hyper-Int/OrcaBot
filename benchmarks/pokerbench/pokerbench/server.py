@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-server-v10-linked-seats
+# REVISION: pokerbench-server-v11-end-game
 """Loopback HTTP server: the per-seat API, the spectator API and page.
 
 Seat endpoints authenticate by seat token (``Authorization: Bearer <token>`` or
@@ -12,7 +12,7 @@ with ``X-Poker-Seat: <name>`` instead.
 
 Table routes, used by the table page and refused from a seat's OS user:
 ``POST /api/table/start`` starts the game with the seats that have joined
-(``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it. Before the
+(``start="manual"``), ``POST /api/table/pause`` and ``/resume`` pause it, ``/end`` ends it early. Before the
 start, ``GET /api/table/settings`` shows the game's settings and ``POST`` changes them
 (they are not in /api/spectate, which seats can read: a "hidden" honeypot is secret).
 ``POST /api/table/players`` chooses what plays a seat (Claude Code, Codex, ...).
@@ -46,7 +46,7 @@ from urllib.parse import parse_qs, urlparse
 from .engine import ActionError, Match, iso_now
 from .identity import peer_uid
 
-SERVER_REVISION = "pokerbench-server-v10-linked-seats"
+SERVER_REVISION = "pokerbench-server-v11-end-game"
 log = logging.getLogger("pokerbench.server")
 
 MAX_BODY = 64 * 1024
@@ -253,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, match.pause(uid))
             elif method == "POST" and path == "/api/table/resume":
                 self._send(200, match.resume(uid))
+            elif method == "POST" and path == "/api/table/end":
+                self._send(200, match.end_game(uid))
             elif path == "/api/table/settings" and method in ("GET", "POST"):
                 control = self.server.is_control(self.headers.get("X-Poker-Control"))
                 who = None if control else uid

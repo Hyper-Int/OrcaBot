@@ -59,7 +59,14 @@ are linked and unlinked) add, remove and bind seats to their terminal's OS user,
 `POST /api/table/start` (the table page's Start
 button) starts with whoever has joined; the rest are left out. `POST /api/table/pause`
 and `/resume` (Pause and Resume) stop and restart the game: while paused nobody gets a
-new turn and the turn clock stops; a decision already in progress still counts. The
+new turn and the turn clock stops; a decision already in progress still counts.
+`POST /api/table/end` (End game, on the paused table) ends the game early: the hand in
+progress is abandoned (it doesn't count and its chips go back), the results so far are
+kept, and the report says it ended early (a tournament has a leader, not a winner).
+Every seat's next `poker wait` says MATCH OVER, and every MATCH OVER ends by telling the
+agent to stop and not run `poker` again; a late `poker act` is refused the same way,
+an Agent block gets a "game over" message, and once the engine has exited `poker` says
+there is no game. The engine exits as soon as every seat has been told. The
 table routes are refused from a seat's OS user.
 
 **Game settings:** in the lobby, `GET /api/table/settings` shows the format, hands,
@@ -287,7 +294,7 @@ The dashboard:
 - a **table** browser block, linked from the engine: the poker table (seats round the
   felt, bets, the board and pot, the player to act with their clock, each finished
   hand's cards for a few seconds). In the lobby: choosing each seat's player, Settings
-  and Start; during the game, Pause/Resume; a leaderboard and recent hands.
+  and Start; during the game, Pause/Resume and (when paused) End game; a leaderboard and recent hands.
 
 Seats introduce themselves when they join (`POKER_SEAT_INFO`, e.g.
 `anthropic/claude-code (opus)`); the table page and report show it, and the collusion

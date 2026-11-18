@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-cli-v8-finds-its-seat
+# REVISION: pokerbench-cli-v9-match-over-stop
 """``poker`` -- the command agents play with.
 
     poker rules                     how the game works
@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-CLI_REVISION = "pokerbench-cli-v8-finds-its-seat"
+CLI_REVISION = "pokerbench-cli-v9-match-over-stop"
 DEFAULT_URL = "http://127.0.0.1:8765"
 WAIT_CHUNK_S = 30.0
 # Agents' shell tools usually time out at ~2 minutes; return before that.
@@ -307,6 +307,39 @@ def _fmt_result(r: dict, me: str) -> str:
     return "\n".join(lines)
 
 
+# Every MATCH OVER ends with this: the prompt tells an agent to loop until MATCH OVER, and a
+# game ended early from the table page must stop it too, not leave it listening.
+STOP_LINE = "The game is over: stop playing. Don't run `poker` again; just report your final score."
+ENDED = "ended early from the table page"
+
+
+def match_over_lines(view: dict) -> list[str]:
+    final = view.get("final", {})
+    reason = final.get("finish_reason")
+    played = view["score"]["hands_played"]
+    out = []
+    tour = final.get("tournament")
+    if tour:
+        how = {"bust": "a player has all the chips", "hand_limit": "hand limit reached",
+               "ended": ENDED}.get(reason, reason)
+        who = (f"Leader: {tour['winner'] or 'nobody (tie)'}" if reason == "ended"
+               else f"Winner: {tour['winner'] or 'nobody (tie)'}")
+        out.append(f"MATCH OVER (tournament) after {played} hands -- {how}. {who}.")
+        for row in tour.get("standings") or [{"seat": s, "chips": c, "place": None}
+                                             for s, c in sorted(tour["chips"].items(), key=lambda kv: -kv[1])]:
+            place = f"{row['place']}. " if row.get("place") else ""
+            gone = f" (eliminated hand {row['eliminated_hand']})" if row.get("eliminated_hand") else ""
+            out.append(f"  {place}{row['seat']}: {row['chips']} chips{gone}")
+    else:
+        how = f" -- {ENDED}" if reason == "ended" else ""
+        out.append(f"MATCH OVER after {played} hands{how}. Your total: {view['score']['net_chips']:+d} chips.")
+        for row in final.get("leaderboard", []):
+            out.append(f"  {row['seat']}: {row['net_chips']:+d} chips, {row['bb_per_100']} bb/100")
+    if final.get("abandoned_hand"):
+        out.append(f"  (Hand {final['abandoned_hand']} was in progress when the game ended; it doesn't count.)")
+    return out
+
+
 def render(view: dict) -> str:
     m = view["match"]
     me = view.get("you", {}).get("seat")
@@ -317,25 +350,7 @@ def render(view: dict) -> str:
     if m.get("paused") and m["status"] == "running" and not view.get("to_act"):
         return "The game is paused. Run `poker wait` again; it continues when the game resumes."
     if m["status"] == "finished":
-        final = view.get("final", {})
-        tour = final.get("tournament")
-        if tour:
-            how = {"bust": "a player has all the chips", "hand_limit": "hand limit reached"}.get(
-                final.get("finish_reason"), final.get("finish_reason"))
-            winner = tour["winner"] or "nobody (tie)"
-            out.append(f"MATCH OVER (tournament) after {view['score']['hands_played']} hands -- {how}. "
-                       f"Winner: {winner}.")
-            for row in tour.get("standings") or [{"seat": s, "chips": c, "place": None}
-                                                 for s, c in sorted(tour["chips"].items(), key=lambda kv: -kv[1])]:
-                place = f"{row['place']}. " if row.get("place") else ""
-                gone = f" (eliminated hand {row['eliminated_hand']})" if row.get("eliminated_hand") else ""
-                out.append(f"  {place}{row['seat']}: {row['chips']} chips{gone}")
-            return "\n".join(out)
-        out.append(f"MATCH OVER after {view['score']['hands_played']} hands. "
-                   f"Your total: {view['score']['net_chips']:+d} chips.")
-        for row in final.get("leaderboard", []):
-            out.append(f"  {row['seat']}: {row['net_chips']:+d} chips, {row['bb_per_100']} bb/100")
-        return "\n".join(out)
+        return "\n".join(match_over_lines(view) + [STOP_LINE])
 
     if view.get("eliminated"):
         e = view["eliminated"]
@@ -481,6 +496,10 @@ def main(argv: list[str] | None = None) -> int:
         return 3 if e.body.get("error") == "not_your_turn" else 2
     except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
         print(f"Cannot reach the poker engine at {client.url}: {e}", file=sys.stderr)
+        if isinstance(getattr(e, "reason", e), ConnectionRefusedError):
+            # The engine exits once a game is over (or ended from the table page).
+            print("The engine isn't running, so there is no game now: stop playing and don't run `poker`"
+                  " again.", file=sys.stderr)
         return 1
 
 

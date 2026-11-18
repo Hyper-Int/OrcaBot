@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-main-v12-linked-seats
+# REVISION: pokerbench-main-v13-agent-game-over
 """``pokerbench`` -- run the engine, reference bots and reports.
 
     pokerbench serve --seats claude,codex --deals 50 --run-dir DIR --tokens-dir DIR
@@ -31,7 +31,7 @@ from .engine import CONDITIONS, ENGINE_REVISION, Match, MatchConfig
 from .report import build
 from .server import SERVER_REVISION, make_server, write_control_token, write_tokens
 
-MAIN_REVISION = "pokerbench-main-v12-linked-seats"
+MAIN_REVISION = "pokerbench-main-v13-agent-game-over"
 
 
 HU_GAME = "a heads-up no-limit Texas hold'em match against another player"
@@ -206,6 +206,7 @@ def cmd_agent_seat(args) -> int:
     feed = None if args.quiet else (lambda line: print(line, flush=True))
     final = play_llm(client, seat, max_retries=args.max_retries,
                      log_path=Path(args.log) if args.log else None, feed=feed)
+    seat.game_over(final)
     print(json.dumps(final["score"]))
     return 0
 

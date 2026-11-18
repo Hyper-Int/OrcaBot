@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-table-engine-v9-seat-screen
+# REVISION: pokerbench-table-engine-v10-end-game
 # Runs one PokerBench table from the settings at the top of the engine terminal's
 # boot command (see bin/build-template). The boot command installs PokerBench into
 # $PRIV and then runs this script with those settings in the environment. With
@@ -28,7 +28,7 @@
 # and run $PUB/seat.sh (bin/seat).
 set -u
 START="${START:-manual}"
-REVISION=pokerbench-table-engine-v9-seat-screen
+REVISION=pokerbench-table-engine-v10-end-game
 echo "[table-engine] REVISION: $REVISION loaded at $(date -u +%FT%TZ)"
 PB="$VENV/bin/pokerbench"
 SRC="$PRIV/src/benchmarks/pokerbench"
@@ -83,7 +83,8 @@ done
 echo
 echo "Players: every terminal and Agent block linked to this engine terminal takes a seat."
 echo "Open the table (the browser block, http://localhost:$PORT/): click a seat to choose what"
-echo "plays it, Settings to set up the game, then Start. Pause and Resume are there too."
+echo "plays it, Settings to set up the game, then Start. Pause, Resume and End game are there too."
+echo "After a game (or End game) restart this terminal for the next one."
 "$PB" host --url "http://127.0.0.1:$PORT" --control-token-file "$PRIV/control.token" --pub "$PUB" \
   --tokens-dir "$PRIV/tokens" --run-dir "$RUN" --game "$GAME" --pb "$PB" --seats "${SEATS:-}" --engine-pid $ENGINE &
 HOST=$!

@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-engine-v12-interactive-agents
+# REVISION: pokerbench-engine-v13-end-game
 """No-limit hold'em match engine: heads-up up to a 10-seat full ring.
 
 The engine is the only holder of hidden information (hole cards, the deck).
@@ -50,7 +50,7 @@ from . import REVISION as PACKAGE_REVISION
 from .players import HARNESS_KINDS, PlayerError, label as player_label, normalize as normalize_player
 from .stats import leaderboard
 
-ENGINE_REVISION = "pokerbench-engine-v12-interactive-agents"
+ENGINE_REVISION = "pokerbench-engine-v13-end-game"
 log = logging.getLogger("pokerbench.engine")
 log.info("[engine] REVISION: %s loaded at %s", ENGINE_REVISION, time.strftime("%Y-%m-%dT%H:%M:%S%z"))
 
@@ -578,7 +578,8 @@ class Match:
         self.button: str | None = None  # tournament: the seat with the button this hand
         # Tournament eliminations in order: {"seat", "hand", "place"} (place 1 = winner).
         self.eliminated: list[dict] = []
-        self.finish_reason: str | None = None  # completed | bust | hand_limit
+        self.finish_reason: str | None = None  # completed | bust | hand_limit | ended (from the table page)
+        self.abandoned_hand: int | None = None  # ended mid-hand: that hand never counted
         self.turn_started: float | None = None
         # Paused from the table page: nobody gets a new turn and the clock stops. A
         # decision already in progress still counts (its agent was told it was its turn).
@@ -720,7 +721,7 @@ class Match:
         self.status = "running"
         self._next_hand()
 
-    # -- the table page's controls: start (start="manual"), pause, resume -------------
+    # -- the table page's controls: start (start="manual"), pause, resume, end ---------
     def _reseat(self, cfg: MatchConfig) -> None:
         """Change who sits at the table. Only before the first hand."""
         self.cfg = cfg
@@ -977,6 +978,35 @@ class Match:
                 self._bump()
             return {"ok": True, "paused": False}
 
+    def end_game(self, uid: int | None = None) -> dict:
+        """End the game now, from the table page (paused or not). A hand in progress is
+        abandoned: it doesn't count, and its chips go back to where they were before it.
+        The seats' next ``poker wait`` says MATCH OVER, which tells an agent to stop."""
+        with self.cond:
+            if self.status != "running":
+                raise ActionError("not_running", "The game isn't running.")
+            self._check_controller(uid, "end", "end")
+            hand = self.hand
+            if hand is not None:
+                self.abandoned_hand = hand.number
+                self.log.append("events.jsonl", {"ts": iso_now(), "type": "hand_abandoned", "hand": hand.number,
+                                                 "actions": len(hand.actions)})
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "ended", "uid": uid,
+                                             "hands_played": len(self.results), "paused": self.paused})
+            self.paused, self.paused_at = False, None
+            self.hand_index = len(self.plans)  # no more hands
+            self.hand = None
+            self.status = "finished"
+            self.finish_reason = "ended"
+            self.finished_at = iso_now()
+            self.turn_started = None
+            self.log.write("run.json", json.dumps(self._run_info(), indent=2) + "\n")
+            self.log.write("results.json", json.dumps(self.final_results(), indent=2) + "\n")
+            self.log.append("events.jsonl", {"ts": iso_now(), "type": "match_finished"})
+            self._bump()
+            return {"ok": True, "status": self.status, "hands_played": len(self.results),
+                    "abandoned_hand": self.abandoned_hand}
+
     # -- seat identity ------------------------------------------------------------
     def _isolation(self) -> dict:
         uids = {s: self.seat_uids.get(s) for s in self.cfg.seats}
@@ -1184,6 +1214,12 @@ class Match:
 
     def act(self, seat: str, action: str, amount: int | None = None, reason: str | None = None) -> dict:
         with self.cond:
+            if self.status == "finished":
+                self.final_seen.add(seat)  # told the game is over: the engine needn't wait for it
+                self.cond.notify_all()
+                raise ActionError("not_running", "MATCH OVER: the game has ended"
+                                  + (" (it was ended from the table page)" if self.finish_reason == "ended" else "")
+                                  + ". Stop playing: don't run `poker` again.")
             if self.status != "running" or self.hand is None:
                 raise ActionError("not_running", f"The match is {self.status}.")
             hand = self.hand
@@ -1283,6 +1319,7 @@ class Match:
                 "big_blind": self.cfg.big_blind,
                 "format": self.cfg.format,
                 "finish_reason": self.finish_reason,
+                "hands_played": len(self.results),
                 **({"tournament": self._tournament_info()} if self.tournament else {}),
                 "isolation": self._isolation(),
                 "leaderboard": leaderboard(self.results, self.cfg.seats, self.cfg.big_blind),
@@ -1321,6 +1358,7 @@ class Match:
             "status": self.status,
             "finish_reason": self.finish_reason,
             "hands_played": len(self.results),
+            **({"abandoned_hand": self.abandoned_hand} if self.abandoned_hand else {}),
             "leaderboard": leaderboard(self.results, self.cfg.seats, self.cfg.big_blind),
             "counters": self.counters,
             "isolation": self._isolation(),

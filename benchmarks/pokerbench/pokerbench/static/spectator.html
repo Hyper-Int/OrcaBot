@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v12-move-time -->
+<!-- REVISION: pokerbench-spectator-v13-end-game -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -267,8 +267,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v12-move-time
-console.log(`[spectator] REVISION: pokerbench-spectator-v12-move-time loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v13-end-game
+console.log(`[spectator] REVISION: pokerbench-spectator-v13-end-game loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -280,7 +280,8 @@ let state = null;
 let shownHand = null;       // the last finished hand number we have displayed
 let showdown = null;        // {hand, until}: a finished hand held on the table for a moment
 let controlError = "";
-let busy = false;           // a Start / Pause / Resume request is in flight
+let busy = false;           // a Start / Pause / Resume / End request is in flight
+let confirmEnd = false;     // End game pressed once: asking "are you sure?" on the table
 
 function card(code, cls = "") {
   if (code === undefined) return `<div class="slot"></div>`;
@@ -415,6 +416,7 @@ function render() {
   el("layer").innerHTML = layer;
 
   // centre
+  if (!(s.status === "running" && s.paused)) confirmEnd = false;  // resumed (or over) meanwhile
   let center = "";
   if (lobby) {
     const ready = s.joined.length;
@@ -435,10 +437,20 @@ function render() {
     center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(sd.board[k])).join("")}</div>
       <div class="message">${winners.map(esc).join(" & ") || "Split"} ${winners.length === 1 ? "wins" : "win"} ${num(pot)}
       <small>hand ${sd.hand} · ${sd.showdown ? "showdown" : "everyone else folded"}</small></div>`;
+  } else if (live && s.paused && confirmEnd) {
+    center = `<div class="message">End the game now?
+        <small>Hand ${s.hand} is in progress and won't count; the results so far are kept. Every player is told the game is over and stops.</small></div>
+      <div class="actions">
+        <button class="big ghost" data-confirm-end="no" ${busy ? "disabled" : ""}>KEEP PLAYING</button>
+        <button class="big" data-action="end" ${busy ? "disabled" : ""}>${busy ? "ENDING…" : "END THE GAME"}</button>
+      </div>`;
   } else if (live && s.paused) {
     center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(live.board[k])).join("")}</div>
       <div class="paused-tag">PAUSED</div>
-      <button class="big" data-action="resume" ${busy ? "disabled" : ""}>RESUME</button>`;
+      <div class="actions">
+        <button class="big" data-action="resume" ${busy ? "disabled" : ""}>RESUME</button>
+        <button class="big ghost" data-confirm-end="yes" ${busy ? "disabled" : ""}>END GAME</button>
+      </div>`;
   } else if (live) {
     center = `<div class="board">${[0, 1, 2, 3, 4].map((k) => card(live.board[k])).join("")}</div>
       <div class="pot"><span class="chip gold"></span>Pot ${num(live.pot)}</div>
@@ -448,13 +460,17 @@ function render() {
       ? Object.entries(s.tournament.chips).sort((a, b) => b[1] - a[1])
       : s.leaderboard.map((r) => [r.seat, r.net_chips]);
     const top = standings.length ? standings[0][0] : null;
-    center = `<div class="message">Game over${top ? ` · ${esc(top)} wins` : ""}
-      <small>Full report: /workspace/pokerbench-results/ (the engine terminal prints it too).</small></div>`;
+    const ended = s.finish_reason === "ended";
+    center = `<div class="message">${ended ? "Game ended early" : "Game over"}${top ? ` · ${esc(top)} ${ended ? "was ahead" : "wins"}` : ""}
+      <small>${ended ? `After ${num(s.hands_played ?? 0)} hands. The players have been told to stop. ` : ""}Full report: /workspace/pokerbench-results/ (the engine terminal prints it too). Restart the engine terminal for a new game.</small></div>`;
   }
   if (controlError) center += `<div class="error">${esc(controlError)}</div>`;
   el("center").innerHTML = center;
   el("center").querySelectorAll("[data-action]").forEach((b) => { b.onclick = () => control(b.dataset.action); });
   el("center").querySelectorAll("[data-open=settings]").forEach((b) => { b.onclick = openSettings; });
+  el("center").querySelectorAll("[data-confirm-end]").forEach((b) => {
+    b.onclick = () => { confirmEnd = b.dataset.confirmEnd === "yes"; controlError = ""; render(); };
+  });
   el("stage").classList.toggle("is-paused", Boolean(s.paused && s.status === "running"));
 
   // Pause / Resume in the header while the game runs.
@@ -738,8 +754,9 @@ function renderSettings(force) {
   el("honeypots-help").textContent = HONEYPOT_TEXT[v.honeypots] || "";
 }
 
-// Start, pause or resume the game.
+// Start, pause, resume or end the game.
 async function control(action) {
+  if (action !== "end") confirmEnd = false;
   busy = true; controlError = ""; render();
   try {
     const res = await fetch(`/api/table/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -749,6 +766,7 @@ async function control(action) {
     controlError = "Couldn't reach the engine.";
   }
   busy = false;
+  if (action === "end" && !controlError) confirmEnd = false;
   poll(true);
 }
 

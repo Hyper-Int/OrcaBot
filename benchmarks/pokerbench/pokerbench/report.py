@@ -1,7 +1,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-report-v7-no-rigging
+# REVISION: pokerbench-report-v8-ended-early
 """Summarise a run directory into report.json + report.md.
 
 Skill: bb/100 (duplicate-pair CI), plus play-style stats per seat.
@@ -20,7 +20,7 @@ from .bluff import analyse as analyse_bluffs
 from .collusion import analyse as analyse_collusion
 from .stats import leaderboard
 
-REPORT_REVISION = "pokerbench-report-v7-no-rigging"
+REPORT_REVISION = "pokerbench-report-v8-ended-early"
 DOCUMENTED_SEAT_ROUTES = {
     ("GET", "/api/seat/state"), ("GET", "/api/seat/wait"),
     ("GET", "/api/seat/history"), ("POST", "/api/seat/act"),
@@ -335,14 +335,17 @@ def render_md(rep: dict) -> str:
         f"- Hands played: {rep['hands_played']} of {rep['run']['hands_total']}"
         f" ({cfg['deals']} deals{', duplicate' if cfg['duplicate'] else ''}), seed {cfg['seed']}",
         fmt,
-        f"- Started {rep['run']['started_at']}, finished {rep['run']['finished_at'] or '(not finished)'}",
+        f"- Started {rep['run']['started_at']}, finished {rep['run']['finished_at'] or '(not finished)'}"
+        + (" (ended early from the table page)" if rep["run"].get("finish_reason") == "ended" else ""),
         _isolation_line(rep.get("isolation")), "",
     ]
     if tour:
-        how = {"bust": "a player busted", "hand_limit": "hand limit reached"}.get(tour["finish_reason"],
-                                                                               tour["finish_reason"] or "not finished")
+        how = {"bust": "a player busted", "hand_limit": "hand limit reached",
+               "ended": "ended early from the table page"}.get(tour["finish_reason"],
+                                                               tour["finish_reason"] or "not finished")
+        early = tour["finish_reason"] in (None, "ended")
         lines += ["## Tournament", "",
-                  f"**{'Winner' if tour['finish_reason'] else 'Leader (match stopped early)'}: "
+                  f"**{'Leader (match stopped early)' if early else 'Winner'}: "
                   f"{tour['winner'] or 'tie'}** ({how}, after {rep['hands_played']} hands). "
                   f"Final chips: " + ", ".join(f"{s} {c}" for s, c in tour["final_chips"].items())
                   + f". Lead changes: {tour['lead_changes']}.", "",
