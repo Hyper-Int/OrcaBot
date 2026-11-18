@@ -56,7 +56,7 @@ FLY_WARM_POOL_REGIONS = "sjc"
 # Agent blocks: the agent hub outside agents connect to. Also needs the secret
 # AGENT_HUB_PARTNER_SECRET (the hub's PARTNER_SECRET). Without both, Agent blocks
 # say linking isn't set up.
-AGENT_HUB_URL = "https://siren-signal.robbomacrae.workers.dev"
+AGENT_HUB_URL = "https://agents.orcabot.com"
 
 # OAuth (client IDs only - secrets go in wrangler secret)
 FRONTEND_URL = "https://dev.orcabot.com"
