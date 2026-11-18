@@ -1,7 +1,7 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-// REVISION: agent-link-v1-device-client
+// REVISION: agent-link-v2-status-detail
 
 // Package agentlink connects a dashboard to the outside AI agents its owner has
 // linked (Agent blocks): Grok Bot, Muse, Dots, Claude Code, Codex, ... running on
@@ -44,7 +44,7 @@ import (
 	"time"
 )
 
-const Revision = "agent-link-v1-device-client"
+const Revision = "agent-link-v2-status-detail"
 
 func init() {
 	log.Printf("[agentlink] REVISION: %s loaded at %s", Revision, time.Now().Format(time.RFC3339))
@@ -209,6 +209,15 @@ func (l *Link) Status() (string, string) {
 	return l.status, l.detail
 }
 
+// brief keeps a status detail short enough to show in the Agent block.
+func brief(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 240 {
+		s = s[:240] + "…"
+	}
+	return s
+}
+
 func (l *Link) setStatus(status, detail string) {
 	l.mu.Lock()
 	l.status, l.detail = status, detail
@@ -329,8 +338,12 @@ func (l *Link) run() {
 		cancel()
 		switch {
 		case err != nil:
-			l.setStatus("error", "couldn't reach the control plane")
+			// Logged every try (backoff caps it at about one a minute): without this a VM
+			// pointed at the wrong control plane fails silently.
+			log.Printf("[agentlink] dashboard %s: control plane config: %v", l.dashboardID, err)
+			l.setStatus("error", "couldn't get settings from the control plane: "+brief(err.Error()))
 		case !cfg.Enabled:
+			log.Printf("[agentlink] dashboard %s: agent linking isn't configured on the control plane", l.dashboardID)
 			l.setStatus("disabled", "agent linking isn't set up on this Orcabot")
 			backoff = 5 * time.Minute
 		default:

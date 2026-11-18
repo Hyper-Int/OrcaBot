@@ -1,9 +1,9 @@
 // Copyright 2026 Rob Macrae. All rights reserved.
 // SPDX-License-Identifier: LicenseRef-Proprietary
-// REVISION: agent-block-v1-link-chat-seat
+// REVISION: agent-block-v2-status-detail
 
 import { describe, it, expect } from "vitest";
-import { cleanPairingCode, parseAgentContent } from "./AgentBlock";
+import { cleanPairingCode, parseAgentContent, statusMessage } from "./AgentBlock";
 import { AGENT_KINDS, agentKind, setupText } from "@/data/agent-kinds";
 
 describe("Agent block", () => {
@@ -24,6 +24,17 @@ describe("Agent block", () => {
       .toEqual({ kind: "dots", agent: { identity: "orca:x/agent:dots", name: "dots" } });
     // A malformed agent is ignored rather than trusted.
     expect(parseAgentContent(JSON.stringify({ kind: "dots", agent: { identity: 5 } })).agent).toBeUndefined();
+  });
+
+  it("says why the link failed, and only when something is wrong", () => {
+    const why = "couldn't get settings from the control plane: GET https://api.orcabot.com/internal/...: 404";
+    expect(statusMessage("error", why)).toEqual({ text: "This dashboard can't reach your agents.", why });
+    expect(statusMessage("error", "")).toEqual({ text: "This dashboard can't reach your agents.", why: null });
+    expect(statusMessage("ready", "leftover detail").why).toBeNull();
+    expect(statusMessage("pairing", "x").why).toBeNull();
+    // The VM's "disabled" detail repeats the text: don't say it twice.
+    expect(statusMessage("disabled", "agent linking isn't set up on this Orcabot").why).toBeNull();
+    expect(statusMessage("something-new").text).toBe("something-new");
   });
 
   it("fills the hub URL into every agent's setup text and never names the hub", () => {
