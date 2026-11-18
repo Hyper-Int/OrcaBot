@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v16-gemini-workspace
+# REVISION: pokerbench-template-v17-seats-round-the-table
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -236,21 +236,43 @@ def terminal(pid, name, boot, x, y, w, h, agentic):
     }
 
 
+# The canvas: the table (browser) in the middle, each player next to where its seat is
+# on the table. The engine seats linked terminals in name order, then Agent blocks, and
+# the table deals seats clockwise from the bottom centre, so with all six players:
+# Claude Code bottom, Claude Sonnet (API) lower left, Codex upper left, Gemini CLI top,
+# House bot upper right, the Agent block lower right. (With the Agent block not linked,
+# the five terminals spread round the table a little differently.)
+BROWSER = (700, 440, 1240, 800)  # x, y, width, height
+SEAT_SPOTS = {  # canvas name -> (x, y) of the component
+    "Claude Code": (1040, 1300),          # bottom centre
+    "Claude Sonnet (API)": (80, 800),     # lower left
+    "Codex": (80, 380),                   # upper left
+    "Gemini CLI": (1040, 0),              # top centre
+    "House bot": (2000, 380),             # upper right
+}
+AGENT_SPOT = (2000, 800)                  # lower right
+
+
 def build() -> dict:
+    names = [n for n, *_ in AGENT_TERMINALS] + [n for n, _ in BOT_TERMINALS]
+    clockwise = list(SEAT_SPOTS)
+    # Keep the layout honest: the seat order on the table is the names' sort order.
+    assert sorted(names, key=str.lower) == clockwise, f"seat names sort as {sorted(names, key=str.lower)}, not {clockwise}"
+    bx, by, bw, bh = BROWSER
     items = [
-        terminal("engine", "PokerBench engine", ENGINE_BOOT, 0, 0, 560, 640, False),
+        terminal("engine", "PokerBench engine", ENGINE_BOOT, 80, -40, 560, 380, False),
         {
             "placeholderId": "spectator",
             "type": "browser",
             "content": f"http://localhost:{PORT}/",
-            "position": {"x": 580, "y": 0},
-            "size": {"width": 760, "height": 640},
+            "position": {"x": bx, "y": by},
+            "size": {"width": bw, "height": bh},
         },
     ]
     seats = [(name, agent_boot(vendor, launch), True) for name, vendor, launch in AGENT_TERMINALS]
     seats += [(name, seat_boot(defaults), False) for name, defaults in BOT_TERMINALS]
     for i, (name, boot, agentic) in enumerate(seats):
-        x, y = (i % 3) * 580, 660 + (i // 3) * 400
+        x, y = SEAT_SPOTS[name]
         items.append(terminal(f"seat_{i}", name, boot, x, y, 560, 380, agentic))
     # An outside agent (Grok Bot, Muse, Dots, ...): an Agent block connected to the
     # engine terminal is seated at the table. Unlinked in the template; the block walks
@@ -259,7 +281,7 @@ def build() -> dict:
         "placeholderId": "agent",
         "type": "agent",
         "content": json.dumps({"kind": "grok"}),
-        "position": {"x": -380, "y": 0},
+        "position": {"x": AGENT_SPOT[0], "y": AGENT_SPOT[1]},
         "size": {"width": 360, "height": 480},
     })
     return {
@@ -280,7 +302,7 @@ def build() -> dict:
                  + [{"sourcePlaceholderId": f"seat_{i}", "targetPlaceholderId": "engine",
                      "sourceHandle": "top-out", "targetHandle": "bottom-in"}
                     for i in range(len(AGENT_TERMINALS) + len(BOT_TERMINALS))],
-        "viewport": {"x": 0, "y": 0, "zoom": 0.7},
+        "viewport": {"x": 0, "y": 30, "zoom": 0.45},  # the whole table and its players
         "setupGuide": SETUP_GUIDE,
     }
 
