@@ -75,7 +75,6 @@ CREATE TABLE IF NOT EXISTS dashboard_items (
 
 CREATE INDEX IF NOT EXISTS idx_items_dashboard ON dashboard_items(dashboard_id);
 
--- Dashboard edges (connections between blocks)
 -- Agent blocks: each user's owner identity on the agent hub (outside AI agents link
 -- to it with pairing codes). The token is encrypted (encryptSecret) and never goes to a
 -- VM; kept out of user_secrets on purpose, since those are pushed into the VM env.
@@ -86,6 +85,7 @@ CREATE TABLE IF NOT EXISTS agent_hub_owners (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Dashboard edges (connections between blocks)
 CREATE TABLE IF NOT EXISTS dashboard_edges (
   id TEXT PRIMARY KEY,
   dashboard_id TEXT NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,

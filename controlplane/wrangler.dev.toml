@@ -53,6 +53,11 @@ FLY_PROVISIONING_ENABLED = "true"
 FLY_SANDBOX_CONTROLPLANE_URL = "https://api.dev.orcabot.com"
 FLY_WARM_POOL_REGIONS = "sjc"
 
+# Agent blocks: the agent hub outside agents connect to. Also needs the secret
+# AGENT_HUB_PARTNER_SECRET (the hub's PARTNER_SECRET). Without both, Agent blocks
+# say linking isn't set up.
+AGENT_HUB_URL = "https://siren-signal.robbomacrae.workers.dev"
+
 # OAuth (client IDs only - secrets go in wrangler secret)
 FRONTEND_URL = "https://dev.orcabot.com"
 GOOGLE_CLIENT_ID = "800055652303-t2jus6l3rlkle2fd3a0vrtihs974o6ul.apps.googleusercontent.com"
