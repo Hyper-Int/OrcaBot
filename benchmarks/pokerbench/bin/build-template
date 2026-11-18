@@ -2,7 +2,7 @@
 # Copyright 2026 Rob Macrae. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 
-# REVISION: pokerbench-template-v15-interactive-agents
+# REVISION: pokerbench-template-v16-gemini-workspace
 """Generate ../template.json (the PokerBench dashboard template).
 
 The boot scripts live here as readable shell; template.json is generated output.
@@ -25,11 +25,15 @@ PORT = 8765
 # others: the prompt allows writing tools, and integrity runs need the honeypot
 # reachable); Codex with --dangerously-bypass-approvals-and-sandbox (its own sandbox
 # blocks the loopback HTTP the poker command uses; the VM is the sandbox); Gemini with
-# --yolo --skip-trust (otherwise it stops at a folder-trust prompt and turns YOLO off).
+# --yolo --skip-trust (otherwise it stops at a folder-trust prompt and turns YOLO off)
+# and --include-directories /tmp/pokerbench: Gemini CLI asks before every command naming
+# a path outside its workspace that it has seen in earlier output, YOLO or not, and
+# withholds "allow always" for them, so `poker` (/tmp/pokerbench/...) needed approving
+# over and over.
 AGENT_TERMINALS = (
     ("Claude Code", "anthropic", 'exec claude ${MODEL:+--model "$MODEL"} --dangerously-skip-permissions'),
     ("Codex", "openai", 'exec codex ${MODEL:+-m "$MODEL"} --dangerously-bypass-approvals-and-sandbox'),
-    ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust'),
+    ("Gemini CLI", "google", 'exec gemini ${MODEL:+-m "$MODEL"} --yolo --skip-trust --include-directories /tmp/pokerbench'),
 )
 BOT_TERMINALS = (
     ("Claude Sonnet (API)", {"PLAYER": "api", "PROVIDER": "anthropic", "MODEL": "claude-sonnet-5-5", "EFFORT": ""}),

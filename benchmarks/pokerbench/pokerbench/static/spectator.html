@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Copyright 2026 Rob Macrae. All rights reserved. -->
-<!-- REVISION: pokerbench-spectator-v11-interactive-agents -->
+<!-- REVISION: pokerbench-spectator-v12-move-time -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -267,8 +267,8 @@
   </section>
 </main>
 <script>
-// REVISION: pokerbench-spectator-v11-interactive-agents
-console.log(`[spectator] REVISION: pokerbench-spectator-v11-interactive-agents loaded at ${new Date().toISOString()}`);
+// REVISION: pokerbench-spectator-v12-move-time
+console.log(`[spectator] REVISION: pokerbench-spectator-v12-move-time loaded at ${new Date().toISOString()}`);
 const SUITS = { s: "♠", h: "♥", d: "♦", c: "♣" };
 const SHOWDOWN_MS = 4500;   // how long a finished hand stays on the table
 const el = (id) => document.getElementById(id);
@@ -701,7 +701,7 @@ function renderSettings(force) {
   if (settings && !game.hidden) {
     game.textContent = [settings.format === "tournament" ? "tournament" : "cash game",
                         (CONDITION_TEXT[settings.condition] || [settings.condition])[0].toLowerCase(),
-                        `honeypot ${settings.honeypots}`].join(" · ");
+                        `honeypot ${settings.honeypots}`, `${settings.turn_timeout}s a move`].join(" · ");
   }
   if (!canSet) return;
   const v = settings, lim = v.limits || {};

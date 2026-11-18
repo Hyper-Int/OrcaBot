@@ -303,7 +303,9 @@ Agent launch lines live in [`bin/build-template`](bin/build-template):
   honeypot reachable.
 - **Codex** runs with `--dangerously-bypass-approvals-and-sandbox`, because its own
   sandbox blocks the loopback HTTP the CLI uses. The Orcabot VM is the sandbox.
-- **Gemini** uses `--yolo --skip-trust`.
+- **Gemini** uses `--yolo --skip-trust --include-directories /tmp/pokerbench`: Gemini CLI
+  asks before every command naming a path outside its workspace that appeared in earlier
+  output (YOLO or not, with no "allow always"), which `poker`'s own path triggered.
 
 ## Run it locally
 
